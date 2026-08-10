@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 
 import 'gyro_tilt.dart';
 import 'neon_tokens.dart';
@@ -499,8 +501,32 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
       AnimationController(vsync: this, duration: const Duration(seconds: 18))
         ..repeat();
 
+  // Gyro reactivity — tilting the phone slides the aurora blobs with a
+  // parallax feel AND morphs their colors along the neon palette, easing
+  // back to the resting look when the phone is still. The 18s repeating
+  // controller already repaints every frame, so the handler only has to
+  // integrate + decay these two values; no extra ticker.
+  StreamSubscription<GyroscopeEvent>? _gyro;
+  double _gx = 0, _gy = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _gyro = gyroscopeEventStream(
+        samplingPeriod: SensorInterval.gameInterval, // ~50 Hz
+      ).listen((e) {
+        _gx = ((_gx + e.x * 0.025) * 0.985).clamp(-1.2, 1.2);
+        _gy = ((_gy + e.y * 0.025) * 0.985).clamp(-1.2, 1.2);
+      }, onError: (_) => _gyro?.cancel(), cancelOnError: true);
+    } catch (_) {
+      // No gyroscope (emulator/desktop) — static aurora, as before.
+    }
+  }
+
   @override
   void dispose() {
+    _gyro?.cancel();
     _c.dispose();
     super.dispose();
   }
@@ -515,7 +541,7 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
           AnimatedBuilder(
             animation: _c,
             builder: (context, _) => CustomPaint(
-              painter: _AuroraPainter(_c.value),
+              painter: _AuroraPainter(_c.value, _gx, _gy),
             ),
           ),
           widget.child,
@@ -527,18 +553,23 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
 
 class _AuroraPainter extends CustomPainter {
   final double t;
-  _AuroraPainter(this.t);
+  final double gx, gy; // device tilt, −1.2..1.2, self-centering
+  _AuroraPainter(this.t, [this.gx = 0, this.gy = 0]);
 
   void _blob(Canvas canvas, Size s, Color c, double phase, double dx,
-      double dy, double r) {
+      double dy, double r, double depth) {
     final a = 2 * 3.14159265 * (t + phase);
+    // Parallax: each blob slides with the tilt; nearer blobs (bigger
+    // depth) slide further, which reads as real depth behind the glass.
     final center = Offset(
-      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))),
-      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))),
+      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))) + gy * 46 * depth,
+      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))) + gx * 46 * depth,
     );
+    // Tilt also brightens the wash a touch, so motion feels alive.
+    final motion = math.min(1.0, gx.abs() + gy.abs());
     final paint = Paint()
       ..shader = RadialGradient(colors: [
-        c.withValues(alpha: 0.20),
+        c.withValues(alpha: 0.20 + 0.10 * motion),
         c.withValues(alpha: 0.0),
       ]).createShader(Rect.fromCircle(center: center, radius: r));
     canvas.drawCircle(center, r, paint);
@@ -546,13 +577,26 @@ class _AuroraPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    _blob(canvas, size, Neon.violet, 0.00, 0.10, 0.05, 260);
-    _blob(canvas, size, Neon.cyan, 0.33, 0.85, 0.80, 300);
-    _blob(canvas, size, Neon.pink, 0.66, 0.75, 0.20, 210);
+    // Palette morph: tilting one way slides every blob's color toward the
+    // next neon in the cycle (violet→pink→cyan→violet), the other way
+    // toward the previous — the whole background changes hue with the
+    // phone, then settles back.
+    final shift = ((gx + gy) * 0.5).clamp(-1.0, 1.0);
+    Color morph(Color base, Color fwd, Color back) => shift >= 0
+        ? Color.lerp(base, fwd, shift)!
+        : Color.lerp(base, back, -shift)!;
+
+    _blob(canvas, size, morph(Neon.violet, Neon.pink, Neon.cyan),
+        0.00, 0.10, 0.05, 260, 1.0);
+    _blob(canvas, size, morph(Neon.cyan, Neon.violet, Neon.lime),
+        0.33, 0.85, 0.80, 300, 0.55);
+    _blob(canvas, size, morph(Neon.pink, Neon.cyan, Neon.violet),
+        0.66, 0.75, 0.20, 210, 1.45);
   }
 
   @override
-  bool shouldRepaint(covariant _AuroraPainter old) => old.t != t;
+  bool shouldRepaint(covariant _AuroraPainter old) =>
+      old.t != t || old.gx != gx || old.gy != gy;
 }
 
 

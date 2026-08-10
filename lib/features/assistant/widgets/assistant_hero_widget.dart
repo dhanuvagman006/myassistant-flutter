@@ -1,8 +1,6 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../../design/neon_tokens.dart';
 import '../state/assistant_state.dart';
@@ -34,34 +32,15 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c;
 
-  // Gyro gradient steering — tilting the phone swirls the orb's colors
-  // and drifts its inner light. No 3D transform, just color motion.
-  // The repeating controller already repaints every frame, so these
-  // values are simply read in build(); the event handler both
-  // integrates and decays them, so the swirl settles when still.
-  StreamSubscription<GyroscopeEvent>? _gyro;
-  double _gx = 0, _gy = 0;
-
   @override
   void initState() {
     super.initState();
     _c = AnimationController(vsync: this, duration: const Duration(seconds: 3))
       ..repeat();
-    try {
-      _gyro = gyroscopeEventStream(
-        samplingPeriod: SensorInterval.gameInterval, // ~50 Hz
-      ).listen((e) {
-        _gx = ((_gx + e.x * 0.022) * 0.985).clamp(-1.4, 1.4);
-        _gy = ((_gy + e.y * 0.022) * 0.985).clamp(-1.4, 1.4);
-      }, onError: (_) => _gyro?.cancel(), cancelOnError: true);
-    } catch (_) {
-      // No gyroscope — the orb just keeps its normal animation.
-    }
   }
 
   @override
   void dispose() {
-    _gyro?.cancel();
     _c.dispose();
     super.dispose();
   }
@@ -143,13 +122,11 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                     ),
                   ),
                 ),
-                // The orb itself — slowly rotating tri-color neon sweep.
-                // Device tilt adds to the rotation, so tilting the phone
-                // visibly swirls the colors around the ring.
+                // The orb itself — slowly rotating tri-color neon sweep
                 Transform.scale(
                   scale: breathe + level * 0.08,
                   child: Transform.rotate(
-                    angle: t * 2 * math.pi + (_gx + _gy) * 1.35,
+                    angle: t * 2 * math.pi,
                     child: Container(
                       width: 148,
                       height: 148,
@@ -170,19 +147,13 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                         ],
                       ),
                       child: Transform.rotate(
-                        // Undo the full outer rotation (incl. tilt) so the
-                        // icon face stays upright while the colors move.
-                        angle: -t * 2 * math.pi - (_gx + _gy) * 1.35,
+                        angle: -t * 2 * math.pi, // keep the face upright
                         child: Container(
                           margin: const EdgeInsets.all(7),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: RadialGradient(
-                              // The specular highlight leans with the phone.
-                              center: Alignment(
-                                (-0.35 - _gy * 0.45).clamp(-0.9, 0.9),
-                                (-0.45 - _gx * 0.45).clamp(-0.9, 0.9),
-                              ),
+                              center: const Alignment(-0.35, -0.45),
                               colors: [
                                 Colors.white.withValues(alpha: 0.16),
                                 Neon.bg.withValues(alpha: 0.86),
