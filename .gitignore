@@ -6,16 +6,23 @@ build/
 .flutter-plugins-dependencies
 pubspec.lock
 .metadata
+.dart-plugins/
+.pub-cache/
+.pub/
+coverage/
 
 # IDE
 .idea/
 .vscode/
 *.iml
+.DS_Store
+Thumbs.db
 
 # Android
 android/local.properties
 android/.gradle/
 android/app/google-services.json
+android/app/src/main/assets/flutter_assets/
 *.keystore
 *.jks
 
@@ -25,9 +32,14 @@ ios/.symlinks/
 ios/Flutter/Flutter.framework
 ios/Flutter/flutter_export_environment.sh
 ios/Runner/GoogleService-Info.plist
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
 
 # Secrets
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # Release signing — never commit
 android/key.properties
