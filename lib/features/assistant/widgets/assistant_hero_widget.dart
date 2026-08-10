@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../design/gyro_tilt.dart';
 import '../../../design/neon_tokens.dart';
 import '../state/assistant_state.dart';
 
@@ -59,7 +60,15 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: widget.onTap,
-      child: AnimatedBuilder(
+      // 3D presence: the whole orb tilts with the device, its glow-shadow
+      // sliding opposite the tilt in the current phase's color — cyan while
+      // listening, violet while thinking, and so on.
+      child: GyroTilt(
+        maxTilt: 0.14, // freestanding orb can move more than a card
+        radius: 105,
+        sheen: false, // the orb gradient is its own light source
+        shadowColor: _accent,
+        child: AnimatedBuilder(
         animation: _c,
         builder: (context, _) {
           final t = _c.value;
@@ -182,6 +191,7 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
             ),
           );
         },
+        ),
       ),
     );
   }

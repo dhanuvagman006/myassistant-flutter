@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../design/gyro_tilt.dart';
+import '../../../design/neon_tokens.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
 
@@ -12,17 +14,25 @@ class _Glass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: (borderTint ?? Colors.white).withValues(alpha: 0.14),
+    return Padding(
+      // Margin stays OUTSIDE the tilt so the layout box never moves —
+      // only the painted card floats with the device.
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: GyroTilt(
+        radius: 18,
+        shadowColor: borderTint ?? Neon.violet,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: (borderTint ?? Colors.white).withValues(alpha: 0.14),
+            ),
+          ),
+          child: child,
         ),
       ),
-      child: child,
     );
   }
 }
