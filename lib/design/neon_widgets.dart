@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'gyro_tilt.dart';
 import 'neon_tokens.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -149,6 +150,10 @@ class GlassCard extends StatelessWidget {
   final Gradient? borderGradient;
   final VoidCallback? onTap;
 
+  /// Gyroscope 3D presence — perspective tilt + moving light sheen +
+  /// sliding shadow (see design/gyro_tilt.dart). Off by default.
+  final bool tilt;
+
   const GlassCard({
     super.key,
     required this.child,
@@ -158,6 +163,7 @@ class GlassCard extends StatelessWidget {
     this.tint,
     this.borderGradient,
     this.onTap,
+    this.tilt = false,
   });
 
   @override
@@ -178,7 +184,7 @@ class GlassCard extends StatelessWidget {
       ),
     );
 
-    final bordered = borderGradient == null
+    final bordered0 = borderGradient == null
         ? card
         : Container(
             padding: const EdgeInsets.all(1.2),
@@ -188,6 +194,12 @@ class GlassCard extends StatelessWidget {
             ),
             child: card,
           );
+
+    // Gyro tilt wraps the card itself (inside the margin) so the layout
+    // box never moves — only the painted card floats.
+    final bordered = tilt
+        ? GyroTilt(radius: radius, shadowColor: Neon.violet, child: bordered0)
+        : bordered0;
 
     final content = margin == null
         ? bordered

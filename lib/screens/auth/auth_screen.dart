@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../design/neon_tokens.dart';
+import '../../design/gyro_tilt.dart';
 import '../../design/neon_widgets.dart';
 import '../../services/auth_service.dart';
 
@@ -86,7 +87,12 @@ class _AuthScreenState extends State<AuthScreen> {
                     children: [
                       // Brand mark — orb ring with signature sweep gradient
                       Center(
-                        child: Container(
+                        child: GyroTilt(
+                          maxTilt: 0.12, // the small orb can tilt further
+                          radius: 36,
+                          sheen: false, // the orb gradient is its own light
+                          shadowColor: Neon.cyan,
+                          child: Container(
                           width: 72,
                           height: 72,
                           decoration: BoxDecoration(
@@ -102,6 +108,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             child: const Icon(Icons.auto_awesome_rounded,
                                 color: Neon.cyan, size: 30),
                           ),
+                        ),
                         ),
                       ),
                       const SizedBox(height: Neon.s5),
@@ -123,6 +130,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: Neon.s7),
 
                       GlassCard(
+                        tilt: true, // gyro 3D — sheen + sliding shadow
                         padding: const EdgeInsets.all(Neon.s5),
                         radius: Neon.rXl,
                         child: Column(

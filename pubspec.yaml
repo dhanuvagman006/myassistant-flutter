@@ -32,6 +32,9 @@ dependencies:
   # Local storage for session + cached config
   shared_preferences: ^2.3.2
 
+  # Gyroscope — 3D parallax tilt + dynamic light/shadow on cards (GyroTilt)
+  sensors_plus: ^6.1.0
+
   # Regional language from location (Karnataka -> Kannada etc.)
   geolocator: ^13.0.1
   geocoding: ^3.0.0
