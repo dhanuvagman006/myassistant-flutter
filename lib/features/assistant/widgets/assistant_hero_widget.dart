@@ -71,10 +71,10 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
         animation: _c,
         builder: (context, _) {
           final t = _c.value;
-          final tilt = (_gyro.x + _gyro.y) * 1.8; // color-chase angle
+          final tilt = (_gyro.x + _gyro.y) * 1.1; // color-chase angle
           final energy = _gyro.energy; // 0..1 — how alive the motion is
           final breathe =
-              1 + 0.03 * math.sin(t * 2 * math.pi) + 0.025 * energy;
+              1 + 0.03 * math.sin(t * 2 * math.pi) + 0.012 * energy;
           final level = widget.phase == AssistantPhase.listening
               ? (0.15 + widget.micLevel * 0.85)
               : 0.0;
@@ -148,14 +148,14 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                         boxShadow: [
                           BoxShadow(
                             color: _accent.withValues(
-                                alpha: 0.40 + 0.25 * energy),
-                            blurRadius: 44 + 22 * energy,
-                            spreadRadius: 4 + 4 * energy,
+                                alpha: 0.40 + 0.14 * energy),
+                            blurRadius: 44 + 12 * energy,
+                            spreadRadius: 4 + 2 * energy,
                           ),
                           BoxShadow(
                             color: Neon.pink.withValues(
-                                alpha: 0.18 + 0.12 * energy),
-                            blurRadius: 70 + 26 * energy,
+                                alpha: 0.18 + 0.06 * energy),
+                            blurRadius: 70 + 14 * energy,
                             spreadRadius: 10,
                           ),
                         ],
@@ -170,8 +170,8 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                             gradient: RadialGradient(
                               // Specular highlight leans with the phone.
                               center: Alignment(
-                                (-0.35 - _gyro.y * 0.5).clamp(-0.9, 0.9),
-                                (-0.45 - _gyro.x * 0.5).clamp(-0.9, 0.9),
+                                (-0.35 - _gyro.y * 0.3).clamp(-0.9, 0.9),
+                                (-0.45 - _gyro.x * 0.3).clamp(-0.9, 0.9),
                               ),
                               colors: [
                                 Colors.white.withValues(alpha: 0.16),

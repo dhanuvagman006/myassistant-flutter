@@ -550,14 +550,14 @@ class _AuroraPainter extends CustomPainter {
     // Parallax: each blob slides with the tilt; nearer blobs (bigger
     // depth) slide further, which reads as real depth behind the glass.
     final center = Offset(
-      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))) + gy * 72 * depth,
-      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))) + gx * 72 * depth,
+      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))) + gy * 46 * depth,
+      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))) + gx * 46 * depth,
     );
     // Tilt also brightens the wash a touch, so motion feels alive.
     final motion = math.min(1.0, gx.abs() + gy.abs());
     final paint = Paint()
       ..shader = RadialGradient(colors: [
-        c.withValues(alpha: 0.20 + 0.16 * motion),
+        c.withValues(alpha: 0.20 + 0.08 * motion),
         c.withValues(alpha: 0.0),
       ]).createShader(Rect.fromCircle(center: center, radius: r));
     canvas.drawCircle(center, r, paint);
@@ -569,7 +569,7 @@ class _AuroraPainter extends CustomPainter {
     // next neon in the cycle (violet→pink→cyan→violet), the other way
     // toward the previous — the whole background changes hue with the
     // phone, then settles back.
-    final shift = ((gx + gy) * 0.8).clamp(-1.0, 1.0);
+    final shift = ((gx + gy) * 0.5).clamp(-1.0, 1.0);
     Color morph(Color base, Color fwd, Color back) => shift >= 0
         ? Color.lerp(base, fwd, shift)!
         : Color.lerp(base, back, -shift)!;
