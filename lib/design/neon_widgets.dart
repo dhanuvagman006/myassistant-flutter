@@ -1,11 +1,10 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 
+import 'gyro_motion.dart';
 import 'gyro_tilt.dart';
 import 'neon_tokens.dart';
 
@@ -501,32 +500,21 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
       AnimationController(vsync: this, duration: const Duration(seconds: 18))
         ..repeat();
 
-  // Gyro reactivity — tilting the phone slides the aurora blobs with a
-  // parallax feel AND morphs their colors along the neon palette, easing
-  // back to the resting look when the phone is still. The 18s repeating
-  // controller already repaints every frame, so the handler only has to
-  // integrate + decay these two values; no extra ticker.
-  StreamSubscription<GyroscopeEvent>? _gyro;
-  double _gx = 0, _gy = 0;
+  // Gyro reactivity via the SHARED GyroMotion signal — tilting slides
+  // the aurora blobs in parallax and morphs their colors, easing back
+  // when the phone rests. The 18s repeating controller already repaints
+  // every frame, so we just read the current values in the painter.
+  final _gyro = GyroMotion.instance;
 
   @override
   void initState() {
     super.initState();
-    try {
-      _gyro = gyroscopeEventStream(
-        samplingPeriod: SensorInterval.gameInterval, // ~50 Hz
-      ).listen((e) {
-        _gx = ((_gx + e.x * 0.025) * 0.985).clamp(-1.2, 1.2);
-        _gy = ((_gy + e.y * 0.025) * 0.985).clamp(-1.2, 1.2);
-      }, onError: (_) => _gyro?.cancel(), cancelOnError: true);
-    } catch (_) {
-      // No gyroscope (emulator/desktop) — static aurora, as before.
-    }
+    _gyro.retain();
   }
 
   @override
   void dispose() {
-    _gyro?.cancel();
+    _gyro.release();
     _c.dispose();
     super.dispose();
   }
@@ -541,7 +529,7 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
           AnimatedBuilder(
             animation: _c,
             builder: (context, _) => CustomPaint(
-              painter: _AuroraPainter(_c.value, _gx, _gy),
+              painter: _AuroraPainter(_c.value, _gyro.x, _gyro.y),
             ),
           ),
           widget.child,
@@ -562,14 +550,14 @@ class _AuroraPainter extends CustomPainter {
     // Parallax: each blob slides with the tilt; nearer blobs (bigger
     // depth) slide further, which reads as real depth behind the glass.
     final center = Offset(
-      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))) + gy * 46 * depth,
-      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))) + gx * 46 * depth,
+      s.width * (dx + 0.10 * (0.5 + 0.5 * math.cos(a))) + gy * 72 * depth,
+      s.height * (dy + 0.08 * (0.5 + 0.5 * math.sin(a * 0.8))) + gx * 72 * depth,
     );
     // Tilt also brightens the wash a touch, so motion feels alive.
     final motion = math.min(1.0, gx.abs() + gy.abs());
     final paint = Paint()
       ..shader = RadialGradient(colors: [
-        c.withValues(alpha: 0.20 + 0.10 * motion),
+        c.withValues(alpha: 0.20 + 0.16 * motion),
         c.withValues(alpha: 0.0),
       ]).createShader(Rect.fromCircle(center: center, radius: r));
     canvas.drawCircle(center, r, paint);
@@ -581,7 +569,7 @@ class _AuroraPainter extends CustomPainter {
     // next neon in the cycle (violet→pink→cyan→violet), the other way
     // toward the previous — the whole background changes hue with the
     // phone, then settles back.
-    final shift = ((gx + gy) * 0.5).clamp(-1.0, 1.0);
+    final shift = ((gx + gy) * 0.8).clamp(-1.0, 1.0);
     Color morph(Color base, Color fwd, Color back) => shift >= 0
         ? Color.lerp(base, fwd, shift)!
         : Color.lerp(base, back, -shift)!;

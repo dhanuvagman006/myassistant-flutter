@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../design/gyro_motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../state/assistant_state.dart';
 
@@ -32,15 +33,22 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c;
 
+  // Shared device-tilt signal (see design/gyro_motion.dart) — drives the
+  // orb's color chase, drifting highlight and motion-reactive glow. The
+  // repeating controller repaints every frame, so we just read it.
+  final _gyro = GyroMotion.instance;
+
   @override
   void initState() {
     super.initState();
     _c = AnimationController(vsync: this, duration: const Duration(seconds: 3))
       ..repeat();
+    _gyro.retain();
   }
 
   @override
   void dispose() {
+    _gyro.release();
     _c.dispose();
     super.dispose();
   }
@@ -63,7 +71,10 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
         animation: _c,
         builder: (context, _) {
           final t = _c.value;
-          final breathe = 1 + 0.03 * math.sin(t * 2 * math.pi);
+          final tilt = (_gyro.x + _gyro.y) * 1.8; // color-chase angle
+          final energy = _gyro.energy; // 0..1 — how alive the motion is
+          final breathe =
+              1 + 0.03 * math.sin(t * 2 * math.pi) + 0.025 * energy;
           final level = widget.phase == AssistantPhase.listening
               ? (0.15 + widget.micLevel * 0.85)
               : 0.0;
@@ -122,11 +133,12 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                     ),
                   ),
                 ),
-                // The orb itself — slowly rotating tri-color neon sweep
+                // The orb itself — slowly rotating tri-color neon sweep;
+                // device tilt whips the colors around the ring.
                 Transform.scale(
                   scale: breathe + level * 0.08,
                   child: Transform.rotate(
-                    angle: t * 2 * math.pi,
+                    angle: t * 2 * math.pi + tilt,
                     child: Container(
                       width: 148,
                       height: 148,
@@ -135,25 +147,32 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                         gradient: Neon.gOrb,
                         boxShadow: [
                           BoxShadow(
-                            color: _accent.withValues(alpha: 0.40),
-                            blurRadius: 44,
-                            spreadRadius: 4,
+                            color: _accent.withValues(
+                                alpha: 0.40 + 0.25 * energy),
+                            blurRadius: 44 + 22 * energy,
+                            spreadRadius: 4 + 4 * energy,
                           ),
                           BoxShadow(
-                            color: Neon.pink.withValues(alpha: 0.18),
-                            blurRadius: 70,
+                            color: Neon.pink.withValues(
+                                alpha: 0.18 + 0.12 * energy),
+                            blurRadius: 70 + 26 * energy,
                             spreadRadius: 10,
                           ),
                         ],
                       ),
                       child: Transform.rotate(
-                        angle: -t * 2 * math.pi, // keep the face upright
+                        // Undo the full rotation (incl. tilt): face upright.
+                        angle: -t * 2 * math.pi - tilt,
                         child: Container(
                           margin: const EdgeInsets.all(7),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: RadialGradient(
-                              center: const Alignment(-0.35, -0.45),
+                              // Specular highlight leans with the phone.
+                              center: Alignment(
+                                (-0.35 - _gyro.y * 0.5).clamp(-0.9, 0.9),
+                                (-0.45 - _gyro.x * 0.5).clamp(-0.9, 0.9),
+                              ),
                               colors: [
                                 Colors.white.withValues(alpha: 0.16),
                                 Neon.bg.withValues(alpha: 0.86),
