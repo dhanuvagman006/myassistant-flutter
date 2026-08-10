@@ -15,14 +15,17 @@ class AppUser {
   final String? email;
   final String? name;
   final String provider; // email | google | apple
+  final String? gender; // male | female | other | null (unset)
 
-  const AppUser({required this.id, this.email, this.name, required this.provider});
+  const AppUser(
+      {required this.id, this.email, this.name, required this.provider, this.gender});
 
   factory AppUser.fromJson(Map<String, dynamic> j) => AppUser(
         id: j['id'] as int,
         email: j['email'] as String?,
         name: j['name'] as String?,
         provider: (j['provider'] as String?) ?? 'email',
+        gender: j['gender'] as String?,
       );
 }
 
@@ -128,8 +131,36 @@ class AuthService extends ChangeNotifier {
 
   // ---------------- EMAIL ----------------
 
-  Future<void> signUp({required String email, required String password, String? name}) =>
-      _post('/auth/signup', {'email': email, 'password': password, 'name': name});
+  Future<void> signUp(
+          {required String email,
+          required String password,
+          String? name,
+          String? gender}) =>
+      _post('/auth/signup',
+          {'email': email, 'password': password, 'name': name, 'gender': gender});
+
+  /// Set or change the user's gender (used by social sign-ins that have no
+  /// sign-up form, and by settings later).
+  Future<void> setGender(String gender) async {
+    final token = ApiService.sessionToken;
+    if (token == null) return;
+    try {
+      final r = await http.patch(
+        Uri.parse('${ApiService.baseUrl}/auth/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'gender': gender}),
+      ).timeout(const Duration(seconds: 8));
+      if (r.statusCode == 200) {
+        user = AppUser.fromJson(jsonDecode(r.body)['user']);
+        notifyListeners();
+      }
+    } catch (_) {
+      // Non-fatal — the avatar just uses the default until next sync.
+    }
+  }
 
   Future<void> logIn({required String email, required String password}) =>
       _post('/auth/login', {'email': email, 'password': password});

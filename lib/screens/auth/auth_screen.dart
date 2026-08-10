@@ -24,6 +24,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _password = TextEditingController();
 
   bool _isSignUp = false;
+  String? _gender; // male | female | other — picked on sign-up
   bool _busy = false;
   bool _obscure = true;
   String? _error;
@@ -62,6 +63,7 @@ class _AuthScreenState extends State<AuthScreen> {
             email: _email.text.trim(),
             password: _password.text,
             name: _name.text.trim().isEmpty ? null : _name.text.trim(),
+            gender: _gender,
           )
         : auth.logIn(email: _email.text.trim(), password: _password.text));
   }
@@ -143,16 +145,55 @@ class _AuthScreenState extends State<AuthScreen> {
                                   ? Padding(
                                       padding: const EdgeInsets.only(
                                           bottom: Neon.s4),
-                                      child: TextFormField(
-                                        controller: _name,
-                                        textInputAction: TextInputAction.next,
-                                        textCapitalization:
-                                            TextCapitalization.words,
-                                        decoration: const InputDecoration(
-                                          labelText: 'Name',
-                                          prefixIcon: Icon(
-                                              Icons.person_outline_rounded),
-                                        ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          TextFormField(
+                                            controller: _name,
+                                            textInputAction:
+                                                TextInputAction.next,
+                                            textCapitalization:
+                                                TextCapitalization.words,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Name',
+                                              prefixIcon: Icon(Icons
+                                                  .person_outline_rounded),
+                                            ),
+                                          ),
+                                          const SizedBox(height: Neon.s4),
+                                          // Gender — personalizes the
+                                          // assistant's avatar face.
+                                          Row(
+                                            children: [
+                                              for (final g in const [
+                                                ('male', 'Male',
+                                                    Icons.male_rounded),
+                                                ('female', 'Female',
+                                                    Icons.female_rounded),
+                                                ('other', 'Other',
+                                                    Icons
+                                                        .transgender_rounded),
+                                              ]) ...[
+                                                Expanded(
+                                                  child: _GenderChip(
+                                                    label: g.$2,
+                                                    icon: g.$3,
+                                                    selected: _gender == g.$1,
+                                                    onTap: () => setState(() =>
+                                                        _gender = _gender ==
+                                                                g.$1
+                                                            ? null
+                                                            : g.$1),
+                                                  ),
+                                                ),
+                                                if (g.$1 != 'other')
+                                                  const SizedBox(
+                                                      width: Neon.s2),
+                                              ],
+                                            ],
+                                          ),
+                                        ],
                                       ),
                                     )
                                   : const SizedBox.shrink(),
@@ -324,6 +365,51 @@ class _GoogleG extends StatelessWidget {
         fontSize: 18,
         fontWeight: FontWeight.w800,
         color: Color(0xFF4285F4),
+      ),
+    );
+  }
+}
+
+
+/// Small selectable pill for the sign-up gender row.
+class _GenderChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  const _GenderChip(
+      {required this.label,
+      required this.icon,
+      required this.selected,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: Neon.med,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? Neon.violet.withValues(alpha: 0.22)
+              : Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(Neon.rMd),
+          border: Border.all(
+              color: selected ? Neon.violet : Neon.line, width: 1.2),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon,
+                size: 16, color: selected ? Neon.cyan : Neon.textLo),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: selected ? Neon.textHi : Neon.textLo)),
+          ],
+        ),
       ),
     );
   }

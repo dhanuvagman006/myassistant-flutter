@@ -12,6 +12,7 @@ import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
+import 'widgets/assistant_avatar.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
 
@@ -105,9 +106,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     height: engine.transcript.isEmpty ? 236 : 148,
                     child: FittedBox(
                       fit: BoxFit.contain,
-                      child: AssistantHeroWidget(
+                      child: AssistantAvatar(
                         phase: engine.phase,
                         micLevel: engine.micLevel,
+                        userGender: AuthService.instance.user?.gender,
                         onTap: engine.pressMic,
                       ),
                     ),
