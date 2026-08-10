@@ -784,6 +784,20 @@ class ApiService {
     return (jsonDecode(r.body) as Map<String, dynamic>)['faceUrl'] as String;
   }
 
+  /// The real human face for the home-screen hero — the gender-opposite
+  /// presenter's photo. Null when Face Mode isn't configured.
+  static Future<String?> fetchFacePresenterPhoto() async {
+    try {
+      final r = await _client
+          .get(Uri.parse('$baseUrl/did/presenter'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['imageUrl'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Today's video briefing: status none|creating|processing|done|error.
   static Future<({String status, String? url})> fetchVideoBriefing() =>
       _briefing(generate: false);

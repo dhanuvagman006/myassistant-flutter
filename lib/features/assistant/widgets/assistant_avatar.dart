@@ -34,6 +34,11 @@ class AssistantAvatar extends StatefulWidget {
   /// the opposite.
   final String? userGender;
 
+  /// REAL human photo (the D-ID presenter). When set, this photo IS the
+  /// face — the painted portrait only appears while this is null
+  /// (offline / Face Mode not configured).
+  final String? photoUrl;
+
   final VoidCallback? onTap;
 
   const AssistantAvatar({
@@ -41,6 +46,7 @@ class AssistantAvatar extends StatefulWidget {
     required this.phase,
     this.micLevel = 0,
     this.userGender,
+    this.photoUrl,
     this.onTap,
   });
 
@@ -104,6 +110,18 @@ class _AssistantAvatarState extends State<AssistantAvatar>
           Neon.success,
         _ => Neon.violet,
       };
+
+  _FacePainter _fallbackPainter(double t, bool speaking) => _FacePainter(
+        male: widget.avatarIsMale,
+        phase: widget.phase,
+        t: t,
+        blink: _blink,
+        gx: _gyro.x,
+        gy: _gyro.y,
+        speaking: speaking,
+        micLevel: widget.micLevel,
+        accent: _accent,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -173,19 +191,32 @@ class _AssistantAvatarState extends State<AssistantAvatar>
                     border: Border.all(color: Neon.lineBright, width: 1),
                   ),
                   child: ClipOval(
-                    child: CustomPaint(
-                      painter: _FacePainter(
-                        male: widget.avatarIsMale,
-                        phase: widget.phase,
-                        t: t,
-                        blink: _blink,
-                        gx: _gyro.x,
-                        gy: _gyro.y,
-                        speaking: speaking,
-                        micLevel: widget.micLevel,
-                        accent: _accent,
-                      ),
-                    ),
+                    child: widget.photoUrl != null
+                        // The REAL face — presenter photo, slight gyro
+                        // parallax so she still feels present.
+                        ? Transform.translate(
+                            offset: Offset(
+                                (-_gyro.y * 5).clamp(-6.0, 6.0),
+                                (-_gyro.x * 5).clamp(-6.0, 6.0)),
+                            child: Transform.scale(
+                              scale: 1.08,
+                              child: Image.network(
+                                widget.photoUrl!,
+                                fit: BoxFit.cover,
+                                width: 160,
+                                height: 160,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, __, ___) => CustomPaint(
+                                  size: const Size(160, 160),
+                                  painter: _fallbackPainter(t, speaking),
+                                ),
+                              ),
+                            ),
+                          )
+                        : CustomPaint(
+                            size: const Size(160, 160),
+                            painter: _fallbackPainter(t, speaking),
+                          ),
                   ),
                 ),
               ),

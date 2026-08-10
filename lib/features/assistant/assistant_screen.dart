@@ -47,6 +47,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /// re-open it in a loop.
   static bool _faceAutoOpened = false;
 
+  /// Real presenter photo for the hero; null until loaded / when Face
+  /// Mode isn't configured (painted face shows instead).
+  String? _facePhoto;
+
   Future<void> _openRealFace({bool auto = false}) async {
     try {
       // Probe first: fails fast (503) when Face Mode isn't configured,
@@ -77,6 +81,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.addListener(_autoScroll);
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
+    });
+    ApiService.fetchFacePresenterPhoto().then((url) {
+      if (mounted && url != null) setState(() => _facePhoto = url);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_faceAutoOpened && !AuthService.instance.lastSignInWasNew) {
@@ -146,6 +153,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         phase: engine.phase,
                         micLevel: engine.micLevel,
                         userGender: AuthService.instance.user?.gender,
+                        photoUrl: _facePhoto,
                         onTap: () => _openRealFace(),
                       ),
                     ),
