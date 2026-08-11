@@ -13,7 +13,8 @@ import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
-import 'widgets/assistant_avatar.dart';
+import 'widgets/real_human_face.dart';
+import '../../screens/diagnostics_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
 
@@ -46,10 +47,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /// the human face, not the drawn one. Static so navigating back doesn't
   /// re-open it in a loop.
   static bool _faceAutoOpened = false;
-
-  /// Real presenter photo for the hero; null until loaded / when Face
-  /// Mode isn't configured (painted face shows instead).
-  String? _facePhoto;
 
   Future<void> _openRealFace({bool auto = false}) async {
     try {
@@ -89,9 +86,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.addListener(_autoScroll);
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
-    });
-    ApiService.fetchFacePresenterPhoto().then((url) {
-      if (mounted && url != null) setState(() => _facePhoto = url);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_faceAutoOpened && !AuthService.instance.lastSignInWasNew) {
@@ -157,26 +151,27 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     height: engine.transcript.isEmpty ? 236 : 148,
                     child: FittedBox(
                       fit: BoxFit.contain,
-                      child: AssistantAvatar(
+                      child: RealHumanFace(
                         phase: engine.phase,
                         micLevel: engine.micLevel,
                         userGender: AuthService.instance.user?.gender,
-                        photoUrl: _facePhoto,
                         onTap: () => _openRealFace(),
                       ),
                     ),
                   ),
                   const SizedBox(height: 6),
-                  // Status pill ("Reconnecting…" / phase label) — hidden for now.
-                  // AssistantStatusPill(
-                  //   phase: engine.phase,
-                  //   connected: engine.connected,
-                  //   onCancel: engine.cancelAction,
-                  // ),
+                  AssistantStatusPill(
+                    phase: engine.phase,
+                    connected: engine.connected,
+                    onCancel: engine.cancelAction,
+                  ),
                   const SizedBox(height: 8),
-                  // Error banner ("Could not reach the assistant service.") —
-                  // hidden for now.
-                  // if (engine.errorMessage != null) _errorBanner(),
+                  // Connection trouble is VISIBLE and tappable — the
+                  // banner opens Diagnostics (server URL, /health test,
+                  // live logs). Silence was the old "not even
+                  // connecting" experience.
+                  if (!engine.connected || engine.errorMessage != null)
+                    _connectionBanner(engine),
                   Expanded(child: _feed()),
                   _frostedInput(),
                 ],
@@ -187,6 +182,36 @@ class _AssistantScreenState extends State<AssistantScreen> {
       },
     );
   }
+
+  Widget _connectionBanner(AssistantEngine engine) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Neon.s4),
+        child: GestureDetector(
+          onTap: () {
+            engine.dismissError();
+            Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const DiagnosticsScreen()));
+          },
+          child: GlassCard(
+            tint: Neon.warning,
+            child: Row(
+              children: [
+                const Icon(Icons.wifi_off_rounded,
+                    color: Neon.warning, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    engine.errorMessage ??
+                        "Can't reach the server — tap to diagnose",
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded,
+                    color: Neon.warning, size: 20),
+              ],
+            ),
+          ),
+        ),
+      );
 
   Widget _announcement() => Padding(
         padding: const EdgeInsets.fromLTRB(Neon.s4, Neon.s2, Neon.s4, 0),

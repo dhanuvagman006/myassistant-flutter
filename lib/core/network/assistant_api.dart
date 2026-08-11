@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../services/api_service.dart';
+import '../log.dart';
 
 /// Thin client for the backend's /assistant module.
 ///
@@ -38,13 +39,23 @@ class AssistantApi {
     void Function()? onDisconnect,
   }) async {
     _closed = false;
-    final r = await http
-        .post(Uri.parse('${ApiService.baseUrl}/assistant/session'),
-            headers: _headers)
-        .timeout(const Duration(seconds: 12));
+    AppLog.add('sse', 'POST ${ApiService.baseUrl}/assistant/session');
+    final http.Response r;
+    try {
+      r = await http
+          .post(Uri.parse('${ApiService.baseUrl}/assistant/session'),
+              headers: _headers)
+          .timeout(const Duration(seconds: 12));
+    } catch (e) {
+      AppLog.add('sse', 'session FAILED: $e');
+      rethrow;
+    }
     if (r.statusCode != 200) {
+      AppLog.add('sse', 'session HTTP ${r.statusCode}: '
+          '${r.body.length > 120 ? r.body.substring(0, 120) : r.body}');
       throw Exception('assistant session failed (${r.statusCode})');
     }
+    AppLog.add('sse', 'session ok');
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     _sessionId = j['sessionId'] as String;
     _streamToken = j['streamToken'] as String;
@@ -69,7 +80,11 @@ class AssistantApi {
       req.headers['Accept'] = 'text/event-stream';
       if (_lastEventId > 0) req.headers['Last-Event-ID'] = '$_lastEventId';
       final res = await client.send(req);
-      if (res.statusCode != 200) throw Exception('stream ${res.statusCode}');
+      if (res.statusCode != 200) {
+        AppLog.add('sse', 'stream HTTP ${res.statusCode}');
+        throw Exception('stream ${res.statusCode}');
+      }
+      AppLog.add('sse', 'stream connected');
 
       String? pendingData;
       _sseSub = res.stream
@@ -104,6 +119,7 @@ class AssistantApi {
     void Function()? onDisconnect,
   ) {
     if (_closed) return;
+    AppLog.add('sse', 'stream dropped — reconnecting in 2s');
     onDisconnect?.call();
     Future.delayed(const Duration(seconds: 2), () {
       _openStream(onEvent, onDisconnect);
@@ -121,6 +137,7 @@ class AssistantApi {
         )
         .timeout(const Duration(seconds: 12));
     if (r.statusCode >= 300) {
+      AppLog.add('sse', 'POST /assistant/$path HTTP ${r.statusCode}');
       throw Exception('assistant/$path failed (${r.statusCode})');
     }
   }

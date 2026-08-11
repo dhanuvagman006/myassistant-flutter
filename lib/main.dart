@@ -6,6 +6,7 @@ import 'features/assistant/assistant_screen.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
+import 'services/api_service.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
 import 'services/style_prefs.dart';
@@ -23,6 +24,9 @@ void main() {
   // Style + language prefs load in parallel with the first frame; every
   // later read is a plain field access (no disk on hot paths).
   StylePrefs.instance.load();
+  // Runtime server override (Diagnostics screen) — must resolve before
+  // the first request, or the engine would connect to the wrong host.
+  ApiService.loadServerOverride();
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
   runApp(const MyAssistantApp());
 }

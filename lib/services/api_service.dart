@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/log.dart';
 import '../models/chat_message.dart';
 import '../models/memory_item.dart';
 import '../models/place.dart';
@@ -39,13 +41,46 @@ class VisionException implements Exception {
 }
 
 class ApiService {
-  /// Point this at your backend.
-  /// Android emulator against a local server: http://10.0.2.2:3000
-  /// iOS simulator against a local server:    http://localhost:3000
- static const String baseUrl = String.fromEnvironment(
-  'BASE_URL',
-  defaultValue: 'https://api.hariassistant.tech',
-);
+  /// Compile-time default backend. Override per build with
+  /// --dart-define=BASE_URL=http://192.168.1.5:3000 (phone on your LAN
+  /// against a laptop server), or AT RUNTIME from the Diagnostics screen
+  /// (tap the connection banner) — no rebuild needed.
+  static const String _defaultBaseUrl = String.fromEnvironment(
+    'BASE_URL',
+    defaultValue: 'https://api.hariassistant.tech',
+  );
+
+  static String? _runtimeBaseUrl;
+
+  /// The URL every request uses right now.
+  static String get baseUrl => _runtimeBaseUrl ?? _defaultBaseUrl;
+
+  static const String _serverPrefKey = 'server_url_override';
+
+  /// Load a saved runtime override (called once at app start).
+  static Future<void> loadServerOverride() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final v = p.getString(_serverPrefKey);
+      if (v != null && v.startsWith('http')) _runtimeBaseUrl = v;
+      AppLog.add('api', 'server = $baseUrl'
+          '${_runtimeBaseUrl != null ? ' (runtime override)' : ''}');
+    } catch (_) {}
+  }
+
+  /// Set (or clear with null/empty) the runtime server override.
+  static Future<void> setServerOverride(String? url) async {
+    final clean = url?.trim();
+    final p = await SharedPreferences.getInstance();
+    if (clean == null || clean.isEmpty) {
+      _runtimeBaseUrl = null;
+      await p.remove(_serverPrefKey);
+    } else {
+      _runtimeBaseUrl = clean.replaceAll(RegExp(r'/+$'), '');
+      await p.setString(_serverPrefKey, _runtimeBaseUrl!);
+    }
+    AppLog.add('api', 'server changed to $baseUrl');
+  }
 
   /// Shared secret matching the backend's APP_API_KEY (dev/X-App-Key mode).
   /// Pass with: --dart-define=APP_API_KEY=...

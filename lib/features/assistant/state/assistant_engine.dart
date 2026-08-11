@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/network/assistant_api.dart';
+import '../../../core/log.dart';
+import '../../../services/api_service.dart';
 import '../../../services/call_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
@@ -102,6 +104,9 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    // The saved server override must win the race against this first
+    // connect, or one launch in two would hit the wrong host.
+    await ApiService.loadServerOverride();
     await _connect();
   }
 
@@ -119,6 +124,7 @@ class AssistantEngine extends ChangeNotifier {
     } catch (e) {
       connected = false;
       errorMessage = 'Could not reach the assistant service.';
+      AppLog.add('engine', 'connect failed: $e');
       // Retry quietly — the screen shows the offline banner meanwhile.
       Future.delayed(const Duration(seconds: 4), () {
         if (_started && !connected) _connect();
