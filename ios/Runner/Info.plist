@@ -2,6 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hari listens to your voice so you can talk to your assistant.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera lets you save documents and receipts by photographing them.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Speech recognition turns your voice into questions for Hari.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Contacts access lets Hari place calls when you ask, like "call amma".</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your location powers local weather, nearby places and regional language.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

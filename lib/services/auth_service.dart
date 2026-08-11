@@ -129,6 +129,23 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-fetch the account (e.g. after the onboarding survey updated
+  /// name/gender) so the avatar and greetings pick changes up at once.
+  Future<void> refreshUser() async {
+    final token = ApiService.sessionToken;
+    if (token == null) return;
+    try {
+      final r = await http.get(
+        Uri.parse('${ApiService.baseUrl}/auth/me'),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 8));
+      if (r.statusCode == 200) {
+        user = AppUser.fromJson(jsonDecode(r.body)['user']);
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
   // ---------------- EMAIL ----------------
 
   Future<void> signUp(

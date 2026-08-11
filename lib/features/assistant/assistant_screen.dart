@@ -15,6 +15,7 @@ import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
 import 'widgets/real_human_face.dart';
 import '../../screens/diagnostics_screen.dart';
+import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
 
@@ -87,17 +88,20 @@ class _AssistantScreenState extends State<AssistantScreen> {
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_faceAutoOpened && !AuthService.instance.lastSignInWasNew) {
-        _faceAutoOpened = true;
-        _openRealFace(auto: true);
+    // STARTUP FLOW, strictly ordered: 1) native survey on first run
+    // (always works, no D-ID needed) → 2) brand-new sign-ins get the
+    // optional face-to-face interview sheet → 3) returning users get
+    // the Face Mode auto-open, as before.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (await SurveyGate.needed()) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SurveyScreen()));
+        if (!mounted) return;
       }
-    });
-    // First sign-in → offer the get-to-know-you interview in a sheet
-    // (skippable). The single page stays underneath the whole time.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
       final auth = AuthService.instance;
-      if (auth.lastSignInWasNew && mounted) {
+      if (auth.lastSignInWasNew) {
         auth.lastSignInWasNew = false;
         showGlassSheet(
           context,
@@ -106,6 +110,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
             onDone: () => Navigator.of(context).pop(),
           ),
         );
+      } else if (!_faceAutoOpened) {
+        _faceAutoOpened = true;
+        _openRealFace(auto: true);
       }
     });
   }
