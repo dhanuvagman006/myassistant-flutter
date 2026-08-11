@@ -164,6 +164,19 @@ class _FaceScreenState extends State<FaceScreen> {
                       },
                       child: const Text('Try again'),
                     ),
+                    const SizedBox(height: 10),
+                    // D-ID down / not configured / out of credits? The
+                    // conversation must never die with it — fall back to
+                    // the BUILT-IN animated face on the home screen,
+                    // which needs no external service at all.
+                    TextButton(
+                      onPressed: () =>
+                          Navigator.pop(context, 'use_builtin_face'),
+                      child: const Text(
+                        'Use built-in face instead',
+                        style: TextStyle(color: AppColors.mist),
+                      ),
+                    ),
                   ],
                 ),
               ),

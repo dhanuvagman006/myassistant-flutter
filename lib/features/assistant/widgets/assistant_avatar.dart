@@ -336,12 +336,22 @@ class _FacePainter extends CustomPainter {
     final my = h * 0.74;
     final mouth = Path();
     if (speaking) {
-      // Talking: openness oscillates fast, like syllables.
+      // Talking: a fast syllable oscillation, SCALED by the live TTS
+      // word pulse (micLevel carries it while speaking) — her lips move
+      // with the actual words, and rest between sentences.
+      final pulse = (0.35 + 0.65 * micLevel).clamp(0.35, 1.0);
       final openAmt =
-          4 + 7 * (0.5 + 0.5 * math.sin(t * 2 * math.pi * 4.6)).abs();
+          (3 + 8 * (0.5 + 0.5 * math.sin(t * 2 * math.pi * 4.6)).abs()) *
+              pulse;
+      // Upper lip line + open oval below it reads as real lips, not an
+      // "o" stamp.
       mouth.addOval(Rect.fromCenter(
-          center: Offset(cx, my), width: 26, height: openAmt * 2));
+          center: Offset(cx, my + openAmt * 0.35),
+          width: 26 + 4 * pulse,
+          height: math.max(3.0, openAmt * 2)));
       canvas.drawPath(mouth, soft..strokeWidth = 2.6);
+      canvas.drawLine(Offset(cx - 13, my - 1), Offset(cx + 13, my - 1),
+          soft..strokeWidth = 1.6);
     } else if (phase == AssistantPhase.error) {
       canvas.drawLine(Offset(cx - 12, my), Offset(cx + 12, my), soft);
     } else if (phase == AssistantPhase.listening) {

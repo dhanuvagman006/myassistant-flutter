@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,51 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get micBusy => phase == AssistantPhase.listening;
 
+  /// True while the local TTS is reading a reply — the avatar's mouth and
+  /// the "Speaking…" pill follow THIS, because the backend has already
+  /// moved to `completed` by the time audio actually plays on-device.
+  bool _ttsActive = false;
+
+  Timer? _stuckWatchdog;
+
+  /// Speaks [text] with the phase machine wrapped around the audio:
+  /// speaking while the voice plays, completed when it ends.
+  Future<void> _speakReply(String text) async {
+    _ttsActive = true;
+    _setPhase(AssistantPhase.speaking, silent: true);
+    // The girl's lips ride the word pulses coming from the TTS engine.
+    void feed() {
+      micLevel = _voice.ttsLevel.value;
+      notifyListeners();
+    }
+
+    _voice.ttsLevel.addListener(feed);
+    try {
+      await _voice.speak(text); // awaits completion (awaitSpeakCompletion)
+    } finally {
+      _voice.ttsLevel.removeListener(feed);
+      micLevel = 0;
+      _ttsActive = false;
+      if (phase == AssistantPhase.speaking) {
+        _setPhase(AssistantPhase.completed, silent: true);
+      }
+      notifyListeners();
+    }
+  }
+
+  /// If the backend stream dies mid-turn the app used to sit on
+  /// "Transcribing…" forever. Any busy phase that lasts 35 s without a
+  /// new event now surfaces a retryable error instead.
+  void _armWatchdog() {
+    _stuckWatchdog?.cancel();
+    if (!phase.busy || phase == AssistantPhase.listening || _ttsActive) return;
+    _stuckWatchdog = Timer(const Duration(seconds: 35), () {
+      if (phase.busy && phase != AssistantPhase.listening && !_ttsActive) {
+        _setLocalError("That took too long. Please try again.");
+      }
+    });
+  }
+
   // ---------------- lifecycle ----------------
 
   bool _started = false;
@@ -83,6 +129,7 @@ class AssistantEngine extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stuckWatchdog?.cancel();
     _api.close();
     super.dispose();
   }
@@ -93,8 +140,11 @@ class AssistantEngine extends ChangeNotifier {
   /// (STT + the whole turn run server-side; results stream back).
   Future<void> pressMic() async {
     if (phase == AssistantPhase.listening) {
+      // Tap while listening = cancel this capture (both the recorder
+      // and the device-recognizer fallback honour this).
       _voice.stopSpeaking();
-      return; // recorder stops itself on silence; tap again does nothing
+      await _voice.cancelCapture();
+      return;
     }
     if (phase.busy && phase != AssistantPhase.completed) return;
     await _voice.stopSpeaking();
@@ -117,7 +167,38 @@ class AssistantEngine extends ChangeNotifier {
     micLevel = 0;
 
     if (path == null) {
-      _setPhase(AssistantPhase.idle);
+      if (_voice.lastRecordingCancelled) {
+        _setPhase(AssistantPhase.idle);
+        return;
+      }
+      // The level-based recorder heard nothing — but on many phones that
+      // just means the amplitude meter is unreliable, not that the user
+      // was silent. FALL BACK to the on-device recognizer (it has its own
+      // native voice detection) instead of silently giving up, which is
+      // exactly how "I spoke and nothing happened" felt.
+      final heard = await _voice.captureQuestion(
+        onPartial: (p) {
+          partial = p;
+          notifyListeners();
+        },
+        onLevel: (l) {
+          micLevel = l;
+          notifyListeners();
+        },
+      );
+      micLevel = 0;
+      partial = '';
+      if (heard.trim().isEmpty) {
+        _setPhase(AssistantPhase.idle);
+        return;
+      }
+      // (No local transcript add — the server echoes user_transcript.)
+      _setPhase(AssistantPhase.thinking);
+      try {
+        await _api.sendText(heard.trim());
+      } catch (_) {
+        _setLocalError("I couldn't send that. Check your connection.");
+      }
       return;
     }
     _setPhase(AssistantPhase.transcribing);
@@ -146,6 +227,7 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Confirmation card buttons.
   Future<void> confirm(bool approved) async {
+    final pending = pendingConfirmation;
     pendingConfirmation = null;
     notifyListeners();
     HapticFeedback.selectionClick();
@@ -153,6 +235,14 @@ class AssistantEngine extends ChangeNotifier {
       await _api.confirm(approved);
     } catch (_) {
       _setLocalError('That action could not be sent.');
+      return;
+    }
+    // The phone permissions live HERE — the backend only narrates status,
+    // this device actually dials.
+    if (approved &&
+        pending?.action == 'call' &&
+        (pending?.contact?.phone.isNotEmpty ?? false)) {
+      await CallService.instance.call(pending!.contact!.phone);
     }
   }
 
@@ -192,6 +282,14 @@ class AssistantEngine extends ChangeNotifier {
         final p = AssistantPhase.fromWire(e['state'] as String? ?? '');
         // Never let a server 'idle' stomp on local listening/recording.
         if (p == AssistantPhase.idle && phase == AssistantPhase.listening) break;
+        // The server fires speaking→completed the instant it SENDS the
+        // reply, but the audio plays HERE afterwards — while our TTS is
+        // talking, those two states are ours to manage, or the mouth
+        // would freeze mid-sentence.
+        if (_ttsActive &&
+            (p == AssistantPhase.speaking || p == AssistantPhase.completed)) {
+          break;
+        }
         _setPhase(p, silent: true);
         if (p == AssistantPhase.error) {
           errorMessage = e['message'] as String? ?? 'Something went wrong.';
@@ -207,7 +305,7 @@ class AssistantEngine extends ChangeNotifier {
       case 'assistant_message':
         final text = e['text'] as String? ?? '';
         transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
-        _voice.speak(text); // spoken reply — the core voice loop
+        _speakReply(text); // spoken reply — drives the talking face too
         break;
 
       case 'tool_started':
@@ -320,6 +418,7 @@ class AssistantEngine extends ChangeNotifier {
 
   void _setPhase(AssistantPhase p, {bool silent = false}) {
     phase = p;
+    _armWatchdog();
     notifyListeners();
     if (!silent) _haptic(p);
   }

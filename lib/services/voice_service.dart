@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import 'phone_state_guard.dart';
@@ -86,9 +88,33 @@ class VoiceService {
     await _tts.setSpeechRate(StylePrefs.instance.speechRate);
     await _tts.setPitch(1.0);
     await _tts.awaitSpeakCompletion(true);
+    // LIP-SYNC: each word boundary the engine reports becomes a pulse the
+    // avatar's mouth rides — her lips move WITH the words, not on a loop.
+    _tts.setProgressHandler((_, __, ___, word) {
+      isSpeaking.value = true;
+      ttsLevel.value = (0.55 + 0.45 * _pulseRand.nextDouble())
+          .clamp(0.0, 1.0);
+    });
+    _tts.setStartHandler(() => isSpeaking.value = true);
+    void endSpeech() {
+      isSpeaking.value = false;
+      ttsLevel.value = 0;
+    }
+
+    _tts.setCompletionHandler(endSpeech);
+    _tts.setCancelHandler(endSpeech);
+    _tts.setErrorHandler((_) => endSpeech());
     await _loadVoices();
     return _ready;
   }
+
+  /// True while a reply is being read aloud (drives the avatar's
+  /// "speaking" look even if backend states have already moved on).
+  final ValueNotifier<bool> isSpeaking = ValueNotifier(false);
+
+  /// 0..1 pulse per spoken word — the avatar's mouth openness.
+  final ValueNotifier<double> ttsLevel = ValueNotifier(0);
+  final _pulseRand = math.Random();
 
   bool get isReady => _ready;
 
@@ -459,9 +485,28 @@ class VoiceService {
           }
         } catch (_) {}
       }
-      // Speech must rise 8 dB above ambient; never demand louder than
-      // -22 dBFS (loud rooms) and never accept quieter than -55 (noise).
-      final speechDb = (floor + 8.0).clamp(-55.0, -22.0);
+
+      // Some devices/encoders report NO usable amplitude at all (always
+      // -160 / NaN). Level-gating on a dead meter meant the app decided
+      // "you never spoke" and silently gave up — the exact "not
+      // detecting me" bug. If the meter looks dead, skip VAD entirely:
+      // record a fixed window and let the server's STT decide.
+      if (floorSamples == 0 && !_recCancelled) {
+        var ms = 0;
+        while (ms < 7000 && !_recCancelled && await _rec.isRecording()) {
+          await Future.delayed(const Duration(milliseconds: 200));
+          ms += 200;
+          onLevel?.call(0.35 + 0.25 * ((ms ~/ 200) % 2)); // gentle pulse
+        }
+        final saved = await _rec.stop();
+        if (_recCancelled) return null;
+        return saved ?? path;
+      }
+
+      // Speech must rise 6 dB above ambient (was 8 — quiet talkers on
+      // insensitive mics never crossed it); never demand louder than
+      // -25 dBFS and never accept quieter than -58.
+      final speechDb = (floor + 6.0).clamp(-58.0, -25.0);
       final quietDb = speechDb - 5.0;
 
       var started = false;
@@ -488,8 +533,12 @@ class VoiceService {
           silentMs += 200;
           // No speech at all within the window -> give up quietly.
           if (!started && totalMs >= noSpeechTimeoutMs) break;
-          // Finished talking: 1.6s of silence after speech.
-          if (started && silentMs >= 1600) break;
+          // Finished talking: 1.4s of silence after speech.
+          if (started && silentMs >= 1400) break;
+        } else {
+          // Dead zone between quiet and speech: still counts toward the
+          // no-speech timeout, or the mic could hang for maxSeconds.
+          if (!started && totalMs >= noSpeechTimeoutMs) break;
         }
       }
 

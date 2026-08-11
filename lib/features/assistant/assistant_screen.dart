@@ -57,9 +57,17 @@ class _AssistantScreenState extends State<AssistantScreen> {
       // so an unconfigured dev setup silently keeps the drawn avatar.
       await ApiService.startFaceSession();
       if (!mounted) return;
-      await Navigator.of(context).push(
+      final result = await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const FaceScreen()),
       );
+      // D-ID failed inside Face Mode and the user chose the fallback —
+      // the animated built-in face on this screen takes over; reassure
+      // them she still talks.
+      if (result == 'use_builtin_face' && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                "Using the built-in face — she'll animate as she speaks.")));
+      }
     } on ProRequired {
       if (!auto && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -68,8 +76,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
     } catch (_) {
       if (!auto && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content:
-                Text('Face Mode is not available right now.')));
+            content: Text(
+                'Face Mode is unavailable — using the built-in face.')));
       }
     }
   }
