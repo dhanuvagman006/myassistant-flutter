@@ -46,14 +46,15 @@ class ApiService {
   ///   flutter run --dart-define=BASE_URL=http://192.168.1.5:3000
   static const String _envBaseUrl = String.fromEnvironment('BASE_URL');
 
-  /// DEBUG builds default to a LOCAL server (10.0.2.2 is how the
-  /// Android emulator reaches the laptop's localhost); RELEASE builds
-  /// default to production. On a PHYSICAL phone against a local
-  /// server, set the laptop's LAN IP once in Diagnostics (tap the
-  /// connection banner) — it persists — or pass --dart-define.
+  /// DEBUG builds default to http://127.0.0.1:3000 — the standard dev
+  /// flow is a USB tunnel that works on BOTH physical phones and
+  /// emulators, regardless of what network either device is on:
+  ///     adb reverse tcp:3000 tcp:3000
+  /// RELEASE builds default to production. Diagnostics can override at
+  /// runtime (persisted), --dart-define=BASE_URL overrides at build.
   static String get _defaultBaseUrl {
     if (_envBaseUrl.isNotEmpty) return _envBaseUrl;
-    if (kDebugMode) return 'http://10.0.2.2:3000';
+    if (kDebugMode) return 'http://127.0.0.1:3000';
     return 'https://api.hariassistant.tech';
   }
 

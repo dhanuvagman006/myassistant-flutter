@@ -6,6 +6,7 @@ import '../../design/neon_tokens.dart';
 import '../../design/gyro_tilt.dart';
 import '../../design/neon_widgets.dart';
 import '../../services/auth_service.dart';
+import '../diagnostics_screen.dart';
 
 /// First screen of the app when signed out — Neon V2 redesign.
 /// One screen, two modes (Log in / Sign up) — plus Google and Apple.
@@ -76,7 +77,23 @@ class _AuthScreenState extends State<AuthScreen> {
     return Scaffold(
       body: NeonBackdrop(
         child: SafeArea(
-          child: Center(
+          child: Stack(children: [
+            // Server settings — reachable BEFORE sign-in, because
+            // "Could not reach the server" happens right here and
+            // Diagnostics is where you fix it.
+            Positioned(
+              top: 4,
+              right: 4,
+              child: IconButton(
+                tooltip: 'Connection settings',
+                icon: Icon(Icons.settings_ethernet_rounded,
+                    color: Colors.white.withValues(alpha: 0.55)),
+                onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const DiagnosticsScreen())),
+              ),
+            ),
+            Center(
             child: SingleChildScrollView(
               padding:
                   const EdgeInsets.symmetric(horizontal: Neon.s6, vertical: Neon.s7),
@@ -347,6 +364,7 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ),
           ),
+          ]),
         ),
       ),
     );
