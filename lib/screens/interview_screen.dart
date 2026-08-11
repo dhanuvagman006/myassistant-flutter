@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../services/voice_service.dart';
 import '../theme/app_theme.dart';
+import 'face_screen.dart';
 
 /// SIGN-UP INTERVIEW — shown exactly once, right after a NEW account is
 /// created, before the home shell. Hari asks a few friendly questions
@@ -48,6 +49,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
 
   /// Server-flagged: offer the first meeting FACE TO FACE (D-ID avatar).
   /// The classic voice interview stays as the fallback either way.
+  bool _faceOffered = false;
 
   @override
   void initState() {
@@ -55,6 +57,32 @@ class _InterviewScreenState extends State<InterviewScreen> {
     _startQuestion();
     // Non-blocking: light up the face-to-face invite once the server
     // confirms Face Mode is configured (feature flag + D-ID key).
+    ApiService.refreshConfig().then((c) {
+      if (mounted && c.isEnabled('face_interview')) {
+        setState(() => _faceOffered = true);
+      }
+    }).catchError((_) {});
+  }
+
+  /// The face-to-face first meeting: Hari appears on screen and gets to
+  /// know the user in live conversation; the backend's memory extractor
+  /// learns from every answer, exactly like the voice flow. When the
+  /// user taps Done in there, onboarding is complete.
+  Future<void> _meetFaceToFace() async {
+    HapticFeedback.mediumImpact();
+    await _voice.stopSpeaking();
+    await _voice.cancelCapture();
+    if (!mounted) return;
+    final result = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const FaceScreen(mode: 'interview')),
+    );
+    if (result == 'done') {
+      _done = true;
+      widget.onDone();
+    } else if (mounted && !_done) {
+      _startQuestion(); // came back — resume the voice interview
+    }
   }
 
   @override
@@ -167,6 +195,36 @@ class _InterviewScreenState extends State<InterviewScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Face-to-face invite — the unforgettable first hello.
+              if (_faceOffered)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Material(
+                    color: AppColors.marigold.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: _meetFaceToFace,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.videocam_rounded,
+                                color: Color(0xFFB27107)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text('Prefer video? Meet Hari face to face',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: cs.onSurface)),
+                            ),
+                            Icon(Icons.chevron_right_rounded, color: muted),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
 
               // Top bar: progress dots + Skip all
               Row(

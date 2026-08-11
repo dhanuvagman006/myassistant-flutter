@@ -174,12 +174,24 @@ class VoiceService {
   Future<void> _applyLanguageFor(String text) async {
     final lang = detectLanguage(text);
     if (lang == _currentTtsLang) return;
-    _currentTtsLang = lang;
     try {
-      await _tts.setLanguage(lang);
-      final voice = _bestVoiceFor(lang);
+      // If the device has NO voice for this language, setLanguage would
+      // either throw or fail silently and speak() would say NOTHING —
+      // one of the "TTS sometimes doesn't talk" bugs. Fall back to the
+      // English-India voice: an accented reading beats dead silence.
+      final available = await _tts.isLanguageAvailable(lang);
+      final useLang = available == true ? lang : 'en-IN';
+      if (useLang == _currentTtsLang) return;
+      _currentTtsLang = useLang;
+      await _tts.setLanguage(useLang);
+      final voice = _bestVoiceFor(useLang);
       if (voice != null) await _tts.setVoice(voice);
-    } catch (_) {}
+    } catch (_) {
+      _currentTtsLang = 'en-IN';
+      try {
+        await _tts.setLanguage('en-IN');
+      } catch (_) {}
+    }
   }
 
   // ---------------- LANGUAGE DETECTION (for TTS) ----------------
@@ -503,6 +515,11 @@ class VoiceService {
     final say = sanitizeForSpeech(text);
     if (say.isEmpty) return;
     await _applyLanguageFor(say);
+    // Some Android TTS engines drop a new utterance if one is already
+    // playing (instead of replacing it) — another "went silent" case.
+    try {
+      await _tts.stop();
+    } catch (_) {}
     await _tts.speak(say);
   }
 

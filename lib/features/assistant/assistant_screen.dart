@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../design/neon_tokens.dart';
 import '../../design/neon_widgets.dart';
 import '../../models/remote_config.dart';
+import '../../screens/face_screen.dart';
 import '../../screens/interview_screen.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
@@ -40,6 +41,39 @@ class _AssistantScreenState extends State<AssistantScreen> {
   RemoteConfig _config = const RemoteConfig();
   bool _announcementDismissed = false;
 
+  /// Auto-open the REAL face (D-ID stream) once per app session when the
+  /// backend has it configured — client spec: opening the app should meet
+  /// the human face, not the drawn one. Static so navigating back doesn't
+  /// re-open it in a loop.
+  static bool _faceAutoOpened = false;
+
+  /// Real presenter photo for the hero; null until loaded / when Face
+  /// Mode isn't configured (painted face shows instead).
+  String? _facePhoto;
+
+  Future<void> _openRealFace({bool auto = false}) async {
+    try {
+      // Probe first: fails fast (503) when Face Mode isn't configured,
+      // so an unconfigured dev setup silently keeps the drawn avatar.
+      await ApiService.startFaceSession();
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const FaceScreen()),
+      );
+    } on ProRequired {
+      if (!auto && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Face Mode is a Pro feature.')));
+      }
+    } catch (_) {
+      if (!auto && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('Face Mode is not available right now.')));
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +81,15 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.addListener(_autoScroll);
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
+    });
+    ApiService.fetchFacePresenterPhoto().then((url) {
+      if (mounted && url != null) setState(() => _facePhoto = url);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_faceAutoOpened && !AuthService.instance.lastSignInWasNew) {
+        _faceAutoOpened = true;
+        _openRealFace(auto: true);
+      }
     });
     // First sign-in → offer the get-to-know-you interview in a sheet
     // (skippable). The single page stays underneath the whole time.
@@ -110,7 +153,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         phase: engine.phase,
                         micLevel: engine.micLevel,
                         userGender: AuthService.instance.user?.gender,
-                        onTap: engine.pressMic,
+                        photoUrl: _facePhoto,
+                        onTap: () => _openRealFace(),
                       ),
                     ),
                   ),
@@ -279,7 +323,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
             // Quiet, single-tone helper line — luxury UIs keep secondary
             // text neutral so the orb + greeting stay the only color heroes.
             Text(
-              'Tap the face to talk, or try one of these',
+              'Tap the face to meet Hari, hold the mic, or try one of these',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Neon.textDim,

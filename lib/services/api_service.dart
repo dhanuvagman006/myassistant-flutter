@@ -767,6 +767,36 @@ class ApiService {
   }
 
   /// Start a face session; returns the URL for the in-app WebView.
+  /// [mode] is 'assistant' (Pro) or 'interview' (the one free first hello).
+  /// Throws [ProRequired] on 402 so screens can route to the upgrade page.
+  static Future<String> startFaceSession({String mode = 'assistant'}) async {
+    final r = await _client
+        .post(
+          Uri.parse('$baseUrl/did/session'),
+          headers: _authHeaders,
+          body: jsonEncode({'mode': mode}),
+        )
+        .timeout(const Duration(seconds: 25));
+    if (r.statusCode == 402) throw ProRequired();
+    if (r.statusCode != 200) {
+      throw Exception('Face Mode unavailable (${r.statusCode})');
+    }
+    return (jsonDecode(r.body) as Map<String, dynamic>)['faceUrl'] as String;
+  }
+
+  /// The real human face for the home-screen hero — the gender-opposite
+  /// presenter's photo. Null when Face Mode isn't configured.
+  static Future<String?> fetchFacePresenterPhoto() async {
+    try {
+      final r = await _client
+          .get(Uri.parse('$baseUrl/did/presenter'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return null;
+      return (jsonDecode(r.body) as Map<String, dynamic>)['imageUrl'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Today's video briefing: status none|creating|processing|done|error.
   static Future<({String status, String? url})> fetchVideoBriefing() =>
