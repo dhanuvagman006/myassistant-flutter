@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,14 +42,20 @@ class VisionException implements Exception {
 }
 
 class ApiService {
-  /// Compile-time default backend. Override per build with
-  /// --dart-define=BASE_URL=http://192.168.1.5:3000 (phone on your LAN
-  /// against a laptop server), or AT RUNTIME from the Diagnostics screen
-  /// (tap the connection banner) — no rebuild needed.
-  static const String _defaultBaseUrl = String.fromEnvironment(
-    'BASE_URL',
-    defaultValue: 'https://api.hariassistant.tech',
-  );
+  /// Compile-time BASE_URL wins when provided:
+  ///   flutter run --dart-define=BASE_URL=http://192.168.1.5:3000
+  static const String _envBaseUrl = String.fromEnvironment('BASE_URL');
+
+  /// DEBUG builds default to a LOCAL server (10.0.2.2 is how the
+  /// Android emulator reaches the laptop's localhost); RELEASE builds
+  /// default to production. On a PHYSICAL phone against a local
+  /// server, set the laptop's LAN IP once in Diagnostics (tap the
+  /// connection banner) — it persists — or pass --dart-define.
+  static String get _defaultBaseUrl {
+    if (_envBaseUrl.isNotEmpty) return _envBaseUrl;
+    if (kDebugMode) return 'http://10.0.2.2:3000';
+    return 'https://api.hariassistant.tech';
+  }
 
   static String? _runtimeBaseUrl;
 
