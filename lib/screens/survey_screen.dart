@@ -18,9 +18,7 @@ import '../theme/app_theme.dart';
 ///  knows the user. Gender also drives the opposite-gender avatar.
 ///
 ///  Gating: SurveyGate.needed() is true until the survey has been
-///  completed once (per signed-in account, tracked locally). The D-ID
-///  interview mode remains a richer optional alternative; this native
-///  screen always works, even offline-first installs and free tiers.
+///  completed once (per signed-in account, tracked locally).
 /// ─────────────────────────────────────────────────────────────────────────
 class SurveyGate {
   static const _key = 'survey_done_v1';

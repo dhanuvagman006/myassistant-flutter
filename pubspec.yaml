@@ -78,7 +78,6 @@ dependencies:
 
   # FACE MODE — D-ID streaming avatar rendered in a server-hosted page;
   # the WebView is the window, the words come from our own backend.
-  webview_flutter: ^4.10.0
 
   # Daily video briefing playback (D-ID-rendered mp4 from the backend)
   video_player: ^2.9.2
@@ -102,4 +101,3 @@ flutter:
   assets:
     - assets/icon/
     - assets/wake/
-    - assets/face/

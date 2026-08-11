@@ -34,16 +34,12 @@ new features go.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-## The face (three tiers, automatic)
+## The hero visual
 
-1. **Video face** (best, free, offline): put `idle.mp4` + `talking.mp4`
-   in `assets/face/` (see the README there) — a real human who visibly
-   talks whenever the assistant speaks. `RealHumanFace` widget.
-2. **Painted avatar** (always works): the animated girl with lip-sync,
-   `assistant_avatar.dart`. Automatic fallback when videos are absent.
-3. **D-ID streaming face** (optional, paid): Face Mode via
-   `face_screen.dart`; requires `DID_API_KEY` on the server. Errors
-   offer "use built-in face instead".
+The animated ORB (`assistant_hero_widget.dart`): breathes when idle,
+pulses with the live mic level while listening, orbits sparks while
+thinking, ripples while speaking. Tap it to talk. (The D-ID face and
+avatar experiments were removed — one visual, zero dependencies.)
 
 ## Debugging runbook
 
@@ -57,7 +53,6 @@ the stream state, and the live app log.
 | "Can't reach the server" banner | Diagnostics → Test /health. `FAILED: Connection refused` = server not running / wrong URL. Phone + laptop must be on the same network; use the laptop's LAN IP (`http://192.168.x.x:3000`), never `localhost`. |
 | Mic records but nothing comes back | Diagnostics log: look for `POST /assistant/... HTTP 4xx/5xx`. 404 = server running OLD code (redeploy). 401 = auth/APP key mismatch. |
 | Replies but no voice | Phone media volume; log shows `speak` activity; TTS engine installed? |
-| Face not "real" | Video tier: are both mp4s in assets/face/ and listed in pubspec? D-ID tier: server needs `DID_API_KEY`. |
 | Wrong/robotic answers | Server logs; `GEMINI_API_KEY` set? |
 
 **Server quick-check** (on the laptop):

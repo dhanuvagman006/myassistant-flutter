@@ -6,14 +6,11 @@ import 'package:flutter/services.dart';
 import '../../design/neon_tokens.dart';
 import '../../design/neon_widgets.dart';
 import '../../models/remote_config.dart';
-import '../../screens/face_screen.dart';
-import '../../screens/interview_screen.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
-import 'widgets/real_human_face.dart';
 import '../../screens/diagnostics_screen.dart';
 import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
@@ -43,43 +40,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
   RemoteConfig _config = const RemoteConfig();
   bool _announcementDismissed = false;
 
-  /// Auto-open the REAL face (D-ID stream) once per app session when the
-  /// backend has it configured — client spec: opening the app should meet
-  /// the human face, not the drawn one. Static so navigating back doesn't
-  /// re-open it in a loop.
-  static bool _faceAutoOpened = false;
-
-  Future<void> _openRealFace({bool auto = false}) async {
-    try {
-      // Probe first: fails fast (503) when Face Mode isn't configured,
-      // so an unconfigured dev setup silently keeps the drawn avatar.
-      await ApiService.startFaceSession();
-      if (!mounted) return;
-      final result = await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const FaceScreen()),
-      );
-      // D-ID failed inside Face Mode and the user chose the fallback —
-      // the animated built-in face on this screen takes over; reassure
-      // them she still talks.
-      if (result == 'use_builtin_face' && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                "Using the built-in face — she'll animate as she speaks.")));
-      }
-    } on ProRequired {
-      if (!auto && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Face Mode is a Pro feature.')));
-      }
-    } catch (_) {
-      if (!auto && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Face Mode is unavailable — using the built-in face.')));
-      }
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -88,32 +48,16 @@ class _AssistantScreenState extends State<AssistantScreen> {
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
     });
-    // STARTUP FLOW, strictly ordered: 1) native survey on first run
-    // (always works, no D-ID needed) → 2) brand-new sign-ins get the
-    // optional face-to-face interview sheet → 3) returning users get
-    // the Face Mode auto-open, as before.
+    // STARTUP: first run shows the native onboarding survey; after
+    // that the orb home screen IS the experience (Face Mode removed).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       if (await SurveyGate.needed()) {
         if (!mounted) return;
         await Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const SurveyScreen()));
-        if (!mounted) return;
       }
-      final auth = AuthService.instance;
-      if (auth.lastSignInWasNew) {
-        auth.lastSignInWasNew = false;
-        showGlassSheet(
-          context,
-          heightFactor: 0.92,
-          child: InterviewScreen(
-            onDone: () => Navigator.of(context).pop(),
-          ),
-        );
-      } else if (!_faceAutoOpened) {
-        _faceAutoOpened = true;
-        _openRealFace(auto: true);
-      }
+      AuthService.instance.lastSignInWasNew = false;
     });
   }
 
@@ -158,11 +102,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     height: engine.transcript.isEmpty ? 236 : 148,
                     child: FittedBox(
                       fit: BoxFit.contain,
-                      child: RealHumanFace(
+                      child: AssistantHeroWidget(
                         phase: engine.phase,
                         micLevel: engine.micLevel,
-                        userGender: AuthService.instance.user?.gender,
-                        onTap: () => _openRealFace(),
+                        onTap: engine.pressMic, // tap the orb to talk
                       ),
                     ),
                   ),
