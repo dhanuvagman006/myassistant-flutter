@@ -59,6 +59,9 @@ dependencies:
   phone_state: ^2.0.1
   permission_handler: ^11.3.1
 
+  # Real-time human avatar (Tavus CVI) rendered in a WebView
+  webview_flutter: ^4.10.0
+
   # Reminder notifications — fire even when the app is closed.
   # PINNED to 19.x: v18 still REQUIRES uiLocalNotificationDateInterpretation
   # (removed in 19), and v20+ has further breaking changes — our

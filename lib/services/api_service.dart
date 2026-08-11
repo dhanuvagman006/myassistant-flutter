@@ -107,6 +107,9 @@ class ApiService {
   /// open between turns, saving a full handshake on every voice exchange.
   static final http.Client _client = http.Client();
 
+  /// Public alias for feature modules (avatar screen etc.).
+  static Map<String, String> get authHeaders => _authHeaders;
+
   static Map<String, String> get _authHeaders => {
         'Content-Type': 'application/json',
         if (sessionToken != null) 'Authorization': 'Bearer $sessionToken'

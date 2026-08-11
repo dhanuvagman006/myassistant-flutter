@@ -12,6 +12,7 @@ import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
 import '../../screens/diagnostics_screen.dart';
+import '../../screens/avatar_screen.dart';
 import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
@@ -39,6 +40,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
   final _scroll = ScrollController();
   RemoteConfig _config = const RemoteConfig();
   bool _announcementDismissed = false;
+  bool _avatarAvailable = false;
 
   @override
   void initState() {
@@ -47,6 +49,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.addListener(_autoScroll);
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
+    });
+    AvatarScreen.available().then((ok) {
+      if (mounted) setState(() => _avatarAvailable = ok);
     });
     // STARTUP: first run shows the native onboarding survey; after
     // that the orb home screen IS the experience (Face Mode removed).
@@ -110,10 +115,37 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  AssistantStatusPill(
-                    phase: engine.phase,
-                    connected: engine.connected,
-                    onCancel: engine.cancelAction,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      AssistantStatusPill(
+                        phase: engine.phase,
+                        connected: engine.connected,
+                        onCancel: engine.cancelAction,
+                      ),
+                      if (_avatarAvailable) ...[
+                        const SizedBox(width: 10),
+                        // Face-to-face: the real human avatar video call.
+                        GestureDetector(
+                          onTap: () {
+                            engine.cancelAction();
+                            Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => const AvatarScreen()));
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(9),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withValues(alpha: 0.07),
+                              border: Border.all(
+                                  color: Neon.cyan.withValues(alpha: 0.5)),
+                            ),
+                            child: const Icon(Icons.videocam_rounded,
+                                color: Neon.cyan, size: 18),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 8),
                   // Connection trouble is VISIBLE and tappable — the

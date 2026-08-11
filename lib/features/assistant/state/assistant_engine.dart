@@ -84,6 +84,58 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
+  // ---------------- STREAMED SENTENCES (latency path) ----------------
+  // The backend now streams conversation replies sentence-by-sentence;
+  // we speak each the moment it arrives — the user hears sentence 1
+  // while sentence 2 is still being generated server-side.
+
+  final List<String> _speakQueue = [];
+  bool _draining = false;
+  TranscriptEntry? _liveEntry; // the assistant bubble being built live
+
+  void _enqueueSentence(String sentence) {
+    if (_liveEntry == null) {
+      _liveEntry = TranscriptEntry(TranscriptRole.assistant, sentence);
+      transcript.add(_liveEntry!);
+    } else {
+      final merged = '${_liveEntry!.text} $sentence';
+      transcript[transcript.length - 1] =
+          TranscriptEntry(TranscriptRole.assistant, merged);
+      _liveEntry = transcript.last;
+    }
+    notifyListeners();
+    _speakQueue.add(sentence);
+    _drainSpeech();
+  }
+
+  Future<void> _drainSpeech() async {
+    if (_draining) return;
+    _draining = true;
+    _ttsActive = true;
+    _setPhase(AssistantPhase.speaking, silent: true);
+    void feed() {
+      micLevel = _voice.ttsLevel.value;
+      notifyListeners();
+    }
+
+    _voice.ttsLevel.addListener(feed);
+    try {
+      while (_speakQueue.isNotEmpty) {
+        final s = _speakQueue.removeAt(0);
+        await _voice.speak(s);
+      }
+    } finally {
+      _voice.ttsLevel.removeListener(feed);
+      micLevel = 0;
+      _draining = false;
+      _ttsActive = false;
+      if (phase == AssistantPhase.speaking) {
+        _setPhase(AssistantPhase.completed, silent: true);
+      }
+      notifyListeners();
+    }
+  }
+
   /// If the backend stream dies mid-turn the app used to sit on
   /// "Transcribing…" forever. Any busy phase that lasts 35 s without a
   /// new event now surfaces a retryable error instead.
@@ -149,6 +201,7 @@ class AssistantEngine extends ChangeNotifier {
       // Tap while listening = cancel this capture (both the recorder
       // and the device-recognizer fallback honour this).
       _voice.stopSpeaking();
+      _speakQueue.clear();
       await _voice.cancelCapture();
       return;
     }
@@ -308,10 +361,26 @@ class AssistantEngine extends ChangeNotifier {
         transcript.add(TranscriptEntry(TranscriptRole.user, e['text'] as String? ?? ''));
         break;
 
+      case 'assistant_sentence':
+        _enqueueSentence(e['text'] as String? ?? '');
+        break;
+
       case 'assistant_message':
         final text = e['text'] as String? ?? '';
-        transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
-        _speakReply(text); // spoken reply — drives the talking face too
+        if (e['streamed'] == true) {
+          // Sentences were already displayed + spoken as they arrived —
+          // just settle the live bubble on the exact final text.
+          if (_liveEntry != null) {
+            transcript[transcript.length - 1] =
+                TranscriptEntry(TranscriptRole.assistant, text);
+            _liveEntry = null;
+          } else {
+            transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
+          }
+        } else {
+          transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
+          _speakReply(text); // non-streamed (booking/search) — speak whole
+        }
         break;
 
       case 'tool_started':
@@ -410,6 +479,8 @@ class AssistantEngine extends ChangeNotifier {
   // ---------------- helpers ----------------
 
   void _resetTurn() {
+    _speakQueue.clear();
+    _liveEntry = null;
     errorMessage = null;
     searchQuery = null;
     searchResults = const [];

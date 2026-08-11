@@ -448,7 +448,7 @@ class VoiceService {
   /// margin ABOVE that floor.
   Future<String?> recordUntilSilence({
     int maxSeconds = 15,
-    int noSpeechTimeoutMs = 8000,
+    int noSpeechTimeoutMs = 6000,
     void Function(double level)? onLevel, // 0..1 for UI animation
   }) async {
     try {
@@ -469,11 +469,11 @@ class VoiceService {
         path: path,
       );
 
-      // --- calibrate the ambient noise floor (~600 ms) ---
+      // --- calibrate the ambient noise floor (~450 ms) ---
       var floor = -50.0;
       var floorSamples = 0;
       var totalMs = 0;
-      while (totalMs < 600) {
+      while (totalMs < 450) {
         await Future.delayed(const Duration(milliseconds: 150));
         totalMs += 150;
         if (_recCancelled) break;
@@ -513,8 +513,8 @@ class VoiceService {
       var silentMs = 0;
 
       while (totalMs < maxSeconds * 1000) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        totalMs += 200;
+        await Future.delayed(const Duration(milliseconds: 150));
+        totalMs += 150;
         if (_recCancelled || !await _rec.isRecording()) break;
 
         double db;
@@ -530,11 +530,12 @@ class VoiceService {
           started = true;
           silentMs = 0;
         } else if (db < quietDb) {
-          silentMs += 200;
+          silentMs += 150;
           // No speech at all within the window -> give up quietly.
           if (!started && totalMs >= noSpeechTimeoutMs) break;
-          // Finished talking: 1.4s of silence after speech.
-          if (started && silentMs >= 1400) break;
+          // Finished talking: 900ms of silence after speech — snappy
+          // turn-taking; mid-sentence pauses are shorter than this.
+          if (started && silentMs >= 900) break;
         } else {
           // Dead zone between quiet and speech: still counts toward the
           // no-speech timeout, or the mic could hang for maxSeconds.
