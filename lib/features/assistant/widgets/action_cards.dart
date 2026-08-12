@@ -489,6 +489,9 @@ class _DocumentCardState extends State<DocumentCard> {
                             ApiService.documentFileUrl(document.id),
                             headers: ApiService.imageHeaders,
                             fit: BoxFit.cover,
+                            // Decode at ~2x the 56px display size, not full
+                            // resolution — a big memory saving in a list.
+                            cacheWidth: 130,
                             errorBuilder: (_, __, ___) => Container(
                               color: Neon.surfaceHigh,
                               child: const Icon(Icons.description_rounded,

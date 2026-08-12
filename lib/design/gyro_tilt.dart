@@ -66,12 +66,18 @@ class _GyroTiltState extends State<GyroTilt>
   StreamSubscription<GyroscopeEvent>? _sub;
   late final Ticker _ticker;
 
-  // Current tilt (radians) around the screen's X and Y axes.
-  double _tx = 0, _ty = 0;
+  // Tilt state lives in a ValueNotifier, not in setState: only the thin
+  // Transform/sheen/shadow layer listens and repaints each frame, while
+  // the (potentially expensive) child is built ONCE. Value is (tx, ty).
+  final ValueNotifier<Offset> _tilt = ValueNotifier(Offset.zero);
+
   // Raw angular velocity from the last gyro event (rad/s).
   double _vx = 0, _vy = 0;
   Duration _lastTick = Duration.zero;
   bool _supported = true;
+
+  double get _tx => _tilt.value.dx;
+  double get _ty => _tilt.value.dy;
 
   @override
   void initState() {
@@ -118,21 +124,21 @@ class _GyroTiltState extends State<GyroTilt>
     // Integrate angular velocity into tilt, then decay toward rest so the
     // card always settles flat. Velocity itself is bled off too, which
     // filters hand tremor into a smooth glide.
-    _tx = ((_tx + _vx * dt * 0.9) * math.pow(0.06, dt)).clamp(-cap, cap);
-    _ty = ((_ty + _vy * dt * 0.9) * math.pow(0.06, dt)).clamp(-cap, cap);
+    var tx = ((_tx + _vx * dt * 0.9) * math.pow(0.06, dt)).clamp(-cap, cap);
+    var ty = ((_ty + _vy * dt * 0.9) * math.pow(0.06, dt)).clamp(-cap, cap);
     _vx *= math.pow(0.001, dt).toDouble();
     _vy *= math.pow(0.001, dt).toDouble();
 
     // Asleep? Stop ticking (and repainting) until the next gyro event.
-    if (_tx.abs() < 0.0005 &&
-        _ty.abs() < 0.0005 &&
+    if (tx.abs() < 0.0005 &&
+        ty.abs() < 0.0005 &&
         _vx.abs() < 0.02 &&
         _vy.abs() < 0.02) {
-      _tx = 0;
-      _ty = 0;
+      tx = 0;
+      ty = 0;
       _ticker.stop();
     }
-    if (mounted) setState(() {});
+    if (mounted) _tilt.value = Offset(tx, ty);
   }
 
   @override
@@ -142,8 +148,7 @@ class _GyroTiltState extends State<GyroTilt>
     } else {
       _sub?.cancel();
       _ticker.stop();
-      _tx = 0;
-      _ty = 0;
+      _tilt.value = Offset.zero;
     }
   }
 
@@ -152,6 +157,7 @@ class _GyroTiltState extends State<GyroTilt>
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _ticker.dispose();
+    _tilt.dispose();
     super.dispose();
   }
 
@@ -163,13 +169,26 @@ class _GyroTiltState extends State<GyroTilt>
       return widget.child;
     }
 
+    // The child is built ONCE and captured; only the transform layer below
+    // rebuilds per frame via the ValueListenable.
+    return RepaintBoundary(
+      child: ValueListenableBuilder<Offset>(
+        valueListenable: _tilt,
+        child: widget.child,
+        builder: (context, tilt, child) => _paint(tilt, child!),
+      ),
+    );
+  }
+
+  Widget _paint(Offset tilt, Widget child) {
+    final tx = tilt.dx, ty = tilt.dy;
     final cap = widget.maxTilt * widget.intensity;
     // Normalized tilt −1..1 — drives light and shadow direction.
-    final nx = cap == 0 ? 0.0 : (_ty / cap); // horizontal (screen X)
-    final ny = cap == 0 ? 0.0 : (_tx / cap); // vertical   (screen Y)
+    final nx = cap == 0 ? 0.0 : (ty / cap); // horizontal (screen X)
+    final ny = cap == 0 ? 0.0 : (tx / cap); // vertical   (screen Y)
     final active = nx.abs() > 0.001 || ny.abs() > 0.001;
 
-    Widget content = widget.child;
+    Widget content = child;
 
     // Moving light sheen — a soft white radial that drifts toward the
     // raised edge, clipped to the card's corners.
@@ -222,15 +241,13 @@ class _GyroTiltState extends State<GyroTilt>
       );
     }
 
-    return RepaintBoundary(
-      child: Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.identity()
-          ..setEntry(3, 2, 0.0016) // perspective
-          ..rotateX(-_tx)
-          ..rotateY(-_ty),
-        child: content,
-      ),
+    return Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()
+        ..setEntry(3, 2, 0.0016) // perspective
+        ..rotateX(-tx)
+        ..rotateY(-ty),
+      child: content,
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../design/gyro_motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../state/assistant_state.dart';
 
@@ -32,15 +33,22 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c;
 
+  // Shared, battery-aware device-tilt signal (one stream for the whole
+  // app — see GyroMotion). Read inside the existing AnimatedBuilder, so
+  // the orb's 3D parallax costs no extra ticker and no extra rebuilds.
+  final _gyro = GyroMotion.instance;
+
   @override
   void initState() {
     super.initState();
+    _gyro.retain();
     _c = AnimationController(vsync: this, duration: const Duration(seconds: 3))
       ..repeat();
   }
 
   @override
   void dispose() {
+    _gyro.release();
     _c.dispose();
     super.dispose();
   }
@@ -67,107 +75,122 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
           final level = widget.phase == AssistantPhase.listening
               ? (0.15 + widget.micLevel * 0.85)
               : 0.0;
+          // Device tilt → gentle 3D parallax. Read from the shared signal
+          // (−1.2..1.2, self-centering); scaled down so the orb feels like
+          // it has depth without wobbling. Degrades to 0 with no gyroscope.
+          final gx = _gyro.x, gy = _gyro.y;
           return SizedBox(
             width: 210,
             height: 210,
-            child: Stack(
+            child: Transform(
               alignment: Alignment.center,
-              children: [
-                // Live-level halo (listening) / activity ripple (speaking)
-                if (widget.phase == AssistantPhase.listening ||
-                    widget.phase == AssistantPhase.speaking)
-                  Container(
-                    width: 150 + 55 * (level > 0 ? level : (0.5 + 0.5 * math.sin(t * 6 * math.pi))),
-                    height: 150 + 55 * (level > 0 ? level : (0.5 + 0.5 * math.sin(t * 6 * math.pi))),
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.0014) // perspective
+                ..rotateX(gx * 0.12)
+                ..rotateY(gy * 0.12),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Live-level halo (listening) / activity ripple (speaking)
+                  if (widget.phase == AssistantPhase.listening ||
+                      widget.phase == AssistantPhase.speaking)
+                    Container(
+                      width: 150 + 55 * (level > 0 ? level : (0.5 + 0.5 * math.sin(t * 6 * math.pi))),
+                      height: 150 + 55 * (level > 0 ? level : (0.5 + 0.5 * math.sin(t * 6 * math.pi))),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _accent.withValues(alpha: 0.14),
+                      ),
+                    ),
+                  // Busy: orbiting sparks
+                  if (widget.phase.busy &&
+                      widget.phase != AssistantPhase.listening &&
+                      widget.phase != AssistantPhase.speaking)
+                    ...List.generate(3, (i) {
+                      final a = t * 2 * math.pi + i * (2 * math.pi / 3);
+                      return Transform.translate(
+                        offset: Offset(math.cos(a) * 92, math.sin(a) * 92),
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _accent.withValues(alpha: 0.9),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _accent.withValues(alpha: 0.6),
+                                blurRadius: 10,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                  // State ring
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    width: 172,
+                    height: 172,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: _accent.withValues(alpha: 0.14),
+                      border: Border.all(
+                        color: _accent.withValues(
+                            alpha: widget.phase == AssistantPhase.idle ? 0.25 : 0.7),
+                        width: 2.5,
+                      ),
                     ),
                   ),
-                // Busy: orbiting sparks
-                if (widget.phase.busy &&
-                    widget.phase != AssistantPhase.listening &&
-                    widget.phase != AssistantPhase.speaking)
-                  ...List.generate(3, (i) {
-                    final a = t * 2 * math.pi + i * (2 * math.pi / 3);
-                    return Transform.translate(
-                      offset: Offset(math.cos(a) * 92, math.sin(a) * 92),
+                  // The orb itself — slowly rotating tri-color neon sweep
+                  Transform.scale(
+                    scale: breathe + level * 0.08,
+                    child: Transform.rotate(
+                      angle: t * 2 * math.pi,
                       child: Container(
-                        width: 8,
-                        height: 8,
+                        width: 148,
+                        height: 148,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _accent.withValues(alpha: 0.9),
+                          gradient: Neon.gOrb,
                           boxShadow: [
                             BoxShadow(
-                              color: _accent.withValues(alpha: 0.6),
-                              blurRadius: 10,
+                              color: _accent.withValues(alpha: 0.40),
+                              blurRadius: 44,
+                              spreadRadius: 4,
+                            ),
+                            BoxShadow(
+                              color: Neon.pink.withValues(alpha: 0.18),
+                              blurRadius: 70,
+                              spreadRadius: 10,
                             ),
                           ],
                         ),
-                      ),
-                    );
-                  }),
-                // State ring
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  width: 172,
-                  height: 172,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _accent.withValues(
-                          alpha: widget.phase == AssistantPhase.idle ? 0.25 : 0.7),
-                      width: 2.5,
-                    ),
-                  ),
-                ),
-                // The orb itself — slowly rotating tri-color neon sweep
-                Transform.scale(
-                  scale: breathe + level * 0.08,
-                  child: Transform.rotate(
-                    angle: t * 2 * math.pi,
-                    child: Container(
-                      width: 148,
-                      height: 148,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: Neon.gOrb,
-                        boxShadow: [
-                          BoxShadow(
-                            color: _accent.withValues(alpha: 0.40),
-                            blurRadius: 44,
-                            spreadRadius: 4,
-                          ),
-                          BoxShadow(
-                            color: Neon.pink.withValues(alpha: 0.18),
-                            blurRadius: 70,
-                            spreadRadius: 10,
-                          ),
-                        ],
-                      ),
-                      child: Transform.rotate(
-                        angle: -t * 2 * math.pi, // keep the face upright
-                        child: Container(
-                          margin: const EdgeInsets.all(7),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              center: const Alignment(-0.35, -0.45),
-                              colors: [
-                                Colors.white.withValues(alpha: 0.16),
-                                Neon.bg.withValues(alpha: 0.86),
-                              ],
+                        child: Transform.rotate(
+                          angle: -t * 2 * math.pi, // keep the face upright
+                          child: Container(
+                            margin: const EdgeInsets.all(7),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                // Highlight drifts with the tilt — the glass
+                                // catches light from where the phone leans.
+                                center: Alignment(
+                                    (-0.35 + gy * 0.5).clamp(-1.0, 1.0),
+                                    (-0.45 + gx * 0.5).clamp(-1.0, 1.0)),
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.16),
+                                  Neon.bg.withValues(alpha: 0.86),
+                                ],
+                              ),
                             ),
-                          ),
-                          child: Center(
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 250),
-                              child: Icon(
-                                _icon,
-                                key: ValueKey(_icon),
-                                size: 44,
-                                color: Colors.white.withValues(alpha: 0.94),
+                            child: Center(
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 250),
+                                child: Icon(
+                                  _icon,
+                                  key: ValueKey(_icon),
+                                  size: 44,
+                                  color: Colors.white.withValues(alpha: 0.94),
+                                ),
                               ),
                             ),
                           ),
@@ -175,8 +198,8 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },

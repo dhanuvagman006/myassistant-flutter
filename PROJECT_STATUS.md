@@ -397,3 +397,17 @@ scan.
   10.x API). If pub resolves 11.x, switch that call to
   `SharePlus.instance.share(ShareParams(files: [XFile(...)]))`.
 - No manifest change needed: `share_plus` merges its own FileProvider.
+
+## Update — 12 Aug 2026 (2): Gyro on the main page + render optimisations
+- **Main-page gyro**: the hero orb now has device-motion 3D presence — it
+  tilts in perspective and its inner highlight drifts with the phone's lean,
+  via the SHARED `GyroMotion` singleton read inside the orb's existing
+  animation ticker (no new sensor stream, no extra rebuilds). Degrades to a
+  static orb with no gyroscope.
+- **GyroTilt perf**: rewritten to drive per-frame repaints through a
+  `ValueNotifier<Offset>` + `ValueListenableBuilder` instead of `setState`,
+  so only the thin transform/sheen/shadow layer rebuilds each frame — the
+  (expensive) card child is built once. Wrapped in a RepaintBoundary.
+- **DocumentCard**: list thumbnails decode at `cacheWidth: 130` (not full
+  resolution) — a real memory saving in a scrolling feed; the full-screen
+  viewer still gets full-res (different cache key).
