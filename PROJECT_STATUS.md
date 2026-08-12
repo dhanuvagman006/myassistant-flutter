@@ -366,3 +366,34 @@ app polls `/agent-call/:id` and SPEAKS his answer back ("I spoke with Allen…")
 - New deps: `webview_flutter`, `video_player` → run `flutter pub get`.
 - ⚠️ Not compiled in this environment (no Flutter SDK) — run
   `flutter analyze` locally; expect at most minor lint fixes.
+
+## Update — 12 Aug 2026: Professional mode (clients/patients) + document Send + "show my Aadhaar card" (app side)
+App side of the case-file feature and the show-and-send document flow. Not
+compiled here (no Flutter SDK in this env) — run `flutter analyze` locally;
+expect at most minor lint. All touched files pass a structural (bracket/string)
+scan.
+
+- **Models**: `models/client.dart` (Client + ClientNote). `UserDocument` gained
+  `clientId`.
+- **API** (`services/api_service.dart`): full clients API (list/create/profile/
+  update/delete, notes, link/unlink docs); `uploadDocument` takes optional
+  `clientId`; new `downloadDocument(id)` returns raw bytes + mime for sharing.
+- **Clients screen** (`screens/clients_screen.dart`): searchable list, add/edit
+  sheet (kind chips), and a case-file detail view — profile card, dated notes
+  timeline (add/delete), and document attach (camera/gallery/PDF) filed straight
+  into the case. Reached from a new **Clients** chip beside the orb.
+- **Document cards in the voice feed**: the engine handles the backend's new
+  `documents` SSE event and renders `DocumentCard`s (`features/assistant/
+  widgets/action_cards.dart`). Tap = view (image → pinch-zoom viewer, PDF →
+  system viewer). New **Send** button downloads the real bytes, writes a temp
+  file named from the document title (recipient sees "Aadhaar Card.jpg", not the
+  internal save name) and opens the share sheet via `share_plus`.
+- So "show my Aadhaar card" now: recalls it → shows it on screen → Send shares
+  it. (ID numbers are shown, never spoken — enforced server-side.)
+
+## NEXT
+- `flutter pub get` + `flutter analyze` on a real checkout. `share_plus` is
+  pinned `^10.1.2` and this code uses `Share.shareXFiles([XFile(...)])` (the
+  10.x API). If pub resolves 11.x, switch that call to
+  `SharePlus.instance.share(ShareParams(files: [XFile(...)]))`.
+- No manifest change needed: `share_plus` merges its own FileProvider.

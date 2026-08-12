@@ -10,6 +10,7 @@ class UserDocument {
   final String docDate; // yyyy-mm-dd printed on the document, or ''
   final String summary; // AI plain-language summary
   final String note; // the user's own words (e.g. what the doctor said)
+  final int? clientId; // professional mode: which case file it's filed in
   final int createdAt;
 
   const UserDocument({
@@ -21,6 +22,7 @@ class UserDocument {
     required this.docDate,
     required this.summary,
     required this.note,
+    this.clientId,
     required this.createdAt,
   });
 
@@ -35,6 +37,7 @@ class UserDocument {
         docDate: (j['docDate'] ?? '').toString(),
         summary: (j['summary'] ?? '').toString(),
         note: (j['note'] ?? '').toString(),
+        clientId: (j['clientId'] as num?)?.toInt(),
         createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
       );
 

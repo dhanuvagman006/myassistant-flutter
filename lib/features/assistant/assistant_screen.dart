@@ -13,6 +13,7 @@ import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
 import '../../screens/diagnostics_screen.dart';
 import '../../screens/avatar_screen.dart';
+import '../../screens/clients_screen.dart';
 import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
@@ -145,6 +146,25 @@ class _AssistantScreenState extends State<AssistantScreen> {
                           ),
                         ),
                       ],
+                      const SizedBox(width: 10),
+                      // Professional mode: patients/clients case files.
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) => const ClientsScreen()));
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.07),
+                            border: Border.all(
+                                color: Neon.violet.withValues(alpha: 0.5)),
+                          ),
+                          child: const Icon(Icons.folder_shared_rounded,
+                              color: Neon.violet, size: 18),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -262,6 +282,12 @@ class _AssistantScreenState extends State<AssistantScreen> {
         if (engine.searchResults.isNotEmpty) ...[
           _sectionLabel('Results for "${engine.searchQuery}"'),
           for (final r in engine.searchResults) SearchResultCard(result: r),
+        ],
+        if (engine.documentCards.isNotEmpty) ...[
+          _sectionLabel(engine.documentCards.length == 1
+              ? 'From your saved documents'
+              : '${engine.documentCards.length} saved documents'),
+          for (final d in engine.documentCards) DocumentCard(document: d),
         ],
         if (engine.ambiguousContacts.isNotEmpty) ...[
           _sectionLabel('Which one did you mean?'),

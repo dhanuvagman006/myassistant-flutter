@@ -1,8 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../design/gyro_tilt.dart';
 import '../../../design/neon_tokens.dart';
+import '../../../models/user_document.dart';
+import '../../../services/api_service.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
 
@@ -386,6 +392,234 @@ class ConfirmationCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A saved document Hari just recalled ("show me my Aadhaar card") — image
+/// thumbnail or PDF badge + title/date/summary, with a Send button that
+/// shares the real file out (WhatsApp, email, Drive…). Tap the card to
+/// view: images open in a pinch-zoom viewer, PDFs in the system viewer.
+class DocumentCard extends StatefulWidget {
+  final UserDocument document;
+  const DocumentCard({super.key, required this.document});
+
+  @override
+  State<DocumentCard> createState() => _DocumentCardState();
+}
+
+class _DocumentCardState extends State<DocumentCard> {
+  bool _sending = false;
+
+  UserDocument get document => widget.document;
+
+  String get _date {
+    if (document.docDate.isNotEmpty) return document.docDate;
+    if (document.createdAt <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(document.createdAt);
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
+  void _open(BuildContext context) {
+    final url = ApiService.documentFileUrl(document.id);
+    if (document.isPdf) {
+      // No in-app PDF renderer (kept the app light) — hand to the system.
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _DocumentViewer(document: document),
+    ));
+  }
+
+  /// Downloads the real bytes to a temp file with a clean, human name and
+  /// opens the system share sheet. The temp file is safe to leave — the OS
+  /// clears the cache dir; naming it well means the recipient sees
+  /// "Aadhaar Card.jpg", never "voice_save_1785…jpg".
+  Future<void> _send() async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final file = await ApiService.downloadDocument(document.id);
+      final dir = await getTemporaryDirectory();
+      final safeName = _shareName(document, file.mime);
+      final path = '${dir.path}/$safeName';
+      await File(path).writeAsBytes(file.bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(path, mimeType: file.mime, name: safeName)],
+        subject: document.title,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't prepare that to send.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      borderTint: Neon.cyan,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _open(context),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: document.isPdf
+                        ? Container(
+                            color: Neon.surfaceHigh,
+                            child: const Icon(Icons.picture_as_pdf_rounded,
+                                color: Neon.pink, size: 26),
+                          )
+                        : Image.network(
+                            ApiService.documentFileUrl(document.id),
+                            headers: ApiService.imageHeaders,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Neon.surfaceHigh,
+                              child: const Icon(Icons.description_rounded,
+                                  color: Neon.cyan, size: 24),
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        document.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (_date.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(_date,
+                            style: const TextStyle(
+                                color: Neon.textLo, fontSize: 12)),
+                      ],
+                      if (document.summary.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          document.summary,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 12.5,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.open_in_full_rounded,
+                    size: 16, color: Colors.white.withValues(alpha: 0.4)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _sending ? null : _send,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Neon.cyan,
+                    side: BorderSide(color: Neon.cyan.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  icon: _sending
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Neon.cyan),
+                        )
+                      : const Icon(Icons.send_rounded, size: 16),
+                  label: Text(_sending ? 'Preparing…' : 'Send'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A clean filename for sharing — the document's own title (so the
+/// recipient sees "Aadhaar Card.jpg", not the internal save name), with a
+/// correct extension derived from the mime type.
+String _shareName(UserDocument d, String mime) {
+  var base = d.title.trim();
+  if (base.isEmpty) base = 'document';
+  // Strip anything filesystem-hostile; collapse whitespace.
+  base = base.replaceAll(RegExp(r'[\\/:*?"<>|]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  const extByMime = {
+    'application/pdf': '.pdf',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/jpeg': '.jpg',
+  };
+  final ext = extByMime[mime] ?? (d.isPdf ? '.pdf' : '.jpg');
+  return base.toLowerCase().endsWith(ext) ? base : '$base$ext';
+}
+
+/// Full-screen pinch-zoom viewer for a recalled image document.
+class _DocumentViewer extends StatelessWidget {
+  final UserDocument document;
+  const _DocumentViewer({required this.document});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(document.title,
+            style: const TextStyle(fontSize: 16), maxLines: 1),
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          maxScale: 6,
+          child: Image.network(
+            ApiService.documentFileUrl(document.id),
+            headers: ApiService.imageHeaders,
+            fit: BoxFit.contain,
+            loadingBuilder: (context, child, p) => p == null
+                ? child
+                : const CircularProgressIndicator(color: Neon.cyan),
+            errorBuilder: (_, __, ___) => const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text("Couldn't load this document.",
+                  style: TextStyle(color: Colors.white70)),
+            ),
+          ),
+        ),
       ),
     );
   }

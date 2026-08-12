@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
+import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/call_service.dart';
 import '../../../services/voice_service.dart';
@@ -42,6 +43,10 @@ class AssistantEngine extends ChangeNotifier {
 
   String? searchQuery;
   List<SearchResult> searchResults = const [];
+
+  /// Saved documents recalled by this turn ("pull up patient Ramesh's
+  /// file") — shown as cards while the reply is spoken.
+  List<UserDocument> documentCards = const [];
 
   ContactMatch? foundContact;
   List<ContactMatch> ambiguousContacts = const [];
@@ -404,6 +409,12 @@ class AssistantEngine extends ChangeNotifier {
             .toList();
         break;
 
+      case 'documents':
+        // Saved documents matched by this turn (doc recall or a client's
+        // case file) — pop them on screen while Hari speaks the answer.
+        documentCards = UserDocument.listFromJson(e['documents']);
+        break;
+
       case 'contact_lookup':
         // Contacts live on THIS device — resolve the name here and post
         // the matches back so the backend can continue the flow.
@@ -484,6 +495,7 @@ class AssistantEngine extends ChangeNotifier {
     errorMessage = null;
     searchQuery = null;
     searchResults = const [];
+    documentCards = const [];
     foundContact = null;
     ambiguousContacts = const [];
     pendingConfirmation = null;

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/log.dart';
 import '../models/chat_message.dart';
+import '../models/client.dart';
 import '../models/memory_item.dart';
 import '../models/place.dart';
 import '../models/reminder.dart';
@@ -292,18 +293,21 @@ class ApiService {
   // ---------------------------------------------------------------------
 
   /// Save a file into Hari's memory. [note] is the user's own words —
-  /// e.g. what the doctor suggested — recited back on recall.
+  /// e.g. what the doctor suggested — recited back on recall. Pass
+  /// [clientId] to file it straight into that person's case file.
   static Future<UserDocument> uploadDocument({
     required List<int> bytes,
     required String filename,
     required String mimeType,
     String note = '',
+    int? clientId,
   }) async {
     final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/docs'))
       ..headers.addAll(Map.of(_authHeaders)..remove('Content-Type'))
       ..fields['note'] = note
       ..files.add(http.MultipartFile.fromBytes('file', bytes,
           filename: filename, contentType: MediaType.parse(mimeType)));
+    if (clientId != null) req.fields['clientId'] = clientId.toString();
     final resp = await _client.send(req).timeout(const Duration(seconds: 90));
     final body = await resp.stream.bytesToString();
     if (resp.statusCode != 200) throw Exception('docs ${resp.statusCode}');
@@ -328,6 +332,127 @@ class ApiService {
 
   /// URL of the original file bytes (use with [imageHeaders] for auth).
   static String documentFileUrl(int id) => '$baseUrl/docs/$id/file';
+
+  /// Downloads a saved document's raw bytes (auth required) so the app can
+  /// share it out — WhatsApp, email, etc. Returns the bytes + mime type.
+  static Future<({List<int> bytes, String mime})> downloadDocument(
+      int id) async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/docs/$id/file'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200) throw Exception('docs ${r.statusCode}');
+    final mime = r.headers['content-type']?.split(';').first.trim() ??
+        'application/octet-stream';
+    return (bytes: r.bodyBytes, mime: mime);
+  }
+
+  // ---------------------------------------------------------------------
+  // PROFESSIONAL MODE — clients / patients. One case file per person:
+  // profile + dated notes + linked documents. Recalled by voice
+  // ("pull up patient Ramesh's file") through the normal chat/voice loop.
+  // ---------------------------------------------------------------------
+
+  static Future<List<Client>> fetchClients() async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/clients'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    return Client.listFromJson(jsonDecode(r.body)['clients']);
+  }
+
+  static Future<Client> createClient({
+    required String name,
+    String kind = 'client',
+    String phone = '',
+    String email = '',
+    String summary = '',
+    String tags = '',
+  }) async {
+    final r = await _client
+        .post(Uri.parse('$baseUrl/clients'),
+            headers: _authHeaders,
+            body: jsonEncode({
+              'name': name,
+              'kind': kind,
+              'phone': phone,
+              'email': email,
+              'summary': summary,
+              'tags': tags,
+            }))
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    return Client.fromJson(
+        (jsonDecode(r.body) as Map<String, dynamic>)['client']
+            as Map<String, dynamic>);
+  }
+
+  /// The full case file: profile + notes (newest first) + linked documents.
+  static Future<({Client client, List<ClientNote> notes, List<UserDocument> documents})>
+      fetchClientProfile(int id) async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    final j = jsonDecode(r.body) as Map<String, dynamic>;
+    return (
+      client: Client.fromJson(j['client'] as Map<String, dynamic>),
+      notes: ClientNote.listFromJson(j['notes']),
+      documents: UserDocument.listFromJson(j['documents']),
+    );
+  }
+
+  static Future<Client> updateClient(int id, Map<String, dynamic> patch) async {
+    final r = await _client
+        .patch(Uri.parse('$baseUrl/clients/$id'),
+            headers: _authHeaders, body: jsonEncode(patch))
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    return Client.fromJson(
+        (jsonDecode(r.body) as Map<String, dynamic>)['client']
+            as Map<String, dynamic>);
+  }
+
+  /// Deletes the person's card + notes. Their saved documents are KEPT
+  /// (just unlinked) — the server never destroys files on card deletion.
+  static Future<void> deleteClient(int id) async {
+    await _client
+        .delete(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+  }
+
+  static Future<ClientNote> addClientNote(int clientId, String text) async {
+    final r = await _client
+        .post(Uri.parse('$baseUrl/clients/$clientId/notes'),
+            headers: _authHeaders, body: jsonEncode({'text': text}))
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    return ClientNote.fromJson(
+        (jsonDecode(r.body) as Map<String, dynamic>)['note']
+            as Map<String, dynamic>);
+  }
+
+  static Future<void> deleteClientNote(int clientId, int noteId) async {
+    await _client
+        .delete(Uri.parse('$baseUrl/clients/$clientId/notes/$noteId'),
+            headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+  }
+
+  /// File an already-saved document into a case file (or out of it).
+  static Future<void> linkDocumentToClient(int clientId, int docId) async {
+    final r = await _client
+        .post(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
+            headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+  }
+
+  static Future<void> unlinkDocumentFromClient(int clientId, int docId) async {
+    await _client
+        .delete(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
+            headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+  }
 
   /// STREAMING chat for the voice loop (Gemini-Live-style latency).
   /// Calls [onDelta] with each text fragment the moment the model writes
