@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
@@ -506,6 +507,12 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
+      case 'open_camera':
+        // Voice-driven capture: the backend recognised "save/scan/remember
+        // this" and asks the device to open the camera and file the shot.
+        _captureDocument(e['note'] as String? ?? '');
+        break;
+
       case 'audio_ready':
         readyAudioUrl = e['url'] as String?;
         usedClonedVoice = e['cloned_voice'] == true;
@@ -516,6 +523,51 @@ class AssistantEngine extends ChangeNotifier {
         break;
     }
     notifyListeners();
+  }
+
+  /// Voice-driven document capture: open the camera, then file the shot
+  /// into document memory with the user's own words as the note (so "the
+  /// receipt I saved after the doctor" is findable later). No manual entry.
+  Future<void> _captureDocument(String note) async {
+    await _voice.stopSpeaking();
+    XFile? shot;
+    try {
+      shot = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 82,
+      );
+    } catch (_) {
+      await _speakReply("I couldn't open the camera.");
+      _setPhase(AssistantPhase.completed);
+      return;
+    }
+    if (shot == null) {
+      await _speakReply("Okay, nothing saved.");
+      _setPhase(AssistantPhase.completed);
+      return;
+    }
+
+    _setPhase(AssistantPhase.thinking, silent: true);
+    notifyListeners();
+    try {
+      final bytes = await shot.readAsBytes();
+      final doc = await ApiService.uploadDocument(
+        bytes: bytes,
+        filename: 'voice_save_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        mimeType: 'image/jpeg',
+        note: note,
+      );
+      documentCards = [doc];
+      notifyListeners();
+      await _speakReply(
+          "Saved. Ask me for it anytime — I'll remember what's on it.");
+    } catch (_) {
+      await _speakReply(
+          "I couldn't save that — please check your connection and try again.");
+    }
+    _setPhase(AssistantPhase.completed);
   }
 
   Future<void> _resolveContacts(String name) async {
