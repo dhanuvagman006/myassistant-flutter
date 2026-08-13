@@ -54,6 +54,11 @@ class _AssistantScreenState extends State<AssistantScreen> {
     AvatarScreen.available().then((ok) {
       if (mounted) setState(() => _avatarAvailable = ok);
     });
+    // VOICE-DRIVEN VIDEO MODE: saying "open video mode" pushes the avatar
+    // video call. The engine can't navigate (no BuildContext), so it calls
+    // back here. The chip that used to sit under the orb is gone — voice is
+    // the way in.
+    engine.onOpenVideoMode = _openVideoMode;
     // STARTUP: first run shows the native onboarding survey; after
     // that the orb home screen IS the experience (Face Mode removed).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -70,9 +75,37 @@ class _AssistantScreenState extends State<AssistantScreen> {
   @override
   void dispose() {
     engine.removeListener(_autoScroll);
+    engine.onOpenVideoMode = null;
     _scroll.dispose();
     super.dispose();
   }
+
+  /// Opens the human-avatar video call (voice command "open video mode").
+  /// Guards against a double-push if the screen is already on top, and says
+  /// so plainly when the avatar service isn't configured.
+  Future<void> _openVideoMode() async {
+    if (!mounted) return;
+    if (!_avatarAvailable) {
+      // Re-check once: availability is fetched async at startup and may not
+      // have landed yet on a cold start.
+      _avatarAvailable = await AvatarScreen.available();
+    }
+    if (!mounted) return;
+    if (!_avatarAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Video mode isn't set up on this account yet."),
+      ));
+      return;
+    }
+    if (_videoModeOpen) return;
+    _videoModeOpen = true;
+    engine.cancelAction(); // release the mic before the avatar takes over
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const AvatarScreen()));
+    _videoModeOpen = false;
+  }
+
+  bool _videoModeOpen = false;
 
   void _autoScroll() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -124,28 +157,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         connected: engine.connected,
                         onCancel: engine.cancelAction,
                       ),
-                      if (_avatarAvailable) ...[
-                        const SizedBox(width: 10),
-                        // Face-to-face: the real human avatar video call.
-                        GestureDetector(
-                          onTap: () {
-                            engine.cancelAction();
-                            Navigator.of(context).push(MaterialPageRoute(
-                                builder: (_) => const AvatarScreen()));
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(9),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white.withValues(alpha: 0.07),
-                              border: Border.all(
-                                  color: Neon.cyan.withValues(alpha: 0.5)),
-                            ),
-                            child: const Icon(Icons.videocam_rounded,
-                                color: Neon.cyan, size: 18),
-                          ),
-                        ),
-                      ],
+                      // The video-mode chip used to sit here. It's gone —
+                      // say "open video mode" instead.
                       const SizedBox(width: 10),
                       // Professional mode: patients/clients case files.
                       GestureDetector(

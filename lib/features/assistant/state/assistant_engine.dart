@@ -59,6 +59,12 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get micBusy => phase == AssistantPhase.listening;
 
+  /// Set by the assistant screen: opens the human-avatar video call when the
+  /// user asks for it by voice ("open video mode"). Lives here as a hook
+  /// because navigation needs a BuildContext, which the engine has no
+  /// business holding.
+  void Function()? onOpenVideoMode;
+
   /// True while the local TTS is reading a reply — the avatar's mouth and
   /// the "Speaking…" pill follow THIS, because the backend has already
   /// moved to `completed` by the time audio actually plays on-device.
@@ -712,6 +718,16 @@ class AssistantEngine extends ChangeNotifier {
         // Voice-driven capture: the backend recognised "save/scan/remember
         // this" and asks the device to open the camera and file the shot.
         _captureDocument(e['note'] as String? ?? '');
+        break;
+
+      case 'open_video':
+        // Voice-driven video mode: the backend recognised "open video
+        // mode". Navigation needs a BuildContext, so the screen registers
+        // [onOpenVideoMode] and performs the push itself.
+        _conversationEnded = true; // the avatar screen owns the mic now
+        _speakQueue.clear();
+        _voice.stopSpeaking();
+        onOpenVideoMode?.call();
         break;
 
       case 'audio_ready':
