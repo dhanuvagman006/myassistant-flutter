@@ -164,12 +164,19 @@ class AssistantEngine extends ChangeNotifier {
       // PIPELINE: keep one sentence's synthesis running AHEAD of playback so
       // there's no synthesis gap between spoken sentences. We pre-synthesize
       // the first, then while each sentence plays we synthesize the next.
+      AppLog.add('latency', 'first sentence ${_turnClock?.elapsedMilliseconds}ms');
       String? nextPath = _speakQueue.isNotEmpty
           ? await _voice.prefetchSpeech(_speakQueue.first)
           : null;
+      var firstAudio = true;
       while (_speakQueue.isNotEmpty) {
         final s = _speakQueue.removeAt(0);
         final path = nextPath;
+        if (firstAudio) {
+          firstAudio = false;
+          AppLog.add(
+              'latency', 'first audio ready ${_turnClock?.elapsedMilliseconds}ms');
+        }
         // Start synthesizing the NEXT sentence while THIS one plays.
         final Future<String?> upcoming = _speakQueue.isNotEmpty
             ? _voice.prefetchSpeech(_speakQueue.first)
@@ -318,6 +325,10 @@ class AssistantEngine extends ChangeNotifier {
     _setPhase(AssistantPhase.listening);
     HapticFeedback.mediumImpact();
 
+    // LATENCY TRACING: every stage of the turn is timed and written to the
+    // in-app log (Diagnostics screen), so a slow turn can be attributed to
+    // capture, upload or the server instead of guessed at.
+    _turnClock = Stopwatch()..start();
     final path = await _voice.recordUntilSilence(
       onLevel: (l) {
         micLevel = l;
@@ -325,27 +336,38 @@ class AssistantEngine extends ChangeNotifier {
       },
     );
     micLevel = 0;
+    AppLog.add('latency', 'capture ${_turnClock!.elapsedMilliseconds}ms');
 
     if (path == null) {
       if (_voice.lastRecordingCancelled) {
         _setPhase(AssistantPhase.idle);
         return;
       }
-      // The level-based recorder heard nothing — but on many phones that
-      // just means the amplitude meter is unreliable, not that the user
-      // was silent. FALL BACK to the on-device recognizer (it has its own
-      // native voice detection) instead of silently giving up, which is
-      // exactly how "I spoke and nothing happened" felt.
-      final heard = await _voice.captureQuestion(
-        onPartial: (p) {
-          partial = p;
-          notifyListeners();
-        },
-        onLevel: (l) {
-          micLevel = l;
-          notifyListeners();
-        },
-      );
+      // The recorder captured nothing above the noise floor. The clip is
+      // now uploaded whenever ANY sound was present, so reaching here means
+      // the room really was silent — go straight back to idle instead of
+      // starting a second, invisible listening session (that fallback was
+      // what left the UI stuck on "Listening…" for seconds and then claimed
+      // nothing was heard).
+      if (!_voice.lastRecordingHadSound) {
+        _setPhase(AssistantPhase.idle);
+        return;
+      }
+      // Recorded audio exists but couldn't be saved — try the on-device
+      // recognizer once, hard-bounded so the mic can never hang.
+      _setPhase(AssistantPhase.transcribing);
+      final heard = await _voice
+          .captureQuestion(
+            onPartial: (p) {
+              partial = p;
+              notifyListeners();
+            },
+            onLevel: (l) {
+              micLevel = l;
+              notifyListeners();
+            },
+          )
+          .timeout(const Duration(seconds: 6), onTimeout: () => '');
       micLevel = 0;
       partial = '';
       if (heard.trim().isEmpty) {
@@ -365,11 +387,18 @@ class AssistantEngine extends ChangeNotifier {
     try {
       final bytes = await File(path).readAsBytes();
       await _api.sendAudio(bytes);
+      AppLog.add(
+          'latency', 'uploaded ${_turnClock?.elapsedMilliseconds}ms '
+              '(${(bytes.length / 1024).round()}kB)');
       // Backend takes over: transcribing → thinking → … via SSE.
     } catch (_) {
       _setLocalError("I couldn't upload your audio. Check your connection.");
     }
   }
+
+  /// Times the current turn end-to-end (see the 'latency' entries in the
+  /// Diagnostics log): capture → upload → first sentence → first audio.
+  Stopwatch? _turnClock;
 
   /// Text fallback from the bottom input bar.
   Future<void> sendText(String text) async {

@@ -444,6 +444,13 @@ class VoiceService {
   /// uses this to decide whether to fall back to the device recognizer.
   bool get lastRecordingCancelled => _recCancelled;
 
+  bool _lastRecordingHadSound = false;
+
+  /// True if the last capture contained audio meaningfully above the noise
+  /// floor. When this is false the room really was silent, so re-running a
+  /// second recognizer session would only waste the user's time.
+  bool get lastRecordingHadSound => _lastRecordingHadSound;
+
   /// Records until the speaker goes quiet (or [maxSeconds]).
   /// Returns the file path, or null if nothing was said / cancelled.
   ///
@@ -454,12 +461,13 @@ class VoiceService {
   /// margin ABOVE that floor.
   Future<String?> recordUntilSilence({
     int maxSeconds = 15,
-    int noSpeechTimeoutMs = 6000,
+    int noSpeechTimeoutMs = 4000,
     void Function(double level)? onLevel, // 0..1 for UI animation
   }) async {
     try {
       if (!await _rec.hasPermission()) return null;
       _recCancelled = false;
+      _lastRecordingHadSound = false;
 
       final dir = await getTemporaryDirectory();
       final path =
@@ -487,19 +495,26 @@ class VoiceService {
         path: path,
       );
 
-      // --- calibrate the ambient noise floor (~450 ms) ---
+      // Wall-clock timing. The previous loop assumed each iteration took
+      // exactly 120 ms, but every iteration also awaited platform-channel
+      // calls costing ~35 ms each — so real elapsed time ran ~60% ahead of
+      // the counters and every timeout overshot badly. A Stopwatch measures
+      // what ACTUALLY elapsed.
+      final sw = Stopwatch()..start();
+
+      // --- calibrate the ambient noise floor (~300 ms) ---
       var floor = -50.0;
       var floorSamples = 0;
-      var totalMs = 0;
-      while (totalMs < 450) {
-        await Future.delayed(const Duration(milliseconds: 150));
-        totalMs += 150;
+      var peak = -160.0;
+      while (sw.elapsedMilliseconds < 300) {
+        await Future.delayed(const Duration(milliseconds: 100));
         if (_recCancelled) break;
         try {
           final db = (await _rec.getAmplitude()).current;
           if (db.isFinite && db > -120) {
             floor = floorSamples == 0 ? db : (floor * 0.6 + db * 0.4);
             floorSamples++;
+            if (db > peak) peak = db;
           }
         } catch (_) {}
       }
@@ -510,73 +525,115 @@ class VoiceService {
       // detecting me" bug. If the meter looks dead, skip VAD entirely:
       // record a fixed window and let the server's STT decide.
       if (floorSamples == 0 && !_recCancelled) {
-        var ms = 0;
-        while (ms < 7000 && !_recCancelled && await _rec.isRecording()) {
+        // Dead amplitude meter: skip VAD, record a short fixed window and
+        // let the server's STT decide. 7 s was far longer than a spoken
+        // question needs and felt like a hang; 3.5 s is plenty.
+        while (sw.elapsedMilliseconds < 3500 && !_recCancelled) {
           await Future.delayed(const Duration(milliseconds: 200));
-          ms += 200;
-          onLevel?.call(0.35 + 0.25 * ((ms ~/ 200) % 2)); // gentle pulse
+          onLevel?.call(0.35 + 0.25 * ((sw.elapsedMilliseconds ~/ 200) % 2));
         }
         final saved = await _rec.stop();
         if (_recCancelled) return null;
+        _lastRecordingHadSound = true;
         return saved ?? path;
       }
 
-      // Speech must rise 9 dB above the ambient floor (was 6 — too low, so
-      // background noise crossed it and the app "heard" noise). With
-      // hardware noise-suppression on, real speech clears this comfortably;
-      // clamp so we never demand louder than -22 dBFS nor accept quieter
-      // than -55.
-      final speechDb = (floor + 9.0).clamp(-55.0, -22.0);
-      final quietDb = speechDb - 5.0;
+      // Speech only needs to rise ~6 dB above the ambient floor. The old
+      // gate (+9 dB, hard-clamped to -22 dBFS) was unreachable on many
+      // phones: voiceCommunication + hardware noise suppression pull
+      // recorded speech down to roughly -30..-25 dBFS, so in a normal or
+      // noisy room the gate NEVER latched and the whole clip was discarded
+      // as "nothing heard". The start gate now only decides when to stop
+      // early — never whether the user spoke at all (see [peak] below).
+      //
+      // The speech gate must ALWAYS sit above the measured floor, and the
+      // quiet gate strictly between the floor and the speech gate. A plain
+      // clamp broke this: in a loud room (floor ≈ -30 dBFS) the clamp pinned
+      // the gates BELOW the floor, so ambient noise read as "speech" and the
+      // turn never ended. Deriving both from the floor keeps the ordering
+      // valid at any mic gain: floor < quiet < speech.
+      final speechDb = math.max(floor + 3.0, math.min(floor + 6.0, -28.0));
+      final quietDb = floor + math.max(1.5, (speechDb - floor) * 0.5);
 
       var started = false;
       var silentMs = 0;
-      // A single loud frame is usually a transient (a door, a clap, a cough)
-      // — real speech is sustained. Require ~270 ms of speech-level audio
-      // before we accept that the user has actually started talking. This is
-      // the main defence against background noise triggering a turn.
+      // Real speech is sustained; a single loud frame is a transient (a
+      // door, a clap). ~180 ms of speech-level audio accepts a natural
+      // syllable while still rejecting thumps.
       var voicedMs = 0;
-      const startVoicedMs = 270;
+      const startVoicedMs = 180;
+      var lastMs = sw.elapsedMilliseconds;
+      // Timestamp of the last frame that was clearly speech. Frames that
+      // hover in the dead zone (neither speech nor clearly quiet) do not
+      // refresh it, so a turn ALWAYS ends even if the level never drops
+      // cleanly below the quiet gate — the mic can never hang.
+      var lastVoicedAt = sw.elapsedMilliseconds;
 
-      while (totalMs < maxSeconds * 1000) {
-        await Future.delayed(const Duration(milliseconds: 120));
-        totalMs += 120;
-        if (_recCancelled || !await _rec.isRecording()) break;
+      while (sw.elapsedMilliseconds < maxSeconds * 1000) {
+        await Future.delayed(const Duration(milliseconds: 90));
+        if (_recCancelled) break;
 
         double db;
         try {
+          // Only ONE platform call per iteration now — the old loop also
+          // awaited isRecording() every tick, roughly doubling the cost of
+          // the loop and stretching every timeout.
           db = (await _rec.getAmplitude()).current;
         } catch (_) {
           continue;
         }
+        // Measure the REAL time this iteration took, so the silence and
+        // timeout windows below are true milliseconds.
+        final now = sw.elapsedMilliseconds;
+        final dt = (now - lastMs).clamp(1, 1000);
+        lastMs = now;
+
+        if (!db.isFinite) continue;
+        if (db > peak) peak = db;
         // Map roughly floor..0 dBFS to 0..1 for the orb animation.
         onLevel?.call(((db - floor) / (0 - floor)).clamp(0.0, 1.0));
 
+        // Belt-and-braces: once the user has started, never keep the mic
+        // open more than 700 ms past their last clearly-voiced frame.
+        if (started && now - lastVoicedAt >= 700) break;
+
         if (db > speechDb) {
-          voicedMs += 120;
+          voicedMs += dt;
           if (voicedMs >= startVoicedMs) started = true;
+          lastVoicedAt = now;
           silentMs = 0;
         } else if (db < quietDb) {
           voicedMs = 0;
-          silentMs += 120;
-          // No sustained speech within the window -> give up quietly.
-          if (!started && totalMs >= noSpeechTimeoutMs) break;
-          // Finished talking: end fast after 500 ms of silence for snappy
-          // turn-taking. Natural mid-sentence pauses are shorter than this,
-          // so we don't cut people off mid-thought. (Tuned down from 650 ms
-          // — raise it again if trailing words ever get clipped.)
-          if (started && silentMs >= 500) break;
+          silentMs += dt;
+          // No sustained speech within the window -> stop waiting. 4 s of
+          // true silence (was 6 s, which itself overshot to ~9 s of real
+          // time because of the miscounted loop).
+          if (!started && now >= noSpeechTimeoutMs) break;
+          // Finished talking: end after 380 ms of real silence. Natural
+          // mid-sentence pauses are shorter, so we don't clip mid-thought.
+          if (started && silentMs >= 380) break;
         } else {
-          // Dead zone between quiet and speech: decay the voiced counter so
-          // a slow fade doesn't latch "started"; still honour the no-speech
-          // timeout so the mic can't hang for maxSeconds.
-          voicedMs = (voicedMs - 60).clamp(0, startVoicedMs).toInt();
-          if (!started && totalMs >= noSpeechTimeoutMs) break;
+          // Dead zone: decay the voiced counter so a slow fade doesn't latch
+          // "started"; still honour the no-speech timeout.
+          voicedMs = (voicedMs - dt ~/ 2).clamp(0, startVoicedMs).toInt();
+          if (!started && now >= noSpeechTimeoutMs) break;
         }
       }
 
       final saved = await _rec.stop();
-      if (_recCancelled || !started) return null;
+      if (_recCancelled) return null;
+
+      // THE IMPORTANT FIX: never throw away a recording just because the
+      // level gate didn't latch. If ANY sound rose meaningfully above the
+      // noise floor, upload it and let the server's STT be the judge — it
+      // is vastly better at recognising quiet or accented speech than a
+      // dB meter is, and it already returns a friendly "couldn't hear
+      // that" when a clip really is empty. Previously a missed gate meant
+      // the clip was binned AND a second listening session was started,
+      // which is what made the app sit on "Listening…" and then claim it
+      // heard nothing.
+      _lastRecordingHadSound = started || peak >= floor + 4.0;
+      if (!_lastRecordingHadSound) return null;
       return saved ?? path;
     } catch (_) {
       try {
