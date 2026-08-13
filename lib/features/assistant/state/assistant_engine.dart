@@ -84,8 +84,11 @@ class AssistantEngine extends ChangeNotifier {
     });
   }
 
-  Future<void> _endBargeWatch() async {
-    if (!_bargeMonitorOn) return;
+  /// Stops the barge-in monitor. Returns true if the user interrupted and a
+  /// fresh capture was therefore started — the caller must NOT then also
+  /// re-open the mic via the continuous-conversation loop.
+  Future<bool> _endBargeWatch() async {
+    if (!_bargeMonitorOn) return false;
     _bargeMonitorOn = false;
     await _voice.stopBargeInMonitor(); // frees the mic for a new capture
     if (_bargedIn) {
@@ -93,7 +96,9 @@ class AssistantEngine extends ChangeNotifier {
       // The user interrupted — start listening for their new question at
       // once (fire-and-forget so we don't nest inside the speak finally).
       Future.microtask(pressMic);
+      return true;
     }
+    return false;
   }
 
   /// Speaks [text] with the phase machine wrapped around the audio:
@@ -119,7 +124,10 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed, silent: true);
       }
       notifyListeners();
-      await _endBargeWatch();
+      // If the user barged in, a capture is already starting — don't also
+      // re-open the mic from the continuous loop.
+      final resumed = await _endBargeWatch();
+      if (!resumed) _maybeContinueListening();
     }
   }
 
@@ -197,7 +205,10 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed, silent: true);
       }
       notifyListeners();
-      await _endBargeWatch();
+      // If the user barged in, a capture is already starting — don't also
+      // re-open the mic from the continuous loop.
+      final resumed = await _endBargeWatch();
+      if (!resumed) _maybeContinueListening();
     }
   }
 
@@ -238,6 +249,9 @@ class AssistantEngine extends ChangeNotifier {
   /// A call started/rang — cut all audio and the mic immediately.
   Future<void> _onPhoneCallActive() async {
     _bargedIn = false;
+    // A real phone call always wins: close the continuous loop so the mic
+    // can never reopen itself mid-call.
+    _conversationEnded = true;
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
       try {
@@ -297,10 +311,22 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Mic button: record until silence, then hand the clip to the backend
   /// (STT + the whole turn run server-side; results stream back).
-  Future<void> pressMic() async {
+  ///
+  /// [auto] is true when the continuous-conversation loop re-opened the mic
+  /// by itself; a manual press always (re)starts a conversation.
+  Future<void> pressMic({bool auto = false}) async {
+    if (!auto) {
+      // An explicit tap means "I want to talk" — revive a conversation that
+      // had been closed by a goodbye or by silence.
+      _conversationEnded = false;
+      _silentTurns = 0;
+    }
     if (phase == AssistantPhase.listening) {
       // Tap while listening = cancel this capture (both the recorder
       // and the device-recognizer fallback honour this).
+      // An explicit cancel also closes the conversation loop, so the mic
+      // doesn't immediately reopen against the user's wishes.
+      _conversationEnded = true;
       _voice.stopSpeaking();
       _speakQueue.clear();
       await _voice.cancelCapture();
@@ -350,7 +376,12 @@ class AssistantEngine extends ChangeNotifier {
       // what left the UI stuck on "Listening…" for seconds and then claimed
       // nothing was heard).
       if (!_voice.lastRecordingHadSound) {
+        // Nothing was said. In a continuous conversation this is normal
+        // (a pause after Hari's reply), so listen again — up to the
+        // two-strike limit enforced in _maybeContinueListening.
+        _silentTurns++;
         _setPhase(AssistantPhase.idle);
+        _maybeContinueListening();
         return;
       }
       // Recorded audio exists but couldn't be saved — try the on-device
@@ -384,6 +415,7 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
     _setPhase(AssistantPhase.transcribing);
+    _silentTurns = 0; // real speech captured — reset the walked-away counter
     try {
       final bytes = await File(path).readAsBytes();
       await _api.sendAudio(bytes);
@@ -400,11 +432,92 @@ class AssistantEngine extends ChangeNotifier {
   /// Diagnostics log): capture → upload → first sentence → first audio.
   Stopwatch? _turnClock;
 
+  // ---------------- CONTINUOUS CONVERSATION ----------------
+  // Hari keeps the conversation going: after she finishes speaking she
+  // listens again automatically, so it feels like a phone call instead of
+  // a walkie-talkie. The loop ends when the user says goodbye, taps to
+  // cancel, or twice says nothing at all.
+
+  /// Set false to go back to tap-to-talk for every turn.
+  bool continuousConversation = true;
+
+  bool _conversationEnded = false;
+  int _silentTurns = 0;
+
+  /// True while Hari will re-open the mic on her own after replying.
+  bool get conversationActive =>
+      continuousConversation && !_conversationEnded;
+
+  /// Phrases that close the conversation. Deliberately conservative: the
+  /// phrase must END the utterance (allowing trailing filler like "then",
+  /// "thanks", "for now") and the utterance must be short. That way "see
+  /// you at the clinic tomorrow" or "that's all right, continue" keep the
+  /// conversation going, while "okay goodbye" ends it.
+  static final RegExp _farewellRx = RegExp(
+    r"\b(bye|bye bye|goodbye|good bye|good night|goodnight|see you|see ya|"
+    r"talk (to you )?later|catch you later|that'?s all|thats all|that'?s it|"
+    r"nothing else|no more questions|i'?m done|we'?re done|stop listening|"
+    r"stop it|that will be all)"
+    r"(?:\s+(hari|harry|then|now|dear|ok|okay|thanks|thank you|please|bye|"
+    r"later|for now))*\s*$",
+    caseSensitive: false,
+  );
+
+  /// Farewells in the other languages Hari speaks.
+  static final RegExp _farewellNativeRx = RegExp(
+    r"अलविदा|फिर मिलेंगे|बाय|बस इतना|ಬೈ|ಸಾಕು|ಹೋಗ್ತೀನಿ|ಮುಗಿಯಿತು|"
+    r"போதும்|பிறகு பார்க்கலாம்|సరిపోతుంది|వెళ్తాను",
+  );
+
+  static bool isFarewell(String text) {
+    var t = text.trim().toLowerCase();
+    t = t.replaceAll(RegExp(r'[.!?,;।]+$'), '').trim();
+    if (t.isEmpty) return false;
+    // Sign-offs are short; a long sentence that merely contains "see you"
+    // is not the user ending the conversation.
+    if (t.split(RegExp(r'\s+')).length > 8) return false;
+    return _farewellRx.hasMatch(t) || _farewellNativeRx.hasMatch(t);
+  }
+
+  /// Called when a reply has finished being spoken. Re-opens the mic unless
+  /// something else legitimately owns the turn.
+  void _maybeContinueListening() {
+    if (!conversationActive) return;
+    // A barge-in already schedules its own capture — don't double-start.
+    if (_bargedIn || _bargeMonitorOn) return;
+    if (PhoneStateGuard.instance.inCall) return;
+    // These are waiting on the USER to tap something; don't talk over them.
+    if (pendingConfirmation != null ||
+        ambiguousContacts.isNotEmpty ||
+        phase == AssistantPhase.error ||
+        phase == AssistantPhase.listening ||
+        phase == AssistantPhase.inCall) return;
+    // Two silent turns in a row: they've walked away. Stop the mic rather
+    // than listening to an empty room forever.
+    if (_silentTurns >= 2) {
+      _conversationEnded = true;
+      notifyListeners();
+      return;
+    }
+    // A brief settle lets the audio device release the speaker before the
+    // mic reopens (prevents the tail of Hari's own voice being captured).
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (!conversationActive) return;
+      if (phase == AssistantPhase.listening || phase.busy) return;
+      if (pendingConfirmation != null || ambiguousContacts.isNotEmpty) return;
+      pressMic(auto: true);
+    });
+  }
+
   /// Text fallback from the bottom input bar.
   Future<void> sendText(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
     await _voice.stopSpeaking();
+    // Typing is an explicit "I'm here" — revive the loop, but respect a
+    // typed goodbye the same way a spoken one is respected.
+    _conversationEnded = isFarewell(t);
+    _silentTurns = 0;
     _resetTurn();
     _setPhase(AssistantPhase.thinking);
     try {
@@ -449,6 +562,7 @@ class AssistantEngine extends ChangeNotifier {
   /// Cancel whatever is in flight.
   Future<void> cancelAction() async {
     _bargedIn = false; // an explicit cancel is not a barge-in
+    _conversationEnded = true; // and it closes the continuous loop
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
       await _voice.stopBargeInMonitor();
@@ -494,7 +608,11 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'user_transcript':
         partial = '';
-        transcript.add(TranscriptEntry(TranscriptRole.user, e['text'] as String? ?? ''));
+        final said = e['text'] as String? ?? '';
+        transcript.add(TranscriptEntry(TranscriptRole.user, said));
+        // A goodbye closes the continuous loop: Hari still answers this
+        // turn (so she can say goodbye back), but won't reopen the mic.
+        if (isFarewell(said)) _conversationEnded = true;
         break;
 
       case 'assistant_sentence':

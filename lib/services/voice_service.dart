@@ -503,6 +503,13 @@ class VoiceService {
       final sw = Stopwatch()..start();
 
       // --- calibrate the ambient noise floor (~300 ms) ---
+      // Use the MINIMUM level seen, not a running average. People very often
+      // start talking the instant they tap the mic, and averaging folded
+      // their voice into the "floor" — which pushed the gates above their
+      // actual speech, so the turn never latched and a truncated clip got
+      // sent (transcribing to nothing: "I couldn't hear that clearly").
+      // The quietest moment in the window is a far better floor estimate,
+      // and it keeps adapting downward during the loop below.
       var floor = -50.0;
       var floorSamples = 0;
       var peak = -160.0;
@@ -512,7 +519,7 @@ class VoiceService {
         try {
           final db = (await _rec.getAmplitude()).current;
           if (db.isFinite && db > -120) {
-            floor = floorSamples == 0 ? db : (floor * 0.6 + db * 0.4);
+            floor = floorSamples == 0 ? db : math.min(floor, db);
             floorSamples++;
             if (db > peak) peak = db;
           }
@@ -538,23 +545,6 @@ class VoiceService {
         return saved ?? path;
       }
 
-      // Speech only needs to rise ~6 dB above the ambient floor. The old
-      // gate (+9 dB, hard-clamped to -22 dBFS) was unreachable on many
-      // phones: voiceCommunication + hardware noise suppression pull
-      // recorded speech down to roughly -30..-25 dBFS, so in a normal or
-      // noisy room the gate NEVER latched and the whole clip was discarded
-      // as "nothing heard". The start gate now only decides when to stop
-      // early — never whether the user spoke at all (see [peak] below).
-      //
-      // The speech gate must ALWAYS sit above the measured floor, and the
-      // quiet gate strictly between the floor and the speech gate. A plain
-      // clamp broke this: in a loud room (floor ≈ -30 dBFS) the clamp pinned
-      // the gates BELOW the floor, so ambient noise read as "speech" and the
-      // turn never ended. Deriving both from the floor keeps the ordering
-      // valid at any mic gain: floor < quiet < speech.
-      final speechDb = math.max(floor + 3.0, math.min(floor + 6.0, -28.0));
-      final quietDb = floor + math.max(1.5, (speechDb - floor) * 0.5);
-
       var started = false;
       var silentMs = 0;
       // Real speech is sustained; a single loud frame is a transient (a
@@ -568,6 +558,11 @@ class VoiceService {
       // refresh it, so a turn ALWAYS ends even if the level never drops
       // cleanly below the quiet gate — the mic can never hang.
       var lastVoicedAt = sw.elapsedMilliseconds;
+      // Never send a clip shorter than this. A very short fragment ("Wha…")
+      // transcribes to nothing, which the server reports as "I couldn't
+      // hear that clearly" — the failure mode for quick questions like
+      // "what is your name".
+      const minCaptureMs = 900;
 
       while (sw.elapsedMilliseconds < maxSeconds * 1000) {
         await Future.delayed(const Duration(milliseconds: 90));
@@ -590,12 +585,32 @@ class VoiceService {
 
         if (!db.isFinite) continue;
         if (db > peak) peak = db;
+        // Keep tracking a FALLING noise floor: if calibration happened to
+        // catch the user's voice, the floor corrects itself as soon as they
+        // pause, and the gates below follow it down.
+        if (db < floor) floor = floor * 0.7 + db * 0.3;
+
+        // Gates are recomputed from the current floor so they stay valid as
+        // it adapts. Ordering always holds: floor < quiet < speech.
+        final speechDb = math.max(floor + 3.0, math.min(floor + 6.0, -28.0));
+        final quietDb = floor + math.max(1.5, (speechDb - floor) * 0.5);
+
         // Map roughly floor..0 dBFS to 0..1 for the orb animation.
         onLevel?.call(((db - floor) / (0 - floor)).clamp(0.0, 1.0));
 
+        // RETROACTIVE LATCH: if the user began talking before/during
+        // calibration, no frame ever cleared the (initially too-high) gate.
+        // Once the floor corrects itself downward, a peak well above it is
+        // proof they already spoke — latch now so the normal end-of-speech
+        // rule applies, instead of sitting out the full no-speech timeout.
+        if (!started && peak >= floor + 8.0 && now >= minCaptureMs) {
+          started = true;
+          lastVoicedAt = now;
+        }
+
         // Belt-and-braces: once the user has started, never keep the mic
-        // open more than 700 ms past their last clearly-voiced frame.
-        if (started && now - lastVoicedAt >= 700) break;
+        // open more than 800 ms past their last clearly-voiced frame.
+        if (started && now >= minCaptureMs && now - lastVoicedAt >= 800) break;
 
         if (db > speechDb) {
           voicedMs += dt;
@@ -609,9 +624,10 @@ class VoiceService {
           // true silence (was 6 s, which itself overshot to ~9 s of real
           // time because of the miscounted loop).
           if (!started && now >= noSpeechTimeoutMs) break;
-          // Finished talking: end after 380 ms of real silence. Natural
-          // mid-sentence pauses are shorter, so we don't clip mid-thought.
-          if (started && silentMs >= 380) break;
+          // Finished talking: end after 450 ms of real silence, but never
+          // before minCaptureMs — short questions have word gaps that would
+          // otherwise cut the clip into a meaningless fragment.
+          if (started && now >= minCaptureMs && silentMs >= 450) break;
         } else {
           // Dead zone: decay the voiced counter so a slow fade doesn't latch
           // "started"; still honour the no-speech timeout.
