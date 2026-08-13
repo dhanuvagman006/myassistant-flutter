@@ -620,10 +620,15 @@ class VoiceService {
         } else if (db < quietDb) {
           voicedMs = 0;
           silentMs += dt;
-          // No sustained speech within the window -> stop waiting. 4 s of
-          // true silence (was 6 s, which itself overshot to ~9 s of real
-          // time because of the miscounted loop).
+          // No sustained speech within the window -> stop waiting.
           if (!started && now >= noSpeechTimeoutMs) break;
+          // HEARD SOMETHING, BUT THE GATE NEVER LATCHED (e.g. calibration
+          // caught the user's voice, so the thresholds sat too high). The
+          // clip is worth sending, and sitting on an open mic for the full
+          // no-speech timeout is exactly the "it kept listening after I
+          // stopped" complaint. Once it has been quiet for ~700 ms and we
+          // did hear sound, end the turn.
+          if (!started && peak >= floor + 4.0 && silentMs >= 700) break;
           // Finished talking: end after 450 ms of real silence, but never
           // before minCaptureMs — short questions have word gaps that would
           // otherwise cut the clip into a meaningless fragment.
