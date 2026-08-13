@@ -384,13 +384,16 @@ class VoiceService {
         cancelOnError: true,
       ),
       listenFor: const Duration(seconds: 16),
-      pauseFor: const Duration(milliseconds: 2200),
+      // End-of-speech for the fallback recognizer. Trimmed from 2200 ms so a
+      // turn ends promptly when this path is used (some devices whose
+      // amplitude meter is unreliable fall back here).
+      pauseFor: const Duration(milliseconds: 1400),
     );
 
     // Finish the moment the recognizer session actually ends, so the UI
     // never shows "listening" while the mic is already off.
     void finishSoon() {
-      Timer(const Duration(milliseconds: 350), () {
+      Timer(const Duration(milliseconds: 250), () {
         if (!completer.isCompleted) completer.complete(last.trim());
       });
     }
@@ -558,10 +561,11 @@ class VoiceService {
           silentMs += 120;
           // No sustained speech within the window -> give up quietly.
           if (!started && totalMs >= noSpeechTimeoutMs) break;
-          // Finished talking: end fast after 650 ms of silence for snappy
+          // Finished talking: end fast after 500 ms of silence for snappy
           // turn-taking. Natural mid-sentence pauses are shorter than this,
-          // so we don't cut people off mid-thought.
-          if (started && silentMs >= 650) break;
+          // so we don't cut people off mid-thought. (Tuned down from 650 ms
+          // — raise it again if trailing words ever get clipped.)
+          if (started && silentMs >= 500) break;
         } else {
           // Dead zone between quiet and speech: decay the voiced counter so
           // a slow fade doesn't latch "started"; still honour the no-speech
@@ -623,13 +627,25 @@ class VoiceService {
     await _speakLocal(say);
   }
 
-  /// Plays [say] with the cloud neural voice. Returns false (without
-  /// speaking) if synthesis or playback fails, so the caller can fall back.
-  Future<bool> _speakCloud(String say) async {
+  /// Synthesizes [say] to a temp WAV via the cloud neural voice. Returns the
+  /// file path, or null if synthesis failed / is disabled. Does NOT play —
+  /// so the caller can synthesize the NEXT sentence while the current one is
+  /// still playing (see [prefetchSpeech] / [AssistantEngine] pipelining).
+  Future<String?> _synthCloud(String say) async {
     try {
       final iso = _langIso(say);
-      final path = await ApiService.synthesizeSpeech(say, language: iso);
-      if (path == null) return false;
+      return await ApiService.synthesizeSpeech(say, language: iso);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Plays an already-synthesized cloud WAV at [path], driving the avatar
+  /// mouth and honouring barge-in/stop. Deletes the temp file when done.
+  /// Returns false (leaving no audio playing) if playback fails, so the
+  /// caller can fall back to the on-device voice.
+  Future<bool> _playCloudFile(String path) async {
+    try {
       // Stop any lingering local/cloud audio before the new utterance.
       try {
         await _tts.stop();
@@ -676,8 +692,63 @@ class VoiceService {
     } catch (_) {
       isSpeaking.value = false;
       ttsLevel.value = 0;
+      try {
+        File(path).delete().ignore();
+      } catch (_) {}
       return false;
     }
+  }
+
+  /// Plays [say] with the cloud neural voice. Returns false (without
+  /// speaking) if synthesis or playback fails, so the caller can fall back.
+  Future<bool> _speakCloud(String say) async {
+    final path = await _synthCloud(say);
+    if (path == null) return false;
+    return _playCloudFile(path);
+  }
+
+  /// Pre-synthesizes cloud audio for [text] so playback can begin the instant
+  /// it's this sentence's turn. Pipelining the NEXT sentence's synthesis while
+  /// the current one plays removes the multi-second gap that used to fall
+  /// before EVERY spoken sentence. Returns a playable file path, or null when
+  /// the cloud voice is unavailable (caller should fall back to [speak]).
+  Future<String?> prefetchSpeech(String text) async {
+    if (!cloudVoiceEnabled || _cloudInCooldown) return null;
+    if (PhoneStateGuard.instance.inCall) return null;
+    final say = sanitizeForSpeech(text);
+    if (say.isEmpty) return null;
+    return _synthCloud(say);
+  }
+
+  /// Speaks [text], using [prefetchedPath] if one was prepared by
+  /// [prefetchSpeech] (instant playback — no synthesis wait). Falls back to
+  /// normal synthesis / the on-device voice exactly like [speak] when no
+  /// prefetch is available or playback fails.
+  Future<void> speakPrefetched(String text, String? prefetchedPath) async {
+    if (PhoneStateGuard.instance.inCall) {
+      if (prefetchedPath != null) discardPrefetched(prefetchedPath);
+      return;
+    }
+    if (prefetchedPath == null) {
+      await speak(text);
+      return;
+    }
+    final ok = await _playCloudFile(prefetchedPath);
+    if (ok) {
+      _cloudVoiceFailedAt = null; // cloud voice reachable
+      return;
+    }
+    // Playback of the prefetched clip failed — read this sentence with the
+    // on-device voice rather than dropping it.
+    await _speakLocal(sanitizeForSpeech(text));
+  }
+
+  /// Deletes an unplayed prefetched clip (barge-in / cancel cleanup) so temp
+  /// WAVs don't pile up when a reply is cut short.
+  void discardPrefetched(String path) {
+    try {
+      File(path).delete().ignore();
+    } catch (_) {}
   }
 
   /// The on-device engine (offline / fallback path).

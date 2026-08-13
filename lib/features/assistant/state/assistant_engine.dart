@@ -159,12 +159,29 @@ class AssistantEngine extends ChangeNotifier {
 
     _voice.ttsLevel.addListener(feed);
     _beginBargeWatch();
+    String? pendingPath;
     try {
+      // PIPELINE: keep one sentence's synthesis running AHEAD of playback so
+      // there's no synthesis gap between spoken sentences. We pre-synthesize
+      // the first, then while each sentence plays we synthesize the next.
+      String? nextPath = _speakQueue.isNotEmpty
+          ? await _voice.prefetchSpeech(_speakQueue.first)
+          : null;
       while (_speakQueue.isNotEmpty) {
         final s = _speakQueue.removeAt(0);
-        await _voice.speak(s);
+        final path = nextPath;
+        // Start synthesizing the NEXT sentence while THIS one plays.
+        final Future<String?> upcoming = _speakQueue.isNotEmpty
+            ? _voice.prefetchSpeech(_speakQueue.first)
+            : Future<String?>.value(null);
+        await _voice.speakPrefetched(s, path);
+        nextPath = await upcoming;
       }
+      // A barge-in / cancel can drain the queue mid-flight; drop any
+      // prefetched-but-unplayed audio so temp files don't accumulate.
+      pendingPath = nextPath;
     } finally {
+      if (pendingPath != null) _voice.discardPrefetched(pendingPath);
       _voice.ttsLevel.removeListener(feed);
       micLevel = 0;
       _draining = false;
