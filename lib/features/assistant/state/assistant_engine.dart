@@ -64,6 +64,36 @@ class AssistantEngine extends ChangeNotifier {
 
   Timer? _stuckWatchdog;
 
+  // ---------------- BARGE-IN (talk over Hari to interrupt) ----------------
+  // The mic-monitor lives in VoiceService; the engine turns it on while any
+  // reply is being spoken. If the user talks over Hari, we stop the reply
+  // and immediately capture what they're saying as the next turn — no tap.
+  bool _bargeMonitorOn = false;
+  bool _bargedIn = false;
+
+  void _beginBargeWatch() {
+    if (_bargeMonitorOn) return;
+    _bargedIn = false;
+    _bargeMonitorOn = true;
+    _voice.startBargeInMonitor(() {
+      _bargedIn = true;
+      _voice.stopSpeaking(); // cut the current sentence mid-word
+      _speakQueue.clear(); // drop the rest of the reply
+    });
+  }
+
+  Future<void> _endBargeWatch() async {
+    if (!_bargeMonitorOn) return;
+    _bargeMonitorOn = false;
+    await _voice.stopBargeInMonitor(); // frees the mic for a new capture
+    if (_bargedIn) {
+      _bargedIn = false;
+      // The user interrupted — start listening for their new question at
+      // once (fire-and-forget so we don't nest inside the speak finally).
+      Future.microtask(pressMic);
+    }
+  }
+
   /// Speaks [text] with the phase machine wrapped around the audio:
   /// speaking while the voice plays, completed when it ends.
   Future<void> _speakReply(String text) async {
@@ -76,6 +106,7 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     _voice.ttsLevel.addListener(feed);
+    _beginBargeWatch();
     try {
       await _voice.speak(text); // awaits completion (awaitSpeakCompletion)
     } finally {
@@ -86,6 +117,7 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed, silent: true);
       }
       notifyListeners();
+      await _endBargeWatch();
     }
   }
 
@@ -124,6 +156,7 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     _voice.ttsLevel.addListener(feed);
+    _beginBargeWatch();
     try {
       while (_speakQueue.isNotEmpty) {
         final s = _speakQueue.removeAt(0);
@@ -138,6 +171,7 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed, silent: true);
       }
       notifyListeners();
+      await _endBargeWatch();
     }
   }
 
@@ -211,6 +245,13 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
     if (phase.busy && phase != AssistantPhase.completed) return;
+    // Safety: never let a still-running barge monitor hold the mic while we
+    // try to record a fresh clip.
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      _bargedIn = false;
+      await _voice.stopBargeInMonitor();
+    }
     await _voice.stopSpeaking();
 
     if (!await _voice.canRecord()) {
@@ -323,6 +364,12 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Cancel whatever is in flight.
   Future<void> cancelAction() async {
+    _bargedIn = false; // an explicit cancel is not a barge-in
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      await _voice.stopBargeInMonitor();
+    }
+    _speakQueue.clear();
     _voice.stopSpeaking();
     try {
       await _api.cancel();
