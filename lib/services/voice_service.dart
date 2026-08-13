@@ -416,10 +416,16 @@ class VoiceService {
 
   Future<void> cancelCapture() async {
     if (_stt.isListening) await _stt.stop();
-    if (await _rec.isRecording()) {
-      _recCancelled = true;
-      await _rec.stop();
-    }
+    try {
+      if (await _rec.isRecording()) {
+        _recCancelled = true;
+        // Stopping a MediaRecorder within the first frames triggers the
+        // native "Stop() called but track is not started" — give the
+        // pipeline a beat to write its first samples before stopping.
+        await Future.delayed(const Duration(milliseconds: 120));
+        if (await _rec.isRecording()) await _rec.stop();
+      }
+    } catch (_) {}
   }
 
   // ---------------- RECORD FOR CLOUD STT (Whisper) ----------------
@@ -863,6 +869,15 @@ class VoiceService {
 
   /// Begins listening for a barge-in. Safe to call repeatedly; best-effort
   /// (silently does nothing if the mic can't be opened alongside playback).
+  ///
+  /// Implementation note: this used to record an .m4a file it never read
+  /// (only the amplitude meter was used). On budget devices that churned
+  /// the hardware AAC encoder every reply and produced the native errors
+  ///   E/MPEG4Writer: Stop() called but track is not started
+  ///   Failed to query component interface for required system resources
+  /// A raw PCM stream needs no encoder, no muxer and no file — the level is
+  /// computed here from the samples — so those errors cannot occur, and the
+  /// codec stays free for TTS playback.
   Future<void> startBargeInMonitor(void Function() onBargeIn) async {
     if (_monitoring) return;
     _bargedIn = false;
@@ -871,56 +886,54 @@ class VoiceService {
       if (await _rec.isRecording()) return; // capture in progress — skip
       _monitoring = true;
 
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/hari_monitor.m4a';
-      await _rec.start(
+      final stream = await _rec.startStream(
         const RecordConfig(
-          encoder: AudioEncoder.aacLc,
+          encoder: AudioEncoder.pcm16bits,
           sampleRate: 16000,
           numChannels: 1,
-          bitRate: 32000,
           echoCancel: true, // cancel Hari's own voice from the mic
           noiseSuppress: true,
           androidConfig: AndroidRecordConfig(
             audioSource: AndroidAudioSource.voiceCommunication,
           ),
         ),
-        path: path,
       );
 
-      // Calibrate the residual-echo/ambient floor over ~500 ms, then watch
-      // for the user's voice rising clearly and steadily above it.
+      // Calibrate the residual-echo/ambient floor over the first chunks,
+      // then watch for the user's voice rising clearly and steadily above
+      // it. Levels come straight from the PCM samples (RMS -> dBFS).
       var baseline = -50.0;
       var calib = 0;
       var loudMs = 0;
-      _monitorTimer = Timer.periodic(
-        const Duration(milliseconds: 120),
-        (t) async {
-          if (!_monitoring) {
-            t.cancel();
-            return;
-          }
-          double db;
-          try {
-            db = (await _rec.getAmplitude()).current;
-          } catch (_) {
-            return;
-          }
-          if (!db.isFinite) return;
-          if (calib < 4) {
-            baseline = calib == 0 ? db : (baseline * 0.6 + db * 0.4);
-            calib++;
-            return;
-          }
-          // User speaking OVER Hari: well above the echo floor AND above an
-          // absolute gate (so quiet room tone never triggers).
-          if (db > baseline + 12 && db > -38) {
-            loudMs += 120;
-            if (loudMs >= 300) {
-              // ~300 ms of real talk-over — treat as an interrupt.
-              _bargedIn = true;
-              _monitoring = false;
-              t.cancel();
+      var lastChunkAt = DateTime.now();
+      _monitorSub = stream.listen((chunk) {
+        if (!_monitoring) return;
+        final now = DateTime.now();
+        final dt =
+            now.difference(lastChunkAt).inMilliseconds.clamp(1, 500).toInt();
+        lastChunkAt = now;
+
+        final db = _pcmDb(chunk);
+        if (!db.isFinite) return;
+        if (calib < 4) {
+          baseline = calib == 0 ? db : (baseline * 0.6 + db * 0.4);
+          calib++;
+          return;
+        }
+        // User speaking OVER Hari: well above the echo floor AND above an
+        // absolute gate (so quiet room tone never triggers).
+        if (db > baseline + 12 && db > -38) {
+          loudMs += dt;
+          if (loudMs >= 300) {
+            // ~300 ms of real talk-over — treat as an interrupt.
+            _bargedIn = true;
+            _monitoring = false;
+            _monitorSub?.cancel();
+            _monitorSub = null;
+            () async {
+              try {
+                if (await _rec.isRecording()) await _rec.stop();
+              } catch (_) {}
               try {
                 await _player.stop();
               } catch (_) {}
@@ -928,15 +941,36 @@ class VoiceService {
                 await _tts.stop();
               } catch (_) {}
               onBargeIn();
-            }
-          } else {
-            loudMs = (loudMs - 120).clamp(0, 100000).toInt();
+            }();
           }
-        },
-      );
+        } else {
+          loudMs = (loudMs - dt).clamp(0, 100000).toInt();
+        }
+      }, onError: (_) {
+        _monitoring = false;
+      });
     } catch (_) {
       _monitoring = false;
     }
+  }
+
+  StreamSubscription<List<int>>? _monitorSub;
+
+  /// dBFS of a 16-bit little-endian PCM chunk (RMS).
+  static double _pcmDb(List<int> chunk) {
+    if (chunk.length < 2) return double.negativeInfinity;
+    var sum = 0.0;
+    var n = 0;
+    for (var i = 0; i + 1 < chunk.length; i += 2) {
+      var s = chunk[i] | (chunk[i + 1] << 8);
+      if (s >= 0x8000) s -= 0x10000; // sign-extend
+      sum += (s * s).toDouble();
+      n++;
+    }
+    if (n == 0) return double.negativeInfinity;
+    final rms = math.sqrt(sum / n);
+    if (rms <= 0) return -120.0;
+    return 20 * math.log(rms / 32768.0) / math.ln10;
   }
 
   /// Stops the barge-in monitor and releases the mic (so a capture can
@@ -945,6 +979,8 @@ class VoiceService {
     _monitoring = false;
     _monitorTimer?.cancel();
     _monitorTimer = null;
+    await _monitorSub?.cancel();
+    _monitorSub = null;
     try {
       if (await _rec.isRecording()) await _rec.stop();
     } catch (_) {}

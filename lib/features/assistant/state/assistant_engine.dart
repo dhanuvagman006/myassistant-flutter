@@ -425,6 +425,11 @@ class AssistantEngine extends ChangeNotifier {
     _silentTurns = 0; // real speech captured — reset the walked-away counter
     try {
       final bytes = await File(path).readAsBytes();
+      // Keep the clip: if the server's speech service hits a transient blip
+      // (503 "high demand", timeout), we resend this exact audio once
+      // instead of making the user repeat themselves.
+      _lastAudioBytes = bytes;
+      _audioResent = false;
       await _api.sendAudio(bytes);
       AppLog.add(
           'latency', 'uploaded ${_turnClock?.elapsedMilliseconds}ms '
@@ -454,6 +459,12 @@ class AssistantEngine extends ChangeNotifier {
   /// Consecutive turns that produced no transcript. Guards against the loop
   /// re-listening forever into a broken speech service.
   int _failedTurns = 0;
+
+  /// The last uploaded mic clip, kept so a transient server-side STT
+  /// failure can be retried with the SAME audio — the user shouldn't have
+  /// to repeat themselves because Google's endpoint had a load spike.
+  List<int>? _lastAudioBytes;
+  bool _audioResent = false;
 
   /// True while Hari will re-open the mic on her own after replying.
   bool get conversationActive =>
@@ -738,17 +749,34 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'transcript_failed':
         // The turn produced no transcript. Two different situations:
-        //  • stt_error  — the speech service is broken (retired model, bad
-        //    key, timeout). Re-listening just repeats the failure, which is
-        //    exactly how one server problem became three identical
-        //    "couldn't hear that" bubbles on screen. Stop the loop at once
-        //    and say what's actually wrong.
+        //  • stt_error  — the speech service hiccuped (503 congestion,
+        //    timeout, retired model). The server already retried; here we
+        //    resend the SAME recorded clip exactly once after a short
+        //    pause — congestion blips usually clear in a second, and the
+        //    user shouldn't have to repeat themselves for Google's load
+        //    spikes. If the resend also fails, stop the loop and say the
+        //    service is down rather than blaming their microphone.
         //  • no_speech  — genuinely quiet; allow one retry, then stop.
         _failedTurns++;
         if (e['reason'] == 'stt_error') {
-          _conversationEnded = true;
-          errorMessage = 'Speech service unavailable — check the server logs.';
           AppLog.add('stt', 'stt_error: ${e['detail'] ?? ''}');
+          final clip = _lastAudioBytes;
+          if (!_audioResent && clip != null) {
+            _audioResent = true;
+            _setPhase(AssistantPhase.transcribing, silent: true);
+            Future.delayed(const Duration(milliseconds: 1500), () async {
+              try {
+                await _api.sendAudio(clip);
+              } catch (_) {
+                _setLocalError(
+                    'Speech service unavailable — please try again shortly.');
+              }
+            });
+          } else {
+            _conversationEnded = true;
+            errorMessage =
+                'Speech service unavailable — check the server logs.';
+          }
         } else if (_failedTurns >= 2) {
           _conversationEnded = true;
         }
