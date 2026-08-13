@@ -629,6 +629,21 @@ class AssistantController extends ChangeNotifier {
   /// stops the queued sentences, not just the one currently playing.
   bool _speechAborted = false;
 
+  /// True when the abort came from the user TALKING OVER Hari (barge-in)
+  /// rather than an orb tap. A barge-in continues the conversation (capture
+  /// the new question immediately); an orb tap ends it.
+  bool _bargedIn = false;
+
+  /// Guards start/stop of the barge-in monitor within one answer.
+  bool _bargeMonitorOn = false;
+
+  /// The user started speaking over Hari — stop the reply at once and let
+  /// the loop capture what they're saying.
+  void _onBargeIn() {
+    _speechAborted = true;
+    _bargedIn = true;
+  }
+
   /// question -> STREAMED reply -> speak sentence-by-sentence.
   /// Hari starts SPEAKING the first sentence while the rest of the answer
   /// is still being generated (Gemini-Live-style time-to-first-audio).
@@ -662,6 +677,8 @@ class AssistantController extends ChangeNotifier {
     lastReply = null;
     lastDocuments = const [];
     _speechAborted = false;
+    _bargedIn = false;
+    _bargeMonitorOn = false;
     notifyListeners();
 
     _history.add(ChatMessage(role: 'user', content: question));
@@ -682,6 +699,12 @@ class AssistantController extends ChangeNotifier {
         if (state != OrbState.speaking) {
           state = OrbState.speaking;
           notifyListeners();
+        }
+        // BARGE-IN: the moment Hari starts talking, listen for the user
+        // talking over her. Started once, spans the whole spoken reply.
+        if (!_bargeMonitorOn) {
+          _bargeMonitorOn = true;
+          _voice.startBargeInMonitor(_onBargeIn);
         }
         await _voice.speak(say);
       });
@@ -748,7 +771,22 @@ class AssistantController extends ChangeNotifier {
     enqueue(pending); // whatever remained after the last sentence mark
     await speakChain; // wait until every queued sentence has been spoken
 
-    if (_speechAborted) return false; // user cut Hari off → end conversation
+    // Release the barge-in mic so the next capture can grab it.
+    if (_bargeMonitorOn) {
+      await _voice.stopBargeInMonitor();
+      _bargeMonitorOn = false;
+    }
+
+    // Barge-in: the user talked over Hari → KEEP the conversation going and
+    // capture what they're now saying (no wake word, no tap needed).
+    if (_bargedIn) {
+      _bargedIn = false;
+      state = OrbState.thinking;
+      notifyListeners();
+      return true;
+    }
+
+    if (_speechAborted) return false; // orb tap → end conversation
     state = OrbState.thinking; // brief neutral state while mic reopens
     notifyListeners();
     return true;
@@ -1019,6 +1057,13 @@ class AssistantController extends ChangeNotifier {
   /// silently; nothing more is spoken aloud.
   Future<void> _onPhoneCallActive() async {
     _speechAborted = true; // kills the whole queued sentence chain
+    _bargedIn = false; // a call is not a barge-in — don't resume after
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      try {
+        await _voice.stopBargeInMonitor(); // free the mic for the call
+      } catch (_) {}
+    }
     try {
       await _voice.stopSpeaking(); // cut the CURRENT sentence mid-word
     } catch (_) {}
@@ -1055,6 +1100,11 @@ class AssistantController extends ChangeNotifier {
         await _voice.cancelCapture();
       case OrbState.speaking:
         _speechAborted = true; // stop queued sentences too, not just this one
+        _bargedIn = false; // an explicit tap ENDS the conversation
+        if (_bargeMonitorOn) {
+          _bargeMonitorOn = false;
+          await _voice.stopBargeInMonitor();
+        }
         await _voice.stopSpeaking();
       case OrbState.thinking:
         break;

@@ -21,7 +21,11 @@ dependencies:
 
   # Voice — wake word watch + speech capture + spoken replies (A2, M1)
   speech_to_text: ^7.0.0
-  flutter_tts: ^4.1.0
+  flutter_tts: ^4.1.0        # OFFLINE FALLBACK voice only
+
+  # Cloud neural TTS playback — plays the warm Gemini voice (WAV from the
+  # backend /tts endpoint). flutter_tts stays as an offline fallback.
+  audioplayers: ^6.1.0
 
   # Screen-off wake word: on-device detection (Porcupine). NOTE: the mic
   # foreground service (flutter_foreground_task) was REMOVED for now — its

@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import 'api_service.dart';
 import 'phone_state_guard.dart';
 import 'style_prefs.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'dart:io';
 
 /// Voice layer for the assistant (A2 Voice, A3 Multi-language).
 ///
@@ -465,6 +468,18 @@ class VoiceService {
           sampleRate: 16000,
           numChannels: 1,
           bitRate: 48000,
+          // BACKGROUND NOISE: let the platform DSP strip steady background
+          // noise (fans, traffic, TV) and cancel our own speaker echo, so
+          // only the user's voice reaches both the VAD and the STT. autoGain
+          // stays OFF — it would normalise levels and break the noise-floor
+          // VAD below.
+          noiseSuppress: true,
+          echoCancel: true,
+          androidConfig: AndroidRecordConfig(
+            // VOICE_COMMUNICATION routes through the phone's hardware
+            // echo-canceller / noise-suppressor — the same path calls use.
+            audioSource: AndroidAudioSource.voiceCommunication,
+          ),
         ),
         path: path,
       );
@@ -503,18 +518,26 @@ class VoiceService {
         return saved ?? path;
       }
 
-      // Speech must rise 6 dB above ambient (was 8 — quiet talkers on
-      // insensitive mics never crossed it); never demand louder than
-      // -25 dBFS and never accept quieter than -58.
-      final speechDb = (floor + 6.0).clamp(-58.0, -25.0);
+      // Speech must rise 9 dB above the ambient floor (was 6 — too low, so
+      // background noise crossed it and the app "heard" noise). With
+      // hardware noise-suppression on, real speech clears this comfortably;
+      // clamp so we never demand louder than -22 dBFS nor accept quieter
+      // than -55.
+      final speechDb = (floor + 9.0).clamp(-55.0, -22.0);
       final quietDb = speechDb - 5.0;
 
       var started = false;
       var silentMs = 0;
+      // A single loud frame is usually a transient (a door, a clap, a cough)
+      // — real speech is sustained. Require ~270 ms of speech-level audio
+      // before we accept that the user has actually started talking. This is
+      // the main defence against background noise triggering a turn.
+      var voicedMs = 0;
+      const startVoicedMs = 270;
 
       while (totalMs < maxSeconds * 1000) {
-        await Future.delayed(const Duration(milliseconds: 150));
-        totalMs += 150;
+        await Future.delayed(const Duration(milliseconds: 120));
+        totalMs += 120;
         if (_recCancelled || !await _rec.isRecording()) break;
 
         double db;
@@ -527,18 +550,23 @@ class VoiceService {
         onLevel?.call(((db - floor) / (0 - floor)).clamp(0.0, 1.0));
 
         if (db > speechDb) {
-          started = true;
+          voicedMs += 120;
+          if (voicedMs >= startVoicedMs) started = true;
           silentMs = 0;
         } else if (db < quietDb) {
-          silentMs += 150;
-          // No speech at all within the window -> give up quietly.
+          voicedMs = 0;
+          silentMs += 120;
+          // No sustained speech within the window -> give up quietly.
           if (!started && totalMs >= noSpeechTimeoutMs) break;
-          // Finished talking: 900ms of silence after speech — snappy
-          // turn-taking; mid-sentence pauses are shorter than this.
-          if (started && silentMs >= 900) break;
+          // Finished talking: end fast after 650 ms of silence for snappy
+          // turn-taking. Natural mid-sentence pauses are shorter than this,
+          // so we don't cut people off mid-thought.
+          if (started && silentMs >= 650) break;
         } else {
-          // Dead zone between quiet and speech: still counts toward the
-          // no-speech timeout, or the mic could hang for maxSeconds.
+          // Dead zone between quiet and speech: decay the voiced counter so
+          // a slow fade doesn't latch "started"; still honour the no-speech
+          // timeout so the mic can't hang for maxSeconds.
+          voicedMs = (voicedMs - 60).clamp(0, startVoicedMs).toInt();
           if (!started && totalMs >= noSpeechTimeoutMs) break;
         }
       }
@@ -556,7 +584,26 @@ class VoiceService {
 
   // ---------------- SPEAK ----------------
 
-  /// Speaks [text] in a voice matching its language.
+  /// Cloud neural voice player (Gemini TTS via backend /tts). Falls back to
+  /// the on-device engine when the network / server is unavailable.
+  final AudioPlayer _player = AudioPlayer();
+
+  /// Set false to force the on-device voice (e.g. an offline toggle).
+  bool cloudVoiceEnabled = true;
+
+  /// When the cloud voice last failed. While inside the cooldown window we
+  /// speak locally immediately (no slow network timeout per sentence), then
+  /// retry the good voice automatically — transient outages self-heal.
+  DateTime? _cloudVoiceFailedAt;
+  static const _cloudCooldown = Duration(seconds: 45);
+
+  bool get _cloudInCooldown {
+    final t = _cloudVoiceFailedAt;
+    return t != null && DateTime.now().difference(t) < _cloudCooldown;
+  }
+
+  /// Speaks [text] in a natural voice matching its language.
+  /// Prefers the cloud neural voice; falls back to on-device TTS.
   Future<void> speak(String text) async {
     // HARD MUTE during phone calls: no sentence may START while the
     // phone is ringing or a call is connected — a streamed reply that
@@ -564,6 +611,77 @@ class VoiceService {
     if (PhoneStateGuard.instance.inCall) return;
     final say = sanitizeForSpeech(text);
     if (say.isEmpty) return;
+
+    if (cloudVoiceEnabled && !_cloudInCooldown) {
+      final ok = await _speakCloud(say);
+      if (ok) {
+        _cloudVoiceFailedAt = null; // reachable again
+        return;
+      }
+      _cloudVoiceFailedAt = DateTime.now(); // back off briefly, then retry
+    }
+    await _speakLocal(say);
+  }
+
+  /// Plays [say] with the cloud neural voice. Returns false (without
+  /// speaking) if synthesis or playback fails, so the caller can fall back.
+  Future<bool> _speakCloud(String say) async {
+    try {
+      final iso = _langIso(say);
+      final path = await ApiService.synthesizeSpeech(say, language: iso);
+      if (path == null) return false;
+      // Stop any lingering local/cloud audio before the new utterance.
+      try {
+        await _tts.stop();
+      } catch (_) {}
+      await _player.stop();
+
+      isSpeaking.value = true;
+      // Drive the avatar mouth with a gentle pulse while the file plays
+      // (the cloud path has no per-word callbacks like flutter_tts).
+      final pulse = Timer.periodic(const Duration(milliseconds: 120), (_) {
+        ttsLevel.value =
+            (0.45 + 0.45 * _pulseRand.nextDouble()).clamp(0.0, 1.0);
+      });
+
+      // Resolve when the file finishes NATURALLY *or* when playback is
+      // stopped (barge-in / orb tap / phone call). onPlayerComplete only
+      // fires on natural end, so relying on it alone would hang the whole
+      // speak chain the moment we cut Hari off.
+      final done = Completer<void>();
+      final sub = _player.onPlayerStateChanged.listen((s) {
+        if ((s == PlayerState.completed || s == PlayerState.stopped) &&
+            !done.isCompleted) {
+          done.complete();
+        }
+      });
+      try {
+        await _player.play(DeviceFileSource(path));
+        // Backstop: never hang forever if no state event arrives.
+        await done.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {},
+        );
+      } finally {
+        await sub.cancel();
+        pulse.cancel();
+        isSpeaking.value = false;
+        ttsLevel.value = 0;
+        // Clean up the temp WAV.
+        try {
+          File(path).delete().ignore();
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      isSpeaking.value = false;
+      ttsLevel.value = 0;
+      return false;
+    }
+  }
+
+  /// The on-device engine (offline / fallback path).
+  Future<void> _speakLocal(String say) async {
     await _applyLanguageFor(say);
     // Some Android TTS engines drop a new utterance if one is already
     // playing (instead of replacing it) — another "went silent" case.
@@ -571,6 +689,117 @@ class VoiceService {
       await _tts.stop();
     } catch (_) {}
     await _tts.speak(say);
+  }
+
+  /// ISO-639-1 code for the reply's language (for the cloud voice accent).
+  static String? _langIso(String text) {
+    final tag = detectLanguage(text); // e.g. 'kn-IN'
+    final code = tag.split(RegExp('[-_]')).first.toLowerCase();
+    return code.length == 2 ? code : null;
+  }
+
+  // ---------------- BARGE-IN (talk over Hari to interrupt) ----------------
+  // While Hari is speaking, we quietly monitor the mic. Hardware echo
+  // cancellation removes most of Hari's own voice, so when the USER starts
+  // talking their voice stands out above the residual. A sustained rise =>
+  // the user wants to interrupt: we fire [onBargeIn], and the controller
+  // stops the reply and starts listening for the new question.
+
+  bool _monitoring = false;
+  bool _bargedIn = false;
+  Timer? _monitorTimer;
+
+  /// True if the most recent speaking phase was cut off by the user talking.
+  bool get lastSpeakInterrupted => _bargedIn;
+
+  /// Begins listening for a barge-in. Safe to call repeatedly; best-effort
+  /// (silently does nothing if the mic can't be opened alongside playback).
+  Future<void> startBargeInMonitor(void Function() onBargeIn) async {
+    if (_monitoring) return;
+    _bargedIn = false;
+    try {
+      if (!await _rec.hasPermission()) return;
+      if (await _rec.isRecording()) return; // capture in progress — skip
+      _monitoring = true;
+
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/hari_monitor.m4a';
+      await _rec.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          sampleRate: 16000,
+          numChannels: 1,
+          bitRate: 32000,
+          echoCancel: true, // cancel Hari's own voice from the mic
+          noiseSuppress: true,
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.voiceCommunication,
+          ),
+        ),
+        path: path,
+      );
+
+      // Calibrate the residual-echo/ambient floor over ~500 ms, then watch
+      // for the user's voice rising clearly and steadily above it.
+      var baseline = -50.0;
+      var calib = 0;
+      var loudMs = 0;
+      _monitorTimer = Timer.periodic(
+        const Duration(milliseconds: 120),
+        (t) async {
+          if (!_monitoring) {
+            t.cancel();
+            return;
+          }
+          double db;
+          try {
+            db = (await _rec.getAmplitude()).current;
+          } catch (_) {
+            return;
+          }
+          if (!db.isFinite) return;
+          if (calib < 4) {
+            baseline = calib == 0 ? db : (baseline * 0.6 + db * 0.4);
+            calib++;
+            return;
+          }
+          // User speaking OVER Hari: well above the echo floor AND above an
+          // absolute gate (so quiet room tone never triggers).
+          if (db > baseline + 12 && db > -38) {
+            loudMs += 120;
+            if (loudMs >= 300) {
+              // ~300 ms of real talk-over — treat as an interrupt.
+              _bargedIn = true;
+              _monitoring = false;
+              t.cancel();
+              try {
+                await _player.stop();
+              } catch (_) {}
+              try {
+                await _tts.stop();
+              } catch (_) {}
+              onBargeIn();
+            }
+          } else {
+            loudMs = (loudMs - 120).clamp(0, 100000).toInt();
+          }
+        },
+      );
+    } catch (_) {
+      _monitoring = false;
+    }
+  }
+
+  /// Stops the barge-in monitor and releases the mic (so a capture can
+  /// grab it next). Returns whether a barge-in was detected.
+  Future<bool> stopBargeInMonitor() async {
+    _monitoring = false;
+    _monitorTimer?.cancel();
+    _monitorTimer = null;
+    try {
+      if (await _rec.isRecording()) await _rec.stop();
+    } catch (_) {}
+    return _bargedIn;
   }
 
   /// Cleans a reply before it is read aloud (the FULL text is still
@@ -606,5 +835,14 @@ class VoiceService {
     return t;
   }
 
-  Future<void> stopSpeaking() => _tts.stop();
+  Future<void> stopSpeaking() async {
+    isSpeaking.value = false;
+    ttsLevel.value = 0;
+    try {
+      await _player.stop();
+    } catch (_) {}
+    try {
+      await _tts.stop();
+    } catch (_) {}
+  }
 }

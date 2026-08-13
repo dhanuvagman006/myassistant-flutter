@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/log.dart';
@@ -195,6 +196,40 @@ class ApiService {
       throw Exception('stt ${r.statusCode}');
     }
     return (jsonDecode(r.body)['text'] as String?)?.trim() ?? '';
+  }
+
+  /// Synthesizes [text] to a natural neural voice via the backend /tts
+  /// endpoint (Gemini TTS). Writes the returned WAV to a temp file and
+  /// returns its path, or null on any failure so the caller can fall back
+  /// to the on-device voice. [language] is an ISO-639-1 hint for accent.
+  static Future<String?> synthesizeSpeech(
+    String text, {
+    String? language, // 'kn', 'hi', 'en'…
+    String? voice, // optional Gemini voice name override
+  }) async {
+    final say = text.trim();
+    if (say.isEmpty) return null;
+    try {
+      final r = await _client
+          .post(
+            Uri.parse('$baseUrl/tts'),
+            headers: _authHeaders,
+            body: jsonEncode({
+              'text': say,
+              if (language != null && language.isNotEmpty) 'language': language,
+              if (voice != null && voice.isNotEmpty) 'voice': voice,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200 || r.bodyBytes.isEmpty) return null;
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/hari_tts_${DateTime.now().microsecondsSinceEpoch}.wav';
+      await File(path).writeAsBytes(r.bodyBytes, flush: true);
+      return path;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Returns the assistant reply with any live-information sources (A5).
