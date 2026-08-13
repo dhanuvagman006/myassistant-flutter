@@ -100,7 +100,7 @@ class ApiService {
   /// Managed by AuthService — set on sign-in, cleared on sign-out.
   static String? sessionToken;
 
-  /// Last known GPS fix — set by AssistantController from RegionLanguage;
+  /// Last known GPS fix — set from RegionLanguage;
   /// lets the backend answer "what's the weather" without a city name.
   static double? geoLat;
   static double? geoLng;

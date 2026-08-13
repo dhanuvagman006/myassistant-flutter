@@ -8,7 +8,7 @@ import 'package:phone_state/phone_state.dart';
 /// Hari must go silent INSTANTLY: no talking over the ringtone, no mic
 /// capture stealing audio focus from the call.
 ///
-/// Usage (AssistantController.init):
+/// Usage (AssistantEngine.start):
 ///   PhoneStateGuard.instance.start(
 ///     onCallActive: () { /* stop TTS + capture NOW */ },
 ///     onCallEnded:  () { /* resume wake word */ },

@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 /// VOICE CALLING (B1) — "Hey Hari, call amma".
 ///
 /// All on-device: contact lookup + dialing never touch the backend, so
-/// the user's contact list stays private. The AssistantController runs
+/// the user's contact list stays private. The AssistantEngine runs
 /// [parseCallIntent] on every heard question BEFORE sending it to the AI;
 /// on a hit, the whole flow is handled locally.
 ///
