@@ -326,6 +326,7 @@ class AssistantEngine extends ChangeNotifier {
       // had been closed by a goodbye or by silence.
       _conversationEnded = false;
       _silentTurns = 0;
+      _failedTurns = 0;
     }
     if (phase == AssistantPhase.listening) {
       // Tap while listening = cancel this capture (both the recorder
@@ -449,6 +450,10 @@ class AssistantEngine extends ChangeNotifier {
 
   bool _conversationEnded = false;
   int _silentTurns = 0;
+
+  /// Consecutive turns that produced no transcript. Guards against the loop
+  /// re-listening forever into a broken speech service.
+  int _failedTurns = 0;
 
   /// True while Hari will re-open the mic on her own after replying.
   bool get conversationActive =>
@@ -614,6 +619,7 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'user_transcript':
         partial = '';
+        _failedTurns = 0; // a real transcript — the service is healthy
         final said = e['text'] as String? ?? '';
         transcript.add(TranscriptEntry(TranscriptRole.user, said));
         // A goodbye closes the continuous loop: Hari still answers this
@@ -728,6 +734,24 @@ class AssistantEngine extends ChangeNotifier {
         _speakQueue.clear();
         _voice.stopSpeaking();
         onOpenVideoMode?.call();
+        break;
+
+      case 'transcript_failed':
+        // The turn produced no transcript. Two different situations:
+        //  • stt_error  — the speech service is broken (retired model, bad
+        //    key, timeout). Re-listening just repeats the failure, which is
+        //    exactly how one server problem became three identical
+        //    "couldn't hear that" bubbles on screen. Stop the loop at once
+        //    and say what's actually wrong.
+        //  • no_speech  — genuinely quiet; allow one retry, then stop.
+        _failedTurns++;
+        if (e['reason'] == 'stt_error') {
+          _conversationEnded = true;
+          errorMessage = 'Speech service unavailable — check the server logs.';
+          AppLog.add('stt', 'stt_error: ${e['detail'] ?? ''}');
+        } else if (_failedTurns >= 2) {
+          _conversationEnded = true;
+        }
         break;
 
       case 'audio_ready':
