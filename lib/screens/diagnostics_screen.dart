@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/log.dart';
+import '../design/gyro_motion.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
@@ -127,6 +128,16 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               color:
                   engine.connected ? Colors.greenAccent : Colors.orangeAccent,
             ),
+          ),
+          const SizedBox(height: 20),
+          // Motion sensor actually in use. Many budget phones have no
+          // gyroscope; we fall back to the accelerometer so the tilt
+          // effects still work. 'none' means neither is available.
+          _panel(
+            'Motion sensor: ${GyroMotion.instance.sensorSource}',
+            color: GyroMotion.instance.sensorSource == 'none'
+                ? Colors.orangeAccent
+                : Colors.greenAccent,
           ),
           const SizedBox(height: 20),
           Row(

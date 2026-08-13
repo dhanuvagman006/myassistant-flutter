@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../design/gyro_tilt.dart';
 import '../../design/neon_tokens.dart';
 import '../../design/neon_widgets.dart';
 import '../../models/remote_config.dart';
@@ -365,9 +366,17 @@ class _AssistantScreenState extends State<AssistantScreen> {
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: Neon.s7),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+        // Device tilt gives the greeting + quick chips the same parallax
+        // depth the orb and aurora already have. Sheen/shadow are off:
+        // this is text and chips, not a glass card, so plain tilt reads
+        // cleaner. Degrades to a static layout with no motion sensor.
+        child: GyroTilt(
+          maxTilt: 0.05,
+          sheen: false,
+          shadow: false,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
             GradientText(
               name == null ? 'Hi, I\'m Hari' : 'Hi $name',
               style: Theme.of(context).textTheme.headlineSmall!,
@@ -427,7 +436,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   ),
               ],
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );
