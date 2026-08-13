@@ -161,6 +161,29 @@ class _AssistantScreenState extends State<AssistantScreen> {
                       // The video-mode chip used to sit here. It's gone —
                       // say "open video mode" instead.
                       const SizedBox(width: 10),
+                      // LIVE MODE: real speech-to-speech conversation.
+                      // Glows while a session is open; tap to hang up.
+                      GestureDetector(
+                        onTap: () {
+                          HapticFeedback.mediumImpact();
+                          engine.toggleLive();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: engine.liveActive
+                                ? Neon.cyan.withValues(alpha: 0.22)
+                                : Colors.white.withValues(alpha: 0.07),
+                            border: Border.all(
+                                color: Neon.cyan.withValues(
+                                    alpha: engine.liveActive ? 0.95 : 0.5)),
+                          ),
+                          child: Icon(Icons.graphic_eq_rounded,
+                              color: Neon.cyan, size: 18),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
                       // Professional mode: patients/clients case files.
                       GestureDetector(
                         onTap: () {

@@ -11,6 +11,7 @@ import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
+import '../../../services/live_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
 
@@ -254,6 +255,7 @@ class AssistantEngine extends ChangeNotifier {
 
   /// A call started/rang — cut all audio and the mic immediately.
   Future<void> _onPhoneCallActive() async {
+    if (liveActive) await stopLive(); // a real call always wins the audio
     _bargedIn = false;
     // A real phone call always wins: close the continuous loop so the mic
     // can never reopen itself mid-call.
@@ -321,6 +323,11 @@ class AssistantEngine extends ChangeNotifier {
   /// [auto] is true when the continuous-conversation loop re-opened the mic
   /// by itself; a manual press always (re)starts a conversation.
   Future<void> pressMic({bool auto = false}) async {
+    // In live mode the orb is the hang-up button.
+    if (liveActive) {
+      await stopLive();
+      return;
+    }
     if (!auto) {
       // An explicit tap means "I want to talk" — revive a conversation that
       // had been closed by a goodbye or by silence.
@@ -449,6 +456,112 @@ class AssistantEngine extends ChangeNotifier {
   /// Times the current turn end-to-end (see the 'latency' entries in the
   /// Diagnostics log): capture → upload → first sentence → first audio.
   Stopwatch? _turnClock;
+
+  // ---------------- LIVE MODE (speech-to-speech) ----------------
+  // Real live conversation over the backend /live proxy: the mic streams
+  // continuously, Hari's VOICE streams back, Google detects end-of-speech
+  // and barge-in server-side. No STT step, no client VAD. The classic
+  // record→transcribe loop stays untouched as the fallback.
+
+  final _liveSvc = LiveService.instance;
+  bool get liveActive => _liveSvc.active;
+
+  TranscriptEntry? _liveUserEntry;
+  TranscriptEntry? _liveHariEntry;
+
+  Future<void> toggleLive() async {
+    if (liveActive) {
+      await stopLive();
+      return;
+    }
+    // Live owns all audio: silence the classic loop completely first.
+    _conversationEnded = true;
+    _speakQueue.clear();
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      await _voice.stopBargeInMonitor();
+    }
+    await _voice.stopSpeaking();
+    await _voice.cancelCapture();
+    _resetTurn();
+
+    _liveSvc.onReady = () {
+      _setPhase(AssistantPhase.listening, silent: true);
+      notifyListeners();
+    };
+    _liveSvc.onMicLevel = (l) {
+      if (!_liveSvc.playing) {
+        micLevel = l;
+        notifyListeners();
+      }
+    };
+    _liveSvc.onSpeaking = (speaking) {
+      _setPhase(
+        speaking ? AssistantPhase.speaking : AssistantPhase.listening,
+        silent: true,
+      );
+      if (!speaking) micLevel = 0;
+      notifyListeners();
+    };
+    _liveSvc.onUserText = (t) {
+      if (_liveUserEntry == null) {
+        _liveUserEntry = TranscriptEntry(TranscriptRole.user, t);
+        transcript.add(_liveUserEntry!);
+      } else {
+        final merged = '${_liveUserEntry!.text}$t';
+        transcript[transcript.indexOf(_liveUserEntry!)] =
+            _liveUserEntry = TranscriptEntry(TranscriptRole.user, merged);
+      }
+      notifyListeners();
+    };
+    _liveSvc.onHariText = (t) {
+      if (_liveHariEntry == null) {
+        _liveHariEntry = TranscriptEntry(TranscriptRole.assistant, t);
+        transcript.add(_liveHariEntry!);
+      } else {
+        final merged = '${_liveHariEntry!.text}$t';
+        transcript[transcript.indexOf(_liveHariEntry!)] =
+            _liveHariEntry = TranscriptEntry(TranscriptRole.assistant, merged);
+      }
+      notifyListeners();
+    };
+    _liveSvc.onTurnComplete = () {
+      // Freeze this exchange's bubbles; the next turn starts new ones.
+      _liveUserEntry = null;
+      _liveHariEntry = null;
+      notifyListeners();
+    };
+    _liveSvc.onInterrupted = () {
+      _liveHariEntry = null; // she was cut off — next words are a new bubble
+      _setPhase(AssistantPhase.listening, silent: true);
+      notifyListeners();
+    };
+    _liveSvc.onError = (msg) {
+      errorMessage = msg;
+      AppLog.add('live', msg);
+      _setPhase(AssistantPhase.idle, silent: true);
+      notifyListeners();
+    };
+    _liveSvc.onClosed = () {
+      if (phase != AssistantPhase.idle) {
+        _setPhase(AssistantPhase.idle, silent: true);
+      }
+      notifyListeners();
+    };
+
+    _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
+    notifyListeners();
+    await _liveSvc.start();
+  }
+
+  Future<void> stopLive() async {
+    await _liveSvc.stop();
+    _liveUserEntry = null;
+    _liveHariEntry = null;
+    micLevel = 0;
+    _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
+  }
 
   // ---------------- CONTINUOUS CONVERSATION ----------------
   // Hari keeps the conversation going: after she finishes speaking she

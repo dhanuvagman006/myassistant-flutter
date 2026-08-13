@@ -96,6 +96,23 @@ class ApiService {
   /// Pass with: --dart-define=APP_API_KEY=...
   static const String _appApiKey = String.fromEnvironment('APP_API_KEY');
 
+  /// Exposed for the live-mode WebSocket URL (query-string auth).
+  static String get appApiKey => _appApiKey;
+
+  /// Small generic GET helper (used by the live-mode availability probe).
+  static Future<Map<String, dynamic>?> getJson(String path) async {
+    try {
+      final r = await _client
+          .get(Uri.parse('$baseUrl$path'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 6));
+      if (r.statusCode != 200) return null;
+      final body = jsonDecode(r.body);
+      return body is Map<String, dynamic> ? body : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Session JWT issued by the backend after any sign-in (email/Google/Apple).
   /// Managed by AuthService — set on sign-in, cleared on sign-out.
   static String? sessionToken;

@@ -14,6 +14,8 @@ dependencies:
 
   # Networking — talks to the backend only; AI keys never live in the app
   http: ^1.2.2
+  # Live mode: bidirectional audio stream to the backend /live proxy.
+  web_socket_channel: ^3.0.1
   http_parser: ^4.0.2   # MediaType for vision multipart uploads
 
   # Brand typography — Sora (headlines) + Inter (body) per UI Design V1.0
