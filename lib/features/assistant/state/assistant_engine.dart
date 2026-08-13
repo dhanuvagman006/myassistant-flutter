@@ -10,6 +10,7 @@ import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/call_service.dart';
+import '../../../services/phone_state_guard.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
 
@@ -199,7 +200,43 @@ class AssistantEngine extends ChangeNotifier {
     // The saved server override must win the race against this first
     // connect, or one launch in two would hit the wrong host.
     await ApiService.loadServerOverride();
+    // INCOMING-CALL GUARD: the instant the phone rings or a call connects,
+    // Hari goes silent and releases the mic — never talk over a call. This
+    // was previously only wired in the (now-removed) controller, so the
+    // mute didn't actually work on the live path until now.
+    PhoneStateGuard.instance.start(
+      onCallActive: _onPhoneCallActive,
+      onCallEnded: _onPhoneCallEnded,
+    );
     await _connect();
+  }
+
+  /// A call started/rang — cut all audio and the mic immediately.
+  Future<void> _onPhoneCallActive() async {
+    _bargedIn = false;
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      try {
+        await _voice.stopBargeInMonitor();
+      } catch (_) {}
+    }
+    _speakQueue.clear();
+    try {
+      await _voice.stopSpeaking();
+    } catch (_) {}
+    try {
+      await _voice.cancelCapture();
+    } catch (_) {}
+    _ttsActive = false;
+    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
+  }
+
+  void _onPhoneCallEnded() {
+    // Nothing to resume — the live app waits for the user to tap the mic.
+    if (phase != AssistantPhase.idle && !phase.busy) {
+      _setPhase(AssistantPhase.idle, silent: true);
+    }
   }
 
   Future<void> _connect() async {
