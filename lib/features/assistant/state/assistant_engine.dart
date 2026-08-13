@@ -363,6 +363,12 @@ class AssistantEngine extends ChangeNotifier {
     // capture, upload or the server instead of guessed at.
     _turnClock = Stopwatch()..start();
     final path = await _voice.recordUntilSilence(
+      // The self-reopened mic (continuous loop) is strict: it only uploads
+      // sustained, latched speech and gives up on an idle room after 2.5s
+      // instead of 4 — so it never transcribes background noise ("00:00")
+      // and never apologizes into silence.
+      requireLatch: auto,
+      noSpeechTimeoutMs: auto ? 2500 : 4000,
       onLevel: (l) {
         micLevel = l;
         notifyListeners();

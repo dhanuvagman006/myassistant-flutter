@@ -468,6 +468,13 @@ class VoiceService {
   Future<String?> recordUntilSilence({
     int maxSeconds = 15,
     int noSpeechTimeoutMs = 4000,
+    // AUTO-LISTEN turns (the continuous loop reopening the mic by itself)
+    // must be far stricter than a deliberate tap. With requireLatch a clip
+    // is only uploaded when sustained speech actually latched the gate —
+    // "any sound above the floor" is NOT enough, because in a lived-in room
+    // that's the TV, a fan, or someone across the room, and uploading it is
+    // how "00:00" ended up transcribed as the user's words.
+    bool requireLatch = false,
     void Function(double level)? onLevel, // 0..1 for UI animation
   }) async {
     try {
@@ -629,12 +636,15 @@ class VoiceService {
           // No sustained speech within the window -> stop waiting.
           if (!started && now >= noSpeechTimeoutMs) break;
           // HEARD SOMETHING, BUT THE GATE NEVER LATCHED (e.g. calibration
-          // caught the user's voice, so the thresholds sat too high). The
-          // clip is worth sending, and sitting on an open mic for the full
-          // no-speech timeout is exactly the "it kept listening after I
-          // stopped" complaint. Once it has been quiet for ~700 ms and we
-          // did hear sound, end the turn.
-          if (!started && peak >= floor + 4.0 && silentMs >= 700) break;
+          // caught the user's voice, so the thresholds sat too high). On a
+          // MANUAL tap the clip is worth sending and holding the mic open is
+          // the "kept listening after I stopped" complaint — end after
+          // ~700 ms of quiet. In AUTO mode unlatched sound is presumed
+          // background noise, so this early-out doesn't apply.
+          if (!requireLatch &&
+              !started &&
+              peak >= floor + 4.0 &&
+              silentMs >= 700) break;
           // Finished talking: end after 450 ms of real silence, but never
           // before minCaptureMs — short questions have word gaps that would
           // otherwise cut the clip into a meaningless fragment.
@@ -650,16 +660,15 @@ class VoiceService {
       final saved = await _rec.stop();
       if (_recCancelled) return null;
 
-      // THE IMPORTANT FIX: never throw away a recording just because the
-      // level gate didn't latch. If ANY sound rose meaningfully above the
-      // noise floor, upload it and let the server's STT be the judge — it
-      // is vastly better at recognising quiet or accented speech than a
-      // dB meter is, and it already returns a friendly "couldn't hear
-      // that" when a clip really is empty. Previously a missed gate meant
-      // the clip was binned AND a second listening session was started,
-      // which is what made the app sit on "Listening…" and then claim it
-      // heard nothing.
-      _lastRecordingHadSound = started || peak >= floor + 4.0;
+      // Upload decision. MANUAL tap: generous — if ANY sound rose
+      // meaningfully above the noise floor, send it and let the server's
+      // STT judge (it recognises quiet or accented speech far better than
+      // a dB meter, and a deliberate tap means the user intended to talk).
+      // AUTO turn: strict — only a latched, sustained-speech capture is
+      // sent, so the loop can idle in a noisy room without transcribing
+      // the television.
+      _lastRecordingHadSound =
+          started || (!requireLatch && peak >= floor + 4.0);
       if (!_lastRecordingHadSound) return null;
       return saved ?? path;
     } catch (_) {
