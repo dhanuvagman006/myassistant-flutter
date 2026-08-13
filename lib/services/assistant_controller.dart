@@ -570,6 +570,7 @@ class AssistantController extends ChangeNotifier {
     // The conversation ends when the user simply stays quiet (~6 s),
     // taps the orb, or the turn was a device action (e.g. a phone call).
     var followUp = false;
+    var reprompted = false;
     var pendingText = text;
     while (true) {
       String question;
@@ -582,7 +583,22 @@ class AssistantController extends ChangeNotifier {
         notifyListeners();
         question = await _captureAnyLanguage(followUp: followUp);
       }
-      if (question.trim().isEmpty) break; // silence or cancel → done
+      if (question.trim().isEmpty) {
+        // Nothing heard. If the user tapped to cancel, just stop. Otherwise,
+        // on the OPENING turn, give ONE gentle re-prompt instead of going
+        // silent — the "I opened the mic and Hari went dead" problem. A
+        // follow-up turn ending in silence is the normal, graceful way to
+        // end a conversation, so we don't re-prompt there.
+        if (!followUp && !reprompted && !_voice.lastRecordingCancelled) {
+          reprompted = true;
+          await _sayLocal("Sorry, I didn't catch that. Please say it again.");
+          state = OrbState.idle;
+          notifyListeners();
+          continue; // reopen the mic once
+        }
+        break;
+      }
+      reprompted = false; // heard something → a later miss can re-prompt again
 
       final keepGoing = await _answerOnce(question);
       if (!keepGoing) break;
@@ -694,6 +710,39 @@ class AssistantController extends ChangeNotifier {
     _bargedIn = true;
   }
 
+  /// "Say that again" / "repeat" / "what did you say" — Hari re-speaks the
+  /// last thing she said. Script + Latin, kept to short standalone phrases
+  /// so "repeat the order to the restaurant" isn't caught.
+  static final _repeatRe = RegExp(
+      r"^\s*(please\s+)?(can you\s+|could you\s+)?"
+      r"(repeat( that| it)?|say (that|it) again|come again|again please|"
+      r"what did you say|i (didn'?t|did not) (hear|catch) (that|you)|"
+      r"ಮತ್ತೆ ಹೇಳು|ಪುನಃ ಹೇಳು|फिर से (बोलो|कहो)|दोबारा (बोलो|कहिए)|"
+      r"மீண்டும் சொல்லு|మళ్ళీ చెప్పు)"
+      r"\s*[.?!]?\s*$",
+      caseSensitive: false);
+
+  /// "Stop" / "that's all" / "thanks, that's it" / "goodbye" — a natural,
+  /// hands-free way to END the conversation by voice (no orb tap needed).
+  /// Anchored to short utterances so a real question is never mistaken for
+  /// a goodbye.
+  static final _endRe = RegExp(
+      r"^\s*(that'?s (all|it|enough)|no(,)? that'?s (all|it)|"
+      r"i'?m (good|done|fine)|(that('?ll| will) be all))"
+      r"([ ,.!]*(thanks|thank you|hari))?\s*[.?!]?\s*$"
+      r"|^\s*(stop|cancel|quiet|be quiet|shut up|never ?mind|"
+      r"goodbye|bye( bye)?|good night|nothing|no thanks|"
+      r"thanks? hari|thank you hari|"
+      r"ಸಾಕು|ನಿಲ್ಲಿಸು|ಸರಿ ಸಾಕು|बस|रुको|बंद करो|अलविदा|"
+      r"போதும்|நிறுத்து|చాలు|ఆపు)\s*[.?!]?\s*$",
+      caseSensitive: false);
+
+  bool _isRepeatRequest(String q) => _repeatRe.hasMatch(q.trim());
+  bool _isEndRequest(String q) => _endRe.hasMatch(q.trim());
+
+  /// The last thing Hari said aloud (for "repeat that").
+  String? _lastSpokenReply;
+
   /// question -> STREAMED reply -> speak sentence-by-sentence.
   /// Hari starts SPEAKING the first sentence while the rest of the answer
   /// is still being generated (Gemini-Live-style time-to-first-audio).
@@ -702,6 +751,35 @@ class AssistantController extends ChangeNotifier {
   Future<bool> _answerOnce(String question) async {
     question = question.trim();
     if (question.isEmpty) return false;
+
+    // HANDS-FREE CONVERSATION CONTROL (only when no call confirmation is
+    // pending — during a "which contact?"/"shall I call?" prompt these
+    // words are answers to that, handled in _handleCallIntent):
+    if (_pendingAgentConfirm == null && _pendingCallOptions == null) {
+      // "Say that again" — re-speak the last reply, keep the mic open.
+      if (_isRepeatRequest(question)) {
+        lastHeard = question;
+        notifyListeners();
+        final again = _lastSpokenReply ??
+            _history.lastWhere(
+              (m) => m.role == 'assistant',
+              orElse: () => const ChatMessage(role: 'assistant', content: ''),
+            ).content;
+        if (again.trim().isEmpty) {
+          await _sayLocal("I haven't said anything yet — what can I do?");
+        } else {
+          await _sayLocal(again);
+        }
+        return true; // stay in the conversation
+      }
+      // "Stop" / "that's all" / "thanks" — end gracefully, by voice.
+      if (_isEndRequest(question)) {
+        lastHeard = question;
+        notifyListeners();
+        await _sayLocal("Anytime. Just say Hey Hari when you need me.");
+        return false; // ends the conversation cleanly
+      }
+    }
 
     // DEVICE ACTIONS FIRST: "call amma" is handled entirely on-device
     // (contacts + dialer) — private, instant, works offline.
@@ -803,6 +881,7 @@ class AssistantController extends ChangeNotifier {
     _history.add(answer);
     lastDocuments = answer.documents;
     final reply = answer.content;
+    _lastSpokenReply = reply; // for "say that again"
 
     // FOLLOW THE CONVERSATION'S LANGUAGE: if Hari answered in Kannada,
     // listen in Kannada next time — this is what makes "speak in
