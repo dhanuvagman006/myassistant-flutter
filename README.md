@@ -23,17 +23,41 @@ lib/
 ├── models/                       # ChatMessage, UserDocument, Client, Reminder, Place, …
 ├── core/network/assistant_api.dart   # SSE client for the realtime voice loop
 ├── services/
-│   ├── api_service.dart          # all backend REST (chat, docs, clients, reminders, …)
-│   ├── assistant_controller.dart # voice save/recall + camera flows
-│   ├── voice_service.dart        # wake word, mic capture, TTS
+│   ├── api_service.dart          # all backend REST (chat, docs, /tts, clients, reminders, …)
+│   ├── voice_service.dart        # mic capture, adaptive VAD, cloud TTS + barge-in, wake word
+│   ├── call_service.dart         # on-device contact lookup + dialing
+│   ├── phone_state_guard.dart    # silence Hari the instant the phone rings
 │   └── auth_service.dart, notification_service.dart, app_lock.dart, …
-├── features/assistant/           # the main screen + engine (state machine) + cards
+├── features/assistant/
+│   ├── assistant_screen.dart     # the single-screen agent UI
+│   └── state/assistant_engine.dart   # the LIVE brain: phase machine, events, barge-in, camera
 └── screens/                      # auth, survey, avatar, clients, lock, splash, diagnostics
 ```
+> The heavy orchestration (intent routing, agent calls, document capture) runs
+> **server-side** in the backend's `/assistant` loop; `AssistantEngine` is a thin
+> client that records, renders the streamed events, and speaks.
 
 ## Key features
 - **Voice loop** — wake word (Porcupine) → cloud STT → streamed, sentence-by-
-  sentence spoken replies over SSE.
+  sentence spoken replies over SSE. Adaptive voice-activity detection with
+  hardware **noise suppression** rejects background sound, and snappy
+  end-of-speech detection makes turn-taking feel natural.
+- **Natural cloud voice** — replies are spoken with a warm neural voice
+  (Gemini TTS via the backend `/tts` endpoint), not the robotic on-device
+  engine; it falls back to the device voice automatically when offline.
+- **Barge-in / interrupt** — talk over Hari mid-sentence and she stops at once
+  and listens to your new question. No tap, no wake word. Hardware echo
+  cancellation keeps her own voice from triggering it.
+- **Voice-driven capture** — say "save this receipt", "scan this" or "remember
+  this" and the camera opens, files the shot into document memory with your
+  own words as the note — no typing, no naming step.
+- **Agent phone calls** — "call mom and tell her I'll be late" and Hari places
+  the call itself (Plivo), speaks the message in a natural voice, and **hangs
+  up on its own**; for "ask …" tasks it captures their reply and reports it
+  back. Auto-dials (announces first, interruptible); offers one retry on no
+  answer. Falls back to a direct dial where telephony isn't configured.
+- **Incoming-call mute** — the instant your phone rings or a call connects,
+  Hari goes silent and releases the mic — never talks over a call.
 - **Saved documents** — snap or pick a report/receipt/ID; Hari analyses and
   remembers it. Ask by voice ("show me my last hospital report", "show my
   Aadhaar card") and the document appears on screen with a **Send** button that
@@ -44,8 +68,8 @@ lib/
   from the Clients screen or by voice — "give me the details about patient
   Ramesh" speaks the file and shows the documents; "note for patient Ramesh:
   …" adds a dated note.
-- **Reminders, Gmail drafts + Calendar, agent phone calls, biometric app lock,
-  self-hosted OTA updates**, and Pro/Family gating.
+- **Reminders, Gmail drafts + Calendar, biometric app lock, self-hosted OTA
+  updates**, and Pro/Family gating.
 
 ## First-time setup
 `android/` and `ios/` are already in the repo (release signing, biometric and
