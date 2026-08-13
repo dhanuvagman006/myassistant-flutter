@@ -960,6 +960,19 @@ class AssistantController extends ChangeNotifier {
   /// already read out exactly what it will say; only a "yes" dials.
   (Contact, String)? _pendingAgentConfirm;
 
+  /// When set, require a spoken "yes" before Hari places an agent call.
+  /// Default OFF — the user asked for automatic calling: Hari announces
+  /// what it will do and dials straight away. Flip to true for a safety
+  /// confirmation step.
+  bool confirmAgentCalls = false;
+
+  /// A no-answer call awaiting a "shall I try again?" yes/no.
+  (Contact, String)? _pendingCallRetry;
+
+  /// Retries used on the CURRENT agent-call request (reset per new request).
+  int _agentRetries = 0;
+  static const _maxAgentRetries = 1; // initial attempt + one retry
+
   /// When the pending call is an AGENT call ("…and ask him when he'll be
   /// home"), the task rides along so the chosen contact gets it.
   String? _pendingCallTask;
@@ -990,6 +1003,20 @@ class AssistantController extends ChangeNotifier {
         await _placeAgentCall(contact, task);
       } else {
         await _sayLocal("Okay, I won't call.");
+      }
+      return true;
+    }
+
+    // A no-answer call is offering a retry: "shall I try again?"
+    if (_pendingCallRetry != null) {
+      final (contact, task) = _pendingCallRetry!;
+      _pendingCallRetry = null;
+      lastHeard = question;
+      if (_yesRe.hasMatch(question)) {
+        _agentRetries++;
+        await _placeAgentCall(contact, task);
+      } else {
+        await _sayLocal("Alright, I won't try again.");
       }
       return true;
     }
@@ -1073,6 +1100,7 @@ class AssistantController extends ChangeNotifier {
   /// preview endpoint is unreachable we fall back to the old direct flow
   /// rather than leaving the request hanging.
   Future<void> _previewAgentCall(Contact c, String task) async {
+    _agentRetries = 0; // fresh request → fresh retry budget
     state = OrbState.thinking;
     notifyListeners();
     try {
@@ -1085,15 +1113,26 @@ class AssistantController extends ChangeNotifier {
         await _sayLocal(p.reason ?? "Your call rules don't allow this right now.");
         return;
       }
-      _pendingAgentConfirm = (c, task);
+      if (confirmAgentCalls) {
+        // Safety mode: read out exactly what will be said, wait for a yes.
+        _pendingAgentConfirm = (c, task);
+        await _sayLocal(
+            'Here\'s what I\'ll say to ${c.displayName}: "${p.opening}" '
+            'Shall I make the call?');
+        state = OrbState.idle;
+        notifyListeners();
+        await ask(); // opens the mic; the yes/no routes back through here
+        return;
+      }
+      // AUTO mode (default): announce what Hari will say, then dial straight
+      // away — no confirmation step. The user can still say "stop"/"cancel"
+      // to abort at any time.
       await _sayLocal(
-          'Here\'s what I\'ll say to ${c.displayName}: "${p.opening}" '
-          'Shall I make the call?');
-      state = OrbState.idle;
-      notifyListeners();
-      await ask(); // opens the mic; the yes/no routes back through here
+          'Okay, calling ${c.displayName} now — I\'ll say: "${p.opening}"');
+      await _placeAgentCall(c, task, announce: false);
     } catch (_) {
-      // Preview unavailable (old backend / network) — proceed the old way.
+      // Preview unavailable (old backend / network) — proceed anyway so the
+      // user's request still gets acted on.
       await _placeAgentCall(c, task);
     }
   }
@@ -1102,12 +1141,15 @@ class AssistantController extends ChangeNotifier {
   /// their answer back to the user. Backend-driven (Plivo — India-capable telephony): the phone's
   /// own dialer is never involved, so the loop keeps running while the
   /// call happens and the answer is spoken the moment it lands.
-  Future<void> _placeAgentCall(Contact c, String task) async {
+  Future<void> _placeAgentCall(Contact c, String task,
+      {bool announce = true}) async {
     final svc = CallService.instance;
     final number = svc.bestNumber(c);
-    await _sayLocal(
-        "Alright — I'll call ${c.displayName} and ask. Give me a moment, "
-        "I'll tell you what they say.");
+    if (announce) {
+      await _sayLocal(
+          "Alright — I'll call ${c.displayName} now. Give me a moment, "
+          "I'll tell you what happens.");
+    }
     state = OrbState.thinking;
     notifyListeners();
 
@@ -1144,6 +1186,7 @@ class AssistantController extends ChangeNotifier {
     const poll = Duration(seconds: 3);
     final deadline = DateTime.now().add(const Duration(minutes: 3));
     String? result;
+    String? terminal;
     var stateName = 'dialing';
     while (DateTime.now().isBefore(deadline)) {
       await Future.delayed(poll);
@@ -1154,6 +1197,7 @@ class AssistantController extends ChangeNotifier {
             s.state == 'no_answer' ||
             s.state == 'failed') {
           result = s.result;
+          terminal = s.state;
           break;
         }
       } catch (_) {/* transient poll error — keep waiting */}
@@ -1163,6 +1207,24 @@ class AssistantController extends ChangeNotifier {
         ? "The call with ${c.displayName} is taking longer than expected — "
             "I'll keep the result in our chat."
         : "I couldn't complete the call to ${c.displayName}.";
+
+    // NO ANSWER: offer to try again (once). The backend's result line already
+    // asks "Want me to try again?"; we open the mic and wait for the yes/no.
+    if (terminal == 'no_answer' && _agentRetries < _maxAgentRetries) {
+      _pendingCallRetry = (c, task);
+      await _sayLocal(result);
+      _history.add(ChatMessage(role: 'assistant', content: result));
+      state = OrbState.idle;
+      notifyListeners();
+      await ask(); // the yes/no routes back through _handleCallIntent
+      return;
+    }
+    if (terminal == 'no_answer') {
+      // Retries exhausted — don't dangle a "try again?" we won't act on.
+      result = "${c.displayName} still isn't picking up. I'll leave it for "
+          "now — just ask me to call again whenever you like.";
+    }
+
     await _sayLocal(result);
     // The outcome belongs in the chat history so follow-ups ("call him
     // back", "what did he say again?") have context.
