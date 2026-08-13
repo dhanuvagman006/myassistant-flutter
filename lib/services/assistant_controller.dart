@@ -356,23 +356,73 @@ class AssistantController extends ChangeNotifier {
       r'\b(this|it|that)\b|photo|picture|pic\b|ಇದ|इस|ये|यह|ഇത|இத|ఇద',
       caseSensitive: false);
 
+  /// Strong "point the camera at something" verbs — always a capture, no
+  /// document noun needed ("scan this", "capture this", "click a photo").
+  static final _scanVerb = RegExp(
+      r'\b(scan|capture)\b|\bclick (a |one )?(photo|pic|picture)\b|'
+      r'ಸ್ಕ್ಯಾನ್|ಸೆರೆ|स्कैन|कैप्चर|ஸ்கேன்|స్కాన్',
+      caseSensitive: false);
+
+  /// "Note this down", "take a note of this" — a hands-free capture too.
+  static final _noteThis = RegExp(
+      r'\bnote (this|it|that)( down)?\b|note it down|'
+      r'take a note of (this|it|that)|make a note of (this|it|that)',
+      caseSensitive: false);
+
+  /// Markers that turn "remember …" into a spoken FACT/TASK (route to
+  /// memory), not a physical thing to photograph. Keeps "remember that my
+  /// flight is at six" out of the camera path.
+  static final _factMarker = RegExp(
+      r'\b(is|are|was|were|will|has|have)\b|birthday|meeting|appointment|'
+      r'flight|deadline|anniversary|reminder|remind',
+      caseSensitive: false);
+
+  /// True when the user is pointing the phone at a real thing to keep it —
+  /// "scan this", "note this down", or a short "save/remember this" with no
+  /// fact clause. This is what lets a bare "remember this" open the camera.
+  bool _isPhysicalCaptureRequest(String q) {
+    final t = q.trim();
+    if (_scanVerb.hasMatch(t)) return true;
+    if (_noteThis.hasMatch(t)) return true;
+    // Bare "save this / remember this / keep this": short, points at a
+    // thing, and carries no fact/task clause.
+    final words =
+        t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    final saveish = _saveVerb.hasMatch(t);
+    final demonstrative = _thisPhoto.hasMatch(t);
+    if (saveish && demonstrative && words <= 5 && !_factMarker.hasMatch(t)) {
+      return true;
+    }
+    return false;
+  }
+
   /// "Save this receipt" → camera opens, the shot is filed into Hari's
   /// document memory (/docs analyzes it in the background), and the
   /// conversation carries on. If a photo is already on the table
   /// ("what's this?" … "save it") that photo is saved without reopening
   /// the camera. Returns null when [question] wasn't a save request.
   Future<bool?> _maybeHandleSaveDocument(String question) async {
-    if (!_saveVerb.hasMatch(question)) return null;
+    // Accept "save/keep/store", "scan/capture", or "note this down".
+    final hasSaveish = _saveVerb.hasMatch(question) ||
+        _scanVerb.hasMatch(question) ||
+        _noteThis.hasMatch(question);
+    if (!hasSaveish) return null;
+
     final photoOnTable =
         _visionBytes != null && _thisPhoto.hasMatch(question);
-    // Plain "remember that mom's birthday is in May" is a memory fact for
-    // the backend, NOT a document — require a document word (or an active
-    // photo being referred to).
-    if (!_docNoun.hasMatch(question) && !photoOnTable) return null;
+    // Open the camera when the user named a document (receipt, bill…), is
+    // pointing at a photo already on the table, or is clearly asking to
+    // capture a real thing ("scan this", "note this down", "remember this").
+    // Plain "remember that mom's birthday is in May" matches none of these,
+    // so it still flows to the backend as a memory fact.
+    final wantsCapture = _docNoun.hasMatch(question) ||
+        photoOnTable ||
+        _isPhysicalCaptureRequest(question);
+    if (!wantsCapture) return null;
 
     List<int>? bytes = photoOnTable ? _visionBytes : null;
     if (bytes == null) {
-      await _sayLocal('Sure — show it to the camera.');
+      await _sayLocal("Sure — show it to the camera and I'll remember it.");
       final XFile? shot;
       try {
         shot = await ImagePicker().pickImage(
