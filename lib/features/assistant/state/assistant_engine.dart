@@ -701,7 +701,9 @@ class AssistantEngine extends ChangeNotifier {
         ambiguousContacts.isNotEmpty ||
         phase == AssistantPhase.error ||
         phase == AssistantPhase.listening ||
-        phase == AssistantPhase.inCall) return;
+        phase == AssistantPhase.inCall) {
+      return;
+    }
     // Two silent turns in a row: they've walked away. Stop the mic rather
     // than listening to an empty room forever.
     if (_silentTurns >= 2) {

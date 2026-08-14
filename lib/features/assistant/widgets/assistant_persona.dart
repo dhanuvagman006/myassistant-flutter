@@ -71,7 +71,7 @@ class AssistantPersonaResolver {
     if (source == 'user' && stored != null) return _fromKey(stored);
 
     // 2. Derive from the existing profile gender (opposite gender).
-    final user = AuthService.instance.currentUser;
+    final user = AuthService.instance.user;
     final g = user?.gender?.toLowerCase();
     AssistantPersona? derived;
     if (g == 'male') {

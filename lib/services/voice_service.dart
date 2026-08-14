@@ -644,7 +644,9 @@ class VoiceService {
           if (!requireLatch &&
               !started &&
               peak >= floor + 4.0 &&
-              silentMs >= 700) break;
+              silentMs >= 700) {
+            break;
+          }
           // Finished talking: end after 450 ms of real silence, but never
           // before minCaptureMs — short questions have word gaps that would
           // otherwise cut the clip into a meaningless fragment.

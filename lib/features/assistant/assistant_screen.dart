@@ -10,11 +10,9 @@ import '../../models/remote_config.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
-import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
 import '../../screens/diagnostics_screen.dart';
 import '../../screens/avatar_screen.dart';
-import '../../services/auth_service.dart';
 import 'widgets/assistant_persona.dart';
 import '../../screens/clients_screen.dart';
 import '../../screens/survey_screen.dart';
@@ -76,7 +74,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       // Greet only when the session is actually usable: signed in and not
       // already mid-turn. If the backend is unreachable the assistant stays
       // silent rather than greeting into a broken session.
-      final user = AuthService.instance.currentUser;
+      final user = AuthService.instance.user;
       if (engine.hasGreeted) return;
       await engine.greetOnce(name: user?.name);
     });

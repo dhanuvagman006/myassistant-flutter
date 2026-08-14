@@ -140,7 +140,7 @@ class LiveService {
       _micSub = mic.listen((chunk) {
         if (!_active) return;
         try {
-          _ch?.sink.add(chunk is Uint8List ? chunk : Uint8List.fromList(chunk));
+          _ch?.sink.add(Uint8List.fromList(chunk));
         } catch (_) {}
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
@@ -191,7 +191,9 @@ class LiveService {
   void _onFrame(dynamic frame) {
     if (frame is List<int>) {
       // Reply audio: PCM16 @24 kHz. Buffer for segment playback.
-      _buf.add(frame is Uint8List ? frame : Uint8List.fromList(frame));
+      // record's stream already yields Uint8List; copy only if a platform
+      // ever hands back a plain List<int>.
+      _buf.add(frame is Uint8List ? frame : Uint8List.fromList(frame as List<int>));
       _lastChunkAt = DateTime.now();
       return;
     }
