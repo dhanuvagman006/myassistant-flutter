@@ -14,6 +14,8 @@ import 'state/assistant_state.dart';
 import 'widgets/action_cards.dart';
 import '../../screens/diagnostics_screen.dart';
 import '../../screens/avatar_screen.dart';
+import '../../services/auth_service.dart';
+import 'widgets/assistant_persona.dart';
 import '../../screens/clients_screen.dart';
 import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
@@ -60,6 +62,24 @@ class _AssistantScreenState extends State<AssistantScreen> {
     // back here. The chip that used to sit under the orb is gone — voice is
     // the way in.
     engine.onOpenVideoMode = _openVideoMode;
+
+    // ASSISTANT PRESENCE + GREETING. Resolved once, after the first frame
+    // — never from build() (§15). The greeting itself is guarded inside
+    // the engine, so rebuilds, reconnects and back-navigation cannot
+    // re-trigger it (§6).
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final persona = await AssistantPersonaResolver.resolve();
+      if (!mounted) return;
+      setState(() => _persona = persona);
+
+      // Greet only when the session is actually usable: signed in and not
+      // already mid-turn. If the backend is unreachable the assistant stays
+      // silent rather than greeting into a broken session.
+      final user = AuthService.instance.currentUser;
+      if (engine.hasGreeted) return;
+      await engine.greetOnce(name: user?.name);
+    });
     // STARTUP: first run shows the native onboarding survey; after
     // that the orb home screen IS the experience (Face Mode removed).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -108,6 +128,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   bool _videoModeOpen = false;
 
+  /// Who the assistant appears to be. Neutral until resolved so the first
+  /// frame never flickers a wrong persona.
+  AssistantPersona _persona = AssistantPersona.neutral;
+
+  /// True while a live avatar session is connecting (polished loading
+  /// state inside the circle instead of falling back to an icon, §12).
+  final bool _avatarConnecting = false;
+
   void _autoScroll() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
@@ -146,6 +174,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         phase: engine.phase,
                         micLevel: engine.micLevel,
                         onTap: engine.pressMic, // tap the orb to talk
+                        persona: _persona,
+                        avatarConnecting: _avatarConnecting,
                       ),
                     ),
                   ),

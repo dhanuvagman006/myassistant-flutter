@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../../../design/gyro_motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../state/assistant_state.dart';
+import 'assistant_face.dart';
+import 'assistant_persona.dart';
 
 /// The central animated assistant visual — a breathing gradient orb with a
 /// state-driven halo:
@@ -18,11 +20,25 @@ class AssistantHeroWidget extends StatefulWidget {
   final AssistantPhase phase;
   final double micLevel;
   final VoidCallback? onTap;
+
+  /// Who the assistant appears to be (opposite gender to the user).
+  /// Defaults to neutral so every existing call site keeps compiling.
+  final AssistantPersona persona;
+
+  /// Live avatar video frame from the SAME agent session, when available.
+  final Widget? liveFrame;
+
+  /// True while the avatar provider is connecting.
+  final bool avatarConnecting;
+
   const AssistantHeroWidget({
     super.key,
     required this.phase,
     this.micLevel = 0,
     this.onTap,
+    this.persona = AssistantPersona.neutral,
+    this.liveFrame,
+    this.avatarConnecting = false,
   });
 
   @override
@@ -182,15 +198,20 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
                                 ],
                               ),
                             ),
-                            child: Center(
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 250),
-                                child: Icon(
-                                  _icon,
-                                  key: ValueKey(_icon),
-                                  size: 44,
-                                  color: Colors.white.withValues(alpha: 0.94),
-                                ),
+                            // THE ASSISTANT'S FACE replaces the old mic
+                            // icon here. The ring, sizing, gyro tilt and
+                            // every surrounding control are unchanged —
+                            // only the centre content differs.
+                            child: ClipOval(
+                              child: AssistantFace(
+                                // The inner glass circle is 150 wide with a
+                                // 7px margin on each side.
+                                size: 136,
+                                phase: widget.phase,
+                                persona: widget.persona,
+                                speakingLevel: level,
+                                liveFrame: widget.liveFrame,
+                                connecting: widget.avatarConnecting,
                               ),
                             ),
                           ),
@@ -207,23 +228,10 @@ class _AssistantHeroWidgetState extends State<AssistantHeroWidget>
     );
   }
 
-  IconData get _icon => switch (widget.phase) {
-        AssistantPhase.listening => Icons.graphic_eq_rounded,
-        AssistantPhase.transcribing => Icons.short_text_rounded,
-        AssistantPhase.thinking => Icons.auto_awesome_rounded,
-        AssistantPhase.searching => Icons.travel_explore_rounded,
-        AssistantPhase.findingContact => Icons.person_search_rounded,
-        AssistantPhase.preparingMessage => Icons.edit_note_rounded,
-        AssistantPhase.generatingVoice => Icons.record_voice_over_rounded,
-        AssistantPhase.waitingForConfirmation => Icons.help_outline_rounded,
-        AssistantPhase.dialing ||
-        AssistantPhase.ringing ||
-        AssistantPhase.inCall =>
-          Icons.phone_in_talk_rounded,
-        AssistantPhase.speaking => Icons.volume_up_rounded,
-        AssistantPhase.error => Icons.error_outline_rounded,
-        _ => Icons.mic_none_rounded,
-      };
+  // The per-phase mic/status ICON that used to sit in the centre is gone:
+  // AssistantFace now conveys state through expression and a colour wash,
+  // so the assistant never reverts to an icon (§12). The status pill below
+  // still shows the phase in words.
 }
 
 /// Live status pill — always tells the user what the assistant is doing.

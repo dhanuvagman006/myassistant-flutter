@@ -110,3 +110,6 @@ flutter:
   assets:
     - assets/icon/
     - assets/wake/
+    # Optional licensed portraits (assistant_female.jpg / assistant_male.jpg).
+    # The app runs without them — AssistantFace falls back automatically.
+    - assets/avatar/

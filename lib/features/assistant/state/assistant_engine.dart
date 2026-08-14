@@ -579,6 +579,59 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---------------- OPENING GREETING ----------------
+  // Spoken once when the assistant session becomes ready. It runs through
+  // the SAME voice pipeline as every other reply (_speakQueue -> VoiceService
+  // -> barge-in watcher), so it is interruptible and creates no second
+  // session (§7, §8, §14).
+
+  bool _greeted = false;
+
+  /// True once the greeting has been delivered for this session. Guards
+  /// against rebuilds, reconnects and back-navigation re-triggering it (§6).
+  bool get hasGreeted => _greeted;
+
+  /// Time-appropriate greeting text. Kept as one small generator rather
+  /// than a hard-coded string per case (§16).
+  static String greetingFor(String? name, {DateTime? now}) {
+    final h = (now ?? DateTime.now()).hour;
+    final part = h < 12
+        ? 'Good morning'
+        : h < 17
+            ? 'Good afternoon'
+            : 'Good evening';
+    final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
+    final who = first.isEmpty ? '' : ', $first';
+    return '$part$who. How can I help you today?';
+  }
+
+  /// Speaks the opening greeting exactly once per session.
+  ///
+  /// Called from the screen's init lifecycle — never from build(). Silent
+  /// no-op if the user is already talking or a turn is in flight, so it can
+  /// never talk over someone (§8, §15).
+  Future<void> greetOnce({String? name}) async {
+    if (_greeted) return;
+    _greeted = true; // set FIRST: a rebuild racing this must not double-greet
+
+    if (phase.busy || liveActive) return;
+    if (PhoneStateGuard.instance.inCall) return;
+
+    final text = greetingFor(name);
+    transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
+    _setPhase(AssistantPhase.speaking, silent: true);
+    notifyListeners();
+
+    // Same queue + barge-in watcher as any other reply, so "Call Mom"
+    // spoken over the greeting cuts it off and is processed normally.
+    _speakQueue.add(text);
+    await _drainSpeech();
+  }
+
+  /// Resets the greeting guard — used when a DIFFERENT user signs in, so
+  /// the next person is greeted properly.
+  void resetGreeting() => _greeted = false;
+
   // ---------------- CONTINUOUS CONVERSATION ----------------
   // Hari keeps the conversation going: after she finishes speaking she
   // listens again automatically, so it feels like a phone call instead of
