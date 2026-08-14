@@ -9,16 +9,30 @@ backend (`MYASSISTANT_BACKEND`).
 > excluded iOS. Flutter + iOS is a deviation recorded via Change Request.
 
 ## The experience
-A single-screen agent, not a tab bar. An animated "bloom orb" you tap to talk;
-your words and Hari's replies stream in as a transcript, with dynamic cards
-appearing inline — search results, contacts to call, saved documents, and a
-confirmation card before any real-world action. Two chips sit by the orb:
-**Face** (Tavus human-avatar video call) and **Clients** (professional mode).
+Open the app and you are **in a live video call with your assistant** — a real
+human avatar (Tavus CVI) that hears you, answers in under a second with
+lip-synced video, and can be interrupted mid-sentence like a real call. The
+greeting ("Good evening, Dhanush. I'm Maya…") is spoken by the avatar itself
+only after the session is genuinely live — never while disconnected.
+
+The live screen shows only the assistant: a LIVE badge, speaker toggle,
+**⋯ More** and **End call**. Everything else — voice mode with transcript and
+cards, clients & cases, assistant settings, MCP servers, diagnostics — lives
+behind ⋯ More.
+
+### Live session state machine
+`initializing → connecting → connected → ready` (plus `error / offline /
+ended`). **READY is real**: a probe inside the room reports ready only when a
+remote video element is actually decoding frames — never because "the page
+loaded".
 
 ## Structure
 ```
 lib/
-├── main.dart                     # app shell + AuthGate
+├── main.dart                     # app shell + AuthGate → LiveScreen
+├── features/assistant/live/      # THE main screen: live video call
+│   ├── live_screen.dart          #   video-first UI + honest state overlays
+│   └── live_session_controller.dart  # canonical session state machine
 ├── theme/ · design/              # Neon design system (tokens, glass cards, orb, gyro tilt)
 ├── models/                       # ChatMessage, UserDocument, Client, Reminder, Place, …
 ├── core/network/assistant_api.dart   # SSE client for the realtime voice loop

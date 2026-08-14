@@ -12,14 +12,15 @@ import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
 import 'widgets/action_cards.dart';
 import '../../screens/diagnostics_screen.dart';
-import '../../screens/avatar_screen.dart';
 import 'widgets/assistant_persona.dart';
 import '../../screens/clients_screen.dart';
-import '../../screens/survey_screen.dart';
 import 'widgets/assistant_hero_widget.dart';
 import 'widgets/bottom_input_bar.dart';
 
-/// THE app — a single-page AI agent experience.
+/// VOICE MODE — the secondary, transcript-capable assistant experience.
+/// The MAIN screen is the live video call (features/assistant/live/
+/// live_screen.dart); this screen is reached from ⋯ More or as the
+/// honest fallback when live video is unavailable.
 ///
 /// Layout (top → bottom):
 ///   • animated hero orb (state-driven)
@@ -42,7 +43,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
   final _scroll = ScrollController();
   RemoteConfig _config = const RemoteConfig();
   bool _announcementDismissed = false;
-  bool _avatarAvailable = false;
 
   @override
   void initState() {
@@ -52,13 +52,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
     ApiService.refreshConfig().then((c) {
       if (mounted) setState(() => _config = c);
     });
-    AvatarScreen.available().then((ok) {
-      if (mounted) setState(() => _avatarAvailable = ok);
-    });
-    // VOICE-DRIVEN VIDEO MODE: saying "open video mode" pushes the avatar
-    // video call. The engine can't navigate (no BuildContext), so it calls
-    // back here. The chip that used to sit under the orb is gone — voice is
-    // the way in.
+    // "Open video mode" now RETURNS to the live call — the main screen —
+    // instead of pushing a separate avatar page (one canonical video
+    // pipeline, Rebuild §7).
     engine.onOpenVideoMode = _openVideoMode;
 
     // ASSISTANT PRESENCE. Resolve the persona and hand the engine the
@@ -75,17 +71,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
       // lets the greeting happen now; it is still gated on `connected`.
       engine.greetOnce(name: AuthService.instance.user?.name);
     });
-    // STARTUP: first run shows the native onboarding survey; after
-    // that the orb home screen IS the experience (Face Mode removed).
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      if (await SurveyGate.needed()) {
-        if (!mounted) return;
-        await Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SurveyScreen()));
-      }
-      AuthService.instance.lastSignInWasNew = false;
-    });
   }
 
   @override
@@ -96,32 +81,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
     super.dispose();
   }
 
-  /// Opens the human-avatar video call (voice command "open video mode").
-  /// Guards against a double-push if the screen is already on top, and says
-  /// so plainly when the avatar service isn't configured.
+  /// Voice command "open video mode": release the mic and pop back to the
+  /// live call, which is the root screen and restarts its own session.
   Future<void> _openVideoMode() async {
     if (!mounted) return;
-    if (!_avatarAvailable) {
-      // Re-check once: availability is fetched async at startup and may not
-      // have landed yet on a cold start.
-      _avatarAvailable = await AvatarScreen.available();
-    }
-    if (!mounted) return;
-    if (!_avatarAvailable) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Video mode isn't set up on this account yet."),
-      ));
-      return;
-    }
-    if (_videoModeOpen) return;
-    _videoModeOpen = true;
-    engine.cancelAction(); // release the mic before the avatar takes over
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const AvatarScreen()));
-    _videoModeOpen = false;
+    engine.cancelAction(); // release the mic before the live room takes over
+    Navigator.of(context).popUntil((r) => r.isFirst);
   }
-
-  bool _videoModeOpen = false;
 
   /// Who the assistant appears to be. Neutral until resolved so the first
   /// frame never flickers a wrong persona.

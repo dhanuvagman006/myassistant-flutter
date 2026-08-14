@@ -16,7 +16,7 @@ import 'assistant_persona.dart';
 ///  THREE LAYERS, best available wins:
 ///
 ///   1. LIVE AVATAR   — a video frame pushed by the existing Tavus session
-///      (see AvatarScreen / backend src/avatar/tavus.js). When the unified
+///      (see live/live_session_controller.dart / backend src/avatar/tavus.js). When the unified
 ///      session has a live avatar, [liveFrame] renders here. This is the
 ///      production path and reuses the existing provider; no second video
 ///      agent is created.

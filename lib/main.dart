@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'design/neon_tokens.dart';
-import 'features/assistant/assistant_screen.dart';
+import 'features/assistant/live/live_screen.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
@@ -31,9 +31,10 @@ void main() {
   runApp(const MyAssistantApp());
 }
 
-/// Single-page app: the AI agent IS the app. The only screens outside it
-/// are unavoidable security gates (session restore splash, sign-in wall,
-/// biometric lock) — everything else is a glass sheet over the agent page.
+/// The live call IS the app: after the security gates the user lands
+/// directly in a live video conversation with their assistant
+/// (LiveScreen). Voice mode, history, clients, settings and MCP are
+/// secondary screens behind ⋯ More.
 class MyAssistantApp extends StatelessWidget {
   const MyAssistantApp({super.key});
 
@@ -51,7 +52,7 @@ class MyAssistantApp extends StatelessWidget {
 }
 
 /// Splash while restoring the session, then AuthScreen (signed out) or the
-/// agent page (signed in). Listens to AuthService so sign-in and sign-out
+/// live assistant (signed in). Listens to AuthService so sign-in and sign-out
 /// swap automatically. The first-run interview is handled by the agent
 /// page itself as a glass sheet — no extra route.
 class AuthGate extends StatefulWidget {
@@ -100,6 +101,6 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (!auth.isSignedIn) return const AuthScreen();
     // F1 — optional fingerprint/PIN wall in front of everything.
     if (AppLock.instance.shouldLock) return const LockScreen();
-    return const AssistantScreen();
+    return const LiveScreen();
   }
 }
