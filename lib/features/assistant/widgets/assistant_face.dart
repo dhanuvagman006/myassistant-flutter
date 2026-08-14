@@ -157,7 +157,24 @@ class _AssistantFaceState extends State<AssistantFace>
         child: FittedBox(fit: BoxFit.cover, child: widget.liveFrame),
       );
     }
-    // 2. Licensed portrait asset, if the app ships one.
+    // 2a. Configurable remote portrait — set ASSISTANT_PORTRAIT_URL at
+    //     build time (--dart-define) or point it at your own CDN, so a
+    //     licensed image can be used without shipping it in the repo.
+    final url = widget.persona.portraitUrl;
+    if (url.isNotEmpty) {
+      return _animate(
+        Image.network(
+          url,
+          fit: BoxFit.cover,
+          width: widget.size,
+          height: widget.size,
+          loadingBuilder: (c, child, p) =>
+              p == null ? child : _silhouette(),
+          errorBuilder: (_, __, ___) => _silhouette(),
+        ),
+      );
+    }
+    // 2b. Licensed portrait asset, if the app ships one.
     return FutureBuilder<bool>(
       key: const ValueKey('static'),
       future: _portraitProbe,
@@ -259,9 +276,16 @@ class _AssistantFaceState extends State<AssistantFace>
         ),
       );
 
-  /// Non-photographic presence: warm lit form, soft rim light, gentle
-  /// gradient. Reads as "someone is here" without pretending to be a photo.
-  Widget _presence() {
+  /// Portrait-shaped fallback: a soft human SILHOUETTE, lit like a studio
+  /// portrait. Not a letter, not an orb, not a microphone — it reads as
+  /// "a person is here" while being honest that no photograph is loaded.
+  ///
+  /// This is intentionally the last resort. A photorealistic face must be
+  /// a real licensed image (portraitUrl or the asset above); a face cannot
+  /// be conjured in code without fabricating someone's likeness.
+  Widget _presence() => _silhouette();
+
+  Widget _silhouette() {
     final p = widget.persona;
     return Semantics(
       label: '${p.displayName}, your assistant',
@@ -269,31 +293,61 @@ class _AssistantFaceState extends State<AssistantFace>
       child: DecoratedBox(
         decoration: BoxDecoration(
           gradient: RadialGradient(
-            center: const Alignment(-0.25, -0.4),
-            radius: 1.1,
+            center: const Alignment(-0.3, -0.45),
+            radius: 1.2,
             colors: [
-              p.tint.withValues(alpha: 0.55),
-              p.tint.withValues(alpha: 0.22),
-              Neon.bg.withValues(alpha: 0.94),
+              p.tint.withValues(alpha: 0.42),
+              p.tint.withValues(alpha: 0.16),
+              Neon.bg.withValues(alpha: 0.96),
             ],
-            stops: const [0.0, 0.45, 1.0],
+            stops: const [0.0, 0.5, 1.0],
           ),
         ),
-        child: Center(
-          child: Text(
-            p.initial,
-            style: TextStyle(
-              fontSize: widget.size * 0.34,
-              fontWeight: FontWeight.w300,
-              letterSpacing: 1,
-              color: Colors.white.withValues(alpha: 0.92),
-              shadows: [
-                Shadow(color: p.tint.withValues(alpha: 0.8), blurRadius: 24),
-              ],
-            ),
+        child: CustomPaint(
+          painter: _SilhouettePainter(
+            tint: Colors.white.withValues(alpha: 0.30),
+            rim: p.tint.withValues(alpha: 0.55),
           ),
+          size: Size(widget.size, widget.size),
         ),
       ),
     );
   }
+}
+
+/// Head-and-shoulders silhouette with a rim light — the universal
+/// "portrait not loaded" figure, drawn rather than lettered.
+class _SilhouettePainter extends CustomPainter {
+  final Color tint;
+  final Color rim;
+  const _SilhouettePainter({required this.tint, required this.rim});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final body = Paint()..color = tint..style = PaintingStyle.fill;
+    final rimPaint = Paint()
+      ..color = rim
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = w * 0.012;
+
+    // Head
+    final headR = w * 0.155;
+    final headC = Offset(w * 0.5, h * 0.40);
+    canvas.drawCircle(headC, headR, body);
+    canvas.drawCircle(headC, headR, rimPaint);
+
+    // Shoulders: a rounded torso rising from the lower edge.
+    final shoulders = Path()
+      ..moveTo(w * 0.18, h * 1.02)
+      ..cubicTo(w * 0.20, h * 0.70, w * 0.34, h * 0.60, w * 0.5, h * 0.60)
+      ..cubicTo(w * 0.66, h * 0.60, w * 0.80, h * 0.70, w * 0.82, h * 1.02)
+      ..close();
+    canvas.drawPath(shoulders, body);
+    canvas.drawPath(shoulders, rimPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SilhouettePainter old) =>
+      old.tint != tint || old.rim != rim;
 }

@@ -296,6 +296,13 @@ class AssistantEngine extends ChangeNotifier {
       );
       connected = true;
       errorMessage = null;
+      // THE REAL READY SIGNAL. The SSE session is open and the backend
+      // answered — this, and only this, is what unlocks the greeting.
+      // A new epoch means a genuinely new assistant session, so a
+      // reconnect after a real drop can greet again, while rebuilds,
+      // setState and navigation cannot (they never reach this line).
+      _sessionEpoch++;
+      _maybeGreetOnReady();
     } catch (e) {
       connected = false;
       errorMessage = 'Could not reach the assistant service.';
@@ -585,11 +592,20 @@ class AssistantEngine extends ChangeNotifier {
   // -> barge-in watcher), so it is interruptible and creates no second
   // session (§7, §8, §14).
 
-  bool _greeted = false;
+  /// Increments each time a live session genuinely becomes ready. The
+  /// greeting is keyed to this rather than a global boolean, so it can
+  /// never fire twice for one session and is never permanently blocked
+  /// after a real reconnect (§16).
+  int _sessionEpoch = 0;
+  int _greetedEpoch = -1;
 
-  /// True once the greeting has been delivered for this session. Guards
-  /// against rebuilds, reconnects and back-navigation re-triggering it (§6).
-  bool get hasGreeted => _greeted;
+  /// The user's display name, supplied by the screen once it is known.
+  String? greetingName;
+
+  /// Set false to suppress the automatic greeting entirely.
+  bool greetingEnabled = true;
+
+  bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
   /// Time-appropriate greeting text. Kept as one small generator rather
   /// than a hard-coded string per case (§16).
@@ -605,32 +621,51 @@ class AssistantEngine extends ChangeNotifier {
     return '$part$who. How can I help you today?';
   }
 
-  /// Speaks the opening greeting exactly once per session.
+  /// Speaks the opening greeting — ONLY when the live session is really
+  /// ready. Called from the connect path, never from a widget lifecycle.
   ///
-  /// Called from the screen's init lifecycle — never from build(). Silent
-  /// no-op if the user is already talking or a turn is in flight, so it can
-  /// never talk over someone (§8, §15).
-  Future<void> greetOnce({String? name}) async {
-    if (_greeted) return;
-    _greeted = true; // set FIRST: a rebuild racing this must not double-greet
-
+  /// Refuses to speak when: not connected, already greeted this session,
+  /// a turn is in flight, live mode owns the audio, or a phone call is
+  /// active. If the session drops before the audio starts, the greeting is
+  /// abandoned rather than spoken into a dead session (§4).
+  Future<void> _maybeGreetOnReady() async {
+    if (!greetingEnabled) return;
+    if (!connected) return;                 // never greet while offline
+    final epoch = _sessionEpoch;
+    if (_greetedEpoch == epoch) return;     // once per real session
     if (phase.busy || liveActive) return;
     if (PhoneStateGuard.instance.inCall) return;
+    _greetedEpoch = epoch;                  // claim before awaiting
 
-    final text = greetingFor(name);
+    // Small settle so a reconnect storm cannot start speech mid-flap.
+    await Future.delayed(const Duration(milliseconds: 600));
+    // Re-verify: the session may have dropped during the settle.
+    if (!connected || _sessionEpoch != epoch || phase.busy || liveActive) {
+      if (_sessionEpoch == epoch) _greetedEpoch = -1; // allow a later retry
+      return;
+    }
+
+    final text = greetingFor(greetingName);
     transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
     _setPhase(AssistantPhase.speaking, silent: true);
     notifyListeners();
 
-    // Same queue + barge-in watcher as any other reply, so "Call Mom"
-    // spoken over the greeting cuts it off and is processed normally.
+    // Same speak queue + barge-in watcher as any other reply, so "Call
+    // Mom" over the greeting cuts it off and is processed normally.
     _speakQueue.add(text);
     await _drainSpeech();
   }
 
+  /// Kept for the screen to nudge a greeting once the user's name is
+  /// known, if the session was already ready before that happened.
+  Future<void> greetOnce({String? name}) async {
+    if (name != null && name.isNotEmpty) greetingName = name;
+    await _maybeGreetOnReady();
+  }
+
   /// Resets the greeting guard — used when a DIFFERENT user signs in, so
   /// the next person is greeted properly.
-  void resetGreeting() => _greeted = false;
+  void resetGreeting() => _greetedEpoch = -1;
 
   // ---------------- CONTINUOUS CONVERSATION ----------------
   // Hari keeps the conversation going: after she finishes speaking she

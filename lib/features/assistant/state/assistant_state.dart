@@ -40,15 +40,22 @@ enum AssistantPhase {
       };
 
   /// Short human label for the status pill.
+  ///
+  /// The user sees what the ASSISTANT is doing, not what the voice
+  /// pipeline is doing. Internal stages — transcribing, generating voice,
+  /// preparing a message — all read as "Thinking…", because "Transcribing…"
+  /// is a debug state, not something a person waiting for an answer needs
+  /// to know (§6). The phases themselves are unchanged; only their
+  /// user-facing wording is.
   String get label => switch (this) {
         AssistantPhase.idle => 'Ready',
         AssistantPhase.listening => 'Listening…',
-        AssistantPhase.transcribing => 'Transcribing…',
+        AssistantPhase.transcribing => 'Thinking…',
         AssistantPhase.thinking => 'Thinking…',
         AssistantPhase.searching => 'Searching…',
         AssistantPhase.findingContact => 'Finding contact…',
-        AssistantPhase.preparingMessage => 'Preparing message…',
-        AssistantPhase.generatingVoice => 'Generating voice…',
+        AssistantPhase.preparingMessage => 'Thinking…',
+        AssistantPhase.generatingVoice => 'Thinking…',
         AssistantPhase.waitingForConfirmation => 'Waiting for you',
         AssistantPhase.dialing => 'Dialing…',
         AssistantPhase.ringing => 'Ringing…',

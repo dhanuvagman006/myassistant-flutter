@@ -32,6 +32,17 @@ class AssistantPersona {
   static const male = AssistantPersona._(AssistantGender.male, 'Hari');
   static const neutral = AssistantPersona._(AssistantGender.neutral, 'Hari');
 
+  /// Optional remote portrait, so a licensed image can be used without
+  /// committing it: flutter run --dart-define=ASSISTANT_PORTRAIT_FEMALE=https://…
+  String get portraitUrl => switch (gender) {
+        AssistantGender.female =>
+          const String.fromEnvironment('ASSISTANT_PORTRAIT_FEMALE'),
+        AssistantGender.male =>
+          const String.fromEnvironment('ASSISTANT_PORTRAIT_MALE'),
+        AssistantGender.neutral =>
+          const String.fromEnvironment('ASSISTANT_PORTRAIT_NEUTRAL'),
+      };
+
   /// Portrait asset for this persona. Ships absent by design — a
   /// photorealistic face must be a licensed image, not something generated
   /// in code. Add the file and AssistantFace picks it up automatically.

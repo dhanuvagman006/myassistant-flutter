@@ -61,22 +61,19 @@ class _AssistantScreenState extends State<AssistantScreen> {
     // the way in.
     engine.onOpenVideoMode = _openVideoMode;
 
-    // ASSISTANT PRESENCE + GREETING. Resolved once, after the first frame
-    // — never from build() (§15). The greeting itself is guarded inside
-    // the engine, so rebuilds, reconnects and back-navigation cannot
-    // re-trigger it (§6).
+    // ASSISTANT PRESENCE. Resolve the persona and hand the engine the
+    // user's name. The GREETING is NOT triggered here: it fires from the
+    // engine's connect path when the live session genuinely becomes
+    // ready, so opening the screen offline never produces a greeting.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final persona = await AssistantPersonaResolver.resolve();
       if (!mounted) return;
       setState(() => _persona = persona);
-
-      // Greet only when the session is actually usable: signed in and not
-      // already mid-turn. If the backend is unreachable the assistant stays
-      // silent rather than greeting into a broken session.
-      final user = AuthService.instance.user;
-      if (engine.hasGreeted) return;
-      await engine.greetOnce(name: user?.name);
+      engine.greetingName = AuthService.instance.user?.name;
+      // If the session was already ready before the name arrived, this
+      // lets the greeting happen now; it is still gated on `connected`.
+      engine.greetOnce(name: AuthService.instance.user?.name);
     });
     // STARTUP: first run shows the native onboarding survey; after
     // that the orb home screen IS the experience (Face Mode removed).
@@ -233,31 +230,43 @@ class _AssistantScreenState extends State<AssistantScreen> {
     );
   }
 
-  Widget _connectionBanner(AssistantEngine engine) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Neon.s4),
-        child: GestureDetector(
-          onTap: () {
-            engine.dismissError();
-            Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const DiagnosticsScreen()));
-          },
-          child: GlassCard(
-            tint: Neon.warning,
-            child: Row(
-              children: [
-                const Icon(Icons.wifi_off_rounded,
-                    color: Neon.warning, size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    engine.errorMessage ??
-                        "Can't reach the server — tap to diagnose",
-                    style: const TextStyle(fontSize: 13),
+  /// Connection trouble, stated once and quietly. Previously this was a
+  /// full-width warning card in the centre of the assistant experience,
+  /// which turned a transient network blip into the main event. It is now
+  /// a compact pill: the assistant stays the focus, and the technical
+  /// detail lives behind a tap (§5, §20).
+  Widget _connectionBanner(AssistantEngine engine) => Center(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: GestureDetector(
+            onTap: () {
+              engine.dismissError();
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const DiagnosticsScreen()));
+            },
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                color: Neon.warning.withValues(alpha: 0.10),
+                border:
+                    Border.all(color: Neon.warning.withValues(alpha: 0.35)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cloud_off_rounded,
+                      color: Neon.warning.withValues(alpha: 0.9), size: 14),
+                  const SizedBox(width: 7),
+                  Text(
+                    engine.connected ? 'Connection issue' : 'Offline',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Neon.warning.withValues(alpha: 0.95)),
                   ),
-                ),
-                const Icon(Icons.chevron_right_rounded,
-                    color: Neon.warning, size: 20),
-              ],
+                ],
+              ),
             ),
           ),
         ),
