@@ -99,6 +99,32 @@ class ApiService {
   /// Exposed for the live-mode WebSocket URL (query-string auth).
   static String get appApiKey => _appApiKey;
 
+  /// Generic JSON request helper (POST/PUT/DELETE) used by MCP settings.
+  /// Returns the decoded body, or null on any failure — callers surface a
+  /// friendly message rather than an exception.
+  static Future<Map<String, dynamic>?> sendJson(String path,
+      {String method = 'POST', Object? body}) async {
+    try {
+      final uri = Uri.parse('$baseUrl$path');
+      final headers = {..._authHeaders, 'Content-Type': 'application/json'};
+      final payload = body == null ? null : jsonEncode(body);
+      late final http.Response r;
+      switch (method) {
+        case 'PUT':
+          r = await _client.put(uri, headers: headers, body: payload);
+        case 'DELETE':
+          r = await _client.delete(uri, headers: headers, body: payload);
+        default:
+          r = await _client.post(uri, headers: headers, body: payload);
+      }
+      if (r.statusCode >= 300) return null;
+      final decoded = r.body.isEmpty ? {} : jsonDecode(r.body);
+      return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Small generic GET helper (used by the live-mode availability probe).
   static Future<Map<String, dynamic>?> getJson(String path) async {
     try {
