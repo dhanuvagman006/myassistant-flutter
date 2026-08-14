@@ -47,6 +47,14 @@ class _SurveyScreenState extends State<SurveyScreen> {
   final _name = TextEditingController(
       text: AuthService.instance.user?.name ?? '');
   final _location = TextEditingController();
+
+  // Conversational onboarding (§3): one free-text box that the backend
+  // turns into structured fields, so nobody is forced through a form.
+  final _aboutMe = TextEditingController();
+  final _profession = TextEditingController();
+  final _organisation = TextEditingController();
+  bool _extracting = false;
+  String? _extractNote;
   String? _gender = AuthService.instance.user?.gender;
   final Set<String> _picked = {};
   bool _saving = false;
@@ -56,6 +64,54 @@ class _SurveyScreenState extends State<SurveyScreen> {
     'Fitness', 'Technology', 'Studies', 'Business', 'Devotional',
     'Fashion', 'Gaming',
   ];
+
+  Future<void> _saveDetails() async {
+    // Optional fields — sent only when present; skipping is first-class.
+    final body = {
+      if (_profession.text.trim().isNotEmpty)
+        'profession': _profession.text.trim(),
+      if (_organisation.text.trim().isNotEmpty)
+        'organisation': _organisation.text.trim(),
+      if (_location.text.trim().isNotEmpty)
+        'location': _location.text.trim(),
+    };
+    if (body.isEmpty) return;
+    await ApiService.sendJson('/profile/details', method: 'PUT', body: body);
+  }
+
+  /// "Just tell me about yourself" — sends the free text to the backend,
+  /// which extracts structured fields and reports exactly what it applied.
+  Future<void> _extractFromText() async {
+    final text = _aboutMe.text.trim();
+    if (text.isEmpty) return;
+    setState(() { _extracting = true; _extractNote = null; });
+    final r = await ApiService.sendJson('/profile/conversational',
+        method: 'POST', body: {'text': text});
+    if (!mounted) return;
+    setState(() {
+      _extracting = false;
+      if (r == null) {
+        _extractNote = "Couldn't reach the server — you can fill the fields instead.";
+        return;
+      }
+      final applied = (r['applied'] as Map?) ?? {};
+      if (applied.isEmpty) {
+        _extractNote = (r['error'] as String?) ??
+            'Nothing recognised — try the fields below.';
+        return;
+      }
+      // Reflect what the server understood back into the form, honestly.
+      if (applied['name'] is String) _name.text = applied['name'];
+      if (applied['location'] is String) _location.text = applied['location'];
+      if (applied['profession'] is String) {
+        _profession.text = applied['profession'];
+      }
+      if (applied['organisation'] is String) {
+        _organisation.text = applied['organisation'];
+      }
+      _extractNote = 'Got it: ${applied.keys.join(', ')}.';
+    });
+  }
 
   Future<void> _submit() async {
     final name = _name.text.trim();
@@ -83,6 +139,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
           )
           .timeout(const Duration(seconds: 12));
       AppLog.add('survey', 'submit HTTP ${r.statusCode}');
+      await _saveDetails();
       if (r.statusCode == 200) {
         await AuthService.instance.refreshUser();
       }
@@ -101,6 +158,9 @@ class _SurveyScreenState extends State<SurveyScreen> {
   void dispose() {
     _name.dispose();
     _location.dispose();
+    _aboutMe.dispose();
+    _profession.dispose();
+    _organisation.dispose();
     super.dispose();
   }
 
@@ -126,7 +186,60 @@ class _SurveyScreenState extends State<SurveyScreen> {
             _field(_name, hint: 'e.g. Dhanu'),
             const SizedBox(height: 18),
             _label('Where do you live?'),
+            // CONVERSATIONAL PATH — speak/type naturally instead of forms.
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: Colors.white.withValues(alpha: 0.05),
+                border:
+                    Border.all(color: Colors.white.withValues(alpha: 0.10)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Or just tell me about yourself',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _aboutMe,
+                    maxLines: 3,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText:
+                          "e.g. I'm Dhanush, a software engineer in Mangalore working on AI systems.",
+                      hintStyle: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.35),
+                          fontSize: 13),
+                      border: InputBorder.none,
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _extracting
+                        ? const SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : TextButton(
+                            onPressed: _extractFromText,
+                            child: const Text('Understand me')),
+                  ),
+                  if (_extractNote != null)
+                    Text(_extractNote!,
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.6),
+                            fontSize: 12)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
             _field(_location, hint: 'e.g. Mysuru'),
+            const SizedBox(height: 10),
+            _field(_profession, hint: 'Profession (optional)'),
+            const SizedBox(height: 10),
+            _field(_organisation, hint: 'Company / organisation (optional)'),
             const SizedBox(height: 18),
             _label('You are'),
             const SizedBox(height: 8),

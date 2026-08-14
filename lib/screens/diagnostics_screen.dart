@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/log.dart';
+import 'assistant_settings_screen.dart';
 import 'mcp_servers_screen.dart';
 import '../design/gyro_motion.dart';
 import '../features/assistant/state/assistant_engine.dart';
@@ -133,6 +134,19 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           const SizedBox(height: 20),
           // MCP lives in settings, never on the live agent screen — the
           // normal experience is "open the app and talk".
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading:
+                const Icon(Icons.face_retouching_natural, color: Colors.white70),
+            title: const Text('Assistant',
+                style: TextStyle(color: Colors.white)),
+            subtitle: const Text('Name, voice, style, standing rules',
+                style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+            trailing: const Icon(Icons.chevron_right, color: Colors.white38),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const AssistantSettingsScreen())),
+          ),
+          const SizedBox(height: 8),
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.extension_rounded, color: Colors.white70),
