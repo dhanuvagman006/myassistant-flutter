@@ -323,10 +323,18 @@ class AssistantEngine extends ChangeNotifier {
   /// [auto] is true when the continuous-conversation loop re-opened the mic
   /// by itself; a manual press always (re)starts a conversation.
   Future<void> pressMic({bool auto = false}) async {
-    // In live mode the orb is the hang-up button.
+    // THE ORB IS LIVE MODE. One tap opens a real speech-to-speech
+    // conversation; tapping again hangs up. The classic record→STT→TTS
+    // loop only runs as a SILENT fallback when live isn't available on
+    // this key/server — the user never sees an error for it.
     if (liveActive) {
       await stopLive();
       return;
+    }
+    if (!auto && !_liveUnavailable) {
+      final ok = await _startLive();
+      if (ok) return;
+      // Live couldn't start — fall through to the classic path, silently.
     }
     if (!auto) {
       // An explicit tap means "I want to talk" — revive a conversation that
@@ -466,14 +474,21 @@ class AssistantEngine extends ChangeNotifier {
   final _liveSvc = LiveService.instance;
   bool get liveActive => _liveSvc.active;
 
-  TranscriptEntry? _liveUserEntry;
-  TranscriptEntry? _liveHariEntry;
+  bool _liveUnavailable = false;
+  Completer<bool>? _liveStartResult;
 
   Future<void> toggleLive() async {
     if (liveActive) {
       await stopLive();
-      return;
+    } else {
+      await _startLive();
     }
+  }
+
+  /// Starts a live session. Resolves TRUE once the session is ready, FALSE
+  /// if it failed (so the caller can fall back to the classic loop without
+  /// the user ever seeing an error).
+  Future<bool> _startLive() async {
     // Live owns all audio: silence the classic loop completely first.
     _conversationEnded = true;
     _speakQueue.clear();
@@ -486,6 +501,8 @@ class AssistantEngine extends ChangeNotifier {
     _resetTurn();
 
     _liveSvc.onReady = () {
+      _liveStartResult?.complete(true);
+      _liveStartResult = null;
       _setPhase(AssistantPhase.listening, silent: true);
       notifyListeners();
     };
@@ -503,46 +520,29 @@ class AssistantEngine extends ChangeNotifier {
       if (!speaking) micLevel = 0;
       notifyListeners();
     };
-    _liveSvc.onUserText = (t) {
-      if (_liveUserEntry == null) {
-        _liveUserEntry = TranscriptEntry(TranscriptRole.user, t);
-        transcript.add(_liveUserEntry!);
-      } else {
-        final merged = '${_liveUserEntry!.text}$t';
-        transcript[transcript.indexOf(_liveUserEntry!)] =
-            _liveUserEntry = TranscriptEntry(TranscriptRole.user, merged);
-      }
-      notifyListeners();
-    };
-    _liveSvc.onHariText = (t) {
-      if (_liveHariEntry == null) {
-        _liveHariEntry = TranscriptEntry(TranscriptRole.assistant, t);
-        transcript.add(_liveHariEntry!);
-      } else {
-        final merged = '${_liveHariEntry!.text}$t';
-        transcript[transcript.indexOf(_liveHariEntry!)] =
-            _liveHariEntry = TranscriptEntry(TranscriptRole.assistant, merged);
-      }
-      notifyListeners();
-    };
-    _liveSvc.onTurnComplete = () {
-      // Freeze this exchange's bubbles; the next turn starts new ones.
-      _liveUserEntry = null;
-      _liveHariEntry = null;
-      notifyListeners();
-    };
+    // PURE VOICE: live mode shows NO text conversation. Transcripts are
+    // logged for diagnostics only — the screen stays clean.
+    _liveSvc.onUserText = (t) => AppLog.add('live', 'you: $t');
+    _liveSvc.onHariText = (t) => AppLog.add('live', 'hari: $t');
+    _liveSvc.onTurnComplete = () {};
     _liveSvc.onInterrupted = () {
-      _liveHariEntry = null; // she was cut off — next words are a new bubble
       _setPhase(AssistantPhase.listening, silent: true);
       notifyListeners();
     };
     _liveSvc.onError = (msg) {
-      errorMessage = msg;
-      AppLog.add('live', msg);
+      // NO visible error. Log it, mark live unavailable for this run, and
+      // let the orb fall back to the classic loop from now on.
+      AppLog.add('live', 'unavailable: $msg');
+      _liveUnavailable = true;
+      _liveStartResult?.complete(false);
+      _liveStartResult = null;
+      _liveSvc.stop();
       _setPhase(AssistantPhase.idle, silent: true);
       notifyListeners();
     };
     _liveSvc.onClosed = () {
+      _liveStartResult?.complete(false);
+      _liveStartResult = null;
       if (phase != AssistantPhase.idle) {
         _setPhase(AssistantPhase.idle, silent: true);
       }
@@ -551,13 +551,29 @@ class AssistantEngine extends ChangeNotifier {
 
     _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
     notifyListeners();
+    _liveStartResult = Completer<bool>();
     await _liveSvc.start();
+    if (!_liveSvc.active) {
+      _liveStartResult?.complete(false);
+      _liveStartResult = null;
+      _liveUnavailable = true;
+      _setPhase(AssistantPhase.idle, silent: true);
+      return false;
+    }
+    // Ready must arrive within 6s or we treat live as unavailable.
+    final ok = await (_liveStartResult?.future ??
+            Future<bool>.value(_liveSvc.active))
+        .timeout(const Duration(seconds: 6), onTimeout: () {
+      _liveUnavailable = true;
+      _liveSvc.stop();
+      _setPhase(AssistantPhase.idle, silent: true);
+      return false;
+    });
+    return ok;
   }
 
   Future<void> stopLive() async {
     await _liveSvc.stop();
-    _liveUserEntry = null;
-    _liveHariEntry = null;
     micLevel = 0;
     _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();

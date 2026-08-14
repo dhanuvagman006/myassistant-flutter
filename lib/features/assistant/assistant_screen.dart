@@ -159,30 +159,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         onCancel: engine.cancelAction,
                       ),
                       // The video-mode chip used to sit here. It's gone —
-                      // say "open video mode" instead.
-                      const SizedBox(width: 10),
-                      // LIVE MODE: real speech-to-speech conversation.
-                      // Glows while a session is open; tap to hang up.
-                      GestureDetector(
-                        onTap: () {
-                          HapticFeedback.mediumImpact();
-                          engine.toggleLive();
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(9),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: engine.liveActive
-                                ? Neon.cyan.withValues(alpha: 0.22)
-                                : Colors.white.withValues(alpha: 0.07),
-                            border: Border.all(
-                                color: Neon.cyan.withValues(
-                                    alpha: engine.liveActive ? 0.95 : 0.5)),
-                          ),
-                          child: Icon(Icons.graphic_eq_rounded,
-                              color: Neon.cyan, size: 18),
-                        ),
-                      ),
+                      // say "open video mode" instead. The LIVE chip is
+                      // gone too: tapping the ORB now starts a live
+                      // conversation directly.
                       const SizedBox(width: 10),
                       // Professional mode: patients/clients case files.
                       GestureDetector(
@@ -211,8 +190,12 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   // connecting" experience.
                   if (!engine.connected || engine.errorMessage != null)
                     _connectionBanner(engine),
-                  Expanded(child: _feed()),
-                  _frostedInput(),
+                  // PURE VOICE: during a live conversation there is no
+                  // text chat and no input bar — just the orb and a hint.
+                  Expanded(
+                      child:
+                          engine.liveActive ? _liveIndicator() : _feed()),
+                  if (!engine.liveActive) _frostedInput(),
                 ],
               ),
             ),
@@ -304,6 +287,48 @@ class _AssistantScreenState extends State<AssistantScreen> {
   // }
 
   /// Transcript + all dynamic action cards, in conversational order.
+  /// Shown instead of the chat feed during a live conversation: voice is
+  /// the whole interface, so the screen stays clean.
+  Widget _liveIndicator() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              color: Neon.cyan.withValues(alpha: 0.10),
+              border:
+                  Border.all(color: Neon.cyan.withValues(alpha: 0.55)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                      shape: BoxShape.circle, color: Neon.cyan),
+                ),
+                const SizedBox(width: 8),
+                const Text('Live — just talk',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text('Tap the orb to end',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: 12.5)),
+        ],
+      ),
+    );
+  }
+
   Widget _feed() {
     final empty = engine.transcript.isEmpty &&
         engine.activities.isEmpty &&
