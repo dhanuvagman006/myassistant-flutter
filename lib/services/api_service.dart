@@ -48,15 +48,12 @@ class ApiService {
   ///   flutter run --dart-define=BASE_URL=http://192.168.1.5:3000
   static const String _envBaseUrl = String.fromEnvironment('BASE_URL');
 
-  /// DEBUG builds default to http://127.0.0.1:3000 — the standard dev
-  /// flow is a USB tunnel that works on BOTH physical phones and
-  /// emulators, regardless of what network either device is on:
-  ///     adb reverse tcp:3000 tcp:3000
+  /// When no override is provided, default to the production backend.
   /// RELEASE builds default to production. Diagnostics can override at
   /// runtime (persisted), --dart-define=BASE_URL overrides at build.
   static String get _defaultBaseUrl {
     if (_envBaseUrl.isNotEmpty) return _envBaseUrl;
-    if (kDebugMode) return 'http://127.0.0.1:3000';
+    if (kDebugMode) return 'https://api.hariassistant.tech';
     return 'https://api.hariassistant.tech';
   }
 
