@@ -56,14 +56,49 @@ class _SurveyScreenState extends State<SurveyScreen> {
   bool _extracting = false;
   String? _extractNote;
   String? _gender = AuthService.instance.user?.gender;
+  DateTime? _birthday;
   final Set<String> _picked = {};
   bool _saving = false;
 
   static const _interests = [
     'Music', 'Movies', 'Cricket', 'Food & cooking', 'Travel',
     'Fitness', 'Technology', 'Studies', 'Business', 'Devotional',
-    'Fashion', 'Gaming',
+    'Fashion', 'Gaming', 'Astrology & Horoscope',
   ];
+
+  String? get _birthdayString {
+    if (_birthday == null) return null;
+    final y = _birthday!.year.toString().padLeft(4, '0');
+    final m = _birthday!.month.toString().padLeft(2, '0');
+    final d = _birthday!.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  Future<void> _pickBirthday() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _birthday ?? DateTime(2000, 1, 1),
+      firstDate: DateTime(1920),
+      lastDate: now,
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppColors.marigold,
+              onPrimary: Colors.black,
+              surface: Color(0xFF1E2230),
+              onSurface: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _birthday = picked);
+    }
+  }
 
   Future<void> _saveDetails() async {
     // Optional fields — sent only when present; skipping is first-class.
@@ -74,6 +109,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
         'organisation': _organisation.text.trim(),
       if (_location.text.trim().isNotEmpty)
         'location': _location.text.trim(),
+      if (_birthdayString != null)
+        'birthday': _birthdayString,
     };
     if (body.isEmpty) return;
     await ApiService.sendJson('/profile/details', method: 'PUT', body: body);
@@ -134,6 +171,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
               'name': name,
               'location': _location.text.trim(),
               'gender': _gender,
+              'birthday': _birthdayString,
               'preferences': _picked.toList(),
             }),
           )
@@ -236,6 +274,45 @@ class _SurveyScreenState extends State<SurveyScreen> {
             ),
             const SizedBox(height: 14),
             _field(_location, hint: 'e.g. Mysuru'),
+            const SizedBox(height: 14),
+            _label('Date of birth (for daily astrology & lucky insights)'),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: _pickBirthday,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: Colors.white.withValues(alpha: 0.06),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.auto_awesome_rounded,
+                        color: AppColors.marigold, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _birthday == null
+                            ? 'Select your birthday (e.g. 15 Aug 1998)'
+                            : '${_birthday!.day} / ${_birthday!.month} / ${_birthday!.year}',
+                        style: TextStyle(
+                          color: _birthday == null
+                              ? Colors.white.withValues(alpha: 0.35)
+                              : Colors.white,
+                          fontSize: 14.5,
+                          fontWeight: _birthday == null
+                              ? FontWeight.normal
+                              : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.calendar_month_rounded,
+                        color: Colors.white.withValues(alpha: 0.6), size: 18),
+                  ],
+                ),
+              ),
+            ),
             const SizedBox(height: 10),
             _field(_profession, hint: 'Profession (optional)'),
             const SizedBox(height: 10),

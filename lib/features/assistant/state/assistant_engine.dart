@@ -607,18 +607,11 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
-  /// Time-appropriate greeting text. Kept as one small generator rather
-  /// than a hard-coded string per case (§16).
+  /// Time-appropriate greeting text starting with Hello.
   static String greetingFor(String? name, {DateTime? now}) {
-    final h = (now ?? DateTime.now()).hour;
-    final part = h < 12
-        ? 'Good morning'
-        : h < 17
-            ? 'Good afternoon'
-            : 'Good evening';
     final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
-    final who = first.isEmpty ? '' : ', $first';
-    return '$part$who. How can I help you today?';
+    final who = first.isEmpty ? 'there' : first;
+    return 'Hello $who! Today is your lucky day. How can I inspire or assist you today?';
   }
 
   /// Speaks the opening greeting — ONLY when the live session is really

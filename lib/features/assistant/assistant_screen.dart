@@ -403,16 +403,16 @@ class _AssistantScreenState extends State<AssistantScreen> {
     final actions = <(IconData, String, String)>[
       (Icons.waving_hand_rounded, 'Say hello', 'Hello'),
       (
-        Icons.travel_explore_rounded,
-        "Today's gold price",
-        "Search for today's gold price"
+        Icons.auto_awesome_rounded,
+        "Today's lucky astrology",
+        'Give me my daily astrology and tell me why today is my lucky day'
       ),
       (
-        Icons.phone_forwarded_rounded,
-        'Call & inform someone',
-        'Call Alan and inform him I will not be coming today'
+        Icons.psychology_alt_rounded,
+        'Daily motivation',
+        'Give me an inspiring motivational quote to boost my confidence and trust'
       ),
-      (Icons.wb_sunny_outlined, 'Plan my day', 'What should I focus on today?'),
+      (Icons.wb_sunny_outlined, 'Morning briefing', 'Good morning briefing with weather, astrology and reminders'),
     ];
     return Center(
       child: SingleChildScrollView(

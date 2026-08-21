@@ -16,9 +16,16 @@ class AppUser {
   final String? name;
   final String provider; // email | google | apple
   final String? gender; // male | female | other | null (unset)
+  final String? birthday; // YYYY-MM-DD | null
 
-  const AppUser(
-      {required this.id, this.email, this.name, required this.provider, this.gender});
+  const AppUser({
+    required this.id,
+    this.email,
+    this.name,
+    required this.provider,
+    this.gender,
+    this.birthday,
+  });
 
   factory AppUser.fromJson(Map<String, dynamic> j) => AppUser(
         id: j['id'] as int,
@@ -26,6 +33,7 @@ class AppUser {
         name: j['name'] as String?,
         provider: (j['provider'] as String?) ?? 'email',
         gender: j['gender'] as String?,
+        birthday: j['birthday'] as String?,
       );
 }
 
