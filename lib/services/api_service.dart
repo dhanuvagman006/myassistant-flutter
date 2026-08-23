@@ -513,6 +513,30 @@ class ApiService {
         .timeout(const Duration(seconds: 15));
   }
 
+  // ----------------------------------------------------------------------
+  // Stocks & Market Data
+  // ----------------------------------------------------------------------
+
+  static Future<Map<String, dynamic>> fetchStocks() async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/stocks'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('stocks ${r.statusCode}');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  // ----------------------------------------------------------------------
+  // Admin & Analytics Data
+  // ----------------------------------------------------------------------
+
+  static Future<Map<String, dynamic>> fetchAnalytics() async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/analytics'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('analytics ${r.statusCode}');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
   /// File an already-saved document into a case file (or out of it).
   static Future<void> linkDocumentToClient(int clientId, int docId) async {
     final r = await _client

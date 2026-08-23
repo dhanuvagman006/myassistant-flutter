@@ -9,6 +9,7 @@ import 'widgets/assistant_persona.dart';
 import 'widgets/assistant_face.dart';
 import '../../screens/diagnostics_screen.dart';
 import '../../screens/clients_screen.dart';
+import '../../screens/stocks_screen.dart';
 
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({super.key});
@@ -20,6 +21,7 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen> {
   final engine = AssistantEngine.instance;
   AssistantPersona _persona = AssistantPersona.neutral;
+  bool _stocksEnabled = false;
 
   @override
   void initState() {
@@ -79,6 +81,15 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                   child: Row(
                     children: [
+                      IconButton(
+                        icon: Icon(
+                          _stocksEnabled ? Icons.candlestick_chart : Icons.candlestick_chart_outlined,
+                          color: _stocksEnabled ? Neon.cyan : Colors.white54,
+                        ),
+                        onPressed: () => setState(() => _stocksEnabled = !_stocksEnabled),
+                        tooltip: 'Toggle Market & Stocks',
+                      ),
+                      const SizedBox(width: 8),
                       Text(
                         _persona.displayName,
                         style: const TextStyle(
@@ -123,6 +134,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClientsScreen()));
                         },
                       ),
+                      if (_stocksEnabled)
+                        _roundButton(
+                          icon: Icons.trending_up_rounded,
+                          label: 'Stocks',
+                          onTap: () {
+                             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StocksScreen()));
+                          },
+                        ),
                       _micButton(),
                        _roundButton(
                         icon: Icons.monitor_heart_outlined,
