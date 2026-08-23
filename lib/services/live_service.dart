@@ -66,6 +66,9 @@ class LiveService {
   final List<String> _queue = []; // WAV files waiting to play
   bool _draining = false;
   int _seq = 0;
+  int _silenceMs = 0;
+  bool _hasSpoken = false;
+  final List<List<int>> _silenceBuffer = [];
 
   static const _outRate = 24000; // Gemini native-audio output sample rate
   static const _inRate = 16000; // what we send up
@@ -83,11 +86,15 @@ class LiveService {
   /// Opens the session: connects the socket and starts streaming the mic.
   Future<void> start() async {
     if (_active) return;
+    _active = true;
+    _seq = 0;
+    _silenceMs = 0;
+    _hasSpoken = false;
+    _silenceBuffer.clear();
     if (!await _rec.hasPermission()) {
       onError?.call('Microphone permission is needed for live mode.');
       return;
     }
-    _active = true;
     playing = false;
     _buf.clear();
     _queue.clear();
@@ -139,11 +146,35 @@ class LiveService {
       );
       _micSub = mic.listen((chunk) {
         if (!_active) return;
-        try {
-          _ch?.sink.add(Uint8List.fromList(chunk));
-        } catch (_) {}
+        _seq++;
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
+        try {
+          if (!playing && l != null) {
+            if (l > 0.03) {
+              _hasSpoken = true;
+              _silenceMs = 0;
+              for (final c in _silenceBuffer) {
+                _ch?.sink.add(Uint8List.fromList(c));
+              }
+              _silenceBuffer.clear();
+              _ch?.sink.add(Uint8List.fromList(chunk));
+            } else if (_hasSpoken) {
+              // chunk size 4096 at 16kHz = ~128ms
+              _silenceMs += 128;
+              if (_silenceMs > 2500) {
+                for (final c in _silenceBuffer) {
+                  _ch?.sink.add(Uint8List.fromList(c));
+                }
+                _silenceBuffer.clear();
+                _ch?.sink.add(Uint8List.fromList(chunk));
+                _hasSpoken = false; // reset
+              } else {
+                _silenceBuffer.add(chunk);
+              }
+            }
+          }
+        } catch (_) {}
       });
     } catch (e) {
       onError?.call('Could not open the microphone for live mode.');

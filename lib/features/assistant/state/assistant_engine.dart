@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
@@ -251,6 +254,8 @@ class AssistantEngine extends ChangeNotifier {
       onCallEnded: _onPhoneCallEnded,
     );
     await _connect();
+    // Auto-start Live Mode on launch so the user doesn't have to tap the mic.
+    _startLive();
   }
 
   /// A call started/rang — cut all audio and the mic immediately.
@@ -529,7 +534,11 @@ class AssistantEngine extends ChangeNotifier {
     };
     // PURE VOICE: live mode shows NO text conversation. Transcripts are
     // logged for diagnostics only — the screen stays clean.
-    _liveSvc.onUserText = (t) => AppLog.add('live', 'you: $t');
+    _liveSvc.onUserText = (t) {
+      AppLog.add('live', 'you: $t');
+      _setPhase(AssistantPhase.thinking, silent: true);
+      notifyListeners();
+    };
     _liveSvc.onHariText = (t) => AppLog.add('live', 'hari: $t');
     _liveSvc.onTurnComplete = () {};
     _liveSvc.onInterrupted = () {
@@ -626,7 +635,7 @@ class AssistantEngine extends ChangeNotifier {
     if (!connected) return;                 // never greet while offline
     final epoch = _sessionEpoch;
     if (_greetedEpoch == epoch) return;     // once per real session
-    if (phase.busy || liveActive) return;
+    if (phase.busy || liveActive || _liveStartResult != null) return;
     if (PhoneStateGuard.instance.inCall) return;
     _greetedEpoch = epoch;                  // claim before awaiting
 
@@ -949,10 +958,30 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
+      case 'analyze_camera':
+        // Voice-driven vision analysis ("what tablet is this")
+        _analyzeCamera(e['question'] as String? ?? 'What is in this image?');
+        break;
+
+      case 'capture_document':
       case 'open_camera':
         // Voice-driven capture: the backend recognised "save/scan/remember
-        // this" and asks the device to open the camera and file the shot.
-        _captureDocument(e['note'] as String? ?? '');
+        // this" and asks the device to open the camera/gallery and file the shot.
+        _captureDocument(
+          e['note'] as String? ?? '',
+          clientId: e['client_id'] as int?,
+          source: e['source'] as String? ?? 'camera',
+        );
+        break;
+
+      case 'open_url':
+        // Voice-driven deep linking to external apps like Uber, Swiggy, Zomato.
+        final url = e['url'] as String?;
+        if (url != null && url.isNotEmpty) {
+          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          // Auto-resume conversation after firing intent
+          _setPhase(AssistantPhase.completed);
+        }
         break;
 
       case 'open_video':
@@ -1012,15 +1041,75 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Voice-driven document capture: open the camera, then file the shot
-  /// into document memory with the user's own words as the note (so "the
-  /// receipt I saved after the doctor" is findable later). No manual entry.
-  Future<void> _captureDocument(String note) async {
+  /// Voice-driven vision analysis: opens the camera, sends the photo directly
+  /// to the backend /vision endpoint with the user's question, and speaks the answer.
+  Future<void> _analyzeCamera(String question) async {
     await _voice.stopSpeaking();
     XFile? shot;
     try {
       shot = await ImagePicker().pickImage(
         source: ImageSource.camera,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 82,
+      );
+    } catch (_) {
+      await _speakReply("I couldn't open the camera.");
+      _setPhase(AssistantPhase.completed);
+      return;
+    }
+    if (shot == null) {
+      await _speakReply("Okay, cancelled.");
+      _setPhase(AssistantPhase.completed);
+      return;
+    }
+
+    _setPhase(AssistantPhase.thinking, silent: true);
+    notifyListeners();
+    try {
+      final bytes = await shot.readAsBytes();
+      
+      var request = http.MultipartRequest('POST', Uri.parse('${ApiService.baseUrl}/vision'));
+      if (ApiService.sessionToken != null) {
+        request.headers['Authorization'] = 'Bearer ${ApiService.sessionToken}';
+      }
+      request.fields['mode'] = 'ask';
+      request.fields['question'] = question;
+      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'scan.jpg'));
+      
+      final response = await request.send();
+      final body = await response.stream.bytesToString();
+      
+      if (response.statusCode != 200) {
+        await _speakReply("I couldn't analyze the image right now.");
+        _setPhase(AssistantPhase.completed);
+        return;
+      }
+      
+      final data = jsonDecode(body);
+      final answer = data['answer'] as String? ?? "I couldn't see anything clearly.";
+      
+      transcript.add(TranscriptEntry(TranscriptRole.assistant, answer));
+      await _speakReply(answer);
+      
+      // Let the backend know we answered it so context is maintained
+      _api.sendText("I looked at it and saw: $answer");
+      
+    } catch (e) {
+      await _speakReply("There was a problem scanning the image.");
+      _setPhase(AssistantPhase.completed);
+    }
+  }
+
+  /// Voice-driven document capture: open the camera or gallery, then file the shot
+  /// into document memory with the user's own words as the note (so "the
+  /// receipt I saved after the doctor" is findable later). No manual entry.
+  Future<void> _captureDocument(String note, {int? clientId, String source = 'camera'}) async {
+    await _voice.stopSpeaking();
+    XFile? shot;
+    try {
+      shot = await ImagePicker().pickImage(
+        source: source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
         maxWidth: 1920,
         maxHeight: 1920,
         imageQuality: 82,
@@ -1042,14 +1131,15 @@ class AssistantEngine extends ChangeNotifier {
       final bytes = await shot.readAsBytes();
       final doc = await ApiService.uploadDocument(
         bytes: bytes,
-        filename: 'voice_save_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        filename: 'Capture.jpg',
         mimeType: 'image/jpeg',
+        title: 'Captured Document',
         note: note,
+        clientId: clientId,
       );
       documentCards = [doc];
       notifyListeners();
-      await _speakReply(
-          "Saved. Ask me for it anytime — I'll remember what's on it.");
+      await _speakReply("Saved and filed.");
     } catch (_) {
       await _speakReply(
           "I couldn't save that — please check your connection and try again.");

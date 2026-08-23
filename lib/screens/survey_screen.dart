@@ -52,6 +52,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
   // turns into structured fields, so nobody is forced through a form.
   final _aboutMe = TextEditingController();
   final _profession = TextEditingController();
+  final _phoneNumber = TextEditingController();
   final _organisation = TextEditingController();
   bool _extracting = false;
   String? _extractNote;
@@ -105,6 +106,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
     final body = {
       if (_profession.text.trim().isNotEmpty)
         'profession': _profession.text.trim(),
+      if (_phoneNumber.text.trim().isNotEmpty)
+        'phone_number': _phoneNumber.text.trim(),
       if (_organisation.text.trim().isNotEmpty)
         'organisation': _organisation.text.trim(),
       if (_location.text.trim().isNotEmpty)
@@ -198,6 +201,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
     _location.dispose();
     _aboutMe.dispose();
     _profession.dispose();
+    _phoneNumber.dispose();
     _organisation.dispose();
     super.dispose();
   }
@@ -314,6 +318,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            _field(_phoneNumber, hint: 'Phone Number (for messages)'),
+            const SizedBox(height: 12),
             _field(_profession, hint: 'Profession (optional)'),
             const SizedBox(height: 10),
             _field(_organisation, hint: 'Company / organisation (optional)'),

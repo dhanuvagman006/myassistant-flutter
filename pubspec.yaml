@@ -90,6 +90,8 @@ dependencies:
 
   # Daily video briefing playback (D-ID-rendered mp4 from the backend)
   video_player: ^2.9.2
+  firebase_core: ^4.13.0
+  firebase_messaging: ^16.5.0
 
 dev_dependencies:
   flutter_test:

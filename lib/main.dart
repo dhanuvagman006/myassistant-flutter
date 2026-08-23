@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'design/neon_tokens.dart';
-import 'features/assistant/live/live_screen.dart';
+import 'features/assistant/assistant_screen.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
@@ -10,10 +10,35 @@ import 'services/api_service.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
 import 'services/style_prefs.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'services/push_service.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp();
+    await PushService.instance.init();
+  } catch (e) {
+    print('Firebase init failed (missing google-services.json?): $e');
+  }
+  AudioPlayer.global.setAudioContext(AudioContext(
+    android: const AudioContextAndroid(
+      isSpeakerphoneOn: true,
+      stayAwake: true,
+      contentType: AndroidContentType.speech,
+      usageType: AndroidUsageType.media,
+      audioFocus: AndroidAudioFocus.none,
+    ),
+    iOS: AudioContextIOS(
+      category: AVAudioSessionCategory.playAndRecord,
+      options: const {
+        AVAudioSessionOptions.defaultToSpeaker,
+        AVAudioSessionOptions.allowBluetooth,
+      },
+    ),
+  ));
   // Liquid Glass is dark-first: paint the system bars to match.
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -101,6 +126,6 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (!auth.isSignedIn) return const AuthScreen();
     // F1 — optional fingerprint/PIN wall in front of everything.
     if (AppLock.instance.shouldLock) return const LockScreen();
-    return const LiveScreen();
+    return const AssistantScreen();
   }
 }
