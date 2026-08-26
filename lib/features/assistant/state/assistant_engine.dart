@@ -1133,7 +1133,6 @@ class AssistantEngine extends ChangeNotifier {
         bytes: bytes,
         filename: 'Capture.jpg',
         mimeType: 'image/jpeg',
-        title: 'Captured Document',
         note: note,
         clientId: clientId,
       );

@@ -58,6 +58,7 @@ class LiveService {
   void Function()? onClosed;
   void Function(double level)? onMicLevel; // 0..1 for the orb
   void Function(bool speaking)? onSpeaking; // playback started/stopped
+  void Function(Uint8List chunk)? onAudioChunk; // For external renderer (Simli)
 
   // ---- incoming-audio segmenting ----
   final BytesBuilder _buf = BytesBuilder(copy: false);
@@ -170,7 +171,10 @@ class LiveService {
                 _ch?.sink.add(Uint8List.fromList(chunk));
                 _hasSpoken = false; // reset
               } else {
-                _silenceBuffer.add(chunk);
+                // Cap buffer at 32 chunks (~4s) to prevent unbounded growth
+                if (_silenceBuffer.length < 32) {
+                  _silenceBuffer.add(chunk);
+                }
               }
             }
           }
@@ -217,6 +221,13 @@ class LiveService {
     onSpeaking?.call(false);
   }
 
+  /// Sends a text message directly through the live WebSocket.
+  void sendText(String text) {
+    if (_active && _ch != null) {
+      _ch?.sink.add(jsonEncode({'type': 'text', 'text': text}));
+    }
+  }
+
   // ---------------- incoming frames ----------------
 
   void _onFrame(dynamic frame) {
@@ -224,7 +235,9 @@ class LiveService {
       // Reply audio: PCM16 @24 kHz. Buffer for segment playback.
       // record's stream already yields Uint8List; copy only if a platform
       // ever hands back a plain List<int>.
-      _buf.add(frame is Uint8List ? frame : Uint8List.fromList(frame as List<int>));
+      final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame as List<int>);
+      _buf.add(chunk);
+      onAudioChunk?.call(chunk);
       _lastChunkAt = DateTime.now();
       return;
     }
@@ -355,6 +368,7 @@ class LiveService {
     } catch (_) {}
     if (clear) {
       _buf.clear();
+      // Delete all queued temp files — player is already stopped so no race
       for (final p in _queue) {
         File(p).delete().ignore();
       }

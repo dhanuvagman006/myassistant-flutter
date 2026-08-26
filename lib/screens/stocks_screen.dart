@@ -102,11 +102,11 @@ class _StocksScreenState extends State<StocksScreen> {
   }
 
   Widget _stockCard(Map e, bool isBuy) {
-    final color = isBuy ? const Color(0xFF35C48D) : AppColors.danger;
+    final color = isBuy ? const Color(0xFF35C48D) : Neon.pink;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlassCard(
-        borderTint: color.withOpacity(0.5),
+        borderGradient: LinearGradient(colors: [color.withOpacity(0.5), color.withOpacity(0.1)]),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

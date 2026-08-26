@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'design/neon_tokens.dart';
 import 'features/assistant/assistant_screen.dart';
+import 'screens/avatar_screen.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
@@ -21,7 +22,7 @@ Future<void> main() async {
     await Firebase.initializeApp();
     await PushService.instance.init();
   } catch (e) {
-    print('Firebase init failed (missing google-services.json?): $e');
+    debugPrint('Firebase init failed (missing google-services.json?): $e');
   }
   AudioPlayer.global.setAudioContext(AudioContext(
     android: const AudioContextAndroid(
@@ -126,6 +127,6 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (!auth.isSignedIn) return const AuthScreen();
     // F1 — optional fingerprint/PIN wall in front of everything.
     if (AppLock.instance.shouldLock) return const LockScreen();
-    return const AssistantScreen();
+    return const AvatarScreen();
   }
 }

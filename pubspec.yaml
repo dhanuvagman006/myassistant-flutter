@@ -76,7 +76,11 @@ dependencies:
   timezone: ^0.10.0
   flutter_timezone: ^3.0.1
 
-  url_launcher: ^6.3.0           # opens App Store on iOS
+  url_launcher: ^6.3.0
+  simli_client: ^1.0.0
+  flutter_webrtc: ^0.12.7
+  logging: ^1.2.0
+           # opens App Store on iOS
 
   # Sign-in (F1) — email + Google + Apple, verified by the backend
   google_sign_in: ^6.2.1
