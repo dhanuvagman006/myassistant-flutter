@@ -106,7 +106,7 @@ class _StocksScreenState extends State<StocksScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlassCard(
-        borderGradient: LinearGradient(colors: [color.withOpacity(0.5), color.withOpacity(0.1)]),
+        borderGradient: LinearGradient(colors: [color.withValues(alpha: 0.5), color.withValues(alpha: 0.1)]),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -121,7 +121,7 @@ class _StocksScreenState extends State<StocksScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
+                    color: color.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(

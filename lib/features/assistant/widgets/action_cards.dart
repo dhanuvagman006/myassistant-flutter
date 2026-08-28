@@ -276,9 +276,9 @@ class CallStatusCard extends StatelessWidget {
               }),
             ),
             const SizedBox(height: 6),
-            Row(
+            const Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: const [
+              children: [
                 _StepLabel('Dialing'),
                 _StepLabel('Ringing'),
                 _StepLabel('In call'),

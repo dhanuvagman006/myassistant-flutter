@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import 'api_service.dart';
+import 'push_service.dart';
 
 /// A signed-in user, as returned by the backend.
 class AppUser {
@@ -18,6 +19,14 @@ class AppUser {
   final String? gender; // male | female | other | null (unset)
   final String? birthday; // YYYY-MM-DD | null
 
+  /// The verified number in E.164, or null if none is on the account.
+  final String? phone;
+
+  /// Whether the number was proven by SMS OTP. An account without this
+  /// cannot be addressed by another person's agent, so the app treats it
+  /// as not yet finished signing up.
+  final bool phoneVerified;
+
   const AppUser({
     required this.id,
     this.email,
@@ -25,6 +34,8 @@ class AppUser {
     required this.provider,
     this.gender,
     this.birthday,
+    this.phone,
+    this.phoneVerified = false,
   });
 
   factory AppUser.fromJson(Map<String, dynamic> j) => AppUser(
@@ -34,6 +45,8 @@ class AppUser {
         provider: (j['provider'] as String?) ?? 'email',
         gender: j['gender'] as String?,
         birthday: j['birthday'] as String?,
+        phone: j['phone'] as String?,
+        phoneVerified: j['phoneVerified'] == true,
       );
 }
 
@@ -126,6 +139,10 @@ class AuthService extends ChangeNotifier {
       ).timeout(const Duration(seconds: 8));
       if (r.statusCode == 200) {
         user = AppUser.fromJson(jsonDecode(r.body)['user']);
+        // Returning user: re-assert the token. FCM rotates it on reinstall,
+        // restore and app-data clear, and a stale token silently drops
+        // every notification.
+        PushService.instance.syncToken();
       } else if (r.statusCode == 401) {
         await _clear(); // token expired or account gone
       } else {
@@ -270,6 +287,12 @@ class AuthService extends ChangeNotifier {
     ApiService.sessionToken = token;
     user = AppUser.fromJson(data['user']);
     lastSignInWasNew = (data['isNew'] as bool?) ?? false;
+    // Register this device NOW that there is a session to attach it to.
+    // Doing it at app start meant the request went out unauthenticated and
+    // the token was never stored, so incoming agent messages arrived with
+    // no notification at all. Not awaited — sign-in must not wait on a
+    // permission prompt.
+    PushService.instance.syncToken();
     notifyListeners();
   }
 }

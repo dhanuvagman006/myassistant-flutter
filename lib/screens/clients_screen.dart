@@ -509,7 +509,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                             else
                               for (final d in _documents)
                                 DocumentCard(document: d),
-                            SectionHeader('Case notes'),
+                            const SectionHeader('Case notes'),
                             _noteComposer(),
                             if (_notes.isEmpty)
                               const Padding(

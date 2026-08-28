@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:flutter/services.dart';
 
 import '../../design/neon_tokens.dart';
@@ -57,21 +58,39 @@ class _AssistantScreenState extends State<AssistantScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // FULL SCREEN PORTRAIT (Massive circle that bleeds off the edges)
-          Positioned(
-            top: -h * 0.1,
-            bottom: -h * 0.1,
-            left: -h * 0.4,
-            right: -h * 0.4,
-            child: Center(
-              child: AssistantFace(
-                size: h * 1.5,
-                phase: engine.phase,
-                persona: _persona,
-                speakingLevel: engine.micLevel,
+          // LIVE AVATAR — rendered at SCREEN size, not through the portrait's
+          // oversized hero circle.
+          //
+          // Simli publishes 360x360. The portrait layout below draws into a
+          // box of h * 1.5 (~3510 px on this device) and crops back to the
+          // screen, so only about a tenth of that width is visible — the
+          // source ends up stretched roughly 10x and looks soft. Filling the
+          // screen directly cuts the stretch to the minimum a 360 px square
+          // needs to cover the display, which is the sharpest this source
+          // can be without letterboxing it.
+          if (engine.avatarTrack != null)
+            Positioned.fill(
+              child: lk.VideoTrackRenderer(
+                engine.avatarTrack!,
+                fit: lk.VideoViewFit.cover,
+              ),
+            )
+          else
+            // FULL SCREEN PORTRAIT (Massive circle that bleeds off the edges)
+            Positioned(
+              top: -h * 0.1,
+              bottom: -h * 0.1,
+              left: -h * 0.4,
+              right: -h * 0.4,
+              child: Center(
+                child: AssistantFace(
+                  size: h * 1.5,
+                  phase: engine.phase,
+                  persona: _persona,
+                  speakingLevel: engine.micLevel,
+                ),
               ),
             ),
-          ),
 
           // TOP BAR
           SafeArea(

@@ -65,7 +65,7 @@ dependencies:
   phone_state: ^2.0.1
   permission_handler: ^11.3.1
 
-  # Real-time human avatar (Tavus CVI) rendered in a WebView
+  # Real-time avatar WebView (BeyondPresence via LiveKit — served by backend)
   webview_flutter: ^4.10.0
 
   # Reminder notifications — fire even when the app is closed.
@@ -77,8 +77,6 @@ dependencies:
   flutter_timezone: ^3.0.1
 
   url_launcher: ^6.3.0
-  simli_client: ^1.0.0
-  flutter_webrtc: ^0.12.7
   logging: ^1.2.0
            # opens App Store on iOS
 
@@ -89,12 +87,10 @@ dependencies:
   local_auth: ^2.3.0               # F1 — fingerprint/face app lock (PIN fallback is ours)
   share_plus: ^10.1.2              # F2 export sharing + J3 share-anywhere drafts
 
-  # FACE MODE — D-ID streaming avatar rendered in a server-hosted page;
-  # the WebView is the window, the words come from our own backend.
-
-  # Daily video briefing playback (D-ID-rendered mp4 from the backend)
   video_player: ^2.9.2
+  livekit_client: ^2.4.9           # avatar video: subscribes to the BEY track
   firebase_core: ^4.13.0
+  firebase_auth: ^6.4.0             # phone OTP: proves the number is theirs
   firebase_messaging: ^16.5.0
 
 dev_dependencies:

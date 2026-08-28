@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 
 import 'design/neon_tokens.dart';
 import 'features/assistant/assistant_screen.dart';
-import 'screens/avatar_screen.dart';
 import 'screens/auth/auth_screen.dart';
+import 'screens/auth/phone_verify_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
@@ -58,8 +59,8 @@ Future<void> main() async {
 }
 
 /// The live call IS the app: after the security gates the user lands
-/// directly in a live video conversation with their assistant
-/// (LiveScreen). Voice mode, history, clients, settings and MCP are
+/// directly in a live voice conversation with their assistant
+/// (AssistantScreen). Voice mode, history, clients, settings and MCP are
 /// secondary screens behind ⋯ More.
 class MyAssistantApp extends StatelessWidget {
   const MyAssistantApp({super.key});
@@ -81,6 +82,22 @@ class MyAssistantApp extends StatelessWidget {
 /// live assistant (signed in). Listens to AuthService so sign-in and sign-out
 /// swap automatically. The first-run interview is handled by the agent
 /// page itself as a glass sheet — no extra route.
+/// DEV ONLY — skip the mandatory phone-verification step.
+///
+///     flutter run --dart-define=SKIP_PHONE_GATE=true
+///
+/// Exists so work can continue while Firebase Phone Auth is unavailable
+/// (it needs the Blaze plan to send real SMS). Two things keep it from
+/// ever reaching users: it is a COMPILE-TIME constant, so without the flag
+/// the branch is not even built; and it is ANDed with kDebugMode, so
+/// passing the flag to a release build still does nothing.
+///
+/// While this is on, the account has no verified number — so agent-to-agent
+/// messaging will not find it, and nobody can send to it. Everything else
+/// works normally.
+const bool _skipPhoneGate =
+    kDebugMode && bool.fromEnvironment('SKIP_PHONE_GATE');
+
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
@@ -125,8 +142,23 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (_restoring) return const SplashScreen();
     final auth = AuthService.instance;
     if (!auth.isSignedIn) return const AuthScreen();
+
+    // Registration is not finished until a number is VERIFIED: it is the
+    // address other people's agents deliver to, so an account without one
+    // can never be reached.
+    //
+    // id == -1 is the offline/server-hiccup placeholder AuthService falls
+    // back to, and it carries no phone state. Gating on it would strand an
+    // already-verified user behind a screen that cannot complete without a
+    // network — so an unknown user is let through, and the gate applies
+    // only when the server actually told us the number is missing.
+    final u = auth.user;
+    if (!_skipPhoneGate && u != null && u.id > 0 && !u.phoneVerified) {
+      return const PhoneVerifyScreen();
+    }
+
     // F1 — optional fingerprint/PIN wall in front of everything.
     if (AppLock.instance.shouldLock) return const LockScreen();
-    return const AvatarScreen();
+    return const AssistantScreen();
   }
 }

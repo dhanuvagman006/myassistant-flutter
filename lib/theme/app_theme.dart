@@ -187,12 +187,12 @@ class AppTheme {
         contentTextStyle:
             GoogleFonts.manrope(fontSize: 14.5, color: Neon.textLo, height: 1.45),
       ),
-      bottomSheetTheme: BottomSheetThemeData(
+      bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: Neon.surface,
         modalBackgroundColor: Neon.surface,
         showDragHandle: true,
         dragHandleColor: Neon.textDim,
-        shape: const RoundedRectangleBorder(
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
         ),
       ),

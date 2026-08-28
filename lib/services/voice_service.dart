@@ -331,16 +331,16 @@ class VoiceService {
         partialResults: true,
         listenMode: stt.ListenMode.dictation,
         cancelOnError: false,
+        // Longest session Android reliably allows. pauseFor must not be
+        // shorter than listenFor here, or silence (the normal state while
+        // waiting for a wake word) ends the session early and the mic
+        // audibly recycles every few seconds. With these values the
+        // recognizer holds one session ~55 s, then restarts once — the
+        // minimum cycling this engine permits. TRULY continuous listening
+        // requires the Porcupine engine (raw audio stream, no sessions).
+        listenFor: const Duration(seconds: 55),
+        pauseFor: const Duration(seconds: 55),
       ),
-      // Longest session Android reliably allows. pauseFor must not be
-      // shorter than listenFor here, or silence (the normal state while
-      // waiting for a wake word) ends the session early and the mic
-      // audibly recycles every few seconds. With these values the
-      // recognizer holds one session ~55 s, then restarts once — the
-      // minimum cycling this engine permits. TRULY continuous listening
-      // requires the Porcupine engine (raw audio stream, no sessions).
-      listenFor: const Duration(seconds: 55),
-      pauseFor: const Duration(seconds: 55),
     );
   }
 
@@ -367,7 +367,6 @@ class VoiceService {
     String last = '';
 
     await _stt.listen(
-      localeId: localeId,
       onResult: (r) {
         last = r.recognizedWords;
         onPartial?.call(last);
@@ -379,15 +378,16 @@ class VoiceService {
       onSoundLevelChange: (db) =>
           onLevel?.call(((db + 2) / 12).clamp(0.0, 1.0)),
       listenOptions: stt.SpeechListenOptions(
+        localeId: localeId,
         partialResults: true,
         listenMode: stt.ListenMode.dictation,
         cancelOnError: true,
+        listenFor: const Duration(seconds: 16),
+        // End-of-speech for the fallback recognizer. Trimmed from 2200 ms so
+        // a turn ends promptly when this path is used (some devices whose
+        // amplitude meter is unreliable fall back here).
+        pauseFor: const Duration(milliseconds: 1400),
       ),
-      listenFor: const Duration(seconds: 16),
-      // End-of-speech for the fallback recognizer. Trimmed from 2200 ms so a
-      // turn ends promptly when this path is used (some devices whose
-      // amplitude meter is unreliable fall back here).
-      pauseFor: const Duration(milliseconds: 1400),
     );
 
     // Finish the moment the recognizer session actually ends, so the UI

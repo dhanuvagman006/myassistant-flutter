@@ -152,9 +152,16 @@ class _AssistantFaceState extends State<AssistantFace>
   Widget _layer() {
     // 1. Live avatar from the unified session.
     if (widget.liveFrame != null) {
-      return SizedBox.expand(
+      // No FittedBox here. It hands its child UNBOUNDED constraints, and a
+      // live video renderer expands to fill whatever it is given — infinite
+      // width and height, which trips BoxConstraints.debugAssertIsValid the
+      // moment a real frame arrives. The frame is sized explicitly instead
+      // and does its own cover-fit internally.
+      return SizedBox(
         key: const ValueKey('live'),
-        child: FittedBox(fit: BoxFit.cover, child: widget.liveFrame),
+        width: widget.size,
+        height: widget.size,
+        child: widget.liveFrame,
       );
     }
     // 2a. Configurable remote portrait — set ASSISTANT_PORTRAIT_URL at

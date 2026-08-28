@@ -45,6 +45,19 @@ class LiveService {
   bool _active = false;
   bool get active => _active;
 
+  /// True while the AVATAR is speaking out of the phone's loudspeaker.
+  ///
+  /// In avatar mode Hari's audio never reaches this app — it goes to the
+  /// avatar service — so [playing] stays false for the whole conversation
+  /// and the mic gate below never closes. The result is that her own voice,
+  /// picked up by the microphone, is uploaded to the model as if the user
+  /// were talking over her, and she interrupts herself mid-sentence.
+  /// AvatarService drives this flag from the real audio in the room.
+  bool remoteSpeaking = false;
+
+  /// Fires when the server reports the avatar starting/stopping speech.
+  void Function(bool speaking)? onAvatarSpeaking;
+
   /// True while a reply segment is actually playing (drives the orb).
   bool playing = false;
 
@@ -85,7 +98,12 @@ class LiveService {
   }
 
   /// Opens the session: connects the socket and starts streaming the mic.
-  Future<void> start() async {
+  ///
+  /// [avatarRoom] is the LiveKit room reserved for this conversation, when
+  /// the avatar is in play. Passing it tells the backend to route Hari's
+  /// voice into that room for lip-sync instead of sending PCM down this
+  /// socket, so the app must not expect reply audio here in that case.
+  Future<void> start({String? avatarRoom}) async {
     if (_active) return;
     _active = true;
     _seq = 0;
@@ -97,6 +115,7 @@ class LiveService {
       return;
     }
     playing = false;
+    remoteSpeaking = false;
     _buf.clear();
     _queue.clear();
 
@@ -105,7 +124,10 @@ class LiveService {
     final qp = ApiService.sessionToken != null
         ? 'token=${Uri.encodeComponent(ApiService.sessionToken!)}'
         : 'appKey=${Uri.encodeComponent(ApiService.appApiKey)}';
-    final uri = Uri.parse('$base/live/ws?$qp');
+    final room = avatarRoom == null
+        ? ''
+        : '&room=${Uri.encodeComponent(avatarRoom)}';
+    final uri = Uri.parse('$base/live/ws?$qp$room');
 
     try {
       _ch = WebSocketChannel.connect(uri);
@@ -151,7 +173,9 @@ class LiveService {
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
         try {
-          if (!playing && l != null) {
+          // Either path means Hari is audible right now: `playing` for local
+          // PCM playback, `remoteSpeaking` for the avatar's own track.
+          if (!playing && !remoteSpeaking && l != null) {
             if (l > 0.03) {
               _hasSpoken = true;
               _silenceMs = 0;
@@ -235,7 +259,7 @@ class LiveService {
       // Reply audio: PCM16 @24 kHz. Buffer for segment playback.
       // record's stream already yields Uint8List; copy only if a platform
       // ever hands back a plain List<int>.
-      final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame as List<int>);
+      final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame);
       _buf.add(chunk);
       onAudioChunk?.call(chunk);
       _lastChunkAt = DateTime.now();
@@ -251,6 +275,15 @@ class LiveService {
       switch (m['type']) {
         case 'ready':
           onReady?.call();
+          break;
+        case 'avatar_speaking':
+          // Authoritative "Hari is audible" signal from the server, which
+          // is the only side that can know: her audio goes to the avatar
+          // service, never to this app. It already accounts for the avatar
+          // still playing out audio after the last byte was sent.
+          final speaking = m['speaking'] == true;
+          remoteSpeaking = speaking;
+          onAvatarSpeaking?.call(speaking);
           break;
         case 'interrupted':
           // The user talked over Hari — Google already cut generation; we

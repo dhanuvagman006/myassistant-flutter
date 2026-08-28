@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -14,6 +15,8 @@ import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
+import '../../../services/avatar_service.dart';
+import '../../../services/contacts_sync_service.dart';
 import '../../../services/live_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
@@ -254,6 +257,10 @@ class AssistantEngine extends ChangeNotifier {
       onCallEnded: _onPhoneCallEnded,
     );
     await _connect();
+    // Mirror the address book so "tell mom I'll be late" can be resolved by
+    // the server-side tool mid-turn. Not awaited: it must never delay the
+    // assistant coming up, and it silently does nothing without permission.
+    ContactsSyncService.instance.maybeSync();
     // Auto-start Live Mode on launch so the user doesn't have to tap the mic.
     _startLive();
   }
@@ -486,6 +493,25 @@ class AssistantEngine extends ChangeNotifier {
   final _liveSvc = LiveService.instance;
   bool get liveActive => _liveSvc.active;
 
+  // ---------------- AVATAR ----------------
+  // The photorealistic face is tied to the LIVE session, not to the screen:
+  // it starts with live mode and dies with it, so the per-minute meter only
+  // runs while a conversation is actually happening.
+  final _avatar = AvatarService.instance;
+
+  /// Guards against the mic gate sticking closed if the speaking-changed
+  /// event that normally reopens it never arrives.
+  Timer? _micGateWatchdog;
+
+  /// Debounces the end of her turn, so a pause between clauses is not
+  /// mistaken for her having finished.
+  Timer? _silenceSettle;
+
+  /// The avatar's video track while BeyondPresence is rendering, else null.
+  /// The screen paints this into AssistantFace's live layer; null simply
+  /// leaves the existing portrait in place.
+  lk.VideoTrack? get avatarTrack => _avatar.videoTrack;
+
   bool _liveUnavailable = false;
   Completer<bool>? _liveStartResult;
 
@@ -536,11 +562,68 @@ class AssistantEngine extends ChangeNotifier {
     // logged for diagnostics only — the screen stays clean.
     _liveSvc.onUserText = (t) {
       AppLog.add('live', 'you: $t');
+      // Gemini streams the user's transcript WHILE they are still talking,
+      // so treating its arrival as "thinking" puts the orb in a busy state
+      // during the user's own sentence. In avatar mode the turn boundaries
+      // are known exactly — her transcript starts the reply, turn_complete
+      // ends it — so stay on "listening" here and let those drive it.
+      if (_avatar.isLive) {
+        if (phase != AssistantPhase.listening) {
+          _setPhase(AssistantPhase.listening, silent: true);
+          notifyListeners();
+        }
+        return;
+      }
       _setPhase(AssistantPhase.thinking, silent: true);
       notifyListeners();
     };
-    _liveSvc.onHariText = (t) => AppLog.add('live', 'hari: $t');
-    _liveSvc.onTurnComplete = () {};
+    _liveSvc.onHariText = (t) {
+      AppLog.add('live', 'hari: $t');
+      // With the avatar rendering, Hari's audio goes to the avatar service
+      // and never reaches this app — so onSpeaking (which is driven by local
+      // playback) can never fire, and the phase would stay stuck on the
+      // "thinking" set by onUserText for the rest of the conversation.
+      // Her transcript is the only speaking signal we still receive, so it
+      // drives the phase instead. Audio-only mode keeps using onSpeaking,
+      // which is tied to actual playback and therefore more precise.
+      // Early guard. The room's audio-level signal is authoritative but
+      // takes a few hundred ms to trip, and mic audio uploaded in that
+      // window is enough to make the model think it was interrupted. Her
+      // transcript arrives first, so close the gate on it.
+      if (_avatar.isLive) {
+        _liveSvc.remoteSpeaking = true;
+        // Safety net: if the speaking-changed event never arrives (it is
+        // what normally reopens the gate), the mic would stay muted and the
+        // conversation would be over. Force it open after a long turn.
+        _micGateWatchdog?.cancel();
+        _micGateWatchdog = Timer(const Duration(seconds: 20), () {
+          if (!_avatar.isSpeaking) {
+            AppLog.add('avatar', 'mic gate watchdog released');
+            _liveSvc.remoteSpeaking = false;
+            _setPhase(AssistantPhase.listening, silent: true);
+            notifyListeners();
+          }
+        });
+        if (phase != AssistantPhase.speaking) {
+          _setPhase(AssistantPhase.speaking, silent: true);
+          notifyListeners();
+        }
+      }
+    };
+    _liveSvc.onTurnComplete = () {
+      // End of Hari's turn — back to listening. Same reasoning as above:
+      // without local audio there is no playback-finished event to wait on.
+      // NOT used to return to listening: turn_complete means Gemini stopped
+      // GENERATING, but the avatar is still playing out what it buffered.
+      // Trusting it here would unmute the mic while she talks — exactly the
+      // self-interruption this is meant to prevent. The speaking-changed
+      // signal ends the turn instead.
+      if (_avatar.isLive && !_avatar.isSpeaking) {
+        micLevel = 0;
+        _setPhase(AssistantPhase.listening, silent: true);
+        notifyListeners();
+      }
+    };
     _liveSvc.onInterrupted = () {
       _setPhase(AssistantPhase.listening, silent: true);
       notifyListeners();
@@ -568,11 +651,78 @@ class AssistantEngine extends ChangeNotifier {
     _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
     notifyListeners();
     _liveStartResult = Completer<bool>();
-    await _liveSvc.start();
+
+    // Reserve the avatar BEFORE the socket: the backend needs the room at
+    // setup time to know where to send Hari's voice. Never fatal — a null
+    // room just means this conversation is audio-only with the portrait.
+    _avatar.onChanged = notifyListeners;
+    // Close the mic while she is audible, and drive the orb from the same
+    // signal. This is what stops her interrupting herself: without it the
+    // loudspeaker feeds her own voice back to the model as user speech.
+    // PRIMARY signal — from the server, which knows exactly how much audio
+    // it handed the avatar and how long that takes to play. LiveKit's own
+    // active-speaker events (wired below) turned out to fire only sometimes,
+    // which left the mic muted until the watchdog rescued it 20 s later.
+    _liveSvc.onAvatarSpeaking = (speaking) {
+      AppLog.add('avatar', speaking ? 'speaking' : 'silent');
+      _micGateWatchdog?.cancel();
+      _micGateWatchdog = null;
+      _silenceSettle?.cancel();
+      _silenceSettle = null;
+      _liveSvc.remoteSpeaking = speaking;
+      micLevel = 0;
+      _setPhase(
+        speaking ? AssistantPhase.speaking : AssistantPhase.listening,
+        silent: true,
+      );
+      notifyListeners();
+    };
+
+    _avatar.onSpeakingChanged = (speaking) {
+      // Secondary. It may close the gate early (useful), but it must never
+      // OPEN it — it has been seen to miss transitions entirely, and the
+      // server signal above is the one that knows when she is really done.
+      if (!speaking) return;
+      _micGateWatchdog?.cancel();
+      _micGateWatchdog = null;
+
+      if (speaking) {
+        _silenceSettle?.cancel();
+        _silenceSettle = null;
+        _liveSvc.remoteSpeaking = true;
+        micLevel = 0;
+        _setPhase(AssistantPhase.speaking, silent: true);
+        notifyListeners();
+        return;
+      }
+
+      // Do NOT reopen the mic on the first sign of silence. Natural pauses
+      // between clauses register as silence, and reopening inside one lets
+      // her own next words back into the model as if the user had spoken —
+      // the self-interruption returns as a stutter mid-reply. Wait for the
+      // silence to hold before deciding the turn is really over.
+      _silenceSettle?.cancel();
+      _silenceSettle = Timer(const Duration(milliseconds: 700), () {
+        if (_avatar.isSpeaking) return; // she resumed — the gap was a pause
+        _liveSvc.remoteSpeaking = false;
+        micLevel = 0;
+        _setPhase(AssistantPhase.listening, silent: true);
+        notifyListeners();
+      });
+    };
+    String? avatarRoom;
+    try {
+      if (await AvatarService.isAvailable()) avatarRoom = await _avatar.start();
+    } catch (_) {
+      avatarRoom = null;
+    }
+
+    await _liveSvc.start(avatarRoom: avatarRoom);
     if (!_liveSvc.active) {
       _liveStartResult?.complete(false);
       _liveStartResult = null;
       _liveUnavailable = true;
+      await _avatar.stop(); // socket never came up — don't leave a paid room
       _setPhase(AssistantPhase.idle, silent: true);
       return false;
     }
@@ -582,6 +732,7 @@ class AssistantEngine extends ChangeNotifier {
         .timeout(const Duration(seconds: 6), onTimeout: () {
       _liveUnavailable = true;
       _liveSvc.stop();
+      _avatar.stop();
       _setPhase(AssistantPhase.idle, silent: true);
       return false;
     });
@@ -589,7 +740,14 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> stopLive() async {
+    _micGateWatchdog?.cancel();
+    _micGateWatchdog = null;
+    _silenceSettle?.cancel();
+    _silenceSettle = null;
     await _liveSvc.stop();
+    // Ends the BEY session and deletes the room — this is what stops the
+    // per-minute billing, so it runs on every exit from live mode.
+    await _avatar.stop();
     micLevel = 0;
     _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();

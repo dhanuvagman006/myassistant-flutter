@@ -72,7 +72,7 @@ class CallService {
       task = task.replaceFirst(
           RegExp(r'^(ask|tell|inform|let|say to|confirm with|remind)\s+(him|her|them)\b',
               caseSensitive: false),
-          (task.split(' ').first) + ' ' + name);
+          '${task.split(' ').first} $name');
       if (!RegExp(r'^(ask|tell|inform|say|find out|check|confirm|know|let)',
               caseSensitive: false)
           .hasMatch(task)) {
