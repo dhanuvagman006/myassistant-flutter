@@ -1,4 +1,6 @@
+import 'package:firebase_app_installations/firebase_app_installations.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myassistant/services/api_service.dart';
 
 import '../core/log.dart';
@@ -89,7 +91,43 @@ class PushService {
         return;
       }
 
-      final token = await FirebaseMessaging.instance.getToken();
+      // ONE-TIME identity reset. Devices that ran early builds carry a
+      // Firebase installation FCM no longer recognises: every token minted
+      // from it comes back "NotRegistered" on send, getToken() serves the
+      // dead value from cache in milliseconds, and no push ever arrives.
+      // The cure is deleteToken() FIRST (purges the local cache while the
+      // old installation still exists) then an installations reset, so the
+      // next mint happens under a fresh identity. Done once, remembered in
+      // prefs — repeating it every launch would kill each good token at
+      // the following startup.
+      final prefs = await SharedPreferences.getInstance();
+      // v2: the project finally has this package registered as a real
+      // Firebase Android app (it was com.example.myassistant only — every
+      // token ever minted was unsendable). One more clean mint under the
+      // correct app id.
+      if (!(prefs.getBool('fcm_identity_reset_v2') ?? false)) {
+        try {
+          await FirebaseMessaging.instance
+              .deleteToken()
+              .timeout(const Duration(seconds: 8));
+          AppLog.add('push', 'token cache purged');
+        } catch (e) {
+          AppLog.add('push', 'deleteToken skipped: $e');
+        }
+        try {
+          await FirebaseInstallations.instance
+              .delete()
+              .timeout(const Duration(seconds: 8));
+          AppLog.add('push', 'installation reset ok');
+        } catch (e) {
+          AppLog.add('push', 'installation reset failed: $e');
+        }
+        await prefs.setBool('fcm_identity_reset_v2', true);
+      }
+      final token = await FirebaseMessaging.instance
+          .getToken()
+          .timeout(const Duration(seconds: 25));
+      AppLog.add('push', 'token ${token == null ? "null" : token.substring(0, 12)}');
       if (token == null) {
         AppLog.add('push', 'no FCM token available');
         return;

@@ -61,6 +61,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.addListener(_onStateChanged);
     // The Today pill's data — one aggregate fetch, refreshed quietly.
     BriefService.instance.start();
+    // Messages that arrived while the app was closed (or whose push never
+    // landed — tokens die on reinstall) still get SPOKEN on open.
+    engine.announceIncomingMessages();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;

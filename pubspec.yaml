@@ -89,9 +89,10 @@ dependencies:
 
   video_player: ^2.9.2
   livekit_client: ^2.4.9           # avatar video: subscribes to the BEY track
-  firebase_core: ^4.13.0
-  firebase_auth: ^6.4.0             # phone OTP: proves the number is theirs
-  firebase_messaging: ^16.5.0
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1             # phone OTP: proves the number is theirs
+  firebase_messaging: ^16.6.0
+  firebase_app_installations: ^0.4.3
 
 dev_dependencies:
   flutter_test:
