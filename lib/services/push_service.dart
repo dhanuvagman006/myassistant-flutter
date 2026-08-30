@@ -2,6 +2,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:myassistant/services/api_service.dart';
 
 import '../core/log.dart';
+import '../features/assistant/state/assistant_engine.dart';
+import 'brief_service.dart';
 
 /// Registers this device with the backend so other people's agents can
 /// reach the user.
@@ -40,6 +42,34 @@ class PushService {
         // immediately rather than waiting for the next sign-in.
         _registeredToken = null;
         _send(token);
+      });
+
+      // AGENT-TO-AGENT DELIVERY, receiving half. The push is only a nudge
+      // (no message text on the lock screen); the words come from our own
+      // inbox and are SPOKEN by Hari — that is the product: your assistant
+      // tells you, you don't read a banner.
+      FirebaseMessaging.onMessage.listen((m) {
+        // App is open in the foreground — speak it right now.
+        if (m.data['kind'] == 'agent_message') {
+          AppLog.add('push', 'agent message arrived (foreground)');
+          AssistantEngine.instance.announceIncomingMessages();
+          BriefService.instance.refresh(force: true);
+        }
+      });
+      FirebaseMessaging.onMessageOpenedApp.listen((m) {
+        // User tapped the notification — the app is coming to front.
+        if (m.data['kind'] == 'agent_message') {
+          AppLog.add('push', 'agent message opened from notification');
+          AssistantEngine.instance.announceIncomingMessages();
+          BriefService.instance.refresh(force: true);
+        }
+      });
+      // Cold start FROM the notification (app was killed).
+      FirebaseMessaging.instance.getInitialMessage().then((m) {
+        if (m != null && m.data['kind'] == 'agent_message') {
+          AppLog.add('push', 'agent message launched the app');
+          AssistantEngine.instance.announceIncomingMessages();
+        }
       });
       _listenerAttached = true;
     } catch (e) {

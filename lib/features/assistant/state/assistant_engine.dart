@@ -960,6 +960,54 @@ class AssistantEngine extends ChangeNotifier {
     await sendText(t);
   }
 
+  /// AGENT-TO-AGENT DELIVERY, spoken half. Fetches this user's unread
+  /// agent messages and has Hari SPEAK them ("Dhanush says: …"). Called by
+  /// the push listeners (foreground arrival, notification tap, cold start
+  /// from a notification). Messages are marked read immediately so a live
+  /// session that starts later doesn't announce them a second time.
+  bool _announcing = false;
+  Future<void> announceIncomingMessages() async {
+    if (_announcing) return;
+    _announcing = true;
+    try {
+      // On a cold start from a notification tap the auth session may not
+      // be loaded yet — wait for it briefly rather than fetching as nobody.
+      for (var i = 0; i < 20 && ApiService.sessionToken == null; i++) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      final j = await ApiService.getJson('/messages/unread');
+      final list = (j?['messages'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const [];
+      if (list.isEmpty) return;
+      await ApiService.sendJson('/messages/read',
+          body: {'ids': [for (final m in list) m['id']]});
+
+      final lines = [
+        for (final m in list)
+          '${m['from'] ?? 'Someone'} says: ${m['message'] ?? ''}'
+      ];
+      if (liveActive) {
+        // The live model owns the audio — hand it the news to deliver.
+        _liveSvc.sendText(
+            '[SYSTEM] New message${lines.length > 1 ? 's' : ''} just arrived. '
+            'Read to me now, naming each sender: ${lines.join(' | ')}');
+        return;
+      }
+      for (final line in lines) {
+        transcript.add(TranscriptEntry(TranscriptRole.assistant, line));
+        notifyListeners();
+        await _speakReply(line);
+      }
+    } catch (_) {
+      // A failed announce keeps the message unread-safe: worst case the
+      // brief still shows it and the next session speaks it.
+    } finally {
+      _announcing = false;
+    }
+  }
+
   /// Text fallback from the bottom input bar.
   Future<void> sendText(String text) async {
     final t = text.trim();
