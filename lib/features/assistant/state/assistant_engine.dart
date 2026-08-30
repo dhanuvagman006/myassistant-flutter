@@ -984,6 +984,26 @@ class AssistantEngine extends ChangeNotifier {
     pendingConfirmation = null;
     notifyListeners();
     HapticFeedback.selectionClick();
+
+    // On-device flow (live mode): no server round-trip — the SSE session
+    // knows nothing about this call. Dial (or drop) locally and let the
+    // live model know what happened so the conversation stays coherent.
+    if (_localCallFlow) {
+      _localCallFlow = false;
+      final who = pending?.contact?.name ?? 'them';
+      if (approved && (pending?.contact?.phone.isNotEmpty ?? false)) {
+        final ok = await CallService.instance.call(pending!.contact!.phone);
+        if (liveActive) {
+          _liveSvc.sendText(ok
+              ? '[SYSTEM] The call to $who is being placed on the phone now.'
+              : '[SYSTEM] The phone could not start the call to $who. Tell me briefly.');
+        }
+      } else if (liveActive) {
+        _liveSvc.sendText('[SYSTEM] I declined the call to $who. Acknowledge briefly.');
+      }
+      return;
+    }
+
     try {
       await _api.confirm(approved);
     } catch (_) {
@@ -1002,6 +1022,18 @@ class AssistantEngine extends ChangeNotifier {
   /// Ambiguous-contact card selection.
   Future<void> chooseContact(ContactMatch m) async {
     ambiguousContacts = const [];
+    // On-device flow: promote the pick straight to the confirmation card;
+    // the server was never part of this call.
+    if (_localCallFlow) {
+      pendingConfirmation = PendingConfirmation(
+        action: 'call',
+        contact: m,
+        question: 'Call ${m.name}?',
+      );
+      HapticFeedback.mediumImpact();
+      notifyListeners();
+      return;
+    }
     notifyListeners();
     try {
       await _api.chooseContact(m.id);
@@ -1014,6 +1046,7 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> cancelAction() async {
     _bargedIn = false; // an explicit cancel is not a barge-in
     _conversationEnded = true; // and it closes the continuous loop
+    _localCallFlow = false;
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
       await _voice.stopBargeInMonitor();
@@ -1114,6 +1147,19 @@ class AssistantEngine extends ChangeNotifier {
         // Saved documents matched by this turn (doc recall or a client's
         // case file) — pop them on screen while Hari speaks the answer.
         documentCards = UserDocument.listFromJson(e['documents']);
+        break;
+
+      case 'resolve_and_call':
+        // LIVE MODE calling. The place_phone_call tool emits this action;
+        // on the SSE path the server converts it into the contact_lookup
+        // handshake, but on the LIVE socket it arrives here AS-IS — and
+        // nothing handled it, so Hari said "Calling…" and the phone never
+        // dialled. The whole flow is on-device anyway (contacts + dialler
+        // live here), so resolve, confirm and dial locally.
+        _handleResolveAndCall(
+          e['name'] as String? ?? '',
+          e['message'] as String?,
+        );
         break;
 
       case 'contact_lookup':
@@ -1427,6 +1473,57 @@ class AssistantEngine extends ChangeNotifier {
       _deviceFlowActive = false;
       if (liveGated) _liveSvc.remoteSpeaking = false;
     }
+  }
+
+  /// True while a call flow is being handled entirely ON-DEVICE (live
+  /// mode). confirm()/chooseContact() then act locally instead of posting
+  /// to the SSE session, which knows nothing about this flow.
+  bool _localCallFlow = false;
+
+  /// Live-mode "call X": resolve the name against the phone's contacts,
+  /// show the normal confirmation card, and dial on approval.
+  Future<void> _handleResolveAndCall(String name, String? message) async {
+    if (name.trim().isEmpty) return;
+    List<ContactMatch> matches = const [];
+    try {
+      final found = await CallService.instance.findContacts(name);
+      matches = [
+        for (final c in found)
+          if (CallService.instance.bestNumber(c).isNotEmpty)
+            ContactMatch(
+              id: c.id,
+              name: c.displayName,
+              phone: CallService.instance.bestNumber(c),
+            ),
+      ];
+    } catch (_) {}
+
+    if (matches.isEmpty) {
+      // Tell whichever brain is running, so Hari says it instead of the
+      // user waiting on a call that can never come.
+      if (liveActive) {
+        _liveSvc.sendText(
+            '[SYSTEM] No contact named "$name" was found on the phone. '
+            'Tell me that briefly.');
+      } else {
+        await _speakReply("I couldn't find $name in your contacts.");
+      }
+      return;
+    }
+
+    _localCallFlow = true;
+    if (matches.length == 1) {
+      pendingConfirmation = PendingConfirmation(
+        action: 'call',
+        contact: matches.first,
+        question: 'Call ${matches.first.name}?',
+        message: message,
+      );
+      HapticFeedback.mediumImpact();
+    } else {
+      ambiguousContacts = matches.take(6).toList();
+    }
+    notifyListeners();
   }
 
   Future<void> _resolveContacts(String name) async {
