@@ -59,6 +59,12 @@ class AssistantEngine extends ChangeNotifier {
   /// file") — shown as cards while the reply is spoken.
   List<UserDocument> documentCards = const [];
 
+  /// AI creation just generated for the user ("draw me a poster") — the
+  /// backend saved it as a document and sent its JSON along; shown as a
+  /// large card until the next turn starts.
+  UserDocument? generatedImage;
+  String generatedImagePrompt = '';
+
   ContactMatch? foundContact;
   List<ContactMatch> ambiguousContacts = const [];
   PendingConfirmation? pendingConfirmation;
@@ -1286,6 +1292,18 @@ class AssistantEngine extends ChangeNotifier {
         }
         break;
 
+      case 'show_image':
+      case 'show_video':
+        // generate_image / generate_video: the result is already saved as
+        // a document server-side; its client JSON rides in the action.
+        final docJson = e['document'];
+        if (docJson is Map) {
+          generatedImage =
+              UserDocument.fromJson(docJson.cast<String, dynamic>());
+          generatedImagePrompt = e['prompt'] as String? ?? '';
+        }
+        break;
+
       case 'open_video':
         // Voice-driven video mode: the backend recognised "open video
         // mode". Navigation needs a BuildContext, so the screen registers
@@ -1738,6 +1756,8 @@ class AssistantEngine extends ChangeNotifier {
     searchQuery = null;
     searchResults = const [];
     documentCards = const [];
+    generatedImage = null;
+    generatedImagePrompt = '';
     foundContact = null;
     ambiguousContacts = const [];
     pendingConfirmation = null;

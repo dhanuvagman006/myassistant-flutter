@@ -359,6 +359,19 @@ class _AssistantScreenState extends State<AssistantScreen> {
         child: CallStatusCard(status: engine.callStatus!),
       );
     }
+    if (engine.generatedImage != null) {
+      // The showpiece: an image Hari just created. Give it real estate.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: h * 0.46),
+          child: GeneratedImageCard(
+            document: engine.generatedImage!,
+            prompt: engine.generatedImagePrompt,
+          ),
+        ),
+      );
+    }
     if (engine.searchResults.isNotEmpty) {
       return ConstrainedBox(
         constraints: BoxConstraints(maxHeight: h * 0.32),

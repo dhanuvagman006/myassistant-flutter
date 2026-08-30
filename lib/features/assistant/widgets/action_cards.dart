@@ -595,6 +595,145 @@ String _shareName(UserDocument d, String mime) {
 }
 
 /// Full-screen pinch-zoom viewer for a recalled image document.
+/// An image Hari just CREATED ("draw me a poster for the café") — shown
+/// big, because this is the showpiece moment: the full square render with
+/// a share button so it can go straight to WhatsApp. Tap for pinch-zoom.
+/// The file is already saved server-side as a document.
+class GeneratedImageCard extends StatefulWidget {
+  final UserDocument document;
+  final String prompt;
+  const GeneratedImageCard(
+      {super.key, required this.document, this.prompt = ''});
+
+  @override
+  State<GeneratedImageCard> createState() => _GeneratedImageCardState();
+}
+
+class _GeneratedImageCardState extends State<GeneratedImageCard> {
+  bool _sending = false;
+
+  bool get _isVideo => widget.document.mime.startsWith('video/');
+
+  Future<void> _share() async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final file = await ApiService.downloadDocument(widget.document.id);
+      final dir = await getTemporaryDirectory();
+      final safeName = _shareName(widget.document, file.mime);
+      final path = '${dir.path}/$safeName';
+      await File(path).writeAsBytes(file.bytes, flush: true);
+      await Share.shareXFiles(
+        [XFile(path, mimeType: file.mime, name: safeName)],
+        subject: widget.document.title,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't prepare that to share.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      borderTint: Neon.violet,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Flexible(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _isVideo
+                  ? Container(
+                      height: 160,
+                      alignment: Alignment.center,
+                      color: Neon.surfaceHigh,
+                      child: const Icon(Icons.movie_rounded,
+                          color: Neon.cyan, size: 42),
+                    )
+                  : GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              _DocumentViewer(document: widget.document),
+                        ),
+                      ),
+                      child: Image.network(
+                        ApiService.documentFileUrl(widget.document.id),
+                        headers: ApiService.imageHeaders,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        loadingBuilder: (context, child, p) => p == null
+                            ? child
+                            : Container(
+                                height: 200,
+                                alignment: Alignment.center,
+                                color: Neon.surfaceHigh,
+                                child: const CircularProgressIndicator(
+                                    color: Neon.violet, strokeWidth: 2.5),
+                              ),
+                        errorBuilder: (_, __, ___) => Container(
+                          height: 120,
+                          alignment: Alignment.center,
+                          color: Neon.surfaceHigh,
+                          child: const Text("Couldn't load the image.",
+                              style: TextStyle(color: Colors.white70)),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded,
+                  color: Neon.violet, size: 16),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  widget.prompt.isNotEmpty
+                      ? widget.prompt
+                      : widget.document.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.75),
+                    fontSize: 12.5,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _sending
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          color: Neon.cyan, strokeWidth: 2),
+                    )
+                  : InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: _share,
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(Icons.share_rounded,
+                            color: Neon.cyan, size: 20),
+                      ),
+                    ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DocumentViewer extends StatelessWidget {
   final UserDocument document;
   const _DocumentViewer({required this.document});
