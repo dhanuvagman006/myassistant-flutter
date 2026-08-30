@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -77,6 +78,12 @@ class AssistantEngine extends ChangeNotifier {
   /// moved to `completed` by the time audio actually plays on-device.
   bool _ttsActive = false;
 
+  /// True while a DEVICE FLOW owns the screen (camera capture, gallery
+  /// pick). The continuous loop must NOT reopen the mic then — it recorded
+  /// shutter clicks and camera-app silence, and the server answered every
+  /// empty transcript with "I couldn't hear that clearly".
+  bool _deviceFlowActive = false;
+
   Timer? _stuckWatchdog;
 
   // ---------------- BARGE-IN (talk over Hari to interrupt) ----------------
@@ -116,32 +123,28 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Speaks [text] with the phase machine wrapped around the audio:
   /// speaking while the voice plays, completed when it ends.
+  ///
+  /// The reply is split into sentences and fed through the SAME pipelined
+  /// queue the streamed path uses, so playback begins after the FIRST
+  /// sentence's synthesis instead of after the whole reply's — a long
+  /// answer used to cost one huge synthesis wait before any audio at all.
   Future<void> _speakReply(String text) async {
-    _ttsActive = true;
-    _setPhase(AssistantPhase.speaking, silent: true);
-    // The girl's lips ride the word pulses coming from the TTS engine.
-    void feed() {
-      micLevel = _voice.ttsLevel.value;
-      notifyListeners();
-    }
+    final parts = _splitSentences(text);
+    if (parts.isEmpty) return;
+    _speakQueue.addAll(parts);
+    await _drainSpeech();
+  }
 
-    _voice.ttsLevel.addListener(feed);
-    _beginBargeWatch();
-    try {
-      await _voice.speak(text); // awaits completion (awaitSpeakCompletion)
-    } finally {
-      _voice.ttsLevel.removeListener(feed);
-      micLevel = 0;
-      _ttsActive = false;
-      if (phase == AssistantPhase.speaking) {
-        _setPhase(AssistantPhase.completed, silent: true);
-      }
-      notifyListeners();
-      // If the user barged in, a capture is already starting — don't also
-      // re-open the mic from the continuous loop.
-      final resumed = await _endBargeWatch();
-      if (!resumed) _maybeContinueListening();
-    }
+  /// Sentence split for speech pipelining: . ! ? and the Devanagari danda ।.
+  static List<String> _splitSentences(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return const [];
+    final parts = t
+        .split(RegExp(r'(?<=[.!?।])\s+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return parts.isEmpty ? [t] : parts;
   }
 
   // ---------------- STREAMED SENTENCES (latency path) ----------------
@@ -303,6 +306,13 @@ class AssistantEngine extends ChangeNotifier {
         onEvent: _onEvent,
         onDisconnect: () {
           connected = false;
+          notifyListeners();
+        },
+        // Every successful (re)connect — a blip must not leave the header
+        // stuck on "Connecting" after the stream quietly came back.
+        onConnected: () {
+          connected = true;
+          errorMessage = null;
           notifyListeners();
         },
       );
@@ -470,7 +480,7 @@ class AssistantEngine extends ChangeNotifier {
       // instead of making the user repeat themselves.
       _lastAudioBytes = bytes;
       _audioResent = false;
-      await _api.sendAudio(bytes);
+      await _api.sendAudio(bytes, auto: auto);
       AppLog.add(
           'latency', 'uploaded ${_turnClock?.elapsedMilliseconds}ms '
               '(${(bytes.length / 1024).round()}kB)');
@@ -663,6 +673,14 @@ class AssistantEngine extends ChangeNotifier {
     // it handed the avatar and how long that takes to play. LiveKit's own
     // active-speaker events (wired below) turned out to fire only sometimes,
     // which left the mic muted until the watchdog rescued it 20 s later.
+    // Device actions arriving over the live socket go through the same
+    // dispatcher as the classic path, so camera, contact lookup and document
+    // capture all behave identically in both modes.
+    _liveSvc.onDeviceAction = (action) {
+      AppLog.add('live', 'device action: ${action['type']}');
+      _onEvent(action);
+    };
+
     _liveSvc.onAvatarSpeaking = (speaking) {
       AppLog.add('avatar', speaking ? 'speaking' : 'silent');
       _micGateWatchdog?.cancel();
@@ -778,7 +796,15 @@ class AssistantEngine extends ChangeNotifier {
   static String greetingFor(String? name, {DateTime? now}) {
     final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
     final who = first.isEmpty ? 'there' : first;
-    return 'Hello $who! Today is your lucky day. How can I inspire or assist you today?';
+    // Short and professional — the greeting is also the app's first
+    // latency impression, so one crisp sentence beats a flourish.
+    final h = (now ?? DateTime.now()).hour;
+    final part = h < 12
+        ? 'Good morning'
+        : h < 17
+            ? 'Good afternoon'
+            : 'Good evening';
+    return '$part, $who! How can I help you today?';
   }
 
   /// Speaks the opening greeting — ONLY when the live session is really
@@ -891,6 +917,9 @@ class AssistantEngine extends ChangeNotifier {
     // A barge-in already schedules its own capture — don't double-start.
     if (_bargedIn || _bargeMonitorOn) return;
     if (PhoneStateGuard.instance.inCall) return;
+    // The camera/gallery owns the screen — reopening the mic underneath it
+    // only records noise. The flow re-enters here when it finishes.
+    if (_deviceFlowActive) return;
     // These are waiting on the USER to tap something; don't talk over them.
     if (pendingConfirmation != null ||
         ambiguousContacts.isNotEmpty ||
@@ -914,6 +943,21 @@ class AssistantEngine extends ChangeNotifier {
       if (pendingConfirmation != null || ambiguousContacts.isNotEmpty) return;
       pressMic(auto: true);
     });
+  }
+
+  /// Ask the assistant something on the user's behalf (dashboard quick
+  /// actions). Routed into whichever conversation currently owns the audio:
+  /// the LIVE session when one is up (she answers by voice, tools and all),
+  /// otherwise the classic SSE session — so a button tap and a spoken
+  /// request are the same thing to the rest of the system.
+  Future<void> askAssistant(String text) async {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    if (liveActive) {
+      _liveSvc.sendText(t);
+      return;
+    }
+    await sendText(t);
   }
 
   /// Text fallback from the bottom input bar.
@@ -1128,6 +1172,7 @@ class AssistantEngine extends ChangeNotifier {
         _captureDocument(
           e['note'] as String? ?? '',
           clientId: e['client_id'] as int?,
+          person: e['person'] as String?,
           source: e['source'] as String? ?? 'camera',
         );
         break;
@@ -1201,7 +1246,45 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Voice-driven vision analysis: opens the camera, sends the photo directly
   /// to the backend /vision endpoint with the user's question, and speaks the answer.
+  /// Opens the camera, sends the frame to /vision, and reports what it says.
+  ///
+  /// The mic is held shut for the whole capture: the shutter and whatever the
+  /// user mutters while framing the shot would otherwise stream into the live
+  /// model and be taken as a new question. The gate is released in a finally
+  /// because there are five ways out of the inner method — cancelled capture,
+  /// camera failure, upload failure, thrown error, success — and missing any
+  /// one of them would leave the microphone dead for the rest of the session.
   Future<void> _analyzeCamera(String question) async {
+    final gated = liveActive;
+    if (gated) _liveSvc.remoteSpeaking = true;
+    _deviceFlowActive = true; // no auto-listen under the camera
+    try {
+      await _analyzeCameraInner(question);
+    } finally {
+      _deviceFlowActive = false;
+      if (gated) _liveSvc.remoteSpeaking = false;
+    }
+  }
+
+  /// Say something that came out of the camera flow.
+  ///
+  /// In live mode the assistant's voice IS the avatar's, so speaking locally
+  /// would be a second, unsynced voice — and in practice the user heard
+  /// nothing and the assistant simply appeared to give up after the shutter.
+  /// Routing through the live session makes her say it, and keeps the model
+  /// aware of what happened.
+  Future<void> _sayFromCamera(String text) async {
+    if (liveActive) {
+      _liveSvc.sendText('Say this to me now, in my language: "$text"');
+      _setPhase(AssistantPhase.listening, silent: true);
+      notifyListeners();
+      return;
+    }
+    await _speakReply(text);
+    _setPhase(AssistantPhase.completed);
+  }
+
+  Future<void> _analyzeCameraInner(String question) async {
     await _voice.stopSpeaking();
     XFile? shot;
     try {
@@ -1212,13 +1295,11 @@ class AssistantEngine extends ChangeNotifier {
         imageQuality: 82,
       );
     } catch (_) {
-      await _speakReply("I couldn't open the camera.");
-      _setPhase(AssistantPhase.completed);
+      await _sayFromCamera("I couldn't open the camera.");
       return;
     }
     if (shot == null) {
-      await _speakReply("Okay, cancelled.");
-      _setPhase(AssistantPhase.completed);
+      await _sayFromCamera("Okay, cancelled.");
       return;
     }
 
@@ -1233,75 +1314,119 @@ class AssistantEngine extends ChangeNotifier {
       }
       request.fields['mode'] = 'ask';
       request.fields['question'] = question;
-      request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: 'scan.jpg'));
+      // contentType is REQUIRED, not optional. Without it the part goes up
+      // as application/octet-stream and /vision — which accepts only
+      // image/jpeg|png|webp — rejects every photo with 415. A filename
+      // ending in .jpg does NOT set the MIME type.
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: 'scan.jpg',
+        contentType: MediaType('image', 'jpeg'),
+      ));
       
       final response = await request.send();
       final body = await response.stream.bytesToString();
       
       if (response.statusCode != 200) {
-        await _speakReply("I couldn't analyze the image right now.");
-        _setPhase(AssistantPhase.completed);
+        // Log the body: a silent "couldn't analyse it" hid a 415 for the
+        // whole of this feature's life.
+        AppLog.add('vision',
+            'HTTP ${response.statusCode}: ${body.substring(0, body.length < 160 ? body.length : 160)}');
+        await _sayFromCamera("I couldn't read that image, sorry. Try again?");
         return;
       }
       
       final data = jsonDecode(body);
       final answer = data['answer'] as String? ?? "I couldn't see anything clearly.";
-      
+
       transcript.add(TranscriptEntry(TranscriptRole.assistant, answer));
-      await _speakReply(answer);
-      
-      // Let the backend know we answered it so context is maintained
-      _api.sendText("I looked at it and saw: $answer");
+
+      if (liveActive) {
+        // In live mode the assistant's voice belongs to the avatar. Speaking
+        // this locally would talk over her with a second, unsynced voice and
+        // leave the model unaware of what was on the sign. Hand the reading
+        // back to the live session instead: she says it herself, in the
+        // user's language, and can be asked follow-up questions about it.
+        _liveSvc.sendText(
+          'I pointed the camera and the image shows: "$answer". '
+          'Tell me this now, naturally, in the language I am speaking.',
+        );
+        _setPhase(AssistantPhase.listening, silent: true);
+        notifyListeners();
+      } else {
+        await _speakReply(answer);
+        // Let the backend know we answered it so context is maintained
+        _api.sendText("I looked at it and saw: $answer");
+      }
       
     } catch (e) {
-      await _speakReply("There was a problem scanning the image.");
-      _setPhase(AssistantPhase.completed);
+      await _sayFromCamera("There was a problem scanning the image.");
     }
   }
 
   /// Voice-driven document capture: open the camera or gallery, then file the shot
   /// into document memory with the user's own words as the note (so "the
   /// receipt I saved after the doctor" is findable later). No manual entry.
-  Future<void> _captureDocument(String note, {int? clientId, String source = 'camera'}) async {
-    await _voice.stopSpeaking();
-    XFile? shot;
+  ///
+  /// [person] is who the document BELONGS to ("save this scan for Prasant") —
+  /// passed through to the upload so the file lands in that person's records
+  /// and "show me Prasant's records" finds it later.
+  Future<void> _captureDocument(String note,
+      {int? clientId, String? person, String source = 'camera'}) async {
+    // Hold the continuous loop shut for the whole flow — the camera owns
+    // the screen and the mic would only record shutter noise (the source of
+    // the "I couldn't hear that clearly" error after every scan).
+    _deviceFlowActive = true;
+    final liveGated = liveActive;
+    if (liveGated) _liveSvc.remoteSpeaking = true;
     try {
-      shot = await ImagePicker().pickImage(
-        source: source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 82,
-      );
-    } catch (_) {
-      await _speakReply("I couldn't open the camera.");
-      _setPhase(AssistantPhase.completed);
-      return;
-    }
-    if (shot == null) {
-      await _speakReply("Okay, nothing saved.");
-      _setPhase(AssistantPhase.completed);
-      return;
-    }
+      await _voice.stopSpeaking();
+      XFile? shot;
+      try {
+        shot = await ImagePicker().pickImage(
+          source: source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
+          maxWidth: 1920,
+          maxHeight: 1920,
+          imageQuality: 82,
+        );
+      } catch (_) {
+        await _sayFromCamera("I couldn't open the camera.");
+        _setPhase(AssistantPhase.completed);
+        return;
+      }
+      if (shot == null) {
+        await _sayFromCamera("Okay, nothing saved.");
+        _setPhase(AssistantPhase.completed);
+        return;
+      }
 
-    _setPhase(AssistantPhase.thinking, silent: true);
-    notifyListeners();
-    try {
-      final bytes = await shot.readAsBytes();
-      final doc = await ApiService.uploadDocument(
-        bytes: bytes,
-        filename: 'Capture.jpg',
-        mimeType: 'image/jpeg',
-        note: note,
-        clientId: clientId,
-      );
-      documentCards = [doc];
+      _setPhase(AssistantPhase.thinking, silent: true);
       notifyListeners();
-      await _speakReply("Saved and filed.");
-    } catch (_) {
-      await _speakReply(
-          "I couldn't save that — please check your connection and try again.");
+      try {
+        final bytes = await shot.readAsBytes();
+        final doc = await ApiService.uploadDocument(
+          bytes: bytes,
+          filename: 'Capture.jpg',
+          mimeType: 'image/jpeg',
+          note: note,
+          clientId: clientId,
+          person: person,
+        );
+        documentCards = [doc];
+        notifyListeners();
+        await _sayFromCamera(person == null
+            ? "Saved and filed."
+            : "Saved to $person's records.");
+      } catch (_) {
+        await _sayFromCamera(
+            "I couldn't save that — please check your connection and try again.");
+      }
+      _setPhase(AssistantPhase.completed);
+    } finally {
+      _deviceFlowActive = false;
+      if (liveGated) _liveSvc.remoteSpeaking = false;
     }
-    _setPhase(AssistantPhase.completed);
   }
 
   Future<void> _resolveContacts(String name) async {

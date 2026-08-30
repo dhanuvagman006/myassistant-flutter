@@ -58,6 +58,16 @@ class LiveService {
   /// Fires when the server reports the avatar starting/stopping speech.
   void Function(bool speaking)? onAvatarSpeaking;
 
+  /// A DEVICE ACTION the assistant wants this phone to perform — open the
+  /// camera, look up a contact, capture a document.
+  ///
+  /// Tools that need the handset return these, and the server forwards them
+  /// down this socket. Nothing was listening: the switch below handled only
+  /// the protocol's own message types and everything else fell through, so
+  /// in live mode the assistant would say "Opening the camera" and then
+  /// nothing happened at all.
+  void Function(Map<String, dynamic> action)? onDeviceAction;
+
   /// True while a reply segment is actually playing (drives the orb).
   bool playing = false;
 
@@ -80,12 +90,56 @@ class LiveService {
   final List<String> _queue = []; // WAV files waiting to play
   bool _draining = false;
   int _seq = 0;
-  int _silenceMs = 0;
-  bool _hasSpoken = false;
-  final List<List<int>> _silenceBuffer = [];
 
   static const _outRate = 24000; // Gemini native-audio output sample rate
   static const _inRate = 16000; // what we send up
+
+  // ---- VOICE ACTIVITY DETECTION (this side decides, not Google) ----
+  //
+  // Every mic frame is ~128 ms of audio at 16 kHz, so these are counted in
+  // frames rather than milliseconds.
+  //
+  // The detector is ADAPTIVE. A fixed level threshold cannot work: a quiet
+  // room and a moving car differ by an order of magnitude, and a fixed
+  // number is either deaf in one or permanently triggered in the other. So
+  // the noise floor is measured continuously while nobody is speaking, and
+  // speech is "clearly louder than this room currently is".
+  double _noiseFloor = 0.01; // running estimate of the room
+  bool _speaking = false; // is the user mid-utterance right now?
+  int _aboveMs = 0; // consecutive audio above the speech threshold
+  int _belowMs = 0; // consecutive audio below it
+  int _utteranceMs = 0; // length of the current utterance
+
+  /// Speech must be this many times the room's noise floor. Background
+  /// sound sits at the floor by definition, so it never clears this bar.
+  static const _speechFactor = 3.0;
+
+  /// An absolute floor too, so a very quiet room's tiny noise estimate
+  /// cannot make a fan or a distant voice look like speech. _levelOf maps
+  /// RMS through x6, so speech lands around 0.12-1.0 and a still room sits
+  /// well under 0.03; 0.08 sits in the gap between them.
+  static const _minSpeechLevel = 0.08;
+
+  /// How much loud audio before we accept it as speech. Stops a door slam
+  /// or a keyboard click from opening a turn.
+  static const _onsetMs = 200;
+
+  /// How much quiet before the turn is ENDED. This is the number the user
+  /// feels — the pause between them stopping and Hari starting. Short
+  /// enough to feel immediate, long enough to survive the gap between
+  /// words. Tuned here rather than on the server because only this side
+  /// knows the room.
+  static const _hangoverMs = 450;
+
+  /// A turn that never ends is a hung app. If someone is in a genuinely
+  /// loud place the detector could in principle stay open, so cut it.
+  static const _maxUtteranceMs = 30000;
+
+  /// PCM16 mono @16 kHz: 32 bytes per millisecond. Deriving duration from
+  /// the buffer means the thresholds above stay honest whatever chunk size
+  /// the recorder happens to hand us — assuming a fixed frame length would
+  /// silently scale every timeout on a different device.
+  static int _msOf(List<int> chunk) => chunk.length ~/ 32;
 
   /// Availability probe — GET /live on the backend.
   static Future<bool> available() async {
@@ -107,15 +161,17 @@ class LiveService {
     if (_active) return;
     _active = true;
     _seq = 0;
-    _silenceMs = 0;
-    _hasSpoken = false;
-    _silenceBuffer.clear();
     if (!await _rec.hasPermission()) {
       onError?.call('Microphone permission is needed for live mode.');
       return;
     }
     playing = false;
     remoteSpeaking = false;
+    _speaking = false;
+    _aboveMs = 0;
+    _belowMs = 0;
+    _utteranceMs = 0;
+    _noiseFloor = 0.01;
     _buf.clear();
     _queue.clear();
 
@@ -127,7 +183,16 @@ class LiveService {
     final room = avatarRoom == null
         ? ''
         : '&room=${Uri.encodeComponent(avatarRoom)}';
-    final uri = Uri.parse('$base/live/ws?$qp$room');
+    // Device context for server-side tools: timezone so "tomorrow at 8"
+    // lands in the right day, platform so deep links can use Android
+    // intent:// URLs. Same facts the classic path sends as headers.
+    final tz = DateTime.now().timeZoneOffset.inMinutes;
+    final platform = Platform.isAndroid
+        ? 'android'
+        : Platform.isIOS
+            ? 'ios'
+            : 'other';
+    final uri = Uri.parse('$base/live/ws?$qp$room&tz=$tz&platform=$platform');
 
     try {
       _ch = WebSocketChannel.connect(uri);
@@ -173,34 +238,57 @@ class LiveService {
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
         try {
-          // Either path means Hari is audible right now: `playing` for local
-          // PCM playback, `remoteSpeaking` for the avatar's own track.
-          if (!playing && !remoteSpeaking && l != null) {
-            if (l > 0.03) {
-              _hasSpoken = true;
-              _silenceMs = 0;
-              for (final c in _silenceBuffer) {
-                _ch?.sink.add(Uint8List.fromList(c));
-              }
-              _silenceBuffer.clear();
-              _ch?.sink.add(Uint8List.fromList(chunk));
-            } else if (_hasSpoken) {
-              // chunk size 4096 at 16kHz = ~128ms
-              _silenceMs += 128;
-              if (_silenceMs > 2500) {
-                for (final c in _silenceBuffer) {
-                  _ch?.sink.add(Uint8List.fromList(c));
-                }
-                _silenceBuffer.clear();
-                _ch?.sink.add(Uint8List.fromList(chunk));
-                _hasSpoken = false; // reset
-              } else {
-                // Cap buffer at 32 chunks (~4s) to prevent unbounded growth
-                if (_silenceBuffer.length < 32) {
-                  _silenceBuffer.add(chunk);
-                }
-              }
+          // While Hari is audible her voice must never go back up the mic,
+          // or the model hears itself. Also drop any half-open turn so we
+          // do not resume mid-utterance when she finishes.
+          if (playing || remoteSpeaking) {
+            if (_speaking) _endUtterance();
+            return;
+          }
+          if (l == null) return;
+
+          final threshold =
+              math.max(_noiseFloor * _speechFactor, _minSpeechLevel);
+          final loud = l > threshold;
+
+          final ms = _msOf(chunk);
+
+          // STREAM EVERY FRAME, INCLUDING THE SILENCE.
+          //
+          // Google's detector decides when the turn ends, and it decides by
+          // HEARING the pause. Withholding quiet audio — which an earlier
+          // version did, and which manual activity markers also effectively
+          // did — means the pause never arrives and the turn hangs open.
+          // So the audio path is unconditional; the detection below is only
+          // a probe for timing logs and for driving the orb.
+          _ch?.sink.add(Uint8List.fromList(chunk));
+
+          if (!_speaking) {
+            if (!loud) {
+              // Learn the room while nobody is talking. Never while they
+              // are, or the user's own voice drags the floor up until they
+              // are inaudible to the probe.
+              _noiseFloor = _noiseFloor * 0.95 + l * 0.05;
+              _aboveMs = 0;
+              return;
             }
+            _aboveMs += ms;
+            if (_aboveMs < _onsetMs) return;
+            _speaking = true;
+            _belowMs = 0;
+            _utteranceMs = 0;
+            _send({'type': 'activity_start'});
+            return;
+          }
+
+          _utteranceMs += ms;
+          if (loud) {
+            _belowMs = 0;
+          } else {
+            _belowMs += ms;
+          }
+          if (_belowMs >= _hangoverMs || _utteranceMs >= _maxUtteranceMs) {
+            _endUtterance();
           }
         } catch (_) {}
       });
@@ -215,10 +303,33 @@ class LiveService {
       if (_buf.isEmpty) return;
       final bufferedMs = _buf.length * 1000 ~/ (_outRate * 2);
       final gapMs = DateTime.now().difference(_lastChunkAt).inMilliseconds;
-      if (bufferedMs >= 600 || (gapMs >= 250 && bufferedMs >= 120)) {
+      // FIRST WORD FAST: when nothing is playing or queued, this buffer is
+      // the START of Hari's reply — every ms it waits here is silence the
+      // user hears. Flush it small (~250 ms) so her first word lands ~350 ms
+      // sooner; Gemini streams faster than realtime, so the next (600 ms)
+      // segment is ready before this one finishes playing.
+      final startOfReply = !playing && _queue.isEmpty;
+      final flushAtMs = startOfReply ? 250 : 600;
+      if (bufferedMs >= flushAtMs || (gapMs >= 250 && bufferedMs >= 120)) {
         _flushSegment();
       }
     });
+  }
+
+  /// Closes the current utterance and asks the server to answer NOW.
+  void _endUtterance() {
+    if (!_speaking) return;
+    _speaking = false;
+    _aboveMs = 0;
+    _belowMs = 0;
+    _utteranceMs = 0;
+    _send({'type': 'activity_end'});
+  }
+
+  void _send(Map<String, dynamic> m) {
+    try {
+      _ch?.sink.add(jsonEncode(m));
+    } catch (_) {}
   }
 
   /// Ends the session and releases the mic/speaker.
@@ -309,6 +420,17 @@ class LiveService {
           onError?.call(m['message'] as String? ?? 'Live mode error.');
           stop();
           break;
+        // Anything that is not part of the wire protocol above is a DEVICE
+        // ACTION for the app to carry out. Matching the fallthrough rather
+        // than listing action names keeps this from needing an edit every
+        // time a new handset-side tool is added. Nothing was listening
+        // before, so in live mode the assistant announced "Opening the
+        // camera" and then nothing happened.
+        default:
+          final t = m['type'];
+          if (t is String && t.isNotEmpty) {
+            onDeviceAction?.call(Map<String, dynamic>.from(m));
+          }
       }
     }
   }

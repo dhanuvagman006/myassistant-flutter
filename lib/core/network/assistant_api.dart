@@ -31,13 +31,22 @@ class AssistantApi {
           'Authorization': 'Bearer ${ApiService.sessionToken}',
       };
 
+  /// Fires every time the stream is (re)established — the UI's "connected"
+  /// flag follows THIS, not just the first connect. Without it, any stream
+  /// blip (a server restart) left the header saying "Connecting" forever
+  /// even though the auto-reconnect had long since succeeded.
+  void Function()? _onConnected;
+
   /// Creates a session and opens the event stream. [onEvent] receives every
   /// decoded JSON event; [onDisconnect] fires when the stream drops (the
-  /// client auto-reconnects with Last-Event-ID so nothing is missed).
+  /// client auto-reconnects with Last-Event-ID so nothing is missed) and
+  /// [onConnected] fires on every successful (re)connect.
   Future<void> connect({
     required void Function(Map<String, dynamic> event) onEvent,
     void Function()? onDisconnect,
+    void Function()? onConnected,
   }) async {
+    _onConnected = onConnected;
     _closed = false;
     AppLog.add('sse', 'POST ${ApiService.baseUrl}/assistant/session');
     final http.Response r;
@@ -85,6 +94,7 @@ class AssistantApi {
         throw Exception('stream ${res.statusCode}');
       }
       AppLog.add('sse', 'stream connected');
+      _onConnected?.call();
 
       String? pendingData;
       _sseSub = res.stream
@@ -146,7 +156,12 @@ class AssistantApi {
 
   /// Uploads a recorded clip; transcription + the whole turn run
   /// server-side and stream back as events.
-  Future<void> sendAudio(List<int> bytes, {String filename = 'turn.m4a'}) async {
+  ///
+  /// [auto] marks a clip from a SELF-reopened mic (continuous loop). The
+  /// server then treats an empty transcript as a normal quiet moment
+  /// instead of scolding "I couldn't hear that clearly".
+  Future<void> sendAudio(List<int> bytes,
+      {String filename = 'turn.m4a', bool auto = false}) async {
     final sid = _sessionId;
     if (sid == null) throw Exception('no assistant session');
     final req = http.MultipartRequest(
@@ -156,6 +171,7 @@ class AssistantApi {
     if (ApiService.sessionToken != null) {
       req.headers['Authorization'] = 'Bearer ${ApiService.sessionToken}';
     }
+    if (auto) req.fields['auto'] = 'true';
     req.files.add(http.MultipartFile.fromBytes('audio', bytes,
         filename: filename));
     final res = await req.send().timeout(const Duration(seconds: 30));

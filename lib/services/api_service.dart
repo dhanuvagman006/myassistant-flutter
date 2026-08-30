@@ -376,6 +376,7 @@ class ApiService {
     required String mimeType,
     String note = '',
     int? clientId,
+    String? person, // whose records this belongs to ("Prasant")
   }) async {
     final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/docs'))
       ..headers.addAll(Map.of(_authHeaders)..remove('Content-Type'))
@@ -383,6 +384,9 @@ class ApiService {
       ..files.add(http.MultipartFile.fromBytes('file', bytes,
           filename: filename, contentType: MediaType.parse(mimeType)));
     if (clientId != null) req.fields['clientId'] = clientId.toString();
+    if (person != null && person.trim().isNotEmpty) {
+      req.fields['person'] = person.trim();
+    }
     final resp = await _client.send(req).timeout(const Duration(seconds: 90));
     final body = await resp.stream.bytesToString();
     if (resp.statusCode != 200) throw Exception('docs ${resp.statusCode}');

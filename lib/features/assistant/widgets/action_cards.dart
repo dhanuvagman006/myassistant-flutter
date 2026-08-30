@@ -207,7 +207,10 @@ class CallStatusCard extends StatelessWidget {
   final CallStatusInfo status;
   const CallStatusCard({super.key, required this.status});
 
-  static const _steps = ['dialing', 'ringing', 'in_call', 'completed'];
+  // Mirrors the backend's agent-call state machine (dialing → in_progress →
+  // summarizing → completed), so the progress dots actually advance while
+  // Hari is on the phone instead of sitting on step one the whole time.
+  static const _steps = ['dialing', 'in_progress', 'summarizing', 'completed'];
 
   @override
   Widget build(BuildContext context) {

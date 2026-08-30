@@ -26,6 +26,10 @@ enum AssistantPhase {
         'transcribing' => AssistantPhase.transcribing,
         'thinking' => AssistantPhase.thinking,
         'searching' => AssistantPhase.searching,
+        // The backend enters this while a tool runs (ordering, booking,
+        // looking a place up). Unmapped it fell through to idle, so the
+        // status pill read "Ready" while Hari was mid-errand.
+        'using_tool' => AssistantPhase.searching,
         'finding_contact' => AssistantPhase.findingContact,
         'preparing_message' => AssistantPhase.preparingMessage,
         'generating_voice' => AssistantPhase.generatingVoice,
@@ -156,13 +160,27 @@ class CallStatusInfo {
         'dialing' => 'Dialing',
         'ringing' => 'Ringing',
         'in_call' => 'In call',
+        // The backend's agent-call engine reports these two while Hari is
+        // actually speaking to the business. Without them the card showed
+        // the raw state string ("in_progress") to the user.
+        'in_progress' => 'Speaking with them',
+        'summarizing' => 'Getting the answer',
         'completed' => 'Call completed',
+        'ended' => 'Call ended',
+        'timeout' => 'Call timed out',
+        'cancelled' => 'Cancelled',
         'failed' => 'Call failed',
         'no_answer' => 'No answer',
         _ => status,
       };
 
-  bool get done => status == 'completed' || status == 'failed' || status == 'no_answer';
+  bool get done =>
+      status == 'completed' ||
+      status == 'failed' ||
+      status == 'no_answer' ||
+      status == 'ended' ||
+      status == 'timeout' ||
+      status == 'cancelled';
 }
 
 /// A tool run shown as a small "what I'm doing" chip/card.
