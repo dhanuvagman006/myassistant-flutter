@@ -47,4 +47,32 @@ class BriefService extends ChangeNotifier {
       _fetching = false;
     }
   }
+
+  /// Promise actions are OPTIMISTIC: the card leaves the screen the moment
+  /// the user acts (that instant feedback is the whole point of a swipe),
+  /// and the server call follows. A failed call is reconciled by the next
+  /// periodic refresh rather than by resurrecting the card mid-gesture.
+  Future<void> completePromise(PromiseItem p) => _promiseAction(p, 'done');
+  Future<void> dismissPromise(PromiseItem p) => _promiseAction(p, 'delete');
+
+  Future<void> _promiseAction(PromiseItem p, String kind) async {
+    brief.promises.remove(p);
+    notifyListeners();
+    if (p.id == null) return; // pre-upgrade payload — refresh will resync
+    if (kind == 'done') {
+      await ApiService.sendJson('/commitments/${p.id}/done');
+    } else {
+      await ApiService.sendJson('/commitments/${p.id}', method: 'DELETE');
+    }
+  }
+
+  /// Same optimistic treatment for reminder rows on the agenda.
+  Future<void> deleteReminder(AgendaItem a) async {
+    brief.agenda.remove(a);
+    notifyListeners();
+    if (a.id == null) return;
+    try {
+      await ApiService.deleteReminder(a.id!);
+    } catch (_) {}
+  }
 }

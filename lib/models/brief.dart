@@ -70,23 +70,28 @@ class Headline {
 
 class AgendaItem {
   final String kind; // 'reminder' | 'meeting'
+  final int? id; // reminder id — meetings have none (they live in Google)
   final String title;
   final int? atMs; // epoch ms, null = undated
-  const AgendaItem({required this.kind, required this.title, this.atMs});
+  const AgendaItem(
+      {required this.kind, this.id, required this.title, this.atMs});
 
   factory AgendaItem.fromJson(Map<String, dynamic> j) => AgendaItem(
         kind: j['kind'] as String? ?? 'reminder',
+        id: (j['id'] as num?)?.toInt(),
         title: j['title'] as String? ?? '',
         atMs: (j['at'] as num?)?.toInt(),
       );
 }
 
 class PromiseItem {
+  final int? id; // commitment id — needed to complete/dismiss from the UI
   final String text;
   final String? dueLabel; // "by Friday" style, server-rendered
-  const PromiseItem({required this.text, this.dueLabel});
+  const PromiseItem({this.id, required this.text, this.dueLabel});
 
   factory PromiseItem.fromJson(Map<String, dynamic> j) => PromiseItem(
+        id: (j['id'] as num?)?.toInt(),
         text: j['text'] as String? ?? '',
         dueLabel: j['due_label'] as String?,
       );
@@ -105,8 +110,11 @@ class BriefMessage {
 
 class CirclePerson {
   final String name;
-  const CirclePerson({required this.name});
+  final String phone; // empty when the server withheld it
+  const CirclePerson({required this.name, this.phone = ''});
 
-  factory CirclePerson.fromJson(Map<String, dynamic> j) =>
-      CirclePerson(name: j['name'] as String? ?? '');
+  factory CirclePerson.fromJson(Map<String, dynamic> j) => CirclePerson(
+        name: j['name'] as String? ?? '',
+        phone: j['phone'] as String? ?? '',
+      );
 }

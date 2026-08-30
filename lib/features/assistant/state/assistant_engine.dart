@@ -526,7 +526,6 @@ class AssistantEngine extends ChangeNotifier {
   /// leaves the existing portrait in place.
   lk.VideoTrack? get avatarTrack => _avatar.videoTrack;
 
-  bool _liveUnavailable = false;
   Completer<bool>? _liveStartResult;
 
   Future<void> toggleLive() async {
@@ -646,7 +645,6 @@ class AssistantEngine extends ChangeNotifier {
       // NO visible error. Log it, mark live unavailable for this run, and
       // let the orb fall back to the classic loop from now on.
       AppLog.add('live', 'unavailable: $msg');
-      _liveUnavailable = true;
       _liveStartResult?.complete(false);
       _liveStartResult = null;
       _liveSvc.stop();
@@ -743,7 +741,6 @@ class AssistantEngine extends ChangeNotifier {
     if (!_liveSvc.active) {
       _liveStartResult?.complete(false);
       _liveStartResult = null;
-      _liveUnavailable = true;
       await _avatar.stop(); // socket never came up — don't leave a paid room
       _setPhase(AssistantPhase.idle, silent: true);
       return false;
@@ -752,7 +749,6 @@ class AssistantEngine extends ChangeNotifier {
     final ok = await (_liveStartResult?.future ??
             Future<bool>.value(_liveSvc.active))
         .timeout(const Duration(seconds: 12), onTimeout: () {
-      _liveUnavailable = true;
       _liveSvc.stop();
       _avatar.stop();
       _setPhase(AssistantPhase.idle, silent: true);
@@ -1412,6 +1408,10 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
+  /// Dashboard "Scan" button — same flow as the voice command, but entered
+  /// deterministically: the camera opens immediately, no voice turn needed.
+  Future<void> startScan() => _captureDocument('');
+
   /// Voice-driven document capture: open the camera or gallery, then file the shot
   /// into document memory with the user's own words as the note (so "the
   /// receipt I saved after the doctor" is findable later). No manual entry.
@@ -1496,6 +1496,18 @@ class AssistantEngine extends ChangeNotifier {
     if (name.trim().isEmpty) return;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
+
+    // The user SPOKE a number ("call 6360139965") — the model passes it as
+    // the name. Searching contacts for a digit string always fails; dial
+    // it directly instead.
+    final digits = name.replaceAll(RegExp(r'[^\d+]'), '');
+    if (digits.replaceAll('+', '').length >= 7 &&
+        digits.length >= name.trim().length - 4) {
+      await _actOnResolvedCall(
+          ContactMatch(id: '', name: name.trim(), phone: digits));
+      return;
+    }
+
     List<ContactMatch> matches = const [];
     try {
       final found = await CallService.instance.findContacts(name);
@@ -1509,6 +1521,38 @@ class AssistantEngine extends ChangeNotifier {
             ),
       ];
     } catch (_) {}
+
+    // Device contacts had nothing — ask the SERVER, which knows the synced
+    // address book, the client files, AND registered app users. This is
+    // what lets "call Dhanush" work when he's saved under a nickname (or
+    // only exists as an app user the caller knows by real name).
+    if (matches.isEmpty) {
+      try {
+        final r = await ApiService.getJson(
+            '/contacts/resolve?name=${Uri.encodeComponent(name.trim())}');
+        final m = r?['match'];
+        if (m is Map && (m['phone'] as String? ?? '').isNotEmpty) {
+          matches = [
+            ContactMatch(
+              id: '',
+              name: m['name'] as String? ?? name,
+              phone: m['phone'] as String,
+            ),
+          ];
+        } else {
+          final cands = (r?['candidates'] as List?) ?? const [];
+          matches = [
+            for (final c in cands.whereType<Map>())
+              if ((c['phone'] as String? ?? '').isNotEmpty)
+                ContactMatch(
+                  id: '',
+                  name: c['name'] as String? ?? name,
+                  phone: c['phone'] as String,
+                ),
+          ];
+        }
+      } catch (_) {}
+    }
 
     if (matches.isEmpty) {
       // Tell whichever brain is running, so Hari says it instead of the
