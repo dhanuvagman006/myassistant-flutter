@@ -360,7 +360,11 @@ class AssistantEngine extends ChangeNotifier {
       await stopLive();
       return;
     }
-    if (!auto && !_liveUnavailable) {
+    if (!auto) {
+      // ALWAYS retry live on a deliberate tap. _liveUnavailable used to be
+      // sticky for the whole app run, so ONE transient failure (a quota
+      // blip, a slow avatar reservation) silently demoted the app to the
+      // classic loop until restart — "the agent is not visible".
       final ok = await _startLive();
       if (ok) return;
       // Live couldn't start — fall through to the classic path, silently.
@@ -747,7 +751,7 @@ class AssistantEngine extends ChangeNotifier {
     // Ready must arrive within 6s or we treat live as unavailable.
     final ok = await (_liveStartResult?.future ??
             Future<bool>.value(_liveSvc.active))
-        .timeout(const Duration(seconds: 6), onTimeout: () {
+        .timeout(const Duration(seconds: 12), onTimeout: () {
       _liveUnavailable = true;
       _liveSvc.stop();
       _avatar.stop();
