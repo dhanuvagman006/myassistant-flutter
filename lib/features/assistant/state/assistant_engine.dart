@@ -1022,16 +1022,12 @@ class AssistantEngine extends ChangeNotifier {
   /// Ambiguous-contact card selection.
   Future<void> chooseContact(ContactMatch m) async {
     ambiguousContacts = const [];
-    // On-device flow: promote the pick straight to the confirmation card;
-    // the server was never part of this call.
+    // On-device flow: the user's tap on the pick IS the choice — act on it
+    // (relay or direct dial); the server was never part of this call.
     if (_localCallFlow) {
-      pendingConfirmation = PendingConfirmation(
-        action: 'call',
-        contact: m,
-        question: 'Call ${m.name}?',
-      );
-      HapticFeedback.mediumImpact();
+      _localCallFlow = false;
       notifyListeners();
+      await _actOnResolvedCall(m);
       return;
     }
     notifyListeners();
@@ -1159,6 +1155,7 @@ class AssistantEngine extends ChangeNotifier {
         _handleResolveAndCall(
           e['name'] as String? ?? '',
           e['message'] as String?,
+          agentAvailable: e['agent_available'] == true,
         );
         break;
 
@@ -1480,10 +1477,21 @@ class AssistantEngine extends ChangeNotifier {
   /// to the SSE session, which knows nothing about this flow.
   bool _localCallFlow = false;
 
-  /// Live-mode "call X": resolve the name against the phone's contacts,
-  /// show the normal confirmation card, and dial on approval.
-  Future<void> _handleResolveAndCall(String name, String? message) async {
+  /// The message to deliver / question to ask on the current local call
+  /// flow ("call X and tell him …"), and whether the server can place the
+  /// call itself (agent relay) so the user never has to talk.
+  String? _localCallTask;
+  bool _localCallAgentAvailable = false;
+
+  /// Live-mode "call X [and tell them Y]": resolve the name against the
+  /// phone's contacts and act. The spoken yes/no already happened inside
+  /// the live conversation (high-risk tools are gated server-side), so a
+  /// single match proceeds immediately — no second tap to approve.
+  Future<void> _handleResolveAndCall(String name, String? message,
+      {bool agentAvailable = false}) async {
     if (name.trim().isEmpty) return;
+    _localCallTask = message;
+    _localCallAgentAvailable = agentAvailable;
     List<ContactMatch> matches = const [];
     try {
       final found = await CallService.instance.findContacts(name);
@@ -1511,19 +1519,94 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
 
-    _localCallFlow = true;
     if (matches.length == 1) {
-      pendingConfirmation = PendingConfirmation(
-        action: 'call',
-        contact: matches.first,
-        question: 'Call ${matches.first.name}?',
-        message: message,
-      );
-      HapticFeedback.mediumImpact();
+      await _actOnResolvedCall(matches.first);
     } else {
+      _localCallFlow = true; // chooseContact routes back here
       ambiguousContacts = matches.take(6).toList();
+      notifyListeners();
     }
+  }
+
+  /// Acts on a resolved contact: agent relay (Hari speaks the message on
+  /// the call herself) when a task + the server-side caller are available,
+  /// else a plain direct dial for the user to talk.
+  Future<void> _actOnResolvedCall(ContactMatch contact) async {
+    HapticFeedback.mediumImpact();
+    final task = _localCallTask;
+    _localCallTask = null;
+
+    if (task != null && task.isNotEmpty && _localCallAgentAvailable) {
+      String? id;
+      try {
+        id = await ApiService.startAgentCall(
+          toNumber: contact.phone,
+          contactName: contact.name,
+          task: task,
+        );
+      } catch (_) {
+        id = null; // unavailable / quota / network — fall through
+      }
+      if (id != null) {
+        await _followAgentCall(id, contact.name);
+        return;
+      }
+      // Couldn't start after all — fall through to a direct dial, and be
+      // honest about it.
+      if (liveActive) {
+        _liveSvc.sendText(
+            '[SYSTEM] I could not start the relay call to ${contact.name}. '
+            'The phone is dialling them directly instead — tell me briefly.');
+      }
+    }
+
+    final ok = await CallService.instance.call(contact.phone);
+    if (liveActive) {
+      _liveSvc.sendText(ok
+          ? '[SYSTEM] The phone is dialling ${contact.name} now.'
+          : '[SYSTEM] The phone could not start the call to ${contact.name}. Tell me briefly.');
+    }
+  }
+
+  /// Follows a server-placed relay call to its real end, keeping the
+  /// call-status card honest and speaking the true outcome — never "done"
+  /// unless the call actually landed.
+  Future<void> _followAgentCall(String id, String who) async {
+    callStatus = CallStatusInfo(status: 'dialing', contactName: who);
     notifyListeners();
+    String state = 'failed';
+    String? result;
+    final deadline = DateTime.now().add(const Duration(minutes: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(seconds: 3));
+      try {
+        final st = await ApiService.agentCallStatus(id);
+        state = st.state;
+        result = st.result ?? result;
+      } catch (_) {
+        continue; // transient poll failure — keep following
+      }
+      if (state == 'completed' || state == 'no_answer' || state == 'failed') {
+        break;
+      }
+      callStatus = CallStatusInfo(status: state, contactName: who);
+      notifyListeners();
+    }
+    callStatus = null;
+    notifyListeners();
+    final said = result ??
+        (state == 'completed'
+            ? 'The call to $who is done.'
+            : state == 'no_answer'
+                ? '$who did not pick up, so the message was not delivered.'
+                : 'The call to $who did not go through.');
+    if (liveActive) {
+      _liveSvc.sendText(
+          '[SYSTEM] The call to $who has ended. Result: $said Tell me this '
+          'now in one short sentence, exactly as it happened.');
+    } else {
+      await _speakReply(said);
+    }
   }
 
   Future<void> _resolveContacts(String name) async {
