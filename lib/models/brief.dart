@@ -3,6 +3,7 @@
 /// through five loaders. Mirrors backend src/routes/brief.js.
 class TodayBrief {
   final String? weatherLine; // "Partly cloudy · 24°C" or null
+  final String? screenTime; // "4h 10m yesterday · most: YouTube 2h 5m"
   final List<AgendaItem> agenda; // reminders + meetings, time-sorted
   final List<PromiseItem> promises; // open commitments
   final List<BriefMessage> messages; // unread agent-to-agent messages
@@ -12,6 +13,7 @@ class TodayBrief {
 
   const TodayBrief({
     this.weatherLine,
+    this.screenTime,
     this.agenda = const [],
     this.promises = const [],
     this.messages = const [],
@@ -47,6 +49,7 @@ class TodayBrief {
             .toList();
     return TodayBrief(
       weatherLine: j['weather_line'] as String?,
+      screenTime: j['screen_time'] as String?,
       agenda: list('agenda', AgendaItem.fromJson),
       promises: list('promises', PromiseItem.fromJson),
       messages: list('messages', BriefMessage.fromJson),

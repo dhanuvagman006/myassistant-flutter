@@ -19,6 +19,7 @@ import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
 import '../../../services/contacts_sync_service.dart';
 import '../../../services/live_service.dart';
+import '../../../services/usage_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
 
@@ -1266,6 +1267,13 @@ class AssistantEngine extends ChangeNotifier {
           person: e['person'] as String?,
           source: e['source'] as String? ?? 'camera',
         );
+        break;
+
+      case 'open_usage_access':
+        // Screen-time needs the Usage access switch, which lives in a
+        // system settings screen no dialog can replace — take them there.
+        UsageService.instance.openSettings();
+        _setPhase(AssistantPhase.completed);
         break;
 
       case 'open_url':

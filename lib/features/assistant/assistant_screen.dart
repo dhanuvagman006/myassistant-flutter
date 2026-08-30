@@ -7,6 +7,7 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import '../../design/neon_tokens.dart';
 import '../../services/auth_service.dart';
 import '../../services/brief_service.dart';
+import '../../services/usage_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/assistant_persona.dart';
@@ -64,6 +65,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
     // Messages that arrived while the app was closed (or whose push never
     // landed — tokens die on reinstall) still get SPOKEN on open.
     engine.announceIncomingMessages();
+    // Screen-time sync — a silent no-op until the user grants Usage access.
+    UsageService.instance.syncIfPermitted();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;

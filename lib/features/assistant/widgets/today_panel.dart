@@ -225,6 +225,21 @@ class _TodaySheet extends StatelessWidget {
               '${wk[now.weekday - 1]}, ${mo[now.month - 1]} ${now.day}',
               style: const TextStyle(color: Neon.textLo, fontSize: 13),
             ),
+            if (b.screenTime != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.timelapse_rounded,
+                        size: 12, color: Neon.textDim),
+                    const SizedBox(width: 4),
+                    Text(b.screenTime!,
+                        style: const TextStyle(
+                            color: Neon.textDim, fontSize: 11.5)),
+                  ],
+                ),
+              ),
           ],
         ),
         const Spacer(),
