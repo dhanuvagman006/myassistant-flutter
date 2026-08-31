@@ -85,10 +85,45 @@ class _StocksScreenState extends State<StocksScreen> {
     final invest = _data!['invest'] as List;
     final sell = _data!['sell'] as List;
     final news = _data!['news'] as List;
+    final summary = _data!['summary'] as String?;
+    final indices = (_data!['indices'] as List?) ?? const [];
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
       children: [
+        if (indices.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                for (final i in indices.take(2)) ...[
+                  Expanded(child: _indexChip(i as Map)),
+                  const SizedBox(width: 10),
+                ],
+              ]..removeLast(),
+            ),
+          ),
+        if (summary != null && summary.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: GlassCard(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.insights_rounded,
+                      size: 18, color: Neon.cyan),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      summary,
+                      style: const TextStyle(
+                          color: Neon.textHi, fontSize: 13.5, height: 1.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         const SectionHeader('Top Picks to Invest (Buy)'),
         ...invest.map((e) => _stockCard(e, true)),
         const SizedBox(height: 12),
@@ -133,7 +168,9 @@ class _StocksScreenState extends State<StocksScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              e['name'],
+              e['price'] != null
+                  ? "${e['name']} · ₹${e['price']}"
+                  : e['name'],
               style: const TextStyle(color: Neon.textLo, fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -152,6 +189,42 @@ class _StocksScreenState extends State<StocksScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _indexChip(Map i) {
+    final change = (i['change'] ?? '') as String;
+    final up = !change.startsWith('-');
+    final color = up ? const Color(0xFF35C48D) : Neon.pink;
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(i['name'] ?? '',
+              style: const TextStyle(color: Neon.textDim, fontSize: 11.5)),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${i['price'] ?? ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Neon.textHi,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(change,
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
       ),
     );
   }
