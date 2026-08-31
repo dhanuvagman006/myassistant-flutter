@@ -65,6 +65,11 @@ class AssistantEngine extends ChangeNotifier {
   UserDocument? generatedImage;
   String generatedImagePrompt = '';
 
+  /// A written piece Hari just composed (present_text) — a speech, email
+  /// draft, decision breakdown — shown in a reader card until next turn.
+  String? presentedTitle;
+  String? presentedText;
+
   ContactMatch? foundContact;
   List<ContactMatch> ambiguousContacts = const [];
   PendingConfirmation? pendingConfirmation;
@@ -1292,6 +1297,16 @@ class AssistantEngine extends ChangeNotifier {
         }
         break;
 
+      case 'show_text':
+        // present_text: a speech/script/draft Hari wrote — the reader
+        // card shows it; the spoken line is only a pointer to the screen.
+        final content = e['content'] as String? ?? '';
+        if (content.isNotEmpty) {
+          presentedTitle = e['title'] as String? ?? 'From Hari';
+          presentedText = content;
+        }
+        break;
+
       case 'show_image':
       case 'show_video':
         // generate_image / generate_video: the result is already saved as
@@ -1777,6 +1792,8 @@ class AssistantEngine extends ChangeNotifier {
     documentCards = const [];
     generatedImage = null;
     generatedImagePrompt = '';
+    presentedTitle = null;
+    presentedText = null;
     foundContact = null;
     ambiguousContacts = const [];
     pendingConfirmation = null;

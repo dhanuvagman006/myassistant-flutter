@@ -359,6 +359,19 @@ class _AssistantScreenState extends State<AssistantScreen> {
         child: CallStatusCard(status: engine.callStatus!),
       );
     }
+    if (engine.presentedText != null) {
+      // A speech/script/draft Hari wrote — reader card, tap to go big.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: h * 0.4),
+          child: ScriptCard(
+            title: engine.presentedTitle ?? 'From Hari',
+            content: engine.presentedText!,
+          ),
+        ),
+      );
+    }
     if (engine.generatedImage != null) {
       // The showpiece: an image Hari just created. Give it real estate.
       return Padding(

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -595,6 +596,137 @@ String _shareName(UserDocument d, String mime) {
 }
 
 /// Full-screen pinch-zoom viewer for a recalled image document.
+/// A written piece Hari just COMPOSED ("generate a script for my speech")
+/// — title + preview with one tap into a full-screen reader built for
+/// actually delivering the speech: big type, scroll, copy, share.
+class ScriptCard extends StatelessWidget {
+  final String title;
+  final String content;
+  const ScriptCard({super.key, required this.title, required this.content});
+
+  void _openReader(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _TextReaderPage(title: title, content: content),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      borderTint: Neon.cyan,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openReader(context),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.description_rounded,
+                    color: Neon.cyan, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => Share.share(content, subject: title),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child:
+                        Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: Text(
+                content,
+                maxLines: 7,
+                overflow: TextOverflow.fade,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.82),
+                  fontSize: 13.5,
+                  height: 1.45,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap to open full screen',
+              style: TextStyle(
+                color: Neon.cyan.withValues(alpha: 0.8),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen reader — the "deliver the speech from your phone" view.
+class _TextReaderPage extends StatelessWidget {
+  final String title;
+  final String content;
+  const _TextReaderPage({required this.title, required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B0B12),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0B0B12),
+        foregroundColor: Colors.white,
+        title:
+            Text(title, style: const TextStyle(fontSize: 16), maxLines: 1),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy_rounded, size: 20),
+            tooltip: 'Copy',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: content));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied')),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.share_rounded, size: 20),
+            tooltip: 'Share',
+            onPressed: () => Share.share(content, subject: title),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(22, 14, 22, 48),
+        child: SelectableText(
+          content,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            height: 1.6,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// An image Hari just CREATED ("draw me a poster for the café") — shown
 /// big, because this is the showpiece moment: the full square render with
 /// a share button so it can go straight to WhatsApp. Tap for pinch-zoom.
