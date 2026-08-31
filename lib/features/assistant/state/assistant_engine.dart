@@ -1783,6 +1783,21 @@ class AssistantEngine extends ChangeNotifier {
 
   // ---------------- helpers ----------------
 
+  /// User closed the generated-image card (X or swipe) — conversation
+  /// continues clean.
+  void dismissGeneratedImage() {
+    generatedImage = null;
+    generatedImagePrompt = '';
+    notifyListeners();
+  }
+
+  /// User closed the written-piece reader card.
+  void dismissPresentedText() {
+    presentedTitle = null;
+    presentedText = null;
+    notifyListeners();
+  }
+
   void _resetTurn() {
     _speakQueue.clear();
     _liveEntry = null;

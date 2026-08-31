@@ -602,7 +602,9 @@ String _shareName(UserDocument d, String mime) {
 class ScriptCard extends StatelessWidget {
   final String title;
   final String content;
-  const ScriptCard({super.key, required this.title, required this.content});
+  final VoidCallback? onClose;
+  const ScriptCard(
+      {super.key, required this.title, required this.content, this.onClose});
 
   void _openReader(BuildContext context) {
     Navigator.of(context).push(MaterialPageRoute(
@@ -647,6 +649,19 @@ class ScriptCard extends StatelessWidget {
                         Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
                   ),
                 ),
+                if (onClose != null) ...[
+                  const SizedBox(width: 6),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: onClose,
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.close_rounded,
+                          color: Colors.white.withValues(alpha: 0.65),
+                          size: 19),
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -734,8 +749,9 @@ class _TextReaderPage extends StatelessWidget {
 class GeneratedImageCard extends StatefulWidget {
   final UserDocument document;
   final String prompt;
+  final VoidCallback? onClose;
   const GeneratedImageCard(
-      {super.key, required this.document, this.prompt = ''});
+      {super.key, required this.document, this.prompt = '', this.onClose});
 
   @override
   State<GeneratedImageCard> createState() => _GeneratedImageCardState();
@@ -858,6 +874,19 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                             color: Neon.cyan, size: 20),
                       ),
                     ),
+              if (widget.onClose != null) ...[
+                const SizedBox(width: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: widget.onClose,
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.close_rounded,
+                        color: Colors.white.withValues(alpha: 0.65),
+                        size: 20),
+                  ),
+                ),
+              ],
             ],
           ),
         ],
