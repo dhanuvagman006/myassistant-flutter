@@ -17,6 +17,7 @@ import 'widgets/action_cards.dart';
 import 'widgets/today_panel.dart';
 import '../../screens/assistant_settings_screen.dart';
 import '../../screens/clients_screen.dart';
+import '../../screens/finance_screen.dart';
 import '../../screens/stocks_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -451,6 +452,12 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const StocksScreen())),
                   ),
+                _softButton(
+                  icon: Icons.account_balance_wallet_rounded,
+                  label: 'Finance',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const FinanceScreen())),
+                ),
                 _primaryButton(),
                 _softButton(
                   icon: Icons.tune_rounded,

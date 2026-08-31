@@ -530,6 +530,33 @@ class ApiService {
   }
 
   // ----------------------------------------------------------------------
+  // Finance section (EMIs, incomes, expenses)
+  // ----------------------------------------------------------------------
+
+  static Future<Map<String, dynamic>> fetchFinance() async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/finance'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode != 200) throw Exception('finance ${r.statusCode}');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  static Future<bool> addFinanceItem(Map<String, dynamic> item) async {
+    final r = await _client
+        .post(Uri.parse('$baseUrl/finance'),
+            headers: _authHeaders, body: jsonEncode(item))
+        .timeout(const Duration(seconds: 12));
+    return r.statusCode == 200;
+  }
+
+  static Future<bool> deleteFinanceItem(int id) async {
+    final r = await _client
+        .delete(Uri.parse('$baseUrl/finance/$id'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 12));
+    return r.statusCode == 200;
+  }
+
+  // ----------------------------------------------------------------------
   // Admin & Analytics Data
   // ----------------------------------------------------------------------
 
