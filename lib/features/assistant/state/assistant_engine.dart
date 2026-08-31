@@ -1571,6 +1571,16 @@ class AssistantEngine extends ChangeNotifier {
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
 
+    // EMERGENCY ("call an ambulance", "call 112"): skip contacts AND the
+    // relay — the handset dials the short code itself, immediately.
+    final sos = CallService.emergencyNumber(name);
+    if (sos != null) {
+      _localCallTask = null; // no message ever rides an emergency call
+      await _actOnResolvedCall(
+          ContactMatch(id: '', name: '${name.trim()} ($sos)', phone: sos));
+      return;
+    }
+
     // The user SPOKE a number ("call 6360139965") — the model passes it as
     // the name. Searching contacts for a digit string always fails; dial
     // it directly instead.
@@ -1732,6 +1742,15 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> _resolveContacts(String name) async {
+    // EMERGENCY services aren't contacts — answer the lookup with the
+    // short code so the classic flow confirms and dials it directly.
+    final sos = CallService.emergencyNumber(name);
+    if (sos != null) {
+      await _api.sendContactMatches([
+        {'id': '', 'name': '${name.trim()} ($sos)', 'phone': sos}
+      ]);
+      return;
+    }
     try {
       final found = await CallService.instance.findContacts(name);
       final matches = <Map<String, dynamic>>[];

@@ -205,6 +205,36 @@ class CallService {
     return c.phones.first.number;
   }
 
+  // ---------------- EMERGENCY ----------------
+  // India's emergency short codes. Resolved BEFORE any contact search and
+  // always dialled directly from the handset — never the relay service —
+  // so an emergency call works with no account and no server.
+  static const Map<String, String> _emergencyWords = {
+    'emergency': '112',
+    'ambulance': '108',
+    'police': '100',
+    'fire': '101',
+    'fire brigade': '101',
+    'fire station': '101',
+    'fire department': '101',
+    'women helpline': '1091',
+    'child helpline': '1098',
+  };
+  static const Set<String> _emergencyCodes = {
+    '112', '108', '100', '101', '102', '1091', '1098',
+  };
+
+  /// "an ambulance" / "the police" / "112" → the short code, else null.
+  static String? emergencyNumber(String spoken) {
+    var s = spoken.trim().toLowerCase();
+    s = s.replaceFirst(RegExp(r'^(?:the|an|a)\s+'), '').trim();
+    if (_emergencyCodes.contains(s)) return s;
+    for (final e in _emergencyWords.entries) {
+      if (s == e.key || s.startsWith('${e.key} ')) return e.value;
+    }
+    return null;
+  }
+
   // ---------------- DIALING ----------------
 
   /// Places the call. Android: direct (CALL_PHONE); anywhere that fails,
