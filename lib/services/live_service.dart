@@ -192,7 +192,15 @@ class LiveService {
         : Platform.isIOS
             ? 'ios'
             : 'other';
-    final uri = Uri.parse('$base/live/ws?$qp$room&tz=$tz&platform=$platform');
+    // Coordinates ride along when known, so live-mode tools can answer
+    // "weather here", "hotels near me", cab pickups — same as the headers
+    // on the classic path.
+    final geo = ApiService.geoLat != null
+        ? '&lat=${ApiService.geoLat!.toStringAsFixed(4)}'
+            '&lng=${ApiService.geoLng!.toStringAsFixed(4)}'
+        : '';
+    final uri =
+        Uri.parse('$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo');
 
     try {
       _ch = WebSocketChannel.connect(uri);

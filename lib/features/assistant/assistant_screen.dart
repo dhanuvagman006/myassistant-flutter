@@ -7,6 +7,7 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import '../../design/neon_tokens.dart';
 import '../../services/auth_service.dart';
 import '../../services/brief_service.dart';
+import '../../services/location_service.dart';
 import '../../services/usage_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
@@ -67,6 +68,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
     engine.announceIncomingMessages();
     // Screen-time sync — a silent no-op until the user grants Usage access.
     UsageService.instance.syncIfPermitted();
+    // GPS fix (city-block accuracy) so "weather", "hotels near me", cab
+    // pickups answer for where the user actually is — both voice modes.
+    LocationService.instance.refresh();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
