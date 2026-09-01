@@ -276,8 +276,22 @@ class AssistantEngine extends ChangeNotifier {
     // the server-side tool mid-turn. Not awaited: it must never delay the
     // assistant coming up, and it silently does nothing without permission.
     ContactsSyncService.instance.maybeSync();
-    // Auto-start Live Mode on launch so the user doesn't have to tap the mic.
-    _startLive();
+    // Deliberately NO live mode and NO greeting here. Boot must be silent:
+    // the mic goes hot only when the user opens the conversation screen
+    // (beginConversation), never just because the app launched — a hot mic
+    // behind the dashboard read as "is it listening right now or not?".
+  }
+
+  /// The user opened the conversation screen — THIS is the moment Hari may
+  /// speak and the mic may go hot. Greets first (the orb visibly speaks),
+  /// then opens the live speech-to-speech session; if live can't start,
+  /// the classic tap-to-talk loop is greeted and waiting.
+  Future<void> beginConversation({String? name}) async {
+    if (name != null && name.isNotEmpty) greetingName = name;
+    _conversationOpen = true;
+    await start();
+    await _maybeGreetOnReady();
+    if (!liveActive) await _startLive();
   }
 
   /// A call started/rang — cut all audio and the mic immediately.
@@ -796,6 +810,11 @@ class AssistantEngine extends ChangeNotifier {
   int _sessionEpoch = 0;
   int _greetedEpoch = -1;
 
+  /// True once the user has opened the conversation view this app run.
+  /// The greeting is gated on it so a reconnect while the user is on the
+  /// dashboard can never make the phone start talking out of nowhere.
+  bool _conversationOpen = false;
+
   /// The user's display name, supplied by the screen once it is known.
   String? greetingName;
 
@@ -828,6 +847,7 @@ class AssistantEngine extends ChangeNotifier {
   /// abandoned rather than spoken into a dead session (§4).
   Future<void> _maybeGreetOnReady() async {
     if (!greetingEnabled) return;
+    if (!_conversationOpen) return;         // silent until the user opens the orb
     if (!connected) return;                 // never greet while offline
     final epoch = _sessionEpoch;
     if (_greetedEpoch == epoch) return;     // once per real session

@@ -8,6 +8,7 @@ import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/assistant_persona.dart';
 import 'widgets/aura_core.dart';
+import 'widgets/siri_orb.dart';
 import 'widgets/action_cards.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -49,18 +50,18 @@ class _AssistantScreenState extends State<AssistantScreen> {
   @override
   void initState() {
     super.initState();
-    // App boot (brief, messages, usage, location) happens in HomeShell —
-    // this screen is now the summoned conversation view, not the app root.
-    engine.start();
     engine.addListener(_onStateChanged);
 
+    // App boot (brief, messages, usage, location) happens in HomeShell.
+    // Opening THIS screen is the user's "I want to talk" gesture — only now
+    // does Hari greet and the live conversation begin. The app itself never
+    // starts listening or speaking on launch.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final persona = await AssistantPersonaResolver.resolve();
       if (!mounted) return;
       setState(() => _persona = persona);
-      engine.greetingName = AuthService.instance.user?.name;
-      engine.greetOnce(name: AuthService.instance.user?.name);
+      engine.beginConversation(name: AuthService.instance.user?.name);
     });
   }
 
@@ -401,56 +402,54 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /* CONTROLS                                                         */
   /* ---------------------------------------------------------------- */
 
-  /// The primary control.
+  /// The primary control — the Siri-style orb.
   ///
-  /// While a conversation is live this ENDS it — the session is already
-  /// running, so offering "tap to speak" would be describing something the
-  /// user does not need to do. When nothing is live it starts one.
+  /// No mic glyph: the waveform IS the state. Still and dim means stopped,
+  /// bright moving waves mean hearing you, pink rolling waves mean Hari is
+  /// talking. One tap toggles the conversation; the label underneath only
+  /// ever says the one action a tap would perform right now.
   Widget _primaryButton() {
     final live = engine.liveActive;
-    final level = engine.micLevel.clamp(0.0, 1.0);
-    final listening = engine.phase == AssistantPhase.listening;
+    final sessionUp = engine.connected || live;
+    final active = live ||
+        (engine.phase.busy && engine.phase != AssistantPhase.completed);
+
+    final hint = !sessionUp
+        ? 'Connecting…'
+        : active
+            ? 'Tap to stop'
+            : 'Tap to talk';
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {
         HapticFeedback.mediumImpact();
         engine.pressMic();
       },
-      child: SizedBox(
-        width: 92,
-        height: 78,
-        child: Center(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            // Grows with the user's voice while listening, so the control
-            // itself confirms the microphone is working.
-            width: 66 + (listening ? level * 8 : 0),
-            height: 66 + (listening ? level * 8 : 0),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: live
-                  ? const LinearGradient(
-                      colors: [Color(0xFFFF5A6E), Color(0xFFE5484D)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : Neon.gVioletCyan,
-              boxShadow: [
-                BoxShadow(
-                  color: (live ? Neon.error : Neon.violet)
-                      .withValues(alpha: 0.35 + (listening ? level * 0.4 : 0)),
-                  blurRadius: 22 + (listening ? level * 24 : 0),
-                  spreadRadius: listening ? level * 5 : 0,
-                ),
-              ],
-            ),
-            child: Icon(
-              live ? Icons.call_end_rounded : Icons.mic_rounded,
-              color: Colors.white,
-              size: 29,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SiriOrb(
+            size: 92,
+            phase: sessionUp ? engine.phase : AssistantPhase.idle,
+            level: engine.micLevel,
+            connected: sessionUp,
+          ),
+          const SizedBox(height: 8),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: Text(
+              hint,
+              key: ValueKey(hint),
+              style: const TextStyle(
+                color: Neon.textLo,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
