@@ -92,7 +92,7 @@ class AppTheme {
           textStyle: GoogleFonts.manrope(
               fontWeight: FontWeight.w600, fontSize: 15.5),
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(Neon.rPill)),
+              borderRadius: BorderRadius.circular(14)),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -101,7 +101,7 @@ class AppTheme {
           side: BorderSide(color: Neon.cyan.withValues(alpha: 0.35)),
           textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(Neon.rPill)),
+              borderRadius: BorderRadius.circular(14)),
         ),
       ),
       textButtonTheme: TextButtonThemeData(

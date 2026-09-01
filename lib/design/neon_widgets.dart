@@ -62,7 +62,7 @@ class _GradientButtonState extends State<GradientButton> {
             padding: widget.padding,
             decoration: BoxDecoration(
               gradient: widget.gradient,
-              borderRadius: BorderRadius.circular(Neon.rPill),
+              borderRadius: BorderRadius.circular(16),
               boxShadow: enabled
                   ? Neon.glow2(widget.gradient.colors.first,
                       widget.gradient.colors.last)
@@ -126,7 +126,7 @@ class GhostButton extends StatelessWidget {
         side: BorderSide(color: accent.withValues(alpha: 0.4)),
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(Neon.rPill)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

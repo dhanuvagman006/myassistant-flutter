@@ -1,24 +1,14 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
 import '../../design/neon_tokens.dart';
 import '../../services/auth_service.dart';
-import '../../services/brief_service.dart';
-import '../../services/location_service.dart';
-import '../../services/usage_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
 import 'widgets/assistant_persona.dart';
 import 'widgets/aura_core.dart';
 import 'widgets/action_cards.dart';
-import 'widgets/today_panel.dart';
-import '../../screens/assistant_settings_screen.dart';
-import '../../screens/clients_screen.dart';
-import '../../screens/finance_screen.dart';
-import '../../screens/stocks_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  THE ASSISTANT SCREEN.
@@ -55,23 +45,14 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen> {
   final engine = AssistantEngine.instance;
   AssistantPersona _persona = AssistantPersona.neutral;
-  bool _stocksEnabled = false;
 
   @override
   void initState() {
     super.initState();
+    // App boot (brief, messages, usage, location) happens in HomeShell —
+    // this screen is now the summoned conversation view, not the app root.
     engine.start();
     engine.addListener(_onStateChanged);
-    // The Today pill's data — one aggregate fetch, refreshed quietly.
-    BriefService.instance.start();
-    // Messages that arrived while the app was closed (or whose push never
-    // landed — tokens die on reinstall) still get SPOKEN on open.
-    engine.announceIncomingMessages();
-    // Screen-time sync — a silent no-op until the user grants Usage access.
-    UsageService.instance.syncIfPermitted();
-    // GPS fix (city-block accuracy) so "weather", "hotels near me", cab
-    // pickups answer for where the user actually is — both voice modes.
-    LocationService.instance.refresh();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -154,9 +135,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 if (engine.errorMessage != null) _errorBanner(),
                 const Spacer(),
                 _overlayCards(h),
-                // The day at a glance — agenda, promises, messages, circle.
-                const TodayPill(),
-                _controls(),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 22),
+                  child: Center(child: _primaryButton()),
+                ),
               ],
             ),
           ),
@@ -194,7 +176,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
         gradient: RadialGradient(
           center: Alignment(0, -0.25),
           radius: 1.1,
-          colors: [Color(0xFF161C2E), Neon.bg],
+          colors: [Color(0xFFECEAF8), Neon.bg],
         ),
       ),
       child: Center(
@@ -260,11 +242,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
             ),
             const Spacer(),
             _iconButton(
-              icon: _stocksEnabled
-                  ? Icons.candlestick_chart_rounded
-                  : Icons.candlestick_chart_outlined,
-              tint: _stocksEnabled ? Neon.cyan : null,
-              onTap: () => setState(() => _stocksEnabled = !_stocksEnabled),
+              icon: Icons.keyboard_arrow_down_rounded,
+              onTap: () => Navigator.of(context).maybePop(),
             ),
           ],
         ),
@@ -422,58 +401,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /* CONTROLS                                                         */
   /* ---------------------------------------------------------------- */
 
-  Widget _controls() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(Neon.rXl),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: Neon.surface.withValues(alpha: 0.85),
-              borderRadius: BorderRadius.circular(Neon.rXl),
-              border: Border.all(color: Neon.line),
-              boxShadow: Neon.cardShadow,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _softButton(
-                  icon: Icons.folder_shared_rounded,
-                  label: 'Clients',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const ClientsScreen())),
-                ),
-                if (_stocksEnabled)
-                  _softButton(
-                    icon: Icons.trending_up_rounded,
-                    label: 'Markets',
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const StocksScreen())),
-                  ),
-                _softButton(
-                  icon: Icons.account_balance_wallet_rounded,
-                  label: 'Finance',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const FinanceScreen())),
-                ),
-                _primaryButton(),
-                _softButton(
-                  icon: Icons.tune_rounded,
-                  label: 'Settings',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const AssistantSettingsScreen())),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// The primary control.
   ///
   /// While a conversation is live this ENDS it — the session is already
@@ -527,43 +454,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
       ),
     );
   }
-
-  Widget _softButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) =>
-      GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          width: 62,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Neon.surfaceHigh,
-                  border: Border.all(color: Neon.line),
-                ),
-                child: Icon(icon, color: Neon.textHi, size: 21),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Neon.textLo,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
 
   Widget _iconButton({
     required IconData icon,

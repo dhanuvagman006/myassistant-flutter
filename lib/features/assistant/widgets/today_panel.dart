@@ -127,27 +127,52 @@ class _TodaySheet extends StatelessWidget {
                 const BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
             border: Border(top: BorderSide(color: Neon.lineBright)),
           ),
-          child: AnimatedBuilder(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Neon.textDim.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Flexible(child: TodayBriefBody(showHeader: true)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The whole day as a scrollable feed — shared by the (legacy) sheet and
+/// the Home dashboard tab, so both always show the same live data.
+class TodayBriefBody extends StatelessWidget {
+  final bool showHeader;
+  final EdgeInsets padding;
+  const TodayBriefBody({
+    super.key,
+    this.showHeader = false,
+    this.padding = const EdgeInsets.fromLTRB(20, 10, 20, 28),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
             animation: BriefService.instance,
             builder: (context, _) {
               final svc = BriefService.instance;
               final b = svc.brief;
               return ListView(
                 shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+                padding: padding,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Neon.textDim.withValues(alpha: 0.45),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  _header(b),
+                  if (showHeader) _header(b),
                   const SizedBox(height: 16),
                   _quickActions(context),
                   const SizedBox(height: 20),
@@ -194,11 +219,7 @@ class _TodaySheet extends StatelessWidget {
                   ],
                 ],
               );
-            },
-          ),
-        ),
-      ),
-    );
+            });
   }
 
   Widget _header(TodayBrief b) {
@@ -649,7 +670,7 @@ class _PersonSheetState extends State<_PersonSheet> {
               children: [
                 Row(
                   children: [
-                    _TodaySheet._initialsDot(p.name, Neon.gVioletPink,
+                    TodayBriefBody._initialsDot(p.name, Neon.gVioletPink,
                         size: 44),
                     const SizedBox(width: 12),
                     Expanded(
