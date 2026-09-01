@@ -19,9 +19,17 @@ class AvatarFaceScreen extends StatefulWidget {
 class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
   late String _selected = widget.selectedId;
   bool _saving = false;
+  // The tap that OPENED this screen can fall through the route transition
+  // and land on a grid cell, silently picking a random face (observed on
+  // device). Ignore anything in the first instants after build.
+  final _openedAt = DateTime.now();
 
   Future<void> _pick(String id) async {
     if (_saving) return;
+    if (DateTime.now().difference(_openedAt) <
+        const Duration(milliseconds: 500)) {
+      return;
+    }
     setState(() {
       _saving = true;
       _selected = id;
