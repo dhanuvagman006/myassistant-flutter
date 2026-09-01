@@ -330,7 +330,11 @@ class TodayBriefBody extends StatelessWidget {
         // Brief me is the one action that IS a conversation — hand it to
         // whichever session owns the audio and get out of the way.
         act(Icons.auto_awesome_rounded, 'Brief me', Neon.gVioletCyan, () {
-          Navigator.of(context).pop();
+          // Close the sheet IF this panel is in one. On the dashboard the
+          // panel is embedded in the ROOT route — popping that left the
+          // navigator empty (blank white screen, back-swipe exits).
+          final nav = Navigator.of(context);
+          if (nav.canPop()) nav.pop();
           AssistantEngine.instance.askAssistant(
               'Give me my brief for today — my agenda, my messages and the promises I have open.');
         }),
@@ -343,7 +347,8 @@ class TodayBriefBody extends StatelessWidget {
           );
         }),
         act(Icons.document_scanner_rounded, 'Scan', Neon.gCyanLime, () {
-          Navigator.of(context).pop();
+          final nav = Navigator.of(context);
+          if (nav.canPop()) nav.pop();
           AssistantEngine.instance.startScan();
         }),
       ],
