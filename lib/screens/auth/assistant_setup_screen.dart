@@ -147,7 +147,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                       width: 54,
                       height: 54,
                       decoration: BoxDecoration(
-                        color: Neon.violet,
+                        color: Neon.textHi,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: const Icon(Icons.auto_awesome_rounded,
@@ -223,7 +223,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                               child: Row(
                                 children: [
                                   const Icon(Icons.graphic_eq_rounded,
-                                      color: Neon.violet, size: 19),
+                                      color: Neon.textHi, size: 19),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
@@ -249,6 +249,8 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: n.isEmpty || _busy ? null : _save,
+                    style:
+                        FilledButton.styleFrom(backgroundColor: Neon.textHi),
                     child: _busy
                         ? const SizedBox(
                             width: 20,

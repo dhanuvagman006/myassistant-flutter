@@ -8,7 +8,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
-import '../diagnostics_screen.dart';
 
 /// First screen of the app when signed out.
 ///
@@ -82,19 +81,6 @@ class _AuthScreenState extends State<AuthScreen> {
       backgroundColor: Neon.bg,
       body: SafeArea(
         child: Stack(children: [
-          // Server settings — reachable BEFORE sign-in, because "Could not
-          // reach the server" happens right here and Diagnostics fixes it.
-          Positioned(
-            top: 4,
-            right: 4,
-            child: IconButton(
-              tooltip: 'Connection settings',
-              icon: const Icon(Icons.settings_ethernet_rounded,
-                  color: Neon.textDim),
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const DiagnosticsScreen())),
-            ),
-          ),
           Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(24, 40, 24, 28),
@@ -113,7 +99,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           width: 54,
                           height: 54,
                           decoration: BoxDecoration(
-                            color: Neon.violet,
+                            color: Neon.textHi,
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: const Icon(Icons.auto_awesome_rounded,
@@ -264,6 +250,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 20),
                       FilledButton(
                         onPressed: _busy ? null : _submitEmail,
+                        style: FilledButton.styleFrom(
+                            backgroundColor: Neon.textHi),
                         child: _busy
                             ? const SizedBox(
                                 width: 20,
@@ -345,7 +333,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             TextSpan(
                               text: 'Terms',
                               style: const TextStyle(
-                                  color: Neon.violet,
+                                  color: Neon.textHi,
                                   decoration: TextDecoration.underline),
                               recognizer: TapGestureRecognizer()
                                 ..onTap = () => launchUrl(
@@ -357,7 +345,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             TextSpan(
                               text: 'Privacy Policy',
                               style: const TextStyle(
-                                  color: Neon.violet,
+                                  color: Neon.textHi,
                                   decoration: TextDecoration.underline),
                               recognizer: TapGestureRecognizer()
                                 ..onTap = () => launchUrl(
@@ -419,17 +407,18 @@ class _GenderChip extends StatelessWidget {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
-          color: selected ? Neon.violet.withValues(alpha: 0.10) : Neon.surface,
+          color:
+              selected ? Neon.textHi.withValues(alpha: 0.06) : Neon.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: selected ? Neon.violet : Neon.line,
+              color: selected ? Neon.textHi : Neon.line,
               width: selected ? 1.4 : 1),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon,
-                size: 16, color: selected ? Neon.violet : Neon.textLo),
+                size: 16, color: selected ? Neon.textHi : Neon.textLo),
             const SizedBox(width: 6),
             Text(label,
                 style: TextStyle(
