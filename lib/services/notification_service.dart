@@ -31,7 +31,7 @@ class ReminderNotifications {
   static const _channel = AndroidNotificationDetails(
     'hari_reminders',
     'Reminders',
-    channelDescription: 'Reminders you asked Hari to set',
+    channelDescription: 'Reminders you asked your assistant to set',
     importance: Importance.high,
     priority: Priority.high,
   );
@@ -84,7 +84,7 @@ class ReminderNotifications {
         if (r.done || r.dueAt == null || r.dueAt!.isBefore(now)) continue;
         await _plugin.zonedSchedule(
           r.id, // stable id → editing a reminder replaces its notification
-          'Reminder from Hari',
+          'Reminder',
           r.text,
           tz.TZDateTime.from(r.dueAt!, tz.local),
           const NotificationDetails(

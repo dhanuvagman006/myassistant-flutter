@@ -7,6 +7,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/hub_screen.dart';
+import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
 import '../services/location_service.dart';
 import '../services/usage_service.dart';
@@ -35,6 +36,8 @@ class _HomeShellState extends State<HomeShell> {
     super.initState();
     final engine = AssistantEngine.instance;
     engine.start();
+    // The assistant's user-chosen name — every visible mention reads this.
+    AssistantIdentity.load();
     BriefService.instance.start();
     // Messages that arrived while the app was closed still get SPOKEN.
     engine.announceIncomingMessages();

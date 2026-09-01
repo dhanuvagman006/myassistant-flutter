@@ -91,8 +91,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
                 children: [
                   const Text(
                     'Connect external tools — files, issue trackers, calendars — '
-                    'and Hari can use them in conversation. Optional: everything '
-                    'works without them.',
+                    'and your assistant can use them in conversation. Optional: '
+                    'everything works without them.',
                     style: TextStyle(
                         color: Neon.textDim, fontSize: 13),
                   ),
@@ -100,7 +100,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
                   if (_error != null)
                     _banner(_error!, Colors.orangeAccent),
                   if (_servers.isEmpty && _error == null)
-                    _banner('No servers yet. Add one to extend what Hari can do.',
+                    _banner(
+                        'No servers yet. Add one to extend what your assistant can do.',
                         Neon.textDim),
                   ..._servers.map(_serverCard),
                 ],
@@ -250,7 +251,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
         backgroundColor: const Color(0xFF17162A),
         title: Text('Remove $name?', style: const TextStyle(color: Neon.textHi)),
         content: const Text(
-            'Its tools will no longer be available to Hari. Stored credentials are deleted.',
+            'Its tools will no longer be available to your assistant. Stored credentials are deleted.',
             style: TextStyle(color: Neon.textLo)),
         actions: [
           TextButton(

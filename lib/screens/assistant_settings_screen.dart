@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/assistant_persona.dart';
 import '../services/api_service.dart';
+import '../services/assistant_identity.dart';
 import 'avatar_face_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     setState(() {
       _loading = false;
       final a = (p?['assistant'] as Map?) ?? {};
-      _name.text = (a['name'] as String?) ?? 'Hari';
+      _name.text = (a['name'] as String?) ?? AssistantIdentity.fallback;
       _gender = (a['gender'] as String?) ?? '';
       _voice = (a['voice'] as String?) ?? '';
       _style = (a['style'] as String?) ?? '';
@@ -83,6 +84,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     } else if (_gender == 'male') {
       await AssistantPersonaResolver.setPreference(AssistantGender.male);
     }
+    // Rename everywhere at once — every visible mention reads this.
+    if (r != null) await AssistantIdentity.set(_name.text.trim());
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(

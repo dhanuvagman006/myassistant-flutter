@@ -14,6 +14,7 @@ import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
+import '../../../services/assistant_identity.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
@@ -1322,7 +1323,7 @@ class AssistantEngine extends ChangeNotifier {
         // card shows it; the spoken line is only a pointer to the screen.
         final content = e['content'] as String? ?? '';
         if (content.isNotEmpty) {
-          presentedTitle = e['title'] as String? ?? 'From Hari';
+          presentedTitle = e['title'] as String? ?? 'From ${AssistantIdentity.name}';
           presentedText = content;
         }
         break;

@@ -4,6 +4,7 @@ import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
+import '../services/assistant_identity.dart';
 
 /// FINANCE SECTION — the user's money map: expected incomes, EMIs (with
 /// interest and outstanding principal) and recurring expenses. Everything
@@ -91,8 +92,9 @@ class _FinanceScreenState extends State<FinanceScreen> {
                       onPressed: _planWithHari,
                       icon: const Icon(Icons.auto_awesome_rounded,
                           size: 16, color: Neon.cyan),
-                      label: const Text('Plan with Hari',
-                          style: TextStyle(color: Neon.cyan, fontSize: 13)),
+                      label: Text('Plan with ${AssistantIdentity.name}',
+                          style: const TextStyle(
+                              color: Neon.cyan, fontSize: 13)),
                     ),
                   ],
                 ),
@@ -127,15 +129,15 @@ class _FinanceScreenState extends State<FinanceScreen> {
     final expenses = items.where((i) => i['kind'] == 'expense').toList();
 
     if (items.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(32),
+          padding: const EdgeInsets.all(32),
           child: Text(
             'Nothing here yet.\n\nAdd your EMIs, incomes and expenses with '
-            'the + button — or just tell Hari:\n"I have a bike EMI of '
-            '₹3,500 at 11 percent".',
+            'the + button — or just tell ${AssistantIdentity.name}:\n"I have '
+            'a bike EMI of ₹3,500 at 11 percent".',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
+            style: const TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
           ),
         ),
       );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../design/neon_tokens.dart';
+import '../../../services/assistant_identity.dart';
 import '../../../services/auth_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -24,13 +25,15 @@ enum AssistantGender { female, male, neutral }
 
 class AssistantPersona {
   final AssistantGender gender;
-  final String displayName;
 
-  const AssistantPersona._(this.gender, this.displayName);
+  const AssistantPersona._(this.gender);
 
-  static const female = AssistantPersona._(AssistantGender.female, 'Hari');
-  static const male = AssistantPersona._(AssistantGender.male, 'Hari');
-  static const neutral = AssistantPersona._(AssistantGender.neutral, 'Hari');
+  static const female = AssistantPersona._(AssistantGender.female);
+  static const male = AssistantPersona._(AssistantGender.male);
+  static const neutral = AssistantPersona._(AssistantGender.neutral);
+
+  /// The name the USER gave their assistant — never a hardcoded brand.
+  String get displayName => AssistantIdentity.name;
 
   /// Optional remote portrait, so a licensed image can be used without
   /// committing it: flutter run --dart-define=ASSISTANT_PORTRAIT_FEMALE=https://…

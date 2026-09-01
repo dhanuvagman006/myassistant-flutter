@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
+import '../../../services/assistant_identity.dart';
 import '../../../services/live_service.dart';
 import '../../../services/avatar_service.dart';
 import '../../../screens/diagnostics_screen.dart';
@@ -331,7 +332,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
                 // Status text
                 Text(
                   _connecting
-                      ? 'Connecting to Hari…'
+                      ? 'Connecting to ${AssistantIdentity.name}…'
                       : _errorMessage != null
                           ? _errorMessage!
                           : _isMuted
@@ -343,7 +344,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
                               : _avatarTrack != null
                                   ? 'Tap the mic to mute'
                                   : _isSpeaking
-                                      ? 'Hari is speaking…'
+                                      ? '${AssistantIdentity.name} is speaking…'
                                       : 'Listening…',
                   style: TextStyle(
                     color: _errorMessage != null
@@ -388,7 +389,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
                           Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              'Hari: $_hariTranscript',
+                              '${AssistantIdentity.name}: $_hariTranscript',
                               style: const TextStyle(
                                 color: Neon.cyan,
                                 fontSize: 14,

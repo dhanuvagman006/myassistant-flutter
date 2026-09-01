@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
 import '../../design/neon_tokens.dart';
+import '../../services/assistant_identity.dart';
 import '../../services/auth_service.dart';
 import 'state/assistant_engine.dart';
 import 'state/assistant_state.dart';
@@ -355,7 +356,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: h * 0.4),
             child: ScriptCard(
-              title: engine.presentedTitle ?? 'From Hari',
+              title: engine.presentedTitle ?? 'From ${AssistantIdentity.name}',
               content: engine.presentedText!,
               onClose: engine.dismissPresentedText,
             ),

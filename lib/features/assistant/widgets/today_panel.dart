@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
 import '../../../services/api_service.dart';
+import '../../../services/assistant_identity.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/call_service.dart';
 import '../state/assistant_engine.dart';
@@ -710,8 +711,8 @@ class _PersonSheetState extends State<_PersonSheet> {
                           const SizedBox(height: 2),
                           Text(
                             p.phone.isNotEmpty
-                                ? '${p.phone} · on Hari'
-                                : 'on Hari',
+                                ? '${p.phone} · on the app'
+                                : 'on the app',
                             style: const TextStyle(
                                 color: Neon.textLo, fontSize: 12),
                           ),
@@ -751,10 +752,12 @@ class _PersonSheetState extends State<_PersonSheet> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  _actionButton(Icons.send_rounded, 'Send via Hari',
+                  _actionButton(Icons.send_rounded,
+                      'Send via ${AssistantIdentity.name}',
                       Neon.gVioletCyan, _sendMessage),
                 ] else ...[
-                  _actionButton(Icons.chat_bubble_rounded, 'Message via Hari',
+                  _actionButton(Icons.chat_bubble_rounded,
+                      'Message via ${AssistantIdentity.name}',
                       Neon.gVioletCyan, () => setState(() => _composing = true)),
                   const SizedBox(height: 8),
                   if (p.phone.isNotEmpty)
@@ -765,7 +768,8 @@ class _PersonSheetState extends State<_PersonSheet> {
                     }),
                   const SizedBox(height: 8),
                   _actionButton(Icons.auto_awesome_rounded,
-                      'Ask Hari about them', Neon.gPinkViolet, () {
+                      'Ask ${AssistantIdentity.name} about them',
+                      Neon.gPinkViolet, () {
                     Navigator.of(context).popUntil((r) => r.isFirst);
                     AssistantEngine.instance
                         .askAssistant('What do you know about ${p.name}?');

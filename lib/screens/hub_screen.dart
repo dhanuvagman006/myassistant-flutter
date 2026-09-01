@@ -63,7 +63,7 @@ class HubScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          const Text('Everything Hari can run for you.',
+          const Text('Everything your assistant can run for you.',
               style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
           const SizedBox(height: 18),
           GridView.count(
