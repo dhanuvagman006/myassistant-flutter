@@ -2,10 +2,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
+import '../../../widgets/month_calendar.dart';
 import '../../../services/api_service.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/brief_service.dart';
@@ -183,7 +183,7 @@ class TodayBriefBody extends StatelessWidget {
                       padding: EdgeInsets.symmetric(vertical: 32),
                       child: Center(
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Neon.violet)),
+                              strokeWidth: 2, color: Neon.textLo)),
                     )
                   else ...[
                     if (b.messages.isNotEmpty) ...[
@@ -205,18 +205,17 @@ class TodayBriefBody extends StatelessWidget {
                       _emptyLine('No open promises. Clean slate.')
                     else
                       ...b.promises.take(5).map(_promiseTile),
+                    // The month at a glance — everything the user has told
+                    // their agent about, on the day it happens. News lives
+                    // in the Updates tab now; Home is the user's own life.
+                    const SizedBox(height: 18),
+                    const MonthCalendar(),
                     if (b.people.isNotEmpty) ...[
                       const SizedBox(height: 18),
                       _sectionTitle(Icons.group_rounded,
                           'Your circle on the app', Neon.lime),
                       const SizedBox(height: 8),
                       _peopleRow(b),
-                    ],
-                    if (b.headlines.isNotEmpty) ...[
-                      const SizedBox(height: 18),
-                      _sectionTitle(Icons.public_rounded,
-                          'While you were busy', Neon.warning),
-                      ...b.headlines.take(3).map(_headlineTile),
                     ],
                   ],
                 ],
@@ -288,6 +287,7 @@ class TodayBriefBody extends StatelessWidget {
   /// whichever session (live or classic) currently owns the audio, so the
   /// buttons and the voice agent are one brain, not two features.
   Widget _quickActions(BuildContext context) {
+    // Same visual language as onboarding: ink marks on plain tiles.
     Widget act(IconData icon, String label, Gradient g, VoidCallback onTap) {
       return Expanded(
         child: GestureDetector(
@@ -299,7 +299,7 @@ class TodayBriefBody extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 4),
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
-              color: Neon.surfaceHigh,
+              color: Neon.surface,
               borderRadius: BorderRadius.circular(Neon.rMd),
               border: Border.all(color: Neon.line),
             ),
@@ -308,8 +308,10 @@ class TodayBriefBody extends StatelessWidget {
                 Container(
                   width: 34,
                   height: 34,
-                  decoration:
-                      BoxDecoration(shape: BoxShape.circle, gradient: g),
+                  decoration: BoxDecoration(
+                    color: Neon.textHi,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   child: Icon(icon, size: 17, color: Colors.white),
                 ),
                 const SizedBox(height: 6),
@@ -355,11 +357,13 @@ class TodayBriefBody extends StatelessWidget {
     );
   }
 
+  // The tint parameter is kept for call-site stability but ignored: the
+  // Daylight-ink pass made every section header monochrome.
   Widget _sectionTitle(IconData icon, String title, Color tint) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(
           children: [
-            Icon(icon, size: 15, color: tint),
+            Icon(icon, size: 15, color: Neon.textHi),
             const SizedBox(width: 7),
             Text(title,
                 style: const TextStyle(
@@ -508,49 +512,6 @@ class TodayBriefBody extends StatelessWidget {
                 style: const TextStyle(
                     color: Neon.textHi, fontSize: 13.5, height: 1.25)),
           ],
-        ),
-      );
-
-  Widget _headlineTile(Headline hl) => GestureDetector(
-        // Tap opens the STORY — the article link when the server sent one,
-        // else a Google News search for the headline (old-server fallback).
-        onTap: () {
-          HapticFeedback.selectionClick();
-          final uri = hl.url.isNotEmpty
-              ? Uri.tryParse(hl.url)
-              : Uri.parse('https://news.google.com/search?q='
-                  '${Uri.encodeComponent(hl.title)}');
-          if (uri != null) {
-            launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        },
-        child: _glassTile(
-          leading: const Icon(Icons.circle, size: 6, color: Neon.warning),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(hl.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Neon.textHi, fontSize: 13, height: 1.25)),
-                    if (hl.source.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(hl.source,
-                            style: const TextStyle(
-                                color: Neon.textDim, fontSize: 11)),
-                      ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.open_in_new_rounded,
-                  size: 14, color: Neon.textDim),
-            ],
-          ),
         ),
       );
 

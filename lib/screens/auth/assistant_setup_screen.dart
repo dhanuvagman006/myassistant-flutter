@@ -8,6 +8,8 @@ import '../../services/api_service.dart';
 import '../../services/assistant_identity.dart';
 import '../../shell/home_shell.dart';
 import '../splash_screen.dart';
+import 'guide_screen.dart';
+import 'welcome_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  NAME YOUR ASSISTANT — the last step of registration.
@@ -32,6 +34,13 @@ class AssistantSetupGate extends StatefulWidget {
 class _AssistantSetupGateState extends State<AssistantSetupGate> {
   static const _doneKey = 'assistant_named_v1';
   bool? _needed;
+
+  /// True only right after the naming step actually ran — the one moment
+  /// that earns the celebration screen. Returning users never see it.
+  bool _celebrate = false;
+
+  /// The quick guide that follows the celebration, skippable throughout.
+  bool _guide = false;
 
   @override
   void initState() {
@@ -68,7 +77,12 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_doneKey, true);
     } catch (_) {}
-    if (mounted) setState(() => _needed = false);
+    if (mounted) {
+      setState(() {
+        _needed = false;
+        _celebrate = true; // fresh onboarding → one welcome moment
+      });
+    }
   }
 
   @override
@@ -76,7 +90,16 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
     return switch (_needed) {
       null => const SplashScreen(),
       true => AssistantSetupScreen(onDone: _markDone),
-      false => const HomeShell(),
+      false => _celebrate
+          ? WelcomeScreen(
+              onDone: () => setState(() {
+                    _celebrate = false;
+                    _guide = true;
+                  }))
+          : _guide
+              ? GuideScreen(
+                  onDone: () => setState(() => _guide = false))
+              : const HomeShell(),
     };
   }
 }

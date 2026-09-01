@@ -7,6 +7,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/hub_screen.dart';
+import '../screens/updates_screen.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
 import '../services/location_service.dart';
@@ -72,6 +73,7 @@ class _HomeShellState extends State<HomeShell> {
         children: const [
           HomeDashboard(),
           HubScreen(),
+          UpdatesScreen(),
           AssistantSettingsScreen(),
         ],
       ),
@@ -83,8 +85,14 @@ class _HomeShellState extends State<HomeShell> {
           height: 64,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: Neon.gVioletCyan,
-            boxShadow: Neon.glow(Neon.violet, blur: 22, alpha: 0.35),
+            color: Neon.textHi,
+            boxShadow: [
+              BoxShadow(
+                color: Neon.textHi.withValues(alpha: 0.28),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           child: const Icon(Icons.mic_rounded, color: Colors.white, size: 30),
         ),
@@ -98,23 +106,21 @@ class _HomeShellState extends State<HomeShell> {
         padding: EdgeInsets.zero,
         child: Row(
           children: [
+            // Two items each side of the notch keeps the row symmetric.
             _navItem(0, Icons.space_dashboard_outlined,
                 Icons.space_dashboard_rounded, 'Home'),
             _navItem(
                 1, Icons.grid_view_outlined, Icons.grid_view_rounded, 'Hub'),
             const SizedBox(width: 72), // notch space for the mic
-            _navItem(2, Icons.person_outline_rounded, Icons.person_rounded,
+            _navItem(2, Icons.newspaper_outlined, Icons.newspaper_rounded,
+                'Updates'),
+            _navItem(3, Icons.person_outline_rounded, Icons.person_rounded,
                 'You'),
-            _navSpacer(),
           ],
         ),
       ),
     );
   }
-
-  // The row must stay symmetric around the notch: two items, gap, one item
-  // plus a matching empty slot.
-  Widget _navSpacer() => const Expanded(child: SizedBox());
 
   Widget _navItem(int i, IconData icon, IconData active, String label) {
     final selected = _tab == i;
@@ -128,13 +134,13 @@ class _HomeShellState extends State<HomeShell> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(selected ? active : icon,
-                size: 23, color: selected ? Neon.violet : Neon.textDim),
+                size: 23, color: selected ? Neon.textHi : Neon.textDim),
             const SizedBox(height: 3),
             Text(label,
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? Neon.violet : Neon.textDim,
+                  color: selected ? Neon.textHi : Neon.textDim,
                 )),
           ],
         ),
