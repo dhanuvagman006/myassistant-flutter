@@ -105,16 +105,20 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Simple solid mark. No motion, no glow.
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          color: Neon.violet,
-                          borderRadius: BorderRadius.circular(16),
+                      // Simple solid mark. No motion, no glow. Align keeps
+                      // it 54px — the stretched column would inflate it.
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          width: 54,
+                          height: 54,
+                          decoration: BoxDecoration(
+                            color: Neon.violet,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(Icons.auto_awesome_rounded,
+                              color: Colors.white, size: 26),
                         ),
-                        child: const Icon(Icons.auto_awesome_rounded,
-                            color: Colors.white, size: 26),
                       ),
                       const SizedBox(height: 22),
                       Text(

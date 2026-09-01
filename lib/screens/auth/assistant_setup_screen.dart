@@ -141,15 +141,18 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    width: 54,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      color: Neon.violet,
-                      borderRadius: BorderRadius.circular(16),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        color: Neon.violet,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Icon(Icons.auto_awesome_rounded,
+                          color: Colors.white, size: 26),
                     ),
-                    child: const Icon(Icons.auto_awesome_rounded,
-                        color: Colors.white, size: 26),
                   ),
                   const SizedBox(height: 22),
                   Text(
