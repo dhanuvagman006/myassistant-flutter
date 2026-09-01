@@ -26,6 +26,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   String _gender = '';
   String _voice = '';
   String _style = '';
+  String _avatarId = ''; // '' = deployment default face
+  List<Map<String, dynamic>> _faces = const [];
   List<dynamic> _rules = [];
   final _newRule = TextEditingController();
   bool _loading = true;
@@ -44,6 +46,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   Future<void> _load() async {
     final p = await ApiService.getJson('/profile/full');
     final r = await ApiService.getJson('/profile/instructions');
+    final f = await ApiService.getJson('/live/avatar/faces');
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -52,7 +55,12 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       _gender = (a['gender'] as String?) ?? '';
       _voice = (a['voice'] as String?) ?? '';
       _style = (a['style'] as String?) ?? '';
+      _avatarId = (a['avatar_id'] as String?) ?? '';
       _rules = (r?['instructions'] as List?) ?? [];
+      _faces = ((f?['faces'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((m) => m.cast<String, dynamic>())
+          .toList();
     });
   }
 
@@ -65,6 +73,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
           'gender': _gender,
           'voice': _voice,
           'style': _style,
+          // '' would mean "keep" server-side; 'default' clears the choice.
+          'avatar_id': _avatarId.isEmpty ? 'default' : _avatarId,
         });
     // Keep the local persona (face) in step with the chosen gender.
     if (_gender == 'female') {
@@ -147,6 +157,30 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     child: Text(_saving ? 'Saving…' : 'Save'),
                   ),
                 ),
+                if (_faces.isNotEmpty) ...[
+                  _sectionLabel('Video avatar face'),
+                  _card(children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _faceChip('Default', ''),
+                        for (final f in _faces)
+                          _faceChip(
+                              (f['name'] as String?) ?? 'Face',
+                              (f['id'] as String?) ?? ''),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Used in video mode. Takes effect on the next '
+                      'avatar session after saving.',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 11.5),
+                    ),
+                  ]),
+                ],
                 _sectionLabel('Standing rules'),
                 Text(
                   'Permanent instructions the assistant follows before every '
@@ -203,6 +237,23 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ]),
               ],
             ),
+    );
+  }
+
+  Widget _faceChip(String label, String id) {
+    final selected = _avatarId == id;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      selectedColor: Neon.cyan.withValues(alpha: 0.25),
+      backgroundColor: Colors.white.withValues(alpha: 0.05),
+      labelStyle: TextStyle(
+          color: selected ? Neon.cyan : Colors.white70, fontSize: 12.5),
+      side: BorderSide(
+          color: selected
+              ? Neon.cyan.withValues(alpha: 0.6)
+              : Colors.white.withValues(alpha: 0.12)),
+      onSelected: (_) => setState(() => _avatarId = id),
     );
   }
 
