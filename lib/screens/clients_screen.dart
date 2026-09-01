@@ -118,7 +118,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     prefixIcon:
                         const Icon(Icons.search_rounded, color: Neon.textDim),
                     filled: true,
-                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    fillColor: Neon.surfaceHigh,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: BorderSide.none,
@@ -596,7 +596,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                 hintText: 'Add a dated note…',
                 hintStyle: const TextStyle(color: Neon.textDim),
                 filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.06),
+                fillColor: Neon.surfaceHigh,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 border: OutlineInputBorder(
@@ -730,7 +730,7 @@ class _EditClientSheetState extends State<_EditClientSheet> {
         labelText: label,
         labelStyle: const TextStyle(color: Neon.textDim),
         filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.06),
+        fillColor: Neon.surfaceHigh,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide.none,

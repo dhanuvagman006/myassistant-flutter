@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../design/neon_tokens.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/log.dart';
@@ -86,12 +88,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           const SizedBox(height: 6),
           TextField(
             controller: _url,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            style: const TextStyle(color: Neon.textHi, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'https://your-server  or  http://192.168.1.5:3000',
-              hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+              hintStyle: const TextStyle(color: Neon.textDim),
               filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.06),
+              fillColor: Neon.surfaceHigh,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none),
@@ -137,25 +139,25 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading:
-                const Icon(Icons.face_retouching_natural, color: Colors.white70),
+                const Icon(Icons.face_retouching_natural, color: Neon.textLo),
             title: const Text('Assistant',
-                style: TextStyle(color: Colors.white)),
+                style: TextStyle(color: Neon.textHi)),
             subtitle: const Text('Name, voice, style, standing rules',
-                style: TextStyle(color: Colors.white54, fontSize: 12.5)),
-            trailing: const Icon(Icons.chevron_right, color: Colors.white38),
+                style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+            trailing: const Icon(Icons.chevron_right, color: Neon.textDim),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => const AssistantSettingsScreen())),
           ),
           const SizedBox(height: 8),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.extension_rounded, color: Colors.white70),
+            leading: const Icon(Icons.extension_rounded, color: Neon.textLo),
             title: const Text('MCP servers',
-                style: TextStyle(color: Colors.white)),
+                style: TextStyle(color: Neon.textHi)),
             subtitle: const Text('Connect external tools (advanced)',
-                style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+                style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
             trailing:
-                const Icon(Icons.chevron_right, color: Colors.white38),
+                const Icon(Icons.chevron_right, color: Neon.textDim),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => const McpServersScreen())),
           ),
@@ -200,10 +202,10 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.05),
+          color: Neon.surfaceHigh,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: (color ?? Colors.white).withValues(alpha: 0.25)),
+              color: (color ?? Neon.textHi).withValues(alpha: 0.25)),
         ),
         child: SelectableText(
           text,

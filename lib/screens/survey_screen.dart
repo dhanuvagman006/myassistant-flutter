@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../design/neon_tokens.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -87,9 +89,9 @@ class _SurveyScreenState extends State<SurveyScreen> {
           data: ThemeData.dark().copyWith(
             colorScheme: const ColorScheme.dark(
               primary: AppColors.marigold,
-              onPrimary: Colors.black,
+              onPrimary: Colors.white,
               surface: Color(0xFF1E2230),
-              onSurface: Colors.white,
+              onSurface: Neon.textHi,
             ),
           ),
           child: child!,
@@ -216,7 +218,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
           children: [
             const Text('Let me get to know you',
                 style: TextStyle(
-                    color: Colors.white,
+                    color: Neon.textHi,
                     fontSize: 26,
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
@@ -233,27 +235,27 @@ class _SurveyScreenState extends State<SurveyScreen> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(14),
-                color: Colors.white.withValues(alpha: 0.05),
+                color: Neon.surfaceHigh,
                 border:
-                    Border.all(color: Colors.white.withValues(alpha: 0.10)),
+                    Border.all(color: Neon.line),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Or just tell me about yourself',
+                  const Text('Or just tell me about yourself',
                       style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.8),
+                          color: Neon.textLo,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   TextField(
                     controller: _aboutMe,
                     maxLines: 3,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
+                    style: const TextStyle(color: Neon.textHi),
+                    decoration: const InputDecoration(
                       hintText:
                           "e.g. I'm Dhanush, a software engineer in Mangalore working on AI systems.",
                       hintStyle: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.35),
+                          color: Neon.textDim,
                           fontSize: 13),
                       border: InputBorder.none,
                     ),
@@ -270,8 +272,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                   ),
                   if (_extractNote != null)
                     Text(_extractNote!,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.6),
+                        style: const TextStyle(
+                            color: Neon.textDim,
                             fontSize: 12)),
                 ],
               ),
@@ -287,8 +289,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  color: Colors.white.withValues(alpha: 0.06),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                  color: Neon.surfaceHigh,
+                  border: Border.all(color: Neon.line),
                 ),
                 child: Row(
                   children: [
@@ -302,8 +304,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                             : '${_birthday!.day} / ${_birthday!.month} / ${_birthday!.year}',
                         style: TextStyle(
                           color: _birthday == null
-                              ? Colors.white.withValues(alpha: 0.35)
-                              : Colors.white,
+                              ? Neon.textDim
+                              : Neon.surfaceHigh,
                           fontSize: 14.5,
                           fontWeight: _birthday == null
                               ? FontWeight.normal
@@ -311,8 +313,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                         ),
                       ),
                     ),
-                    Icon(Icons.calendar_month_rounded,
-                        color: Colors.white.withValues(alpha: 0.6), size: 18),
+                    const Icon(Icons.calendar_month_rounded,
+                        color: Neon.textDim, size: 18),
                   ],
                 ),
               ),
@@ -334,8 +336,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                     selected: _gender == g,
                     selectedColor: AppColors.marigold,
                     labelStyle: TextStyle(
-                        color: _gender == g ? Colors.black : AppColors.mist),
-                    backgroundColor: Colors.white.withValues(alpha: 0.06),
+                        color: _gender == g ? Colors.white : AppColors.mist),
+                    backgroundColor: Neon.surfaceHigh,
                     onSelected: (_) => setState(() => _gender = g),
                   ),
                   const SizedBox(width: 10),
@@ -356,9 +358,9 @@ class _SurveyScreenState extends State<SurveyScreen> {
                     selectedColor: AppColors.marigold,
                     labelStyle: TextStyle(
                         color: _picked.contains(i)
-                            ? Colors.black
+                            ? Colors.white
                             : AppColors.mist),
-                    backgroundColor: Colors.white.withValues(alpha: 0.06),
+                    backgroundColor: Neon.surfaceHigh,
                     onSelected: (v) => setState(
                         () => v ? _picked.add(i) : _picked.remove(i)),
                   ),
@@ -375,7 +377,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
                     style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: Colors.black)),
+                        color: Colors.white)),
               ),
             ),
           ],
@@ -392,12 +394,12 @@ class _SurveyScreenState extends State<SurveyScreen> {
         padding: const EdgeInsets.only(top: 8),
         child: TextField(
           controller: c,
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Neon.textHi),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+            hintStyle: const TextStyle(color: Neon.textDim),
             filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.06),
+            fillColor: Neon.surfaceHigh,
             border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(14),
                 borderSide: BorderSide.none),

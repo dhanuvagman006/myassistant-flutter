@@ -222,10 +222,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black.withValues(alpha: 0.55),
+                Neon.bg.withValues(alpha: 0.85),
                 Colors.transparent,
-                Colors.black.withValues(alpha: 0.25),
-                Colors.black.withValues(alpha: 0.82),
+                Neon.bg.withValues(alpha: 0.35),
+                Neon.bg.withValues(alpha: 0.95),
               ],
               stops: const [0.0, 0.22, 0.62, 1.0],
             ),
@@ -248,7 +248,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 Text(
                   _persona.displayName,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: Neon.textHi,
                     fontSize: 19,
                     fontWeight: FontWeight.w700,
                     letterSpacing: -0.2,
@@ -283,8 +283,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
             child: Text(
               _statusText,
               key: ValueKey(_statusText),
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.72),
+              style: const TextStyle(
+                color: Neon.textLo,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0.1,
@@ -333,11 +333,11 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   child: Text(
                     engine.errorMessage ?? '',
                     style: const TextStyle(
-                        color: Colors.white, fontSize: 13, height: 1.3),
+                        color: Neon.textHi, fontSize: 13, height: 1.3),
                   ),
                 ),
-                Icon(Icons.close_rounded,
-                    color: Colors.white.withValues(alpha: 0.5), size: 16),
+                const Icon(Icons.close_rounded,
+                    color: Neon.textDim, size: 16),
               ],
             ),
           ),
@@ -432,9 +432,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.07),
+              color: Neon.surface.withValues(alpha: 0.85),
               borderRadius: BorderRadius.circular(Neon.rXl),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+              border: Border.all(color: Neon.line),
+              boxShadow: Neon.cardShadow,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -545,17 +546,16 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 height: 46,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.10),
-                  border:
-                      Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                  color: Neon.surfaceHigh,
+                  border: Border.all(color: Neon.line),
                 ),
-                child: Icon(icon, color: Colors.white, size: 21),
+                child: Icon(icon, color: Neon.textHi, size: 21),
               ),
               const SizedBox(height: 6),
               Text(
                 label,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.68),
+                style: const TextStyle(
+                  color: Neon.textLo,
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
                 ),
@@ -572,7 +572,6 @@ class _AssistantScreenState extends State<AssistantScreen> {
   }) =>
       IconButton(
         onPressed: onTap,
-        icon: Icon(icon,
-            color: tint ?? Colors.white.withValues(alpha: 0.65), size: 22),
+        icon: Icon(icon, color: tint ?? Neon.textLo, size: 22),
       );
 }

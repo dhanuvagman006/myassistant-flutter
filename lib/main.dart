@@ -41,12 +41,12 @@ Future<void> main() async {
       },
     ),
   ));
-  // Liquid Glass is dark-first: paint the system bars to match.
+  // Daylight design: light bars, dark icons.
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
+    statusBarIconBrightness: Brightness.dark,
     systemNavigationBarColor: Neon.bg,
-    systemNavigationBarIconBrightness: Brightness.light,
+    systemNavigationBarIconBrightness: Brightness.dark,
   ));
   // Style + language prefs load in parallel with the first frame; every
   // later read is a plain field access (no disk on hot paths).
@@ -70,9 +70,9 @@ class MyAssistantApp extends StatelessWidget {
     return MaterialApp(
       title: 'MyAssistant',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark(),
-      darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.dark, // dark-first, always
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.light(),
+      themeMode: ThemeMode.light, // light-first, always
       home: const AuthGate(),
     );
   }

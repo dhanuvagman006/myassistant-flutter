@@ -49,12 +49,12 @@ class TodayPill extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.07),
+                    color: Neon.surface.withValues(alpha: 0.92),
                     borderRadius: BorderRadius.circular(Neon.rPill),
                     border: Border.all(
                       color: hasUrgent
                           ? Neon.cyan.withValues(alpha: 0.45)
-                          : Colors.white.withValues(alpha: 0.10),
+                          : Neon.line,
                     ),
                   ),
                   child: Row(
@@ -85,8 +85,8 @@ class TodayPill extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Icon(Icons.keyboard_arrow_up_rounded,
-                          size: 18, color: Colors.white.withValues(alpha: 0.6)),
+                      const Icon(Icons.keyboard_arrow_up_rounded,
+                          size: 18, color: Neon.textDim),
                     ],
                   ),
                 ),
@@ -141,7 +141,7 @@ class _TodaySheet extends StatelessWidget {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.22),
+                        color: Neon.textDim.withValues(alpha: 0.45),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -276,7 +276,7 @@ class _TodaySheet extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 4),
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.06),
+              color: Neon.surfaceHigh,
               borderRadius: BorderRadius.circular(Neon.rMd),
               border: Border.all(color: Neon.line),
             ),
@@ -334,8 +334,8 @@ class _TodaySheet extends StatelessWidget {
             Icon(icon, size: 15, color: tint),
             const SizedBox(width: 7),
             Text(title,
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
+                style: const TextStyle(
+                    color: Neon.textHi,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.2)),
@@ -568,7 +568,7 @@ class _TodaySheet extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.05),
+          color: Neon.surfaceHigh,
           borderRadius: BorderRadius.circular(Neon.rMd),
           border: Border.all(color: Neon.line),
         ),
@@ -691,7 +691,7 @@ class _PersonSheetState extends State<_PersonSheet> {
                       hintText: 'Message for ${p.name.split(' ').first}…',
                       hintStyle: const TextStyle(color: Neon.textDim),
                       filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.06),
+                      fillColor: Neon.surfaceHigh,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(Neon.rMd),
                         borderSide: BorderSide(color: Neon.line),
@@ -745,7 +745,7 @@ class _PersonSheetState extends State<_PersonSheet> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.06),
+          color: Neon.surfaceHigh,
           borderRadius: BorderRadius.circular(Neon.rMd),
           border: Border.all(color: Neon.line),
         ),
@@ -844,8 +844,8 @@ class _ReminderComposerState extends State<_ReminderComposer> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
           color: selected
-              ? Neon.violet.withValues(alpha: 0.25)
-              : Colors.white.withValues(alpha: 0.06),
+              ? Neon.violet.withValues(alpha: 0.12)
+              : Neon.surfaceHigh,
           borderRadius: BorderRadius.circular(Neon.rPill),
           border: Border.all(
               color: selected ? Neon.violet : Neon.line),
@@ -889,7 +889,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
                 hintText: 'Remind me to…',
                 hintStyle: const TextStyle(color: Neon.textDim),
                 filled: true,
-                fillColor: Colors.white.withValues(alpha: 0.06),
+                fillColor: Neon.surfaceHigh,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(Neon.rMd),
                   borderSide: BorderSide(color: Neon.line),
@@ -934,8 +934,8 @@ class _ReminderComposerState extends State<_ReminderComposer> {
                         'This evening',
                         'Tomorrow 9 am'
                       ].contains(_dueLabel)
-                          ? Neon.violet.withValues(alpha: 0.25)
-                          : Colors.white.withValues(alpha: 0.06),
+                          ? Neon.violet.withValues(alpha: 0.12)
+                          : Neon.surfaceHigh,
                       borderRadius: BorderRadius.circular(Neon.rPill),
                       border: Border.all(color: Neon.line),
                     ),

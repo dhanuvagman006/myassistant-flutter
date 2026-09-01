@@ -54,7 +54,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         id: '',
         name: 'Default',
         child: Container(
-          color: Colors.white.withValues(alpha: 0.06),
+          color: Neon.surfaceHigh,
           child: const Icon(Icons.auto_awesome_rounded,
               color: Neon.violet, size: 40),
         ),
@@ -72,7 +72,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                   loadingBuilder: (c, w, p) => p == null
                       ? w
                       : Container(
-                          color: Colors.white.withValues(alpha: 0.05),
+                          color: Neon.surfaceHigh,
                           alignment: Alignment.center,
                           child: const SizedBox(
                             width: 18,
@@ -88,7 +88,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
     ];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0A14),
+      backgroundColor: Neon.bg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         title: const Text('Avatar face'),
@@ -105,7 +105,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
   }
 
   Widget _initialBox(dynamic name) => Container(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: Neon.surfaceHigh,
         alignment: Alignment.center,
         child: Text(
           (name is String && name.isNotEmpty) ? name[0].toUpperCase() : '?',
@@ -130,7 +130,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                     border: Border.all(
                       color: selected
                           ? Neon.cyan
-                          : Colors.white.withValues(alpha: 0.12),
+                          : Neon.line,
                       width: selected ? 2.5 : 1,
                     ),
                   ),
@@ -148,7 +148,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                       decoration: const BoxDecoration(
                           color: Neon.cyan, shape: BoxShape.circle),
                       child: const Icon(Icons.check_rounded,
-                          size: 14, color: Colors.black),
+                          size: 14, color: Colors.white),
                     ),
                   ),
               ],
@@ -160,7 +160,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: selected ? Neon.cyan : Colors.white70,
+              color: selected ? Neon.cyan : Neon.textLo,
               fontSize: 12.5,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
             ),

@@ -31,10 +31,10 @@ class _Glass extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: Neon.surface,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: (borderTint ?? Colors.white).withValues(alpha: 0.14),
+              color: (borderTint ?? const Color(0xFF141627)).withValues(alpha: 0.18),
             ),
           ),
           child: child,
@@ -67,8 +67,8 @@ class ToolCard extends StatelessWidget {
           Expanded(
             child: Text(
               activity.label,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.85),
+              style: const TextStyle(
+                color: Neon.textHi,
                 fontSize: 13.5,
               ),
             ),
@@ -104,15 +104,15 @@ class SearchResultCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     result.source,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.55),
+                    style: const TextStyle(
+                      color: Neon.textDim,
                       fontSize: 12,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Icon(Icons.open_in_new_rounded,
-                    size: 14, color: Colors.white.withValues(alpha: 0.4)),
+                const Icon(Icons.open_in_new_rounded,
+                    size: 14, color: Neon.textDim),
               ],
             ),
             const SizedBox(height: 6),
@@ -121,7 +121,7 @@ class SearchResultCard extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Colors.white,
+                color: Neon.textHi,
                 fontSize: 14.5,
                 fontWeight: FontWeight.w600,
               ),
@@ -132,8 +132,8 @@ class SearchResultCard extends StatelessWidget {
                 result.snippet,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                style: const TextStyle(
+                  color: Neon.textLo,
                   fontSize: 13,
                   height: 1.35,
                 ),
@@ -174,7 +174,7 @@ class ContactCard extends StatelessWidget {
               backgroundColor: AppColors.peacock.withValues(alpha: 0.6),
               child: Text(initial,
                   style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700)),
+                      color: Neon.textHi, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -183,19 +183,19 @@ class ContactCard extends StatelessWidget {
                 children: [
                   Text(contact.name,
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Neon.textHi,
                           fontSize: 15,
                           fontWeight: FontWeight.w600)),
                   Text(contact.phone,
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.6),
+                      style: const TextStyle(
+                          color: Neon.textDim,
                           fontSize: 13)),
                 ],
               ),
             ),
             if (onTap != null)
-              Icon(Icons.chevron_right_rounded,
-                  color: Colors.white.withValues(alpha: 0.5)),
+              const Icon(Icons.chevron_right_rounded,
+                  color: Neon.textDim),
           ],
         ),
       ),
@@ -234,7 +234,7 @@ class CallStatusCard extends StatelessWidget {
                 child: Text(
                   '${status.label} — ${status.contactName}',
                   style: const TextStyle(
-                      color: Colors.white,
+                      color: Neon.textHi,
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600),
                 ),
@@ -252,7 +252,7 @@ class CallStatusCard extends StatelessWidget {
                       height: 2,
                       color: done
                           ? const Color(0xFF35C48D)
-                          : Colors.white.withValues(alpha: 0.15),
+                          : Neon.line,
                     ),
                   );
                 }
@@ -266,7 +266,7 @@ class CallStatusCard extends StatelessWidget {
                     shape: BoxShape.circle,
                     color: done
                         ? const Color(0xFF35C48D)
-                        : Colors.white.withValues(alpha: 0.2),
+                        : Neon.lineBright,
                     boxShadow: current
                         ? [
                             BoxShadow(
@@ -303,7 +303,7 @@ class _StepLabel extends StatelessWidget {
   Widget build(BuildContext context) => Text(
         text,
         style:
-            TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 10.5),
+            const TextStyle(color: Neon.textDim, fontSize: 10.5),
       );
 }
 
@@ -333,7 +333,7 @@ class ConfirmationCard extends StatelessWidget {
               Text(
                 isCall ? 'Confirm this call' : 'Confirm',
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: Neon.textHi,
                     fontSize: 15,
                     fontWeight: FontWeight.w700),
               ),
@@ -343,21 +343,21 @@ class ConfirmationCard extends StatelessWidget {
           if (isCall && pending.contact != null) ...[
             Text(
               'Call ${pending.contact!.name} (${pending.contact!.phone}) and say:',
-              style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.75), fontSize: 13.5),
+              style: const TextStyle(
+                  color: Neon.textLo, fontSize: 13.5),
             ),
             const SizedBox(height: 8),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.25),
+                color: Neon.surfaceHigh,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
                 '“${pending.spokenPreview ?? pending.message ?? ''}”',
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: Neon.textHi,
                     fontSize: 14,
                     fontStyle: FontStyle.italic,
                     height: 1.4),
@@ -366,7 +366,7 @@ class ConfirmationCard extends StatelessWidget {
           ] else
             Text(
               pending.question ?? 'Shall I go ahead?',
-              style: const TextStyle(color: Colors.white, fontSize: 14.5),
+              style: const TextStyle(color: Neon.textHi, fontSize: 14.5),
             ),
           const SizedBox(height: 14),
           Row(
@@ -374,9 +374,9 @@ class ConfirmationCard extends StatelessWidget {
               Expanded(
                 child: OutlinedButton(
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
+                    foregroundColor: Neon.textLo,
                     side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.25)),
+                        color: Neon.lineBright),
                   ),
                   onPressed: () => onDecision(false),
                   child: const Text('Cancel'),
@@ -514,7 +514,7 @@ class _DocumentCardState extends State<DocumentCard> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: Neon.textHi,
                           fontSize: 14.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -531,8 +531,8 @@ class _DocumentCardState extends State<DocumentCard> {
                           document.summary,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
+                          style: const TextStyle(
+                            color: Neon.textLo,
                             fontSize: 12.5,
                             height: 1.3,
                           ),
@@ -542,8 +542,8 @@ class _DocumentCardState extends State<DocumentCard> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                Icon(Icons.open_in_full_rounded,
-                    size: 16, color: Colors.white.withValues(alpha: 0.4)),
+                const Icon(Icons.open_in_full_rounded,
+                    size: 16, color: Neon.textDim),
               ],
             ),
           ),
@@ -634,7 +634,7 @@ class ScriptCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: Neon.textHi,
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
@@ -654,10 +654,10 @@ class ScriptCard extends StatelessWidget {
                   InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: onClose,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
                       child: Icon(Icons.close_rounded,
-                          color: Colors.white.withValues(alpha: 0.65),
+                          color: Neon.textLo,
                           size: 19),
                     ),
                   ),
@@ -670,8 +670,8 @@ class ScriptCard extends StatelessWidget {
                 content,
                 maxLines: 7,
                 overflow: TextOverflow.fade,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.82),
+                style: const TextStyle(
+                  color: Neon.textHi,
                   fontSize: 13.5,
                   height: 1.45,
                 ),
@@ -703,10 +703,10 @@ class _TextReaderPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0B12),
+      backgroundColor: Neon.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0B0B12),
-        foregroundColor: Colors.white,
+        backgroundColor: Neon.bg,
+        foregroundColor: Neon.textHi,
         title:
             Text(title, style: const TextStyle(fontSize: 16), maxLines: 1),
         actions: [
@@ -732,7 +732,7 @@ class _TextReaderPage extends StatelessWidget {
         child: SelectableText(
           content,
           style: const TextStyle(
-            color: Colors.white,
+            color: Neon.textHi,
             fontSize: 17,
             height: 1.6,
           ),
@@ -831,7 +831,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                           alignment: Alignment.center,
                           color: Neon.surfaceHigh,
                           child: const Text("Couldn't load the image.",
-                              style: TextStyle(color: Colors.white70)),
+                              style: TextStyle(color: Neon.textLo)),
                         ),
                       ),
                     ),
@@ -850,8 +850,8 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       : widget.document.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.75),
+                  style: const TextStyle(
+                    color: Neon.textLo,
                     fontSize: 12.5,
                     height: 1.3,
                   ),
@@ -879,10 +879,10 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                 InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: widget.onClose,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
                     child: Icon(Icons.close_rounded,
-                        color: Colors.white.withValues(alpha: 0.65),
+                        color: Neon.textLo,
                         size: 20),
                   ),
                 ),
@@ -922,7 +922,7 @@ class _DocumentViewer extends StatelessWidget {
             errorBuilder: (_, __, ___) => const Padding(
               padding: EdgeInsets.all(24),
               child: Text("Couldn't load this document.",
-                  style: TextStyle(color: Colors.white70)),
+                  style: TextStyle(color: Neon.textLo)),
             ),
           ),
         ),

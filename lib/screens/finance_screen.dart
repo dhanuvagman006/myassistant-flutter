@@ -54,7 +54,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
       backgroundColor: Colors.transparent,
       floatingActionButton: FloatingActionButton(
         backgroundColor: Neon.cyan,
-        foregroundColor: Colors.black,
+        foregroundColor: Colors.white,
         onPressed: () async {
           final added = await showDialog<bool>(
             context: context,
@@ -332,7 +332,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       child: TextField(
         controller: c,
         keyboardType: type,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: const TextStyle(color: Neon.textHi, fontSize: 14),
         decoration: InputDecoration(
           labelText: label,
           labelStyle: const TextStyle(color: Neon.textDim, fontSize: 13),
@@ -340,7 +340,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide:
-                BorderSide(color: Colors.white.withValues(alpha: 0.18)),
+                BorderSide(color: Neon.lineBright),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -355,11 +355,11 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   Widget build(BuildContext context) {
     final isEmi = _kind == 'emi';
     return AlertDialog(
-      backgroundColor: const Color(0xFF16161F),
+      backgroundColor: Neon.surface,
       shape:
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       title: const Text('Add finance item',
-          style: TextStyle(color: Colors.white, fontSize: 17)),
+          style: TextStyle(color: Neon.textHi, fontSize: 17)),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -402,7 +402,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-              backgroundColor: Neon.cyan, foregroundColor: Colors.black),
+              backgroundColor: Neon.cyan, foregroundColor: Colors.white),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Saving…' : 'Save'),
         ),

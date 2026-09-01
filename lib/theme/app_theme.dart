@@ -42,15 +42,15 @@ class AppTheme {
     );
   }
 
-  /// The one true theme — the app is dark-first by design.
-  static ThemeData dark() {
+  /// The one true theme — "Daylight": light-first, professional.
+  static ThemeData light() {
     final scheme = ColorScheme.fromSeed(
       seedColor: Neon.violet,
-      brightness: Brightness.dark,
+      brightness: Brightness.light,
       primary: Neon.violet,
       onPrimary: Colors.white,
       secondary: Neon.cyan,
-      onSecondary: Neon.bg,
+      onSecondary: Colors.white,
       tertiary: Neon.pink,
       surface: Neon.surface,
       onSurface: Neon.textHi,
@@ -61,7 +61,7 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: Neon.bg,
-      textTheme: _text(ThemeData.dark().textTheme),
+      textTheme: _text(ThemeData.light().textTheme),
       splashFactory: InkSparkle.splashFactory,
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -119,7 +119,7 @@ class AppTheme {
       ),
       dividerTheme: DividerThemeData(color: Neon.line, thickness: 1),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: const Color(0xF20B0F1A),
+        backgroundColor: const Color(0xF2FFFFFF),
         height: 68,
         indicatorColor: Neon.violet.withValues(alpha: 0.22),
         indicatorShape: RoundedRectangleBorder(
@@ -227,7 +227,7 @@ class AppTheme {
     );
   }
 
-  /// Dark-first product: "light" simply returns the same neon dark theme so
-  /// no device setting can drop the app back into the retired light design.
-  static ThemeData light() => dark();
+  /// Light-first product: "dark" returns the same Daylight theme so no
+  /// device setting can drop the app back into the retired neon design.
+  static ThemeData dark() => light();
 }

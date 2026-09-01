@@ -89,8 +89,8 @@ class _AuthScreenState extends State<AuthScreen> {
               right: 4,
               child: IconButton(
                 tooltip: 'Connection settings',
-                icon: Icon(Icons.settings_ethernet_rounded,
-                    color: Colors.white.withValues(alpha: 0.55)),
+                icon: const Icon(Icons.settings_ethernet_rounded,
+                    color: Neon.textDim),
                 onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                         builder: (_) => const DiagnosticsScreen())),
@@ -368,8 +368,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       Text.rich(
                         TextSpan(
                           text: 'By continuing you agree to our ',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.45),
+                          style: const TextStyle(
+                            color: Neon.textDim,
                             fontSize: 11.5,
                             height: 1.5,
                           ),
@@ -455,7 +455,7 @@ class _GenderChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? Neon.violet.withValues(alpha: 0.22)
-              : Colors.white.withValues(alpha: 0.05),
+              : Neon.surfaceHigh,
           borderRadius: BorderRadius.circular(Neon.rMd),
           border: Border.all(
               color: selected ? Neon.violet : Neon.line, width: 1.2),

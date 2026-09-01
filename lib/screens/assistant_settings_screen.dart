@@ -106,7 +106,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0A14),
+      backgroundColor: Neon.bg,
       appBar: AppBar(
           backgroundColor: Colors.transparent,
           title: const Text('Assistant')),
@@ -119,7 +119,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 _card(children: [
                   TextField(
                     controller: _name,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Neon.textHi),
                     decoration:
                         _dec('Assistant name', 'e.g. Maya'),
                   ),
@@ -182,7 +182,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         const Expanded(
                           child: Text('Avatar face',
                               style: TextStyle(
-                                  color: Colors.white, fontSize: 14.5)),
+                                  color: Neon.textHi, fontSize: 14.5)),
                         ),
                         Text(
                           _faceName(_avatarId),
@@ -191,19 +191,19 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         ),
                         const SizedBox(width: 6),
                         const Icon(Icons.chevron_right_rounded,
-                            color: Colors.white38, size: 20),
+                            color: Neon.textDim, size: 20),
                       ]),
                     ),
                   ]),
                 ],
                 _sectionLabel('Standing rules'),
-                Text(
+                const Text(
                   'Permanent instructions the assistant follows before every '
                   'decision — e.g. "Always ask before sending messages", '
                   '"Call me Dhanu". You can also just say these in '
                   'conversation.',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.55),
+                      color: Neon.textDim,
                       fontSize: 12.5),
                 ),
                 const SizedBox(height: 10),
@@ -213,18 +213,18 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: Colors.white.withValues(alpha: 0.05),
+                        color: Neon.surfaceHigh,
                         border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.10)),
+                            color: Neon.line),
                       ),
                       child: Row(children: [
                         Expanded(
                             child: Text(r['instruction'] ?? '',
                                 style:
-                                    const TextStyle(color: Colors.white70))),
+                                    const TextStyle(color: Neon.textLo))),
                         IconButton(
                           icon: const Icon(Icons.close_rounded,
-                              size: 18, color: Colors.white38),
+                              size: 18, color: Neon.textDim),
                           onPressed: () => _removeRule(r['id'] as int),
                         ),
                       ]),
@@ -233,7 +233,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   Expanded(
                     child: TextField(
                       controller: _newRule,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Neon.textHi),
                       decoration: _dec('Add a rule', 'Always…'),
                       onSubmitted: (_) => _addRule(),
                     ),
@@ -247,7 +247,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 _sectionLabel('About & legal'),
                 _card(children: [
                   _legalLink('Privacy Policy', '/legal/privacy'),
-                  const Divider(color: Colors.white12, height: 18),
+                  const Divider(height: 18),
                   _legalLink('Terms & Conditions', '/legal/terms'),
                 ]),
               ],
@@ -268,17 +268,17 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
         child: Row(children: [
           Expanded(
               child: Text(label,
-                  style: const TextStyle(color: Colors.white, fontSize: 14))),
+                  style: const TextStyle(color: Neon.textHi, fontSize: 14))),
           const Icon(Icons.open_in_new_rounded,
-              size: 16, color: Colors.white38),
+              size: 16, color: Neon.textDim),
         ]),
       );
 
   Widget _sectionLabel(String t) => Padding(
         padding: const EdgeInsets.only(top: 18, bottom: 8),
         child: Text(t.toUpperCase(),
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
+            style: const TextStyle(
+                color: Neon.textDim,
                 fontSize: 11,
                 letterSpacing: 1.2)),
       );
@@ -287,8 +287,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Colors.white.withValues(alpha: 0.05),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          color: Neon.surfaceHigh,
+          border: Border.all(color: Neon.line),
         ),
         child: Column(children: children),
       );
@@ -296,10 +296,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   InputDecoration _dec(String label, String hint) => InputDecoration(
         labelText: label,
         hintText: hint,
-        labelStyle: const TextStyle(color: Colors.white70),
-        hintStyle: const TextStyle(color: Colors.white24),
+        labelStyle: const TextStyle(color: Neon.textLo),
+        hintStyle: const TextStyle(color: Neon.textDim),
         filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.05),
+        fillColor: Neon.surfaceHigh,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none),
@@ -314,7 +314,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
             value: items.containsKey(value) ? value : '',
             isExpanded: true,
             dropdownColor: const Color(0xFF17162A),
-            style: const TextStyle(color: Colors.white),
+            style: const TextStyle(color: Neon.textHi),
             items: items.entries
                 .map((e) => DropdownMenuItem(
                     value: e.key, child: Text(e.value)))

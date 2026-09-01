@@ -169,20 +169,20 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tint ?? Colors.white).withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(radius),
-            border: borderGradient == null ? Border.all(color: Neon.line) : null,
-          ),
-          child: child,
-        ),
+    // Daylight: solid white card, hairline + soft neutral shadow. (The old
+    // frosted BackdropFilter was invisible on a light ground AND cost a
+    // full-screen blur per card — dropping it is also a jank fix.)
+    final card = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: tint == null
+            ? Neon.surface
+            : Color.alphaBlend(tint!.withValues(alpha: 0.06), Neon.surface),
+        borderRadius: BorderRadius.circular(radius),
+        border: borderGradient == null ? Border.all(color: Neon.line) : null,
+        boxShadow: Neon.cardShadow,
       ),
+      child: child,
     );
 
     final bordered0 = borderGradient == null
@@ -472,7 +472,7 @@ class NeonBackdrop extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: RadialGradient(colors: [
-              c.withValues(alpha: 0.16),
+              c.withValues(alpha: 0.07),
               c.withValues(alpha: 0.0),
             ]),
           ),
@@ -555,9 +555,11 @@ class _AuroraPainter extends CustomPainter {
     );
     // Tilt also brightens the wash a touch, so motion feels alive.
     final motion = math.min(1.0, gx.abs() + gy.abs());
+    // Daylight: the aurora is a whisper of color on paper, not a light
+    // show — enough to feel alive, never enough to fight the content.
     final paint = Paint()
       ..shader = RadialGradient(colors: [
-        c.withValues(alpha: 0.20 + 0.08 * motion),
+        c.withValues(alpha: 0.08 + 0.04 * motion),
         c.withValues(alpha: 0.0),
       ]).createShader(Rect.fromCircle(center: center, radius: r));
     canvas.drawCircle(center, r, paint);
@@ -612,7 +614,7 @@ Future<T?> showGlassSheet<T>(
           child: Container(
             height: h,
             decoration: BoxDecoration(
-              color: Neon.surface.withValues(alpha: 0.82),
+              color: Neon.surface.withValues(alpha: 0.94),
               border: Border(top: BorderSide(color: Neon.lineBright)),
             ),
             child: Column(

@@ -71,7 +71,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0A14),
+      backgroundColor: Neon.bg,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         title: const Text('MCP servers'),
@@ -89,19 +89,19 @@ class _McpServersScreenState extends State<McpServersScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
                 children: [
-                  Text(
+                  const Text(
                     'Connect external tools — files, issue trackers, calendars — '
                     'and Hari can use them in conversation. Optional: everything '
                     'works without them.',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
+                        color: Neon.textDim, fontSize: 13),
                   ),
                   const SizedBox(height: 16),
                   if (_error != null)
                     _banner(_error!, Colors.orangeAccent),
                   if (_servers.isEmpty && _error == null)
                     _banner('No servers yet. Add one to extend what Hari can do.',
-                        Colors.white54),
+                        Neon.textDim),
                   ..._servers.map(_serverCard),
                 ],
               ),
@@ -131,8 +131,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
       'connected' => (Colors.greenAccent, 'Connected'),
       'connecting' || 'reconnecting' => (Colors.amberAccent, 'Connecting…'),
       'error' => (Colors.redAccent, 'Error'),
-      'disabled' => (Colors.white38, 'Disabled'),
-      _ => (Colors.white38, 'Disconnected'),
+      'disabled' => (Neon.textDim, 'Disabled'),
+      _ => (Neon.textDim, 'Disconnected'),
     };
 
     return Container(
@@ -140,8 +140,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: Colors.white.withValues(alpha: 0.05),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        color: Neon.surfaceHigh,
+        border: Border.all(color: Neon.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,7 +156,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               Expanded(
                 child: Text(s['name'] ?? '',
                     style: const TextStyle(
-                        color: Colors.white,
+                        color: Neon.textHi,
                         fontSize: 16,
                         fontWeight: FontWeight.w600)),
               ),
@@ -173,8 +173,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
           const SizedBox(height: 2),
           Text(
             '$label · ${s['transport']} · ${tools.length} tool${tools.length == 1 ? '' : 's'}',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.55), fontSize: 12.5),
+            style: const TextStyle(
+                color: Neon.textDim, fontSize: 12.5),
           ),
           if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -183,13 +183,13 @@ class _McpServersScreenState extends State<McpServersScreen> {
           ],
           if (s['hasSecrets'] == true) ...[
             const SizedBox(height: 8),
-            Row(children: [
+            const Row(children: [
               Text('Authentication: ',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5), fontSize: 12.5)),
+                      color: Neon.textDim, fontSize: 12.5)),
               // The credential itself is never sent to the app.
-              const Text('••••••••',
-                  style: TextStyle(color: Colors.white70, letterSpacing: 2)),
+              Text('••••••••',
+                  style: TextStyle(color: Neon.textLo, letterSpacing: 2)),
             ]),
           ],
           if (tools.isNotEmpty) ...[
@@ -203,7 +203,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                     ? Colors.redAccent
                     : risk == 'medium'
                         ? Colors.amberAccent
-                        : Colors.white54;
+                        : Neon.textDim;
                 return Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -248,10 +248,10 @@ class _McpServersScreenState extends State<McpServersScreen> {
       context: context,
       builder: (c) => AlertDialog(
         backgroundColor: const Color(0xFF17162A),
-        title: Text('Remove $name?', style: const TextStyle(color: Colors.white)),
+        title: Text('Remove $name?', style: const TextStyle(color: Neon.textHi)),
         content: const Text(
             'Its tools will no longer be available to Hari. Stored credentials are deleted.',
-            style: TextStyle(color: Colors.white70)),
+            style: TextStyle(color: Neon.textLo)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
@@ -288,7 +288,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
             children: [
               const Text('Add MCP server',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: Neon.textHi,
                       fontSize: 18,
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: 14),
@@ -308,10 +308,10 @@ class _McpServersScreenState extends State<McpServersScreen> {
               _field(token, 'Access token (optional)', '',
                   obscure: true),
               const SizedBox(height: 6),
-              Text(
+              const Text(
                 'The token is encrypted on the server and never sent back to this app.',
                 style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.45), fontSize: 11.5),
+                    color: Neon.textDim, fontSize: 11.5),
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -354,14 +354,14 @@ class _McpServersScreenState extends State<McpServersScreen> {
       TextField(
         controller: c,
         obscureText: obscure,
-        style: const TextStyle(color: Colors.white),
+        style: const TextStyle(color: Neon.textHi),
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          labelStyle: const TextStyle(color: Colors.white70),
-          hintStyle: const TextStyle(color: Colors.white24),
+          labelStyle: const TextStyle(color: Neon.textLo),
+          hintStyle: const TextStyle(color: Neon.textDim),
           filled: true,
-          fillColor: Colors.white.withValues(alpha: 0.05),
+          fillColor: Neon.surfaceHigh,
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none),

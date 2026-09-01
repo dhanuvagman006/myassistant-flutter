@@ -258,7 +258,7 @@ class AssistantStatusPill extends StatelessWidget {
       duration: const Duration(milliseconds: 250),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.07),
+        color: Neon.surfaceHigh,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: accent.withValues(alpha: 0.45)),
       ),
@@ -284,7 +284,7 @@ class AssistantStatusPill extends StatelessWidget {
           Text(
             connected ? phase.label : 'Reconnecting…',
             style: const TextStyle(
-              color: Colors.white,
+              color: Neon.textHi,
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
             ),
@@ -293,8 +293,8 @@ class AssistantStatusPill extends StatelessWidget {
             const SizedBox(width: 8),
             GestureDetector(
               onTap: onCancel,
-              child: Icon(Icons.close_rounded,
-                  size: 16, color: Colors.white.withValues(alpha: 0.7)),
+              child: const Icon(Icons.close_rounded,
+                  size: 16, color: Neon.textLo),
             ),
           ],
         ],
@@ -319,7 +319,7 @@ class TranscriptBubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 300),
         decoration: BoxDecoration(
           gradient: isUser ? Neon.gVioletPink : null,
-          color: isUser ? null : Colors.white.withValues(alpha: 0.07),
+          color: isUser ? null : Neon.surfaceHigh,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -328,12 +328,12 @@ class TranscriptBubble extends StatelessWidget {
           ),
           border: isUser
               ? null
-              : Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              : Border.all(color: Neon.line),
         ),
         child: Text(
           entry.text,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: isUser ? 1 : 0.92),
+            color: isUser ? Colors.white : Neon.textHi,
             fontSize: 14.5,
             height: 1.35,
           ),

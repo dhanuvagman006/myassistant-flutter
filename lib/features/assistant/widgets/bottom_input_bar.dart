@@ -60,21 +60,21 @@ class _BottomInputBarState extends State<BottomInputBar> {
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.05),
+                  color: Neon.surfaceHigh,
                   borderRadius: BorderRadius.circular(26),
                   border:
-                      Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                      Border.all(color: Neon.line),
                 ),
                 child: TextField(
                   controller: _controller,
                   focusNode: _focus,
-                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                  style: const TextStyle(color: Neon.textHi, fontSize: 15),
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _send(),
                   decoration: InputDecoration(
                     hintText: 'Type instead…',
-                    hintStyle: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.32),
+                    hintStyle: const TextStyle(
+                        color: Neon.textDim,
                         fontWeight: FontWeight.w500),
                     border: InputBorder.none,
                     filled: false,
