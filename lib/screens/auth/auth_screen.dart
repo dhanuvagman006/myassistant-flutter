@@ -1,10 +1,13 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../design/neon_tokens.dart';
 import '../../design/gyro_tilt.dart';
 import '../../design/neon_widgets.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../diagnostics_screen.dart';
 
@@ -357,6 +360,47 @@ class _AuthScreenState extends State<AuthScreen> {
                               ? 'Already have an account? Log in'
                               : 'New here? Create an account',
                         ),
+                      ),
+                      const SizedBox(height: Neon.s3),
+                      // Consent by continuing — the standard pattern the
+                      // stores expect: shown BEFORE any account exists,
+                      // with both documents one tap away.
+                      Text.rich(
+                        TextSpan(
+                          text: 'By continuing you agree to our ',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.45),
+                            fontSize: 11.5,
+                            height: 1.5,
+                          ),
+                          children: [
+                            TextSpan(
+                              text: 'Terms',
+                              style: const TextStyle(
+                                  color: Neon.cyan,
+                                  decoration: TextDecoration.underline),
+                              recognizer: TapGestureRecognizer()
+                                ..onTap = () => launchUrl(
+                                    Uri.parse(
+                                        '${ApiService.baseUrl}/legal/terms'),
+                                    mode: LaunchMode.externalApplication),
+                            ),
+                            const TextSpan(text: ' and '),
+                            TextSpan(
+                              text: 'Privacy Policy',
+                              style: const TextStyle(
+                                  color: Neon.cyan,
+                                  decoration: TextDecoration.underline),
+                              recognizer: TapGestureRecognizer()
+                                ..onTap = () => launchUrl(
+                                    Uri.parse(
+                                        '${ApiService.baseUrl}/legal/privacy'),
+                                    mode: LaunchMode.externalApplication),
+                            ),
+                            const TextSpan(text: '.'),
+                          ],
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/assistant_persona.dart';
@@ -194,10 +195,29 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       icon: const Icon(Icons.add_circle_rounded,
                           color: Neon.cyan)),
                 ]),
+                _sectionLabel('About & legal'),
+                _card(children: [
+                  _legalLink('Privacy Policy', '/legal/privacy'),
+                  const Divider(color: Colors.white12, height: 18),
+                  _legalLink('Terms & Conditions', '/legal/terms'),
+                ]),
               ],
             ),
     );
   }
+
+  Widget _legalLink(String label, String path) => InkWell(
+        onTap: () => launchUrl(
+            Uri.parse('${ApiService.baseUrl}$path'),
+            mode: LaunchMode.externalApplication),
+        child: Row(children: [
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 14))),
+          const Icon(Icons.open_in_new_rounded,
+              size: 16, color: Colors.white38),
+        ]),
+      );
 
   Widget _sectionLabel(String t) => Padding(
         padding: const EdgeInsets.only(top: 18, bottom: 8),
