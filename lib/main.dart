@@ -3,8 +3,8 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 
 import 'design/neon_tokens.dart';
-import 'shell/home_shell.dart';
 import 'screens/auth/auth_screen.dart';
+import 'screens/auth/assistant_setup_screen.dart';
 import 'screens/auth/phone_verify_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
@@ -159,6 +159,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
     // F1 — optional fingerprint/PIN wall in front of everything.
     if (AppLock.instance.shouldLock) return const LockScreen();
-    return const HomeShell();
+    // Last onboarding step: a first-time account names its assistant.
+    return const AssistantSetupGate();
   }
 }
