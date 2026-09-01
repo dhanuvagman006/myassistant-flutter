@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/assistant_persona.dart';
 import '../services/api_service.dart';
+import 'avatar_face_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS (§4, §14, §28) — who the assistant is, how it
@@ -158,26 +159,40 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   ),
                 ),
                 if (_faces.isNotEmpty) ...[
-                  _sectionLabel('Video avatar face'),
+                  _sectionLabel('Video avatar'),
                   _card(children: [
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _faceChip('Default', ''),
-                        for (final f in _faces)
-                          _faceChip(
-                              (f['name'] as String?) ?? 'Face',
-                              (f['id'] as String?) ?? ''),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Used in video mode. Takes effect on the next '
-                      'avatar session after saving.',
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45),
-                          fontSize: 11.5),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await Navigator.of(context).push<String>(
+                          MaterialPageRoute(
+                            builder: (_) => AvatarFaceScreen(
+                              faces: _faces,
+                              selectedId: _avatarId,
+                            ),
+                          ),
+                        );
+                        if (picked != null && mounted) {
+                          setState(() => _avatarId = picked);
+                        }
+                      },
+                      child: Row(children: [
+                        const Icon(Icons.face_retouching_natural_rounded,
+                            color: Neon.cyan, size: 20),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text('Avatar face',
+                              style: TextStyle(
+                                  color: Colors.white, fontSize: 14.5)),
+                        ),
+                        Text(
+                          _faceName(_avatarId),
+                          style: const TextStyle(
+                              color: Neon.cyan, fontSize: 13.5),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.chevron_right_rounded,
+                            color: Colors.white38, size: 20),
+                      ]),
                     ),
                   ]),
                 ],
@@ -240,21 +255,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     );
   }
 
-  Widget _faceChip(String label, String id) {
-    final selected = _avatarId == id;
-    return ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      selectedColor: Neon.cyan.withValues(alpha: 0.25),
-      backgroundColor: Colors.white.withValues(alpha: 0.05),
-      labelStyle: TextStyle(
-          color: selected ? Neon.cyan : Colors.white70, fontSize: 12.5),
-      side: BorderSide(
-          color: selected
-              ? Neon.cyan.withValues(alpha: 0.6)
-              : Colors.white.withValues(alpha: 0.12)),
-      onSelected: (_) => setState(() => _avatarId = id),
-    );
+  String _faceName(String id) {
+    if (id.isEmpty) return 'Default';
+    final f = _faces.firstWhere((m) => m['id'] == id, orElse: () => const {});
+    return (f['name'] as String?) ?? 'Custom';
   }
 
   Widget _legalLink(String label, String path) => InkWell(
