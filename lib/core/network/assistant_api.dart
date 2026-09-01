@@ -91,6 +91,15 @@ class AssistantApi {
       final res = await client.send(req);
       if (res.statusCode != 200) {
         AppLog.add('sse', 'stream HTTP ${res.statusCode}');
+        // A restarted/redeployed server no longer knows this session — the
+        // old token would 401 on every retry FOREVER, which the user sees
+        // as a permanent "Connecting". Drop the dead session so the
+        // reconnect below performs the full handshake instead.
+        if (res.statusCode == 401 || res.statusCode == 404) {
+          _sessionId = null;
+          _streamToken = null;
+          _lastEventId = 0;
+        }
         throw Exception('stream ${res.statusCode}');
       }
       AppLog.add('sse', 'stream connected');
@@ -132,7 +141,17 @@ class AssistantApi {
     AppLog.add('sse', 'stream dropped — reconnecting in 2s');
     onDisconnect?.call();
     Future.delayed(const Duration(seconds: 2), () {
-      _openStream(onEvent, onDisconnect);
+      if (_closed) return;
+      if (_sessionId == null) {
+        // Session was rejected (server restart) — full handshake.
+        connect(
+          onEvent: onEvent,
+          onDisconnect: onDisconnect,
+          onConnected: _onConnected,
+        ).catchError((_) => _reconnect(onEvent, onDisconnect));
+      } else {
+        _openStream(onEvent, onDisconnect);
+      }
     });
   }
 
