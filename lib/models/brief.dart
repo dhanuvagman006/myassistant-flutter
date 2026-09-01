@@ -63,11 +63,13 @@ class TodayBrief {
 class Headline {
   final String title;
   final String source;
-  const Headline({required this.title, required this.source});
+  final String url; // article link — empty on old servers
+  const Headline({required this.title, required this.source, this.url = ''});
 
   factory Headline.fromJson(Map<String, dynamic> j) => Headline(
         title: j['title'] as String? ?? '',
         source: j['source'] as String? ?? '',
+        url: j['url'] as String? ?? '',
       );
 }
 

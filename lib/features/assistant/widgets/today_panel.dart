@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
@@ -504,24 +505,46 @@ class TodayBriefBody extends StatelessWidget {
         ),
       );
 
-  Widget _headlineTile(Headline hl) => _glassTile(
-        leading: const Icon(Icons.circle, size: 6, color: Neon.warning),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(hl.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: Neon.textHi, fontSize: 13, height: 1.25)),
-            if (hl.source.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(hl.source,
-                    style:
-                        const TextStyle(color: Neon.textDim, fontSize: 11)),
+  Widget _headlineTile(Headline hl) => GestureDetector(
+        // Tap opens the STORY — the article link when the server sent one,
+        // else a Google News search for the headline (old-server fallback).
+        onTap: () {
+          HapticFeedback.selectionClick();
+          final uri = hl.url.isNotEmpty
+              ? Uri.tryParse(hl.url)
+              : Uri.parse('https://news.google.com/search?q='
+                  '${Uri.encodeComponent(hl.title)}');
+          if (uri != null) {
+            launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        },
+        child: _glassTile(
+          leading: const Icon(Icons.circle, size: 6, color: Neon.warning),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(hl.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Neon.textHi, fontSize: 13, height: 1.25)),
+                    if (hl.source.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(hl.source,
+                            style: const TextStyle(
+                                color: Neon.textDim, fontSize: 11)),
+                      ),
+                  ],
+                ),
               ),
-          ],
+              const Icon(Icons.open_in_new_rounded,
+                  size: 14, color: Neon.textDim),
+            ],
+          ),
         ),
       );
 
