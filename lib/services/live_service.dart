@@ -339,11 +339,35 @@ class LiveService {
       interleaved: true,
       bufferSize: 4096,
     );
+    try {
+      await _fs.setVolume(1.0);
+    } catch (_) {}
     _fsStreaming = true;
   }
 
+  /// Gemini's live PCM is mastered quiet — noticeably softer than the
+  /// avatar path, which plays through WebRTC's call stack. +5.6 dB with a
+  /// hard ceiling brings the two in line; speech rarely peaks, so clipping
+  /// is inaudible in practice.
+  static const double _playbackGain = 1.9;
+
+  static Uint8List _boost(Uint8List chunk) {
+    final out = Uint8List(chunk.length & ~1);
+    for (var i = 0; i + 1 < chunk.length; i += 2) {
+      var s = chunk[i] | (chunk[i + 1] << 8);
+      if (s >= 0x8000) s -= 0x10000;
+      var v = (s * _playbackGain).round();
+      if (v > 32767) v = 32767;
+      if (v < -32768) v = -32768;
+      out[i] = v & 0xFF;
+      out[i + 1] = (v >> 8) & 0xFF;
+    }
+    return out;
+  }
+
   /// Feeds one reply chunk to the speaker and advances the playhead clock.
-  void _feed(Uint8List chunk) {
+  void _feed(Uint8List rawChunk) {
+    final chunk = _boost(rawChunk);
     if (!_fsStreaming || chunk.isEmpty) return;
     try {
       _fs.uint8ListSink?.add(chunk);

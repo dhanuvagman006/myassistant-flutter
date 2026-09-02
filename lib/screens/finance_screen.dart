@@ -52,10 +52,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: Neon.bg,
       floatingActionButton: FloatingActionButton(
-        backgroundColor: Neon.cyan,
-        foregroundColor: Colors.white,
+        backgroundColor: Neon.textHi,
+        foregroundColor: Neon.onInk,
         onPressed: () async {
           final added = await showDialog<bool>(
             context: context,
@@ -65,8 +65,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
         },
         child: const Icon(Icons.add_rounded),
       ),
-      body: AuroraBackdrop(
-        child: SafeArea(
+      body: SafeArea(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -91,10 +90,12 @@ class _FinanceScreenState extends State<FinanceScreen> {
                     TextButton.icon(
                       onPressed: _planWithHari,
                       icon: Icon(Icons.auto_awesome_rounded,
-                          size: 16, color: Neon.cyan),
+                          size: 16, color: Neon.textHi),
                       label: Text('Plan with ${AssistantIdentity.name}',
                           style: TextStyle(
-                              color: Neon.cyan, fontSize: 13)),
+                              color: Neon.textHi,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ),
@@ -103,7 +104,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ],
           ),
         ),
-      ),
     );
   }
 
@@ -197,7 +197,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
               cell('Out / month',
                   '₹${_fmt((s['monthly_emi'] as num? ?? 0) + (s['monthly_expense'] as num? ?? 0))}'),
               cell('Surplus', '₹${_fmt(surplus)}',
-                  color: good ? const Color(0xFF35C48D) : Neon.pink),
+                  color: good ? Neon.success : Neon.error),
             ],
           ),
           if ((s['total_debt'] as num? ?? 0) > 0) ...[
@@ -215,10 +215,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
     final isEmi = kind == 'emi';
     final isIncome = kind == 'income';
     final color = isIncome
-        ? const Color(0xFF35C48D)
+        ? Neon.success
         : isEmi
-            ? Neon.pink
-            : Neon.cyan;
+            ? Neon.error
+            : Neon.textLo;
     final chips = <String>[
       if (isEmi && (e['interest_rate'] as num? ?? 0) > 0)
         '${e['interest_rate']}% interest',
@@ -232,10 +232,6 @@ class _FinanceScreenState extends State<FinanceScreen> {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: GlassCard(
-          borderGradient: LinearGradient(colors: [
-            color.withValues(alpha: 0.45),
-            color.withValues(alpha: 0.08)
-          ]),
           child: Row(
             children: [
               Expanded(
@@ -346,7 +342,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: Neon.cyan),
+            borderSide: BorderSide(color: Neon.textHi, width: 1.4),
           ),
         ),
       ),
@@ -378,10 +374,13 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                   ChoiceChip(
                     label: Text(k[1]),
                     selected: _kind == k[0],
-                    selectedColor: Neon.cyan.withValues(alpha: 0.25),
+                    selectedColor: Neon.textHi.withValues(alpha: 0.10),
                     labelStyle: TextStyle(
-                        color: _kind == k[0] ? Neon.cyan : Neon.textLo,
-                        fontSize: 12.5),
+                        color: _kind == k[0] ? Neon.textHi : Neon.textLo,
+                        fontSize: 12.5,
+                        fontWeight: _kind == k[0]
+                            ? FontWeight.w700
+                            : FontWeight.w500),
                     onSelected: (_) => setState(() => _kind = k[0]),
                   ),
               ],
@@ -404,7 +403,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-              backgroundColor: Neon.cyan, foregroundColor: Colors.white),
+              backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Saving…' : 'Save'),
         ),

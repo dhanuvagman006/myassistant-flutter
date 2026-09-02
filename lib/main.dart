@@ -9,6 +9,7 @@ import 'screens/auth/phone_verify_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
 import 'services/style_prefs.dart';
@@ -70,6 +71,7 @@ class MyAssistantApp extends StatelessWidget {
       builder: (_, dark, __) => MaterialApp(
         title: 'MyAssistant',
         debugShowCheckedModeBanner: false,
+        scaffoldMessengerKey: AppFeedback.messengerKey,
         theme: AppTheme.light(),
         darkTheme: AppTheme.light(),
         themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself

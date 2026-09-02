@@ -14,6 +14,7 @@ import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
+import '../../../services/app_feedback.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
@@ -1608,10 +1609,30 @@ class AssistantEngine extends ChangeNotifier {
         );
         documentCards = [doc];
         notifyListeners();
-        await _sayFromCamera(person == null
-            ? "Saved and filed."
+        // Visible proof on WHATEVER screen the user is on — the scan from
+        // the Home tab used to end with a voice line and nothing else,
+        // which read as "nothing was saved".
+        AppFeedback.toast(person == null
+            ? 'Saved to your documents — ask about it anytime.'
             : "Saved to $person's records.");
+        if (liveActive) {
+          // Prime the live model: it confirms the save itself AND knows to
+          // use get_last_document for follow-ups ("what does it say?").
+          _liveSvc.sendText(
+              '[SYSTEM] I just scanned and saved a document to my records; '
+              'it is being analyzed right now. When I ask about "the image/'
+              'photo/document I just scanned" or what it says, call the '
+              'get_last_document tool and answer from its text. Acknowledge '
+              'the save to me now in one short sentence.');
+          _setPhase(AssistantPhase.listening, silent: true);
+          notifyListeners();
+        } else {
+          await _sayFromCamera(person == null
+              ? "Saved and filed. Ask me about it anytime."
+              : "Saved to $person's records.");
+        }
       } catch (_) {
+        AppFeedback.toast("Couldn't save the scan — check your connection.");
         await _sayFromCamera(
             "I couldn't save that — please check your connection and try again.");
       }
