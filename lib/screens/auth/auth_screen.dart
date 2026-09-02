@@ -102,8 +102,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: Neon.textHi,
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: const Icon(Icons.auto_awesome_rounded,
-                              color: Colors.white, size: 26),
+                          child: Icon(Icons.auto_awesome_rounded,
+                              color: Neon.onInk, size: 26),
                         ),
                       ),
                       const SizedBox(height: 22),
@@ -121,7 +121,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         _isSignUp
                             ? 'Your personal assistant, everywhere you go.'
                             : 'Sign in to continue.',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Neon.textLo, fontSize: 14.5, height: 1.4),
                       ),
                       const SizedBox(height: 28),
@@ -233,12 +233,12 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.error_outline_rounded,
+                              Icon(Icons.error_outline_rounded,
                                   color: Neon.error, size: 19),
                               const SizedBox(width: 9),
                               Expanded(
                                 child: Text(_error!,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         color: Neon.error,
                                         fontSize: 13.5,
                                         height: 1.3)),
@@ -253,17 +253,17 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: FilledButton.styleFrom(
                             backgroundColor: Neon.textHi),
                         child: _busy
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2.2, color: Colors.white),
+                                    strokeWidth: 2.2, color: Neon.onInk),
                               )
                             : Text(_isSignUp ? 'Create account' : 'Log in'),
                       ),
 
                       const SizedBox(height: 24),
-                      const Row(
+                      Row(
                         children: [
                           Expanded(child: Divider()),
                           Padding(
@@ -324,7 +324,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       Text.rich(
                         TextSpan(
                           text: 'By continuing you agree to our ',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Neon.textDim,
                             fontSize: 11.5,
                             height: 1.5,
@@ -332,7 +332,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           children: [
                             TextSpan(
                               text: 'Terms',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: Neon.textHi,
                                   decoration: TextDecoration.underline),
                               recognizer: TapGestureRecognizer()
@@ -344,7 +344,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             const TextSpan(text: ' and '),
                             TextSpan(
                               text: 'Privacy Policy',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: Neon.textHi,
                                   decoration: TextDecoration.underline),
                               recognizer: TapGestureRecognizer()

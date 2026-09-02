@@ -51,8 +51,9 @@ class _GuideScreenState extends State<GuideScreen> {
         icon: Icons.tune_rounded,
         title: 'Make it yours',
         body:
-            'Rename $a, pick a voice and a face, or add your own rules — '
-            'any time, under the You tab.',
+            'Pick a voice and a face under the You tab, add your own '
+            'rules — or just say "your name is Nova now" and $a renames '
+            'itself.',
       ),
     ];
   }
@@ -93,7 +94,7 @@ class _GuideScreenState extends State<GuideScreen> {
                 padding: const EdgeInsets.only(top: 4, right: 8),
                 child: TextButton(
                   onPressed: widget.onDone,
-                  child: const Text('Skip',
+                  child: Text('Skip',
                       style: TextStyle(color: Neon.textLo)),
                 ),
               ),
@@ -122,7 +123,7 @@ class _GuideScreenState extends State<GuideScreen> {
                                 borderRadius: BorderRadius.circular(18),
                               ),
                               child: Icon(p.icon,
-                                  color: Colors.white, size: 30),
+                                  color: Neon.onInk, size: 30),
                             ),
                             const SizedBox(height: 26),
                             Text(
@@ -138,7 +139,7 @@ class _GuideScreenState extends State<GuideScreen> {
                             const SizedBox(height: 12),
                             Text(
                               p.body,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Neon.textLo,
                                 fontSize: 15.5,
                                 height: 1.55,

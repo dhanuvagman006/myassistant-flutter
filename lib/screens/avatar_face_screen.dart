@@ -55,7 +55,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         name: 'Default',
         child: Container(
           color: Neon.surfaceHigh,
-          child: const Icon(Icons.auto_awesome_rounded,
+          child: Icon(Icons.auto_awesome_rounded,
               color: Neon.violet, size: 40),
         ),
       ),
@@ -74,7 +74,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                       : Container(
                           color: Neon.surfaceHigh,
                           alignment: Alignment.center,
-                          child: const SizedBox(
+                          child: SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
@@ -109,7 +109,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         alignment: Alignment.center,
         child: Text(
           (name is String && name.isNotEmpty) ? name[0].toUpperCase() : '?',
-          style: const TextStyle(
+          style: TextStyle(
               color: Neon.cyan, fontSize: 30, fontWeight: FontWeight.w700),
         ),
       );
@@ -145,7 +145,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                     top: 6,
                     child: Container(
                       padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                           color: Neon.cyan, shape: BoxShape.circle),
                       child: const Icon(Icons.check_rounded,
                           size: 14, color: Colors.white),

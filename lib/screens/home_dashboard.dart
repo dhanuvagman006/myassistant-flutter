@@ -59,7 +59,7 @@ class HomeDashboard extends StatelessWidget {
                       children: [
                         Text(
                           '${wk[now.weekday - 1]}, ${now.day} ${mo[now.month - 1]}',
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Neon.textLo, fontSize: 13.5),
                         ),
                         if (b.weatherLine != null) ...[
@@ -73,7 +73,7 @@ class HomeDashboard extends StatelessWidget {
                             ),
                             child: Text(
                               b.weatherLine!,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: Neon.cyan,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600),

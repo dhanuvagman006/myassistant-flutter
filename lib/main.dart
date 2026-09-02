@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 
-import 'design/neon_tokens.dart';
+import 'design/theme_controller.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/auth/assistant_setup_screen.dart';
 import 'screens/auth/phone_verify_screen.dart';
@@ -41,13 +41,9 @@ Future<void> main() async {
       },
     ),
   ));
-  // Daylight design: light bars, dark icons.
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: Neon.bg,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
+  // Load the saved theme BEFORE the first frame (also sets the system
+  // bars to match — light bars/dark icons or the other way around).
+  await ThemeController.load();
   // Style + language prefs load in parallel with the first frame; every
   // later read is a plain field access (no disk on hot paths).
   StylePrefs.instance.load();
@@ -67,13 +63,18 @@ class MyAssistantApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'MyAssistant',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.light(),
-      themeMode: ThemeMode.light, // light-first, always
-      home: const AuthGate(),
+    // The whole tree re-creates when the theme flips: tokens are resolved
+    // in build methods, and the KeyedSubtree defeats const-widget caching.
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeController.dark,
+      builder: (_, dark, __) => MaterialApp(
+        title: 'MyAssistant',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.light(),
+        themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself
+        home: KeyedSubtree(key: ValueKey(dark), child: const AuthGate()),
+      ),
     );
   }
 }

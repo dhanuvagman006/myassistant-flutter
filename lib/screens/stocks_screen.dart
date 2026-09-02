@@ -43,10 +43,10 @@ class _StocksScreenState extends State<StocksScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded, color: Neon.textHi),
+                      icon: Icon(Icons.arrow_back_rounded, color: Neon.textHi),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
-                    const Text(
+                    Text(
                       'Market & Stocks Hub',
                       style: TextStyle(
                         color: Neon.textHi,
@@ -110,13 +110,13 @@ class _StocksScreenState extends State<StocksScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.insights_rounded,
+                  Icon(Icons.insights_rounded,
                       size: 18, color: Neon.cyan),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       summary,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Neon.textHi, fontSize: 13.5, height: 1.45),
                     ),
                   ),
@@ -149,7 +149,7 @@ class _StocksScreenState extends State<StocksScreen> {
               children: [
                 Text(
                   e['symbol'],
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Neon.textHi, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -171,7 +171,7 @@ class _StocksScreenState extends State<StocksScreen> {
               e['price'] != null
                   ? "${e['name']} · ₹${e['price']}"
                   : e['name'],
-              style: const TextStyle(color: Neon.textLo, fontSize: 13),
+              style: TextStyle(color: Neon.textLo, fontSize: 13),
             ),
             const SizedBox(height: 12),
             Row(
@@ -182,7 +182,7 @@ class _StocksScreenState extends State<StocksScreen> {
                 Expanded(
                   child: Text(
                     e['reason'],
-                    style: const TextStyle(color: Neon.textHi, fontSize: 13),
+                    style: TextStyle(color: Neon.textHi, fontSize: 13),
                   ),
                 ),
               ],
@@ -202,7 +202,7 @@ class _StocksScreenState extends State<StocksScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(i['name'] ?? '',
-              style: const TextStyle(color: Neon.textDim, fontSize: 11.5)),
+              style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -211,7 +211,7 @@ class _StocksScreenState extends State<StocksScreen> {
                   '${i['price'] ?? ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Neon.textHi,
                       fontSize: 15,
                       fontWeight: FontWeight.w700),
@@ -238,19 +238,19 @@ class _StocksScreenState extends State<StocksScreen> {
           children: [
             Text(
               e['headline'],
-              style: const TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w600),
+              style: TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Row(
               children: [
                 Text(
                   e['source'],
-                  style: const TextStyle(color: Neon.cyan, fontSize: 11),
+                  style: TextStyle(color: Neon.cyan, fontSize: 11),
                 ),
                 const Spacer(),
                 Text(
                   e['time'],
-                  style: const TextStyle(color: Neon.textDim, fontSize: 11),
+                  style: TextStyle(color: Neon.textDim, fontSize: 11),
                 ),
               ],
             ),
@@ -270,7 +270,7 @@ class SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12, top: 8),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
             color: Neon.textDim, fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 0.5),
       ),
     );

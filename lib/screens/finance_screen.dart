@@ -75,11 +75,11 @@ class _FinanceScreenState extends State<FinanceScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded,
+                      icon: Icon(Icons.arrow_back_rounded,
                           color: Neon.textHi),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
-                    const Text(
+                    Text(
                       'Finance',
                       style: TextStyle(
                         color: Neon.textHi,
@@ -90,10 +90,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
                     const Spacer(),
                     TextButton.icon(
                       onPressed: _planWithHari,
-                      icon: const Icon(Icons.auto_awesome_rounded,
+                      icon: Icon(Icons.auto_awesome_rounded,
                           size: 16, color: Neon.cyan),
                       label: Text('Plan with ${AssistantIdentity.name}',
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Neon.cyan, fontSize: 13)),
                     ),
                   ],
@@ -137,7 +137,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
             'the + button — or just tell ${AssistantIdentity.name}:\n"I have '
             'a bike EMI of ₹3,500 at 11 percent".',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
+            style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
           ),
         ),
       );
@@ -175,7 +175,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
             children: [
               Text(label,
                   style:
-                      const TextStyle(color: Neon.textDim, fontSize: 11)),
+                      TextStyle(color: Neon.textDim, fontSize: 11)),
               const SizedBox(height: 3),
               Text(value,
                   maxLines: 1,
@@ -203,7 +203,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
           if ((s['total_debt'] as num? ?? 0) > 0) ...[
             const SizedBox(height: 8),
             Text('Total debt outstanding: ₹${_fmt(s['total_debt'])}',
-                style: const TextStyle(color: Neon.textLo, fontSize: 12)),
+                style: TextStyle(color: Neon.textLo, fontSize: 12)),
           ],
         ],
       ),
@@ -243,14 +243,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(e['name'] ?? '',
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Neon.textHi,
                             fontSize: 15,
                             fontWeight: FontWeight.w600)),
                     if (chips.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(chips.join(' · '),
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Neon.textLo, fontSize: 12)),
                     ],
                   ],
@@ -334,10 +334,10 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       child: TextField(
         controller: c,
         keyboardType: type,
-        style: const TextStyle(color: Neon.textHi, fontSize: 14),
+        style: TextStyle(color: Neon.textHi, fontSize: 14),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Neon.textDim, fontSize: 13),
+          labelStyle: TextStyle(color: Neon.textDim, fontSize: 13),
           isDense: true,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -346,7 +346,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Neon.cyan),
+            borderSide: BorderSide(color: Neon.cyan),
           ),
         ),
       ),
@@ -360,7 +360,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       backgroundColor: Neon.surface,
       shape:
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      title: const Text('Add finance item',
+      title: Text('Add finance item',
           style: TextStyle(color: Neon.textHi, fontSize: 17)),
       content: SingleChildScrollView(
         child: Column(
@@ -399,7 +399,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancel',
+          child: Text('Cancel',
               style: TextStyle(color: Neon.textDim)),
         ),
         FilledButton(

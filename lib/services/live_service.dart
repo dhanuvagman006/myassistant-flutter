@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -26,11 +25,11 @@ import 'api_service.dart';
 ///          {"type":"output_transcript","text":…} |
 ///          {"type":"error","message":…}
 ///
-///  PLAYBACK: audioplayers can't consume a raw PCM stream, so incoming
-///  audio is collected into short WAV segments (flushed on ~600 ms of
-///  buffer or a ~250 ms gap) and played back-to-back from a queue. That
-///  adds a few hundred ms before the first word — still far below the old
-///  STT→TTS pipeline — with zero new native dependencies to break.
+///  PLAYBACK: a single flutter_sound STREAM player fed raw PCM as it
+///  arrives — truly gapless. The old approach (short WAV segments played
+///  back-to-back through a file player) paid file-write + player-startup
+///  latency at EVERY ~600 ms boundary, which the user heard as the voice
+///  "breaking" mid-sentence.
 /// ─────────────────────────────────────────────────────────────────────────
 class LiveService {
   LiveService._();
@@ -40,7 +39,7 @@ class LiveService {
   StreamSubscription? _wsSub;
   final AudioRecorder _rec = AudioRecorder();
   StreamSubscription<List<int>>? _micSub;
-  final AudioPlayer _player = AudioPlayer();
+  final FlutterSoundPlayer _fs = FlutterSoundPlayer();
 
   bool _active = false;
   bool get active => _active;
@@ -83,13 +82,15 @@ class LiveService {
   void Function(bool speaking)? onSpeaking; // playback started/stopped
   void Function(Uint8List chunk)? onAudioChunk; // For external renderer (Simli)
 
-  // ---- incoming-audio segmenting ----
-  final BytesBuilder _buf = BytesBuilder(copy: false);
-  DateTime _lastChunkAt = DateTime.fromMillisecondsSinceEpoch(0);
-  Timer? _flushTimer;
-  final List<String> _queue = []; // WAV files waiting to play
-  bool _draining = false;
-  int _seq = 0;
+  // ---- streaming playback state ----
+  bool _fsOpen = false;
+  bool _fsStreaming = false;
+
+  /// When the audio fed so far will finish coming out of the speaker.
+  /// The stream player has no per-chunk completion events, but PCM maths
+  /// is exact: bytes ÷ (rate × 2) — so [playing] is derived from the clock.
+  DateTime _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _playStateTimer;
 
   static const _outRate = 24000; // Gemini native-audio output sample rate
   static const _inRate = 16000; // what we send up
@@ -160,7 +161,6 @@ class LiveService {
   Future<void> start({String? avatarRoom}) async {
     if (_active) return;
     _active = true;
-    _seq = 0;
     if (!await _rec.hasPermission()) {
       onError?.call('Microphone permission is needed for live mode.');
       return;
@@ -172,8 +172,20 @@ class LiveService {
     _belowMs = 0;
     _utteranceMs = 0;
     _noiseFloor = 0.01;
-    _buf.clear();
-    _queue.clear();
+    _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+
+    // Open the gapless PCM stream player up-front, so the very first reply
+    // byte can be fed straight to the speaker.
+    try {
+      if (!_fsOpen) {
+        await _fs.openPlayer();
+        _fsOpen = true;
+      }
+      await _startStream();
+    } catch (_) {
+      // Playback failing must not kill the session in avatar mode, where
+      // audio never reaches this app anyway.
+    }
 
     // http(s)://host → ws(s)://host/live/ws?token=…
     final base = ApiService.baseUrl.replaceFirst(RegExp(r'^http'), 'ws');
@@ -242,7 +254,6 @@ class LiveService {
       );
       _micSub = mic.listen((chunk) {
         if (!_active) return;
-        _seq++;
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
         try {
@@ -306,22 +317,52 @@ class LiveService {
       return;
     }
 
-    // Segment flusher: turn buffered reply PCM into playable WAVs.
-    _flushTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_buf.isEmpty) return;
-      final bufferedMs = _buf.length * 1000 ~/ (_outRate * 2);
-      final gapMs = DateTime.now().difference(_lastChunkAt).inMilliseconds;
-      // FIRST WORD FAST: when nothing is playing or queued, this buffer is
-      // the START of Hari's reply — every ms it waits here is silence the
-      // user hears. Flush it small (~250 ms) so her first word lands ~350 ms
-      // sooner; Gemini streams faster than realtime, so the next (600 ms)
-      // segment is ready before this one finishes playing.
-      final startOfReply = !playing && _queue.isEmpty;
-      final flushAtMs = startOfReply ? 250 : 600;
-      if (bufferedMs >= flushAtMs || (gapMs >= 250 && bufferedMs >= 120)) {
-        _flushSegment();
+    // Playback-state clock: [playing] gates the mic, so it must fall to
+    // false the moment the fed audio has actually finished sounding.
+    _playStateTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      final isPlaying = DateTime.now().isBefore(_playheadEnd);
+      if (isPlaying != playing) {
+        playing = isPlaying;
+        onSpeaking?.call(playing);
       }
     });
+  }
+
+  /// (Re)arms the PCM stream. Called at session start and after every
+  /// hard stop (barge-in interrupt), so the next turn plays instantly.
+  Future<void> _startStream() async {
+    if (!_fsOpen || _fsStreaming) return;
+    await _fs.startPlayerFromStream(
+      codec: Codec.pcm16,
+      numChannels: 1,
+      sampleRate: _outRate,
+      interleaved: true,
+      bufferSize: 4096,
+    );
+    _fsStreaming = true;
+  }
+
+  /// Feeds one reply chunk to the speaker and advances the playhead clock.
+  void _feed(Uint8List chunk) {
+    if (!_fsStreaming || chunk.isEmpty) return;
+    try {
+      _fs.uint8ListSink?.add(chunk);
+    } catch (_) {
+      return;
+    }
+    final ms = chunk.length * 1000 ~/ (_outRate * 2);
+    final now = DateTime.now();
+    final base = _playheadEnd.isAfter(now)
+        ? _playheadEnd
+        // Fresh turn: pad slightly for the player's own startup latency.
+        : now.add(const Duration(milliseconds: 80));
+    _playheadEnd = base.add(Duration(milliseconds: ms));
+    if (!playing) {
+      // Close the mic gate IMMEDIATELY — waiting for the 100 ms timer left
+      // a window where the reply's first syllable re-entered the mic.
+      playing = true;
+      onSpeaking?.call(true);
+    }
   }
 
   /// Closes the current utterance and asks the server to answer NOW.
@@ -347,8 +388,8 @@ class LiveService {
     try {
       _ch?.sink.add(jsonEncode({'type': 'end'}));
     } catch (_) {}
-    _flushTimer?.cancel();
-    _flushTimer = null;
+    _playStateTimer?.cancel();
+    _playStateTimer = null;
     await _micSub?.cancel();
     _micSub = null;
     try {
@@ -375,13 +416,10 @@ class LiveService {
 
   void _onFrame(dynamic frame) {
     if (frame is List<int>) {
-      // Reply audio: PCM16 @24 kHz. Buffer for segment playback.
-      // record's stream already yields Uint8List; copy only if a platform
-      // ever hands back a plain List<int>.
+      // Reply audio: PCM16 @24 kHz — straight to the stream player.
       final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame);
-      _buf.add(chunk);
+      _feed(chunk);
       onAudioChunk?.call(chunk);
-      _lastChunkAt = DateTime.now();
       return;
     }
     if (frame is String) {
@@ -412,8 +450,7 @@ class LiveService {
           onInterrupted?.call();
           break;
         case 'turn_complete':
-          // Flush whatever tail audio is buffered so the last word plays.
-          if (_buf.isNotEmpty) _flushSegment();
+          // Nothing to flush — every byte was fed on arrival.
           onTurnComplete?.call();
           break;
         case 'input_transcript':
@@ -443,101 +480,24 @@ class LiveService {
     }
   }
 
-  // ---------------- playback (segmented WAV queue) ----------------
+  // ---------------- playback (gapless PCM stream) ----------------
 
-  void _flushSegment() {
-    final pcm = _buf.takeBytes();
-    if (pcm.isEmpty) return;
-    _seq++;
-    _writeWav(pcm).then((path) {
-      if (path == null || !_active) return;
-      _queue.add(path);
-      _drain();
-    });
-  }
-
-  Future<String?> _writeWav(Uint8List pcm) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/hari_live_$_seq.wav';
-      final header = _wavHeader(pcm.length, _outRate);
-      final f = File(path);
-      await f.writeAsBytes(header + pcm, flush: false);
-      return path;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static List<int> _wavHeader(int dataLen, int rate) {
-    final h = ByteData(44);
-    void s(int off, String t) {
-      for (var i = 0; i < t.length; i++) {
-        h.setUint8(off + i, t.codeUnitAt(i));
-      }
-    }
-
-    s(0, 'RIFF');
-    h.setUint32(4, 36 + dataLen, Endian.little);
-    s(8, 'WAVE');
-    s(12, 'fmt ');
-    h.setUint32(16, 16, Endian.little);
-    h.setUint16(20, 1, Endian.little); // PCM
-    h.setUint16(22, 1, Endian.little); // mono
-    h.setUint32(24, rate, Endian.little);
-    h.setUint32(28, rate * 2, Endian.little); // byte rate
-    h.setUint16(32, 2, Endian.little); // block align
-    h.setUint16(34, 16, Endian.little); // bits
-    s(36, 'data');
-    h.setUint32(40, dataLen, Endian.little);
-    return h.buffer.asUint8List();
-  }
-
-  Future<void> _drain() async {
-    if (_draining) return;
-    _draining = true;
-    try {
-      while (_active && _queue.isNotEmpty) {
-        final path = _queue.removeAt(0);
-        playing = true;
-        onSpeaking?.call(true);
-        final done = Completer<void>();
-        final sub = _player.onPlayerStateChanged.listen((s) {
-          if ((s == PlayerState.completed || s == PlayerState.stopped) &&
-              !done.isCompleted) {
-            done.complete();
-          }
-        });
-        try {
-          await _player.play(DeviceFileSource(path));
-          await done.future.timeout(const Duration(seconds: 30),
-              onTimeout: () {});
-        } catch (_) {
-        } finally {
-          await sub.cancel();
-          File(path).delete().ignore();
-        }
-      }
-    } finally {
-      _draining = false;
-      playing = false;
-      onSpeaking?.call(false);
-    }
-  }
-
+  /// Hard-stops whatever is sounding RIGHT NOW (barge-in, session end) and
+  /// re-arms the stream for the next turn while the session lives on.
   Future<void> _stopPlayback({required bool clear}) async {
-    try {
-      await _player.stop();
-    } catch (_) {}
-    if (clear) {
-      _buf.clear();
-      // Delete all queued temp files — player is already stopped so no race
-      for (final p in _queue) {
-        File(p).delete().ignore();
-      }
-      _queue.clear();
-    }
+    _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
     playing = false;
+    if (_fsStreaming) {
+      _fsStreaming = false;
+      try {
+        await _fs.stopPlayer();
+      } catch (_) {}
+    }
+    if (_active) {
+      try {
+        await _startStream();
+      } catch (_) {}
+    }
   }
 
   /// 0..1 mic level from a PCM16 chunk, for the orb animation.

@@ -68,12 +68,12 @@ class _BottomInputBarState extends State<BottomInputBar> {
                 child: TextField(
                   controller: _controller,
                   focusNode: _focus,
-                  style: const TextStyle(color: Neon.textHi, fontSize: 15),
+                  style: TextStyle(color: Neon.textHi, fontSize: 15),
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _send(),
                   decoration: InputDecoration(
                     hintText: 'Type instead…',
-                    hintStyle: const TextStyle(
+                    hintStyle: TextStyle(
                         color: Neon.textDim,
                         fontWeight: FontWeight.w500),
                     border: InputBorder.none,
@@ -82,7 +82,7 @@ class _BottomInputBarState extends State<BottomInputBar> {
                         horizontal: 18, vertical: 13),
                     suffixIcon: _hasText
                         ? IconButton(
-                            icon: const Icon(Icons.send_rounded,
+                            icon: Icon(Icons.send_rounded,
                                 color: Neon.cyan, size: 20),
                             onPressed: _send,
                           )

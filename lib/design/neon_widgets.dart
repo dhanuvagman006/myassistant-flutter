@@ -17,7 +17,9 @@ import 'neon_tokens.dart';
 class GradientButton extends StatefulWidget {
   final String label;
   final VoidCallback? onPressed;
-  final Gradient gradient;
+
+  /// null → the signature violet-cyan (resolved at build so it themes).
+  final Gradient? gradient;
   final IconData? icon;
   final bool busy;
   final EdgeInsets padding;
@@ -26,7 +28,7 @@ class GradientButton extends StatefulWidget {
     super.key,
     required this.label,
     required this.onPressed,
-    this.gradient = Neon.gVioletCyan,
+    this.gradient,
     this.icon,
     this.busy = false,
     this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -58,14 +60,15 @@ class _GradientButtonState extends State<GradientButton> {
         child: AnimatedOpacity(
           duration: Neon.fast,
           opacity: enabled ? 1 : 0.5,
-          child: Container(
+          child: Builder(builder: (context) {
+            final g = widget.gradient ?? Neon.gVioletCyan;
+            return Container(
             padding: widget.padding,
             decoration: BoxDecoration(
-              gradient: widget.gradient,
+              gradient: g,
               borderRadius: BorderRadius.circular(16),
               boxShadow: enabled
-                  ? Neon.glow2(widget.gradient.colors.first,
-                      widget.gradient.colors.last)
+                  ? Neon.glow2(g.colors.first, g.colors.last)
                   : null,
             ),
             child: Row(
@@ -73,16 +76,16 @@ class _GradientButtonState extends State<GradientButton> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (widget.busy) ...[
-                  const SizedBox(
+                  SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2.2, color: Colors.white),
+                        strokeWidth: 2.2, color: Neon.onInk),
                   ),
-                  const SizedBox(width: 10),
+                  SizedBox(width: 10),
                 ] else if (widget.icon != null) ...[
                   Icon(widget.icon, size: 19, color: Colors.white),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                 ],
                 Text(
                   widget.label,
@@ -95,7 +98,8 @@ class _GradientButtonState extends State<GradientButton> {
                 ),
               ],
             ),
-          ),
+          );
+          }),
         ),
       ),
     );
@@ -107,34 +111,37 @@ class GhostButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final Widget? leading;
-  final Color accent;
+
+  /// null → Neon.cyan, resolved at build so it follows the theme.
+  final Color? accent;
 
   const GhostButton({
     super.key,
     required this.label,
     required this.onPressed,
     this.leading,
-    this.accent = Neon.cyan,
+    this.accent,
   });
 
   @override
   Widget build(BuildContext context) {
+    final a = accent ?? Neon.cyan;
     return OutlinedButton(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         foregroundColor: Neon.textHi,
-        side: BorderSide(color: accent.withValues(alpha: 0.4)),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 15),
+        side: BorderSide(color: a.withValues(alpha: 0.4)),
+        padding: EdgeInsets.symmetric(horizontal: 22, vertical: 15),
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (leading != null) ...[leading!, const SizedBox(width: 10)],
+          if (leading != null) ...[leading!, SizedBox(width: 10)],
           Text(label,
               style:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -155,7 +162,7 @@ class GlassCard extends StatelessWidget {
   /// sliding shadow (see design/gyro_tilt.dart). Off by default.
   final bool tilt;
 
-  const GlassCard({
+  GlassCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(Neon.s4),
@@ -188,7 +195,7 @@ class GlassCard extends StatelessWidget {
     final bordered0 = borderGradient == null
         ? card
         : Container(
-            padding: const EdgeInsets.all(1.2),
+            padding: EdgeInsets.all(1.2),
             decoration: BoxDecoration(
               gradient: borderGradient,
               borderRadius: BorderRadius.circular(radius + 1.2),
@@ -219,33 +226,36 @@ class GlassCard extends StatelessWidget {
 /// Small neon label chip / badge.
 class NeonChip extends StatelessWidget {
   final String label;
-  final Color color;
+
+  /// null → Neon.cyan, resolved at build so it follows the theme.
+  final Color? color;
   final IconData? icon;
   final bool filled;
 
   const NeonChip({
     super.key,
     required this.label,
-    this.color = Neon.cyan,
+    this.color,
     this.icon,
     this.filled = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final c = color ?? Neon.cyan;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: filled ? 0.22 : 0.10),
+        color: c.withValues(alpha: filled ? 0.22 : 0.10),
         borderRadius: BorderRadius.circular(Neon.rPill),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
+        border: Border.all(color: c.withValues(alpha: 0.45)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 5),
+            Icon(icon, size: 13, color: c),
+            SizedBox(width: 5),
           ],
           Text(label,
               style: TextStyle(
@@ -260,16 +270,19 @@ class NeonChip extends StatelessWidget {
 class GradientText extends StatelessWidget {
   final String text;
   final TextStyle style;
-  final Gradient gradient;
+
+  /// null → the signature violet-cyan, resolved at build.
+  final Gradient? gradient;
 
   const GradientText(this.text,
-      {super.key, required this.style, this.gradient = Neon.gVioletCyan});
+      {super.key, required this.style, this.gradient});
 
   @override
   Widget build(BuildContext context) {
     return ShaderMask(
       blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) => gradient.createShader(bounds),
+      shaderCallback: (bounds) =>
+          (gradient ?? Neon.gVioletCyan).createShader(bounds),
       child: Text(text, style: style.copyWith(color: Colors.white)),
     );
   }
@@ -345,7 +358,7 @@ class NeonEmptyState extends StatelessWidget {
               ),
               padding: const EdgeInsets.all(2),
               child: Container(
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                     shape: BoxShape.circle, color: Neon.surface),
                 child: Icon(icon, size: 34, color: Neon.cyan),
               ),
@@ -361,7 +374,7 @@ class NeonEmptyState extends StatelessWidget {
               const SizedBox(height: Neon.s2),
               Text(body!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Neon.textLo, height: 1.4)),
+                  style: TextStyle(color: Neon.textLo, height: 1.4)),
             ],
             if (action != null) ...[
               const SizedBox(height: Neon.s5),
@@ -426,10 +439,10 @@ class _NeonLoaderState extends State<NeonLoader>
       child: Container(
         width: widget.size,
         height: widget.size,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
             shape: BoxShape.circle, gradient: Neon.gOrb),
         padding: const EdgeInsets.all(3),
-        child: const DecoratedBox(
+        child: DecoratedBox(
           decoration: BoxDecoration(shape: BoxShape.circle, color: Neon.bg),
         ),
       ),
@@ -446,7 +459,7 @@ class NeonBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(color: Neon.bg),
+      decoration: BoxDecoration(color: Neon.bg),
       child: Stack(
         children: [
           Positioned(
@@ -522,7 +535,7 @@ class _AuroraBackdropState extends State<AuroraBackdrop>
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(color: Neon.bg),
+      decoration: BoxDecoration(color: Neon.bg),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -642,7 +655,7 @@ Future<T?> showGlassSheet<T>(
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.close_rounded,
+                          icon: Icon(Icons.close_rounded,
                               color: Neon.textLo),
                           onPressed: () => Navigator.pop(ctx),
                         ),

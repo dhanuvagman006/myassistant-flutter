@@ -133,7 +133,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           '$assistant is ready — calls, reminders, messages '
                           'and your day, all handled by voice.',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Neon.textLo,
                               fontSize: 15,
                               height: 1.5),
@@ -199,7 +199,7 @@ class _Particle {
   final Color color;
   final double delay; // 0..0.3 of the timeline
 
-  static const _palette = [
+  static final _palette = [
     Neon.violet,
     Neon.cyan,
     Neon.pink,

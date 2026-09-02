@@ -534,6 +534,23 @@ class AssistantEngine extends ChangeNotifier {
   final _liveSvc = LiveService.instance;
   bool get liveActive => _liveSvc.active;
 
+  /// FACE-TO-FACE mode. Off by default: voice-only live is faster and
+  /// burns no avatar minutes. The screen's toggle flips it; the avatar
+  /// room must exist BEFORE the live socket connects (audio routing is
+  /// fixed at session setup), so flipping mid-call is a clean restart.
+  bool faceMode = false;
+
+  Future<void> toggleFaceMode() async {
+    faceMode = !faceMode;
+    notifyListeners();
+    if (liveActive) {
+      await stopLive();
+      await _startLive();
+    } else if (faceMode) {
+      await _startLive();
+    }
+  }
+
   // ---------------- AVATAR ----------------
   // The photorealistic face is tied to the LIVE session, not to the screen:
   // it starts with live mode and dies with it, so the per-minute meter only
@@ -759,9 +776,19 @@ class AssistantEngine extends ChangeNotifier {
     };
     String? avatarRoom;
     try {
-      if (await AvatarService.isAvailable()) avatarRoom = await _avatar.start();
+      if (faceMode && await AvatarService.isAvailable()) {
+        avatarRoom = await _avatar.start();
+      }
     } catch (_) {
       avatarRoom = null;
+    }
+    if (faceMode && avatarRoom == null) {
+      // The avatar service refused (out of credits, quota, outage). Say so
+      // and drop the toggle — a lit camera icon over a face that will
+      // never arrive reads as "the app is broken".
+      faceMode = false;
+      _setLocalError(
+          'Face mode isn\'t available right now — continuing voice-only.');
     }
 
     await _liveSvc.start(avatarRoom: avatarRoom);
@@ -1315,6 +1342,15 @@ class AssistantEngine extends ChangeNotifier {
           launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
           // Auto-resume conversation after firing intent
           _setPhase(AssistantPhase.completed);
+        }
+        break;
+
+      case 'assistant_renamed':
+        // "Your name is Maya now" — the app renames itself instantly,
+        // every screen at once. The spoken confirmation already happened.
+        final newName = (e['name'] as String?)?.trim();
+        if (newName != null && newName.isNotEmpty) {
+          AssistantIdentity.set(newName);
         }
         break;
 

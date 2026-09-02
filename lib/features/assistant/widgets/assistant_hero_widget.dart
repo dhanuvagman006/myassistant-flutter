@@ -283,7 +283,7 @@ class AssistantStatusPill extends StatelessWidget {
           const SizedBox(width: 9),
           Text(
             connected ? phase.label : 'Reconnecting…',
-            style: const TextStyle(
+            style: TextStyle(
               color: Neon.textHi,
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
@@ -293,7 +293,7 @@ class AssistantStatusPill extends StatelessWidget {
             const SizedBox(width: 8),
             GestureDetector(
               onTap: onCancel,
-              child: const Icon(Icons.close_rounded,
+              child: Icon(Icons.close_rounded,
                   size: 16, color: Neon.textLo),
             ),
           ],

@@ -24,7 +24,14 @@ class MonthCalendar extends StatefulWidget {
 class _CalItem {
   final String kind; // meeting | payment | income | reminder | promise
   final String title;
-  const _CalItem(this.kind, this.title);
+
+  /// REST collection + id for deletion ("reminders", "commitments",
+  /// "finance"); null for Google meetings, which we don't own.
+  final String? del;
+  final int? id;
+  const _CalItem(this.kind, this.title, {this.del, this.id});
+
+  bool get deletable => del != null && id != null;
 }
 
 class _MonthCalendarState extends State<MonthCalendar> {
@@ -89,6 +96,8 @@ class _MonthCalendarState extends State<MonthCalendar> {
           .map((e) => _CalItem(
                 (e['kind'] as String?) ?? 'reminder',
                 (e['title'] as String?) ?? '',
+                del: e['del'] as String?,
+                id: (e['id'] as num?)?.toInt(),
               ))
           .toList();
     });
@@ -144,11 +153,11 @@ class _MonthCalendarState extends State<MonthCalendar> {
         // Header: month + arrows, styled like the other section titles.
         Row(
           children: [
-            const Icon(Icons.calendar_month_rounded,
+            Icon(Icons.calendar_month_rounded,
                 size: 15, color: Neon.textHi),
             const SizedBox(width: 7),
             Text('${_mo[_month - 1]} $_year',
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -174,7 +183,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                     Expanded(
                       child: Center(
                         child: Text(d,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: Neon.textDim,
                                 fontSize: 10,
                                 fontWeight: FontWeight.w600)),
@@ -184,7 +193,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
               ),
               const SizedBox(height: 4),
               if (_loading)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.symmetric(vertical: 30),
                   child: Center(
                       child: SizedBox(
@@ -206,7 +215,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  const Text('Less',
+                  Text('Less',
                       style:
                           TextStyle(color: Neon.textDim, fontSize: 9.5)),
                   const SizedBox(width: 4),
@@ -223,7 +232,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                     const SizedBox(width: 3),
                   ],
                   const SizedBox(width: 1),
-                  const Text('More',
+                  Text('More',
                       style:
                           TextStyle(color: Neon.textDim, fontSize: 9.5)),
                 ],
@@ -255,7 +264,14 @@ class _MonthCalendarState extends State<MonthCalendar> {
         behavior: HitTestBehavior.opaque,
         onTap: () {
           HapticFeedback.selectionClick();
-          setState(() => _selected = day);
+          if (isToday) {
+            // Today reads inline, right under the grid — same place the
+            // agenda lives.
+            setState(() => _selected = day);
+          } else {
+            // Any other day opens the day sheet: the full list, deletable.
+            _openDaySheet(day);
+          }
         },
         child: Container(
           height: 40,
@@ -303,7 +319,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
         Padding(
           padding: const EdgeInsets.only(left: 2),
           child: Text('Nothing on $label.',
-              style: const TextStyle(color: Neon.textDim, fontSize: 12.5)),
+              style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
         ),
       ];
     }
@@ -332,7 +348,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     it.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textHi, fontSize: 13, height: 1.3),
                   ),
                 ),
@@ -351,4 +367,176 @@ class _MonthCalendarState extends State<MonthCalendar> {
           child: Icon(icon, size: 20, color: Neon.textLo),
         ),
       );
+
+  // ---------------- DAY SHEET (any day but today) ----------------
+
+  /// Deletes [it] server-side and removes it from the month locally, so
+  /// the tile shade updates the instant the row disappears.
+  Future<bool> _deleteItem(int day, _CalItem it) async {
+    if (!it.deletable) return false;
+    final r =
+        await ApiService.sendJson('/${it.del}/${it.id}', method: 'DELETE');
+    if (r == null) return false;
+    if (mounted) {
+      setState(() {
+        _days[day]?.remove(it);
+        if (_days[day]?.isEmpty ?? false) _days.remove(day);
+      });
+    }
+    return true;
+  }
+
+  void _openDaySheet(int day) {
+    const wk = [
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+      'Sunday'
+    ];
+    final title =
+        '${wk[DateTime(_year, _month, day).weekday - 1]}, $day ${_mo[_month - 1]}';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final items = List<_CalItem>.of(_days[day] ?? const []);
+          return Container(
+            decoration: BoxDecoration(
+              color: Neon.surface,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+              border: Border(top: BorderSide(color: Neon.lineBright)),
+            ),
+            padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 10,
+                bottom: 24 + MediaQuery.of(ctx).viewPadding.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Neon.textDim.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(title,
+                          style: TextStyle(
+                              color: Neon.textHi,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.2)),
+                    ),
+                    if (items.isNotEmpty)
+                      Text(
+                          '${items.length} item${items.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                              color: Neon.textDim, fontSize: 12.5)),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text('Nothing on this day.',
+                        style: TextStyle(
+                            color: Neon.textDim, fontSize: 13.5)),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxHeight:
+                            MediaQuery.of(ctx).size.height * 0.5),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final it in items)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                            decoration: BoxDecoration(
+                              color: Neon.surfaceHigh,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Neon.line),
+                            ),
+                            child: Row(
+                              children: [
+                                Builder(builder: (_) {
+                                  final (icon, color) = _kindBadge(it.kind);
+                                  return Container(
+                                    width: 30,
+                                    height: 30,
+                                    decoration: BoxDecoration(
+                                      color:
+                                          color.withValues(alpha: 0.12),
+                                      borderRadius:
+                                          BorderRadius.circular(9),
+                                    ),
+                                    child:
+                                        Icon(icon, size: 15, color: color),
+                                  );
+                                }),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Text(
+                                    it.title,
+                                    style: TextStyle(
+                                        color: Neon.textHi,
+                                        fontSize: 13.5,
+                                        height: 1.3),
+                                  ),
+                                ),
+                                if (it.deletable)
+                                  IconButton(
+                                    tooltip: 'Delete',
+                                    icon: Icon(Icons.delete_outline_rounded,
+                                        size: 19, color: Neon.textDim),
+                                    onPressed: () async {
+                                      HapticFeedback.mediumImpact();
+                                      final ok =
+                                          await _deleteItem(day, it);
+                                      if (!ctx.mounted) return;
+                                      if (ok) {
+                                        setSheet(() {});
+                                      } else {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content: Text(
+                                                    "Couldn't delete that.")));
+                                      }
+                                    },
+                                  )
+                                else
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(right: 10),
+                                    child: Text('Google',
+                                        style: TextStyle(
+                                            color: Neon.textDim,
+                                            fontSize: 10.5)),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 }

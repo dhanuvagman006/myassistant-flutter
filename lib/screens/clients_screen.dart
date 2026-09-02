@@ -90,11 +90,11 @@ class _ClientsScreenState extends State<ClientsScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_rounded,
+                      icon: Icon(Icons.arrow_back_rounded,
                           color: Neon.textHi),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Clients & patients',
                         style: TextStyle(
@@ -111,12 +111,12 @@ class _ClientsScreenState extends State<ClientsScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
                 child: TextField(
                   onChanged: (v) => setState(() => _query = v),
-                  style: const TextStyle(color: Neon.textHi),
+                  style: TextStyle(color: Neon.textHi),
                   decoration: InputDecoration(
                     hintText: 'Search by name, summary or tag',
-                    hintStyle: const TextStyle(color: Neon.textDim),
+                    hintStyle: TextStyle(color: Neon.textDim),
                     prefixIcon:
-                        const Icon(Icons.search_rounded, color: Neon.textDim),
+                        Icon(Icons.search_rounded, color: Neon.textDim),
                     filled: true,
                     fillColor: Neon.surfaceHigh,
                     border: OutlineInputBorder(
@@ -185,7 +185,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
               backgroundColor: Neon.violet.withValues(alpha: 0.25),
               child: Text(
                 c.name.isNotEmpty ? c.name[0].toUpperCase() : '?',
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 18,
                     fontWeight: FontWeight.w700),
@@ -199,7 +199,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                   Text(c.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Neon.textHi,
                           fontSize: 15.5,
                           fontWeight: FontWeight.w600)),
@@ -208,7 +208,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                     c.summary.isNotEmpty ? c.summary : _kindLabel(c.kind),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Neon.textLo, fontSize: 12.5),
+                    style: TextStyle(color: Neon.textLo, fontSize: 12.5),
                   ),
                 ],
               ),
@@ -309,21 +309,21 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_camera_rounded, color: Neon.cyan),
-              title: const Text('Take a photo',
+              leading: Icon(Icons.photo_camera_rounded, color: Neon.cyan),
+              title: Text('Take a photo',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'camera'),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library_rounded, color: Neon.cyan),
-              title: const Text('Pick from gallery',
+              leading: Icon(Icons.photo_library_rounded, color: Neon.cyan),
+              title: Text('Pick from gallery',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'gallery'),
             ),
             ListTile(
-              leading: const Icon(Icons.picture_as_pdf_rounded, color: Neon.pink),
+              leading: Icon(Icons.picture_as_pdf_rounded, color: Neon.pink),
               title:
-                  const Text('Pick a PDF', style: TextStyle(color: Neon.textHi)),
+                  Text('Pick a PDF', style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'pdf'),
             ),
           ],
@@ -400,9 +400,9 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: Neon.surface,
-        title: const Text('Delete this case file?',
+        title: Text('Delete this case file?',
             style: TextStyle(color: Neon.textHi)),
-        content: const Text(
+        content: Text(
           'The card and its notes are removed. Saved documents are KEPT '
           'in your documents — only the link to this person is removed.',
           style: TextStyle(color: Neon.textLo),
@@ -414,7 +414,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           TextButton(
               onPressed: () => Navigator.pop(context, true),
               child:
-                  const Text('Delete', style: TextStyle(color: Neon.error))),
+                  Text('Delete', style: TextStyle(color: Neon.error))),
         ],
       ),
     );
@@ -456,7 +456,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                       child: Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.arrow_back_rounded,
+                            icon: Icon(Icons.arrow_back_rounded,
                                 color: Neon.textHi),
                             onPressed: () => Navigator.of(context).pop(),
                           ),
@@ -465,18 +465,18 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                               c.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: Neon.textHi,
                                   fontSize: 19,
                                   fontWeight: FontWeight.w700),
                             ),
                           ),
                           IconButton(
-                              icon: const Icon(Icons.edit_rounded,
+                              icon: Icon(Icons.edit_rounded,
                                   color: Neon.textLo, size: 20),
                               onPressed: _edit),
                           IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded,
+                              icon: Icon(Icons.delete_outline_rounded,
                                   color: Neon.textLo, size: 20),
                               onPressed: _delete),
                         ],
@@ -497,7 +497,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                                     label: 'Attach',
                                     onPressed: _busy ? null : _attachDocument)),
                             if (_documents.isEmpty)
-                              const Padding(
+                              Padding(
                                 padding: EdgeInsets.symmetric(vertical: 6),
                                 child: Text(
                                   'Nothing filed yet. Attach reports, '
@@ -512,7 +512,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                             const SectionHeader('Case notes'),
                             _noteComposer(),
                             if (_notes.isEmpty)
-                              const Padding(
+                              Padding(
                                 padding: EdgeInsets.symmetric(vertical: 6),
                                 child: Text(
                                   'No notes yet. You can also add one by '
@@ -551,11 +551,11 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
               const Spacer(),
               Text('Since ${_day(c.createdAt)}',
                   style:
-                      const TextStyle(color: Neon.textDim, fontSize: 12)),
+                      TextStyle(color: Neon.textDim, fontSize: 12)),
             ],
           ),
           if (rows.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text('No details yet — tap the pencil to add.',
                   style: TextStyle(color: Neon.textDim, fontSize: 13)),
@@ -571,7 +571,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                         child: Text(text,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: Neon.textHi, fontSize: 13.5))),
                   ],
                 ),
@@ -589,12 +589,12 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           Expanded(
             child: TextField(
               controller: _noteCtl,
-              style: const TextStyle(color: Neon.textHi, fontSize: 14),
+              style: TextStyle(color: Neon.textHi, fontSize: 14),
               minLines: 1,
               maxLines: 3,
               decoration: InputDecoration(
                 hintText: 'Add a dated note…',
-                hintStyle: const TextStyle(color: Neon.textDim),
+                hintStyle: TextStyle(color: Neon.textDim),
                 filled: true,
                 fillColor: Neon.surfaceHigh,
                 contentPadding:
@@ -609,7 +609,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           const SizedBox(width: 8),
           IconButton(
             onPressed: _busy ? null : _addNote,
-            icon: const Icon(Icons.send_rounded, color: Neon.violet),
+            icon: Icon(Icons.send_rounded, color: Neon.violet),
           ),
         ],
       ),
@@ -627,7 +627,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
               children: [
                 Text(_day(n.createdAt),
                     style:
-                        const TextStyle(color: Neon.textDim, fontSize: 11.5)),
+                        TextStyle(color: Neon.textDim, fontSize: 11.5)),
                 const Spacer(),
                 GestureDetector(
                   onTap: () async {
@@ -639,14 +639,14 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                       _toast("Couldn't delete the note.");
                     }
                   },
-                  child: const Icon(Icons.close_rounded,
+                  child: Icon(Icons.close_rounded,
                       size: 15, color: Neon.textDim),
                 ),
               ],
             ),
             const SizedBox(height: 4),
             Text(n.text,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi, fontSize: 13.5, height: 1.35)),
           ],
         ),
@@ -728,7 +728,7 @@ class _EditClientSheetState extends State<_EditClientSheet> {
 
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Neon.textDim),
+        labelStyle: TextStyle(color: Neon.textDim),
         filled: true,
         fillColor: Neon.surfaceHigh,
         border: OutlineInputBorder(
@@ -752,13 +752,13 @@ class _EditClientSheetState extends State<_EditClientSheet> {
         children: [
           Text(
             widget.existing == null ? 'New case file' : 'Edit case file',
-            style: const TextStyle(
+            style: TextStyle(
                 color: Neon.textHi, fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 14),
           TextField(
               controller: _name,
-              style: const TextStyle(color: Neon.textHi),
+              style: TextStyle(color: Neon.textHi),
               decoration: _dec('Full name *')),
           const SizedBox(height: 10),
           Wrap(
@@ -782,25 +782,25 @@ class _EditClientSheetState extends State<_EditClientSheet> {
           const SizedBox(height: 10),
           TextField(
               controller: _summary,
-              style: const TextStyle(color: Neon.textHi),
+              style: TextStyle(color: Neon.textHi),
               decoration:
                   _dec('One-line summary (e.g. "42M, type-2 diabetic")')),
           const SizedBox(height: 10),
           TextField(
               controller: _phone,
               keyboardType: TextInputType.phone,
-              style: const TextStyle(color: Neon.textHi),
+              style: TextStyle(color: Neon.textHi),
               decoration: _dec('Phone')),
           const SizedBox(height: 10),
           TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
-              style: const TextStyle(color: Neon.textHi),
+              style: TextStyle(color: Neon.textHi),
               decoration: _dec('Email')),
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: const TextStyle(color: Neon.error, fontSize: 13)),
+                style: TextStyle(color: Neon.error, fontSize: 13)),
           ],
           const SizedBox(height: 16),
           SizedBox(

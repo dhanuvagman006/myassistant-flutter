@@ -82,16 +82,16 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Server URL',
+          Text('Server URL',
               style:
                   TextStyle(color: AppColors.mist, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           TextField(
             controller: _url,
-            style: const TextStyle(color: Neon.textHi, fontSize: 14),
+            style: TextStyle(color: Neon.textHi, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'https://your-server  or  http://192.168.1.5:3000',
-              hintStyle: const TextStyle(color: Neon.textDim),
+              hintStyle: TextStyle(color: Neon.textDim),
               filled: true,
               fillColor: Neon.surfaceHigh,
               border: OutlineInputBorder(
@@ -139,25 +139,25 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading:
-                const Icon(Icons.face_retouching_natural, color: Neon.textLo),
-            title: const Text('Assistant',
+                Icon(Icons.face_retouching_natural, color: Neon.textLo),
+            title: Text('Assistant',
                 style: TextStyle(color: Neon.textHi)),
-            subtitle: const Text('Name, voice, style, standing rules',
+            subtitle: Text('Name, voice, style, standing rules',
                 style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
-            trailing: const Icon(Icons.chevron_right, color: Neon.textDim),
+            trailing: Icon(Icons.chevron_right, color: Neon.textDim),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => const AssistantSettingsScreen())),
           ),
           const SizedBox(height: 8),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.extension_rounded, color: Neon.textLo),
-            title: const Text('MCP servers',
+            leading: Icon(Icons.extension_rounded, color: Neon.textLo),
+            title: Text('MCP servers',
                 style: TextStyle(color: Neon.textHi)),
-            subtitle: const Text('Connect external tools (advanced)',
+            subtitle: Text('Connect external tools (advanced)',
                 style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
             trailing:
-                const Icon(Icons.chevron_right, color: Neon.textDim),
+                Icon(Icons.chevron_right, color: Neon.textDim),
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => const McpServersScreen())),
           ),
@@ -175,7 +175,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('App log',
+              Text('App log',
                   style: TextStyle(
                       color: AppColors.mist, fontWeight: FontWeight.w600)),
               TextButton(

@@ -83,11 +83,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
                   color: Neon.textHi,
                 )),
             const SizedBox(height: 4),
-            const Text('The headlines, while you were busy.',
+            Text('The headlines, while you were busy.',
                 style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
             const SizedBox(height: 18),
             if (_loading)
-              const Padding(
+              Padding(
                 padding: EdgeInsets.symmetric(vertical: 60),
                 child: Center(
                     child: CircularProgressIndicator(
@@ -102,7 +102,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
                         ? 'Couldn\'t load the news. Pull down to retry.'
                         : 'No headlines right now. Pull down to refresh.',
                     style:
-                        const TextStyle(color: Neon.textDim, fontSize: 13.5),
+                        TextStyle(color: Neon.textDim, fontSize: 13.5),
                   ),
                 ),
               )
@@ -131,7 +131,7 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(s.title,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textHi,
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
@@ -144,11 +144,11 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
                         s.source.isEmpty ? 'News' : s.source,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Neon.textDim, fontSize: 12),
                       ),
                     ),
-                    const Icon(Icons.open_in_new_rounded,
+                    Icon(Icons.open_in_new_rounded,
                         size: 14, color: Neon.textDim),
                   ],
                 ),

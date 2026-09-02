@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
-import '../features/assistant/widgets/assistant_persona.dart';
+import '../design/theme_controller.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import 'avatar_face_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-///  ASSISTANT SETTINGS (§4, §14, §28) — who the assistant is, how it
-///  speaks, and the user's standing rules.
+///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
+///  user's standing rules.
 ///
-///  Everything here writes through the SAME backend the agent reads from
-///  (assistant_profiles + user_instructions), so a change made here is in
-///  the very next turn's context — there is no second configuration store.
+///  Deliberately NO name field and NO style dropdown: identity is set by
+///  TALKING ("your name is Maya from now on") — the conversation is the
+///  interface. Everything left on this page saves the moment it's tapped;
+///  there is no Save button to forget.
 /// ─────────────────────────────────────────────────────────────────────────
 class AssistantSettingsScreen extends StatefulWidget {
   const AssistantSettingsScreen({super.key});
@@ -24,25 +26,34 @@ class AssistantSettingsScreen extends StatefulWidget {
 }
 
 class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
-  final _name = TextEditingController();
-  String _gender = '';
   String _voice = '';
-  String _style = '';
   String _avatarId = ''; // '' = deployment default face
   List<Map<String, dynamic>> _faces = const [];
   List<dynamic> _rules = [];
   final _newRule = TextEditingController();
   bool _loading = true;
-  bool _saving = false;
 
-  // Voices supported by the existing TTS route.
-  static const _voices = ['', 'Kore', 'Puck', 'Charon', 'Aoede', 'Fenrir'];
-  static const _styles = ['', 'concise', 'friendly', 'formal'];
+  /// Voices the TTS + live stack actually supports, with what they sound
+  /// like — a picker the user can read, not a bare dropdown.
+  static const _voices = [
+    ('', 'Default', 'Matches the chosen face'),
+    ('Kore', 'Kore', 'Warm · Female'),
+    ('Aoede', 'Aoede', 'Bright · Female'),
+    ('Puck', 'Puck', 'Upbeat · Male'),
+    ('Charon', 'Charon', 'Deep · Male'),
+    ('Fenrir', 'Fenrir', 'Bold · Male'),
+  ];
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _newRule.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -53,10 +64,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     setState(() {
       _loading = false;
       final a = (p?['assistant'] as Map?) ?? {};
-      _name.text = (a['name'] as String?) ?? AssistantIdentity.fallback;
-      _gender = (a['gender'] as String?) ?? '';
       _voice = (a['voice'] as String?) ?? '';
-      _style = (a['style'] as String?) ?? '';
       _avatarId = (a['avatar_id'] as String?) ?? '';
       _rules = (r?['instructions'] as List?) ?? [];
       _faces = ((f?['faces'] as List?) ?? const [])
@@ -66,30 +74,19 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     });
   }
 
-  Future<void> _save() async {
-    setState(() => _saving = true);
+  /// Voice saves the moment it's tapped — 'default' clears the override.
+  Future<void> _pickVoice(String v) async {
+    HapticFeedback.selectionClick();
+    final prev = _voice;
+    setState(() => _voice = v);
     final r = await ApiService.sendJson('/profile/assistant',
-        method: 'PUT',
-        body: {
-          'name': _name.text.trim(),
-          'gender': _gender,
-          'voice': _voice,
-          'style': _style,
-          // '' would mean "keep" server-side; 'default' clears the choice.
-          'avatar_id': _avatarId.isEmpty ? 'default' : _avatarId,
-        });
-    // Keep the local persona (face) in step with the chosen gender.
-    if (_gender == 'female') {
-      await AssistantPersonaResolver.setPreference(AssistantGender.female);
-    } else if (_gender == 'male') {
-      await AssistantPersonaResolver.setPreference(AssistantGender.male);
-    }
-    // Rename everywhere at once — every visible mention reads this.
-    if (r != null) await AssistantIdentity.set(_name.text.trim());
+        method: 'PUT', body: {'voice': v.isEmpty ? 'default' : v});
     if (!mounted) return;
-    setState(() => _saving = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(r == null ? "Couldn't save." : 'Saved.')));
+    if (r == null) {
+      setState(() => _voice = prev);
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't save the voice.")));
+    }
   }
 
   Future<void> _addRule() async {
@@ -114,59 +111,110 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
           backgroundColor: Colors.transparent,
           title: const Text('Assistant')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Neon.textLo))
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
               children: [
-                _sectionLabel('Identity'),
+                // Identity lives in the conversation, and the page says so.
                 _card(children: [
-                  TextField(
-                    controller: _name,
-                    style: const TextStyle(color: Neon.textHi),
-                    decoration:
-                        _dec('Assistant name', 'e.g. Maya'),
-                  ),
-                  const SizedBox(height: 12),
-                  _dropdown('Presentation', _gender, const {
-                    '': 'Automatic (opposite of my profile)',
-                    'female': 'Female',
-                    'male': 'Male',
-                    'neutral': 'Neutral',
-                  }, (v) => setState(() => _gender = v)),
+                  Row(children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Neon.textHi,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.auto_awesome_rounded,
+                          color: Neon.onInk, size: 19),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Live: renaming by voice updates this card too.
+                          ValueListenableBuilder<String>(
+                            valueListenable: AssistantIdentity.notifier,
+                            builder: (_, n, __) => Text(n,
+                                style: TextStyle(
+                                    color: Neon.textHi,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'To rename, just say it — "your name is Maya '
+                            'from now on".',
+                            style: TextStyle(
+                                color: Neon.textDim,
+                                fontSize: 12,
+                                height: 1.35),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ]),
                 ]),
-                _sectionLabel('Voice & style'),
+
+                _sectionLabel('Appearance'),
                 _card(children: [
-                  _dropdown(
-                      'Voice',
-                      _voice,
-                      {for (final v in _voices) v: v.isEmpty ? 'Default' : v},
-                      (v) => setState(() => _voice = v)),
-                  const SizedBox(height: 12),
-                  _dropdown(
-                      'Communication style',
-                      _style,
-                      {
-                        for (final v in _styles)
-                          v: v.isEmpty ? 'Default' : v[0].toUpperCase() + v.substring(1)
-                      },
-                      (v) => setState(() => _style = v)),
+                  Row(children: [
+                    Icon(
+                        Neon.isDark
+                            ? Icons.nightlight_round
+                            : Icons.wb_sunny_rounded,
+                        color: Neon.textHi,
+                        size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(Neon.isDark ? 'Dark' : 'Light',
+                              style: TextStyle(
+                                  color: Neon.textHi,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 1),
+                          Text('Tap the sky to switch.',
+                              style: TextStyle(
+                                  color: Neon.textDim, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    const _DayNightSwitch(),
+                  ]),
                 ]),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    style:
-                        FilledButton.styleFrom(backgroundColor: Neon.violet),
-                    onPressed: _saving ? null : _save,
-                    child: Text(_saving ? 'Saving…' : 'Save'),
-                  ),
+
+                _sectionLabel('Voice'),
+                Text(
+                  'Tap a voice — it applies to your next conversation.',
+                  style: TextStyle(color: Neon.textDim, fontSize: 12.5),
                 ),
+                const SizedBox(height: 10),
+                GridView.count(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 2.55,
+                  children: [
+                    for (final (id, title, tagline) in _voices)
+                      _voiceCard(id, title, tagline),
+                  ],
+                ),
+
                 if (_faces.isNotEmpty) ...[
                   _sectionLabel('Video avatar'),
                   _card(children: [
                     InkWell(
                       onTap: () async {
-                        final picked = await Navigator.of(context).push<String>(
+                        final picked =
+                            await Navigator.of(context).push<String>(
                           MaterialPageRoute(
                             builder: (_) => AvatarFaceScreen(
                               faces: _faces,
@@ -179,35 +227,36 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         }
                       },
                       child: Row(children: [
-                        const Icon(Icons.face_retouching_natural_rounded,
-                            color: Neon.cyan, size: 20),
+                        Icon(Icons.face_retouching_natural_rounded,
+                            color: Neon.textHi, size: 20),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Text('Avatar face',
                               style: TextStyle(
                                   color: Neon.textHi, fontSize: 14.5)),
                         ),
                         Text(
                           _faceName(_avatarId),
-                          style: const TextStyle(
-                              color: Neon.cyan, fontSize: 13.5),
+                          style: TextStyle(
+                              color: Neon.textLo,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(width: 6),
-                        const Icon(Icons.chevron_right_rounded,
+                        Icon(Icons.chevron_right_rounded,
                             color: Neon.textDim, size: 20),
                       ]),
                     ),
                   ]),
                 ],
+
                 _sectionLabel('Standing rules'),
-                const Text(
+                Text(
                   'Permanent instructions the assistant follows before every '
                   'decision — e.g. "Always ask before sending messages", '
                   '"Call me Dhanu". You can also just say these in '
                   'conversation.',
-                  style: TextStyle(
-                      color: Neon.textDim,
-                      fontSize: 12.5),
+                  style: TextStyle(color: Neon.textDim, fontSize: 12.5),
                 ),
                 const SizedBox(height: 10),
                 ..._rules.map((r) => Container(
@@ -216,17 +265,16 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: Neon.surfaceHigh,
-                        border: Border.all(
-                            color: Neon.line),
+                        color: Neon.surface,
+                        border: Border.all(color: Neon.line),
                       ),
                       child: Row(children: [
                         Expanded(
                             child: Text(r['instruction'] ?? '',
                                 style:
-                                    const TextStyle(color: Neon.textLo))),
+                                    TextStyle(color: Neon.textLo))),
                         IconButton(
-                          icon: const Icon(Icons.close_rounded,
+                          icon: Icon(Icons.close_rounded,
                               size: 18, color: Neon.textDim),
                           onPressed: () => _removeRule(r['id'] as int),
                         ),
@@ -236,7 +284,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   Expanded(
                     child: TextField(
                       controller: _newRule,
-                      style: const TextStyle(color: Neon.textHi),
+                      style: TextStyle(color: Neon.textHi),
                       decoration: _dec('Add a rule', 'Always…'),
                       onSubmitted: (_) => _addRule(),
                     ),
@@ -244,9 +292,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   const SizedBox(width: 8),
                   IconButton(
                       onPressed: _addRule,
-                      icon: const Icon(Icons.add_circle_rounded,
-                          color: Neon.cyan)),
+                      icon: Icon(Icons.add_circle_rounded,
+                          color: Neon.textHi)),
                 ]),
+
                 _sectionLabel('About & legal'),
                 _card(children: [
                   _legalLink('Privacy Policy', '/legal/privacy'),
@@ -258,6 +307,55 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     );
   }
 
+  Widget _voiceCard(String id, String title, String tagline) {
+    final selected = _voice == id;
+    return GestureDetector(
+      onTap: () => _pickVoice(id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? Neon.textHi.withValues(alpha: 0.05)
+              : Neon.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? Neon.textHi : Neon.line,
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 13.5,
+                        fontWeight:
+                            selected ? FontWeight.w800 : FontWeight.w600,
+                      )),
+                  const SizedBox(height: 2),
+                  Text(tagline,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: Neon.textDim, fontSize: 10.5)),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_circle_rounded,
+                  color: Neon.textHi, size: 17),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _faceName(String id) {
     if (id.isEmpty) return 'Default';
     final f = _faces.firstWhere((m) => m['id'] == id, orElse: () => const {});
@@ -265,32 +363,29 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   }
 
   Widget _legalLink(String label, String path) => InkWell(
-        onTap: () => launchUrl(
-            Uri.parse('${ApiService.baseUrl}$path'),
+        onTap: () => launchUrl(Uri.parse('${ApiService.baseUrl}$path'),
             mode: LaunchMode.externalApplication),
         child: Row(children: [
           Expanded(
               child: Text(label,
-                  style: const TextStyle(color: Neon.textHi, fontSize: 14))),
-          const Icon(Icons.open_in_new_rounded,
+                  style: TextStyle(color: Neon.textHi, fontSize: 14))),
+          Icon(Icons.open_in_new_rounded,
               size: 16, color: Neon.textDim),
         ]),
       );
 
   Widget _sectionLabel(String t) => Padding(
-        padding: const EdgeInsets.only(top: 18, bottom: 8),
+        padding: const EdgeInsets.only(top: 20, bottom: 8),
         child: Text(t.toUpperCase(),
-            style: const TextStyle(
-                color: Neon.textDim,
-                fontSize: 11,
-                letterSpacing: 1.2)),
+            style: TextStyle(
+                color: Neon.textDim, fontSize: 11, letterSpacing: 1.2)),
       );
 
   Widget _card({required List<Widget> children}) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Neon.surfaceHigh,
+          color: Neon.surface,
           border: Border.all(color: Neon.line),
         ),
         child: Column(children: children),
@@ -299,31 +394,106 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   InputDecoration _dec(String label, String hint) => InputDecoration(
         labelText: label,
         hintText: hint,
-        labelStyle: const TextStyle(color: Neon.textLo),
-        hintStyle: const TextStyle(color: Neon.textDim),
+        labelStyle: TextStyle(color: Neon.textLo),
+        hintStyle: TextStyle(color: Neon.textDim),
         filled: true,
-        fillColor: Neon.surfaceHigh,
+        fillColor: Neon.surface,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none),
       );
+}
 
-  Widget _dropdown(String label, String value, Map<String, String> items,
-          ValueChanged<String> onChanged) =>
-      InputDecorator(
-        decoration: _dec(label, ''),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: items.containsKey(value) ? value : '',
-            isExpanded: true,
-            dropdownColor: const Color(0xFF17162A),
-            style: const TextStyle(color: Neon.textHi),
-            items: items.entries
-                .map((e) => DropdownMenuItem(
-                    value: e.key, child: Text(e.value)))
-                .toList(),
-            onChanged: (v) => onChanged(v ?? ''),
+/// ─────────────────────────────────────────────────────────────────────────
+///  DAY/NIGHT SWITCH — a little sky you tap. Light: pale morning with a
+///  sun. Dark: ink night with a moon and stars. The knob drifts across
+///  like the hours passing. Pure ornament wrapped around one boolean.
+/// ─────────────────────────────────────────────────────────────────────────
+class _DayNightSwitch extends StatelessWidget {
+  const _DayNightSwitch();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeController.dark,
+      builder: (_, dark, __) => GestureDetector(
+        onTap: () {
+          HapticFeedback.mediumImpact();
+          ThemeController.toggle();
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+          width: 64,
+          height: 34,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(100),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: dark
+                  ? const [Color(0xFF141A33), Color(0xFF0B0D18)]
+                  : const [Color(0xFFBFDFFF), Color(0xFFE8F3FF)],
+            ),
+            border: Border.all(color: Neon.line),
+          ),
+          child: Stack(
+            children: [
+              // Stars come out at night.
+              for (final (dx, dy, s) in const [
+                (0.22, 0.30, 2.0),
+                (0.38, 0.62, 1.5),
+                (0.30, 0.18, 1.2),
+              ])
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 300),
+                  opacity: dark ? 0.9 : 0.0,
+                  child: Align(
+                    alignment: Alignment(dx * 2 - 1, dy * 2 - 1),
+                    child: Container(
+                      width: s,
+                      height: s,
+                      decoration: const BoxDecoration(
+                          color: Colors.white, shape: BoxShape.circle),
+                    ),
+                  ),
+                ),
+              AnimatedAlign(
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeOutCubic,
+                alignment:
+                    dark ? Alignment.centerRight : Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.all(3),
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: dark
+                          ? const Color(0xFFE8EAF6)
+                          : const Color(0xFFFFC531),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (dark
+                                  ? const Color(0xFFE8EAF6)
+                                  : const Color(0xFFFFB020))
+                              .withValues(alpha: 0.45),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: dark
+                        ? const Icon(Icons.nightlight_round,
+                            size: 15, color: Color(0xFF141A33))
+                        : null,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
+  }
 }

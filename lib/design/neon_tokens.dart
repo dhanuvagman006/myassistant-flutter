@@ -10,51 +10,80 @@ import 'package:flutter/material.dart';
 class Neon {
   Neon._();
 
-  // Core palette — deep, confident accents that hold contrast on white.
-  static const violet = Color(0xFF6D28D9); // primary
-  static const cyan = Color(0xFF0E7490); // secondary (deep teal)
-  static const pink = Color(0xFFBE185D); // accent
-  static const lime = Color(0xFF4D7C0F); // highlight (olive)
-  static const bg = Color(0xFFF7F7FB); // app background: violet-tinted paper
-  static const surface = Color(0xFFFFFFFF); // cards, sheets
-  static const surfaceHigh = Color(0xFFEEEFF6); // raised wells, inputs
-  static const success = Color(0xFF15803D);
-  static const warning = Color(0xFFB45309);
-  static const error = Color(0xFFDC2626);
+  /// THEME SWITCH. The token API stays the same everywhere; flipping this
+  /// swaps every value below. Set ONLY through ThemeController, which
+  /// persists the choice and rebuilds the app.
+  static bool isDark = false;
 
-  // Text — near-black ink with a violet undertone, not pure grey.
-  static const textHi = Color(0xFF1B1D28); // headings, primary text
-  static const textLo = Color(0xFF585E70); // secondary text
-  static const textDim = Color(0xFF9BA0B0); // hints, disabled
+  static void setDark(bool v) => isDark = v;
+
+  // Core palette — deep, confident accents on white; brighter siblings on
+  // ink so contrast holds in the dark.
+  static Color get violet =>
+      isDark ? const Color(0xFF9B85F5) : const Color(0xFF6D28D9);
+  static Color get cyan =>
+      isDark ? const Color(0xFF4CC9E8) : const Color(0xFF0E7490);
+  static Color get pink =>
+      isDark ? const Color(0xFFF472B6) : const Color(0xFFBE185D);
+  static Color get lime =>
+      isDark ? const Color(0xFFA3D65C) : const Color(0xFF4D7C0F);
+  static Color get bg =>
+      isDark ? const Color(0xFF0F1118) : const Color(0xFFF7F7FB);
+  static Color get surface =>
+      isDark ? const Color(0xFF181B25) : const Color(0xFFFFFFFF);
+  static Color get surfaceHigh =>
+      isDark ? const Color(0xFF232734) : const Color(0xFFEEEFF6);
+  static Color get success =>
+      isDark ? const Color(0xFF4ADE80) : const Color(0xFF15803D);
+  static Color get warning =>
+      isDark ? const Color(0xFFFBBF24) : const Color(0xFFB45309);
+  static Color get error =>
+      isDark ? const Color(0xFFF87171) : const Color(0xFFDC2626);
+
+  // Text — ink on paper, chalk on ink.
+  static Color get textHi =>
+      isDark ? const Color(0xFFF2F3F8) : const Color(0xFF1B1D28);
+  static Color get textLo =>
+      isDark ? const Color(0xFFA9AEC0) : const Color(0xFF585E70);
+  static Color get textDim =>
+      isDark ? const Color(0xFF6B7080) : const Color(0xFF9BA0B0);
+
+  /// The GROUND color for things painted in [textHi] — icon-on-ink tiles,
+  /// text on the primary button. Tracks the theme so "white on ink" in
+  /// light mode becomes "ink on chalk" in dark mode automatically.
+  static Color get onInk => bg;
 
   // Hairlines on cards
-  static Color get line => const Color(0xFF141627).withValues(alpha: 0.08);
-  static Color get lineBright =>
-      const Color(0xFF141627).withValues(alpha: 0.14);
+  static Color get line => isDark
+      ? const Color(0xFFEAEBF5).withValues(alpha: 0.10)
+      : const Color(0xFF141627).withValues(alpha: 0.08);
+  static Color get lineBright => isDark
+      ? const Color(0xFFEAEBF5).withValues(alpha: 0.16)
+      : const Color(0xFF141627).withValues(alpha: 0.14);
 
   // Gradients
-  static const gVioletCyan = LinearGradient(
+  static LinearGradient get gVioletCyan => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [violet, cyan]);
-  static const gPinkViolet = LinearGradient(
+  static LinearGradient get gPinkViolet => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [pink, violet]);
-  static const gCyanLime = LinearGradient(
+  static LinearGradient get gCyanLime => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [cyan, lime]);
-  static const gVioletPink = LinearGradient(
+  static LinearGradient get gVioletPink => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [violet, pink]);
 
   /// Tri-color sweep used by the assistant orb — the app's signature.
-  static const gOrb = SweepGradient(
-    colors: [violet, cyan, pink, violet],
-    stops: [0.0, 0.4, 0.75, 1.0],
-  );
+  static SweepGradient get gOrb => SweepGradient(
+        colors: [violet, cyan, pink, violet],
+        stops: const [0.0, 0.4, 0.75, 1.0],
+      );
 
   // Spacing scale
   static const s1 = 4.0, s2 = 8.0, s3 = 12.0, s4 = 16.0;
@@ -80,10 +109,11 @@ class Neon {
             offset: const Offset(0, 6)),
       ];
 
-  /// Neutral card shadow — barely-there depth for white surfaces.
+  /// Neutral card shadow — barely-there depth for light surfaces, a real
+  /// black lift in the dark.
   static List<BoxShadow> get cardShadow => [
         BoxShadow(
-            color: const Color(0xFF141627).withValues(alpha: 0.06),
+            color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.06),
             blurRadius: 18,
             offset: const Offset(0, 6)),
       ];

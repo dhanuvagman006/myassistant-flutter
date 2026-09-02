@@ -10,13 +10,13 @@ import '../design/neon_tokens.dart';
 /// `design/neon_tokens.dart` and use [Neon] directly — treat these as
 /// deprecated aliases to be burned down screen by screen.
 class AppColors {
-  static const peacock = Neon.violet; // primary actions
+  static final peacock = Neon.violet; // primary actions
   static const peacockDeep = Color(0xFF5B21B6); // pressed / emphasis violet
-  static const peacockLight = Neon.cyan; // orb + info highlights
-  static const marigold = Neon.warning; // voice & alerts (amber)
-  static const ink = Neon.bg; // app background
-  static const mist = Neon.textHi; // primary text on dark
-  static const danger = Neon.error;
+  static final peacockLight = Neon.cyan; // orb + info highlights
+  static final marigold = Neon.warning; // voice & alerts (amber)
+  static final ink = Neon.bg; // app background
+  static final mist = Neon.textHi; // primary text on dark
+  static final danger = Neon.error;
 }
 
 class AppTheme {
@@ -46,7 +46,7 @@ class AppTheme {
   static ThemeData light() {
     final scheme = ColorScheme.fromSeed(
       seedColor: Neon.violet,
-      brightness: Brightness.light,
+      brightness: Neon.isDark ? Brightness.dark : Brightness.light,
       primary: Neon.violet,
       onPrimary: Colors.white,
       secondary: Neon.cyan,
@@ -61,7 +61,8 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: Neon.bg,
-      textTheme: _text(ThemeData.light().textTheme),
+      textTheme: _text(
+          (Neon.isDark ? ThemeData.dark() : ThemeData.light()).textTheme),
       splashFactory: InkSparkle.splashFactory,
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -73,7 +74,7 @@ class AppTheme {
           fontWeight: FontWeight.w700,
           color: Neon.textHi,
         ),
-        iconTheme: const IconThemeData(color: Neon.textHi),
+        iconTheme: IconThemeData(color: Neon.textHi),
       ),
       cardTheme: CardThemeData(
         elevation: 0,
@@ -169,11 +170,11 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(Neon.rMd),
-          borderSide: const BorderSide(color: Neon.cyan, width: 1.6),
+          borderSide: BorderSide(color: Neon.cyan, width: 1.6),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(Neon.rMd),
-          borderSide: const BorderSide(color: Neon.error),
+          borderSide: BorderSide(color: Neon.error),
         ),
       ),
       dialogTheme: DialogThemeData(
@@ -187,7 +188,7 @@ class AppTheme {
         contentTextStyle:
             GoogleFonts.manrope(fontSize: 14.5, color: Neon.textLo, height: 1.45),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: Neon.surface,
         modalBackgroundColor: Neon.surface,
         showDragHandle: true,
@@ -214,13 +215,13 @@ class AppTheme {
                 : Neon.surfaceHigh),
       ),
       progressIndicatorTheme:
-          const ProgressIndicatorThemeData(color: Neon.cyan),
+          ProgressIndicatorThemeData(color: Neon.cyan),
       listTileTheme: ListTileThemeData(
         iconColor: Neon.textLo,
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(Neon.rMd)),
       ),
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: Neon.violet,
         foregroundColor: Colors.white,
       ),

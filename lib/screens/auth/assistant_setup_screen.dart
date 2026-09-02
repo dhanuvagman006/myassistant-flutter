@@ -173,8 +173,8 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                         color: Neon.textHi,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: const Icon(Icons.auto_awesome_rounded,
-                          color: Colors.white, size: 26),
+                      child: Icon(Icons.auto_awesome_rounded,
+                          color: Neon.onInk, size: 26),
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -188,9 +188,10 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
+                  Text(
                     'Pick any name you like — this is who you\'ll be '
-                    'talking to. You can change it anytime in Settings.',
+                    'talking to. You can rename it any time by simply '
+                    'telling it so.',
                     style: TextStyle(
                         color: Neon.textLo, fontSize: 14.5, height: 1.45),
                   ),
@@ -245,13 +246,13 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.graphic_eq_rounded,
+                                  Icon(Icons.graphic_eq_rounded,
                                       color: Neon.textHi, size: 19),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       '“Hi, I\'m $n. How can I help you today?”',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           color: Neon.textLo,
                                           fontSize: 13.5,
                                           fontStyle: FontStyle.italic,
@@ -267,19 +268,19 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                     const SizedBox(height: 14),
                     Text(_error!,
                         style:
-                            const TextStyle(color: Neon.error, fontSize: 13)),
+                            TextStyle(color: Neon.error, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: n.isEmpty || _busy ? null : _save,
                     style:
-                        FilledButton.styleFrom(backgroundColor: Neon.textHi),
+                        FilledButton.styleFrom(backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
                     child: _busy
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Colors.white),
+                                strokeWidth: 2.2, color: Neon.onInk),
                           )
                         : const Text('Continue'),
                   ),

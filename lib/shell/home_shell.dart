@@ -25,12 +25,16 @@ import '../services/usage_service.dart';
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
+  /// Survives the full-tree rebuild a theme flip causes, so toggling dark
+  /// mode in the You tab doesn't dump the user back on Home.
+  static int lastTab = 0;
+
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _tab = 0;
+  int _tab = HomeShell.lastTab;
 
   @override
   void initState() {
@@ -94,7 +98,7 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ],
           ),
-          child: const Icon(Icons.mic_rounded, color: Colors.white, size: 30),
+          child: Icon(Icons.mic_rounded, color: Neon.onInk, size: 30),
         ),
       ),
       bottomNavigationBar: BottomAppBar(
@@ -128,6 +132,7 @@ class _HomeShellState extends State<HomeShell> {
       child: InkWell(
         onTap: () {
           HapticFeedback.selectionClick();
+          HomeShell.lastTab = i;
           setState(() => _tab = i);
         },
         child: Column(

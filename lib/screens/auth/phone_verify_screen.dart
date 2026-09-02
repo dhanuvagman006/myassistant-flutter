@@ -124,8 +124,8 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                         color: Neon.textHi,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: const Icon(Icons.verified_user_rounded,
-                          color: Colors.white, size: 26),
+                      child: Icon(Icons.verified_user_rounded,
+                          color: Neon.onInk, size: 26),
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -144,7 +144,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                         ? 'Enter the code we sent to ${_svc.pendingNumber ?? _e164}.'
                         : 'This is how friends and family reach you through '
                             'their assistant. One number, one account.',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textLo, fontSize: 14.5, height: 1.45),
                   ),
                   const SizedBox(height: 26),
@@ -203,12 +203,12 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.error_outline_rounded,
+                          Icon(Icons.error_outline_rounded,
                               color: Neon.error, size: 19),
                           const SizedBox(width: 9),
                           Expanded(
                             child: Text(_error!,
-                                style: const TextStyle(
+                                style: TextStyle(
                                     color: Neon.error,
                                     fontSize: 13.5,
                                     height: 1.3)),
@@ -222,13 +222,13 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                   FilledButton(
                     onPressed: _busy ? null : (_codeSent ? _confirm : _send),
                     style:
-                        FilledButton.styleFrom(backgroundColor: Neon.textHi),
+                        FilledButton.styleFrom(backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
                     child: _busy
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 20,
                             width: 20,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Colors.white),
+                                strokeWidth: 2.2, color: Neon.onInk),
                           )
                         : Text(_codeSent ? 'Confirm' : 'Send code'),
                   ),
@@ -242,7 +242,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                                 _codeSent = false;
                                 _error = null;
                               }),
-                      child: const Text('Change number',
+                      child: Text('Change number',
                           style: TextStyle(color: Neon.textLo)),
                     ),
                   ],
@@ -254,7 +254,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                     const SizedBox(height: 4),
                     TextButton(
                       onPressed: _busy ? null : _devSkip,
-                      child: const Text(
+                      child: Text(
                         'Skip OTP (dev only)',
                         style: TextStyle(color: Neon.warning, fontSize: 13),
                       ),
@@ -265,7 +265,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                   TextButton(
                     onPressed:
                         _busy ? null : () => AuthService.instance.signOut(),
-                    child: const Text('Sign out',
+                    child: Text('Sign out',
                         style:
                             TextStyle(color: Neon.textDim, fontSize: 13)),
                   ),

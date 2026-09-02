@@ -65,7 +65,7 @@ class TodayPill extends StatelessWidget {
                       Container(
                         width: 22,
                         height: 22,
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           gradient: Neon.gVioletCyan,
                         ),
@@ -78,7 +78,7 @@ class TodayPill extends StatelessWidget {
                           b.summary,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Neon.textHi,
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -87,7 +87,7 @@ class TodayPill extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Icon(Icons.keyboard_arrow_up_rounded,
+                      Icon(Icons.keyboard_arrow_up_rounded,
                           size: 18, color: Neon.textDim),
                     ],
                   ),
@@ -179,7 +179,7 @@ class TodayBriefBody extends StatelessWidget {
                   _quickActions(context),
                   const SizedBox(height: 20),
                   if (!svc.loaded)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.symmetric(vertical: 32),
                       child: Center(
                           child: CircularProgressIndicator(
@@ -236,7 +236,7 @@ class TodayBriefBody extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Today',
+            Text('Today',
                 style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 24,
@@ -245,7 +245,7 @@ class TodayBriefBody extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               '${wk[now.weekday - 1]}, ${mo[now.month - 1]} ${now.day}',
-              style: const TextStyle(color: Neon.textLo, fontSize: 13),
+              style: TextStyle(color: Neon.textLo, fontSize: 13),
             ),
             if (b.screenTime != null)
               Padding(
@@ -253,11 +253,11 @@ class TodayBriefBody extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.timelapse_rounded,
+                    Icon(Icons.timelapse_rounded,
                         size: 12, color: Neon.textDim),
                     const SizedBox(width: 4),
                     Text(b.screenTime!,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Neon.textDim, fontSize: 11.5)),
                   ],
                 ),
@@ -275,7 +275,7 @@ class TodayBriefBody extends StatelessWidget {
             ),
             child: Text(
               b.weatherLine!,
-              style: const TextStyle(
+              style: TextStyle(
                   color: Neon.textHi, fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
@@ -312,11 +312,13 @@ class TodayBriefBody extends StatelessWidget {
                     color: Neon.textHi,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, size: 17, color: Colors.white),
+                  // onInk, not white — on the dark theme this tile is
+                  // chalk, and a white glyph on it was invisible.
+                  child: Icon(icon, size: 17, color: Neon.onInk),
                 ),
                 const SizedBox(height: 6),
                 Text(label,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textLo,
                         fontSize: 11,
                         fontWeight: FontWeight.w600)),
@@ -366,7 +368,7 @@ class TodayBriefBody extends StatelessWidget {
             Icon(icon, size: 15, color: Neon.textHi),
             const SizedBox(width: 7),
             Text(title,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -378,7 +380,7 @@ class TodayBriefBody extends StatelessWidget {
   Widget _emptyLine(String text) => Padding(
         padding: const EdgeInsets.only(left: 22, bottom: 4),
         child: Text(text,
-            style: const TextStyle(color: Neon.textDim, fontSize: 13)),
+            style: TextStyle(color: Neon.textDim, fontSize: 13)),
       );
 
   static String _timeLabel(int? atMs) {
@@ -415,7 +417,7 @@ class TodayBriefBody extends StatelessWidget {
       child: Text(a.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
               color: Neon.textHi, fontSize: 13.5, height: 1.25)),
     );
     // Meetings live in Google Calendar — nothing to delete here. Reminders
@@ -443,7 +445,7 @@ class TodayBriefBody extends StatelessWidget {
           HapticFeedback.mediumImpact();
           BriefService.instance.completePromise(p);
         },
-        child: const Padding(
+        child: Padding(
           padding: EdgeInsets.all(6),
           child: Icon(Icons.radio_button_unchecked_rounded,
               size: 18, color: Neon.pink),
@@ -455,13 +457,13 @@ class TodayBriefBody extends StatelessWidget {
           Text(p.text,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                   color: Neon.textHi, fontSize: 13.5, height: 1.25)),
           if (p.dueLabel != null)
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(p.dueLabel!,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Neon.warning,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600)),
@@ -501,7 +503,7 @@ class TodayBriefBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(m.from,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.cyan,
                     fontSize: 12,
                     fontWeight: FontWeight.w700)),
@@ -509,7 +511,7 @@ class TodayBriefBody extends StatelessWidget {
             Text(m.text,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi, fontSize: 13.5, height: 1.25)),
           ],
         ),
@@ -541,7 +543,7 @@ class TodayBriefBody extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Neon.textLo, fontSize: 10.5),
+                    style: TextStyle(color: Neon.textLo, fontSize: 10.5),
                   ),
                 ),
               ],
@@ -670,7 +672,7 @@ class _PersonSheetState extends State<_PersonSheet> {
                           Text(p.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: Neon.textHi,
                                   fontSize: 17,
                                   fontWeight: FontWeight.w700)),
@@ -679,7 +681,7 @@ class _PersonSheetState extends State<_PersonSheet> {
                             p.phone.isNotEmpty
                                 ? '${p.phone} · on the app'
                                 : 'on the app',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: Neon.textLo, fontSize: 12),
                           ),
                         ],
@@ -697,10 +699,10 @@ class _PersonSheetState extends State<_PersonSheet> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _sendMessage(),
                     style:
-                        const TextStyle(color: Neon.textHi, fontSize: 14),
+                        TextStyle(color: Neon.textHi, fontSize: 14),
                     decoration: InputDecoration(
                       hintText: 'Message for ${p.name.split(' ').first}…',
-                      hintStyle: const TextStyle(color: Neon.textDim),
+                      hintStyle: TextStyle(color: Neon.textDim),
                       filled: true,
                       fillColor: Neon.surfaceHigh,
                       border: OutlineInputBorder(
@@ -713,7 +715,7 @@ class _PersonSheetState extends State<_PersonSheet> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(Neon.rMd),
-                        borderSide: const BorderSide(color: Neon.violet),
+                        borderSide: BorderSide(color: Neon.violet),
                       ),
                     ),
                   ),
@@ -774,7 +776,7 @@ class _PersonSheetState extends State<_PersonSheet> {
             ),
             const SizedBox(width: 10),
             Text(label,
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 13.5,
                     fontWeight: FontWeight.w600)),
@@ -887,7 +889,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('New reminder',
+            Text('New reminder',
                 style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 17,
@@ -898,10 +900,10 @@ class _ReminderComposerState extends State<_ReminderComposer> {
               autofocus: true,
               minLines: 1,
               maxLines: 3,
-              style: const TextStyle(color: Neon.textHi, fontSize: 14),
+              style: TextStyle(color: Neon.textHi, fontSize: 14),
               decoration: InputDecoration(
                 hintText: 'Remind me to…',
-                hintStyle: const TextStyle(color: Neon.textDim),
+                hintStyle: TextStyle(color: Neon.textDim),
                 filled: true,
                 fillColor: Neon.surfaceHigh,
                 border: OutlineInputBorder(
@@ -914,7 +916,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(Neon.rMd),
-                  borderSide: const BorderSide(color: Neon.violet),
+                  borderSide: BorderSide(color: Neon.violet),
                 ),
               ),
             ),
@@ -958,7 +960,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
                               .contains(_dueLabel)
                           ? 'Pick time…'
                           : _dueLabel,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Neon.textLo,
                           fontSize: 12,
                           fontWeight: FontWeight.w600),
@@ -974,7 +976,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
                   child:
-                      const Text('Cancel', style: TextStyle(color: Neon.textLo)),
+                      Text('Cancel', style: TextStyle(color: Neon.textLo)),
                 ),
                 const SizedBox(width: 6),
                 FilledButton(

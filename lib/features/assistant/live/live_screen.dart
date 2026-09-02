@@ -390,7 +390,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
                             alignment: Alignment.centerLeft,
                             child: Text(
                               '${AssistantIdentity.name}: $_hariTranscript',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Neon.cyan,
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,

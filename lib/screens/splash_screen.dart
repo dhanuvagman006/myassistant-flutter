@@ -55,9 +55,9 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                     padding: const EdgeInsets.all(3),
                     child: Container(
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                           shape: BoxShape.circle, color: Neon.bg),
-                      child: const Center(
+                      child: Center(
                         child: Icon(Icons.auto_awesome_rounded,
                             size: 40, color: Neon.cyan),
                       ),
@@ -72,7 +72,7 @@ class _SplashScreenState extends State<SplashScreen>
                     letterSpacing: 4, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: Neon.s2),
-              const Text('Booting your assistant…',
+              Text('Booting your assistant…',
                   style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
               const SizedBox(height: Neon.s7),
               const NeonLoader(size: 30),

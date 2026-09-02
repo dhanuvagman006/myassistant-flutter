@@ -93,6 +93,7 @@ dependencies:
   firebase_auth: ^6.6.1             # phone OTP: proves the number is theirs
   firebase_messaging: ^16.6.0
   firebase_app_installations: ^0.4.3
+  flutter_sound: ^9.28.0
 
 dev_dependencies:
   flutter_test:

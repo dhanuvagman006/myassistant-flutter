@@ -89,7 +89,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
                 children: [
-                  const Text(
+                  Text(
                     'Connect external tools — files, issue trackers, calendars — '
                     'and your assistant can use them in conversation. Optional: '
                     'everything works without them.',
@@ -156,7 +156,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(s['name'] ?? '',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textHi,
                         fontSize: 16,
                         fontWeight: FontWeight.w600)),
@@ -174,7 +174,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           const SizedBox(height: 2),
           Text(
             '$label · ${s['transport']} · ${tools.length} tool${tools.length == 1 ? '' : 's'}',
-            style: const TextStyle(
+            style: TextStyle(
                 color: Neon.textDim, fontSize: 12.5),
           ),
           if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
@@ -184,7 +184,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           ],
           if (s['hasSecrets'] == true) ...[
             const SizedBox(height: 8),
-            const Row(children: [
+            Row(children: [
               Text('Authentication: ',
                   style: TextStyle(
                       color: Neon.textDim, fontSize: 12.5)),
@@ -249,8 +249,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
       context: context,
       builder: (c) => AlertDialog(
         backgroundColor: const Color(0xFF17162A),
-        title: Text('Remove $name?', style: const TextStyle(color: Neon.textHi)),
-        content: const Text(
+        title: Text('Remove $name?', style: TextStyle(color: Neon.textHi)),
+        content: Text(
             'Its tools will no longer be available to your assistant. Stored credentials are deleted.',
             style: TextStyle(color: Neon.textLo)),
         actions: [
@@ -287,7 +287,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Add MCP server',
+              Text('Add MCP server',
                   style: TextStyle(
                       color: Neon.textHi,
                       fontSize: 18,
@@ -309,7 +309,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               _field(token, 'Access token (optional)', '',
                   obscure: true),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'The token is encrypted on the server and never sent back to this app.',
                 style: TextStyle(
                     color: Neon.textDim, fontSize: 11.5),
@@ -355,12 +355,12 @@ class _McpServersScreenState extends State<McpServersScreen> {
       TextField(
         controller: c,
         obscureText: obscure,
-        style: const TextStyle(color: Neon.textHi),
+        style: TextStyle(color: Neon.textHi),
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          labelStyle: const TextStyle(color: Neon.textLo),
-          hintStyle: const TextStyle(color: Neon.textDim),
+          labelStyle: TextStyle(color: Neon.textLo),
+          hintStyle: TextStyle(color: Neon.textDim),
           filled: true,
           fillColor: Neon.surfaceHigh,
           border: OutlineInputBorder(

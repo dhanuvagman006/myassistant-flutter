@@ -57,7 +57,7 @@ class ToolCard extends StatelessWidget {
           activity.completed
               ? const Icon(Icons.check_circle_rounded,
                   size: 18, color: Color(0xFF35C48D))
-              : const SizedBox(
+              : SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
@@ -67,7 +67,7 @@ class ToolCard extends StatelessWidget {
           Expanded(
             child: Text(
               activity.label,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Neon.textHi,
                 fontSize: 13.5,
               ),
@@ -98,20 +98,20 @@ class SearchResultCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.public_rounded,
+                Icon(Icons.public_rounded,
                     size: 14, color: AppColors.peacockLight),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     result.source,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Neon.textDim,
                       fontSize: 12,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Icon(Icons.open_in_new_rounded,
+                Icon(Icons.open_in_new_rounded,
                     size: 14, color: Neon.textDim),
               ],
             ),
@@ -120,7 +120,7 @@ class SearchResultCard extends StatelessWidget {
               result.title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Neon.textHi,
                 fontSize: 14.5,
                 fontWeight: FontWeight.w600,
@@ -132,7 +132,7 @@ class SearchResultCard extends StatelessWidget {
                 result.snippet,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Neon.textLo,
                   fontSize: 13,
                   height: 1.35,
@@ -173,7 +173,7 @@ class ContactCard extends StatelessWidget {
               radius: 20,
               backgroundColor: AppColors.peacock.withValues(alpha: 0.6),
               child: Text(initial,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Neon.textHi, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 12),
@@ -182,19 +182,19 @@ class ContactCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(contact.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Neon.textHi,
                           fontSize: 15,
                           fontWeight: FontWeight.w600)),
                   Text(contact.phone,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Neon.textDim,
                           fontSize: 13)),
                 ],
               ),
             ),
             if (onTap != null)
-              const Icon(Icons.chevron_right_rounded,
+              Icon(Icons.chevron_right_rounded,
                   color: Neon.textDim),
           ],
         ),
@@ -233,7 +233,7 @@ class CallStatusCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${status.label} — ${status.contactName}',
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: Neon.textHi,
                       fontSize: 14.5,
                       fontWeight: FontWeight.w600),
@@ -303,7 +303,7 @@ class _StepLabel extends StatelessWidget {
   Widget build(BuildContext context) => Text(
         text,
         style:
-            const TextStyle(color: Neon.textDim, fontSize: 10.5),
+            TextStyle(color: Neon.textDim, fontSize: 10.5),
       );
 }
 
@@ -327,12 +327,12 @@ class ConfirmationCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.verified_user_outlined,
+              Icon(Icons.verified_user_outlined,
                   size: 18, color: AppColors.marigold),
               const SizedBox(width: 8),
               Text(
                 isCall ? 'Confirm this call' : 'Confirm',
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 15,
                     fontWeight: FontWeight.w700),
@@ -343,7 +343,7 @@ class ConfirmationCard extends StatelessWidget {
           if (isCall && pending.contact != null) ...[
             Text(
               'Call ${pending.contact!.name} (${pending.contact!.phone}) and say:',
-              style: const TextStyle(
+              style: TextStyle(
                   color: Neon.textLo, fontSize: 13.5),
             ),
             const SizedBox(height: 8),
@@ -356,7 +356,7 @@ class ConfirmationCard extends StatelessWidget {
               ),
               child: Text(
                 '“${pending.spokenPreview ?? pending.message ?? ''}”',
-                style: const TextStyle(
+                style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 14,
                     fontStyle: FontStyle.italic,
@@ -366,7 +366,7 @@ class ConfirmationCard extends StatelessWidget {
           ] else
             Text(
               pending.question ?? 'Shall I go ahead?',
-              style: const TextStyle(color: Neon.textHi, fontSize: 14.5),
+              style: TextStyle(color: Neon.textHi, fontSize: 14.5),
             ),
           const SizedBox(height: 14),
           Row(
@@ -486,7 +486,7 @@ class _DocumentCardState extends State<DocumentCard> {
                     child: document.isPdf
                         ? Container(
                             color: Neon.surfaceHigh,
-                            child: const Icon(Icons.picture_as_pdf_rounded,
+                            child: Icon(Icons.picture_as_pdf_rounded,
                                 color: Neon.pink, size: 26),
                           )
                         : Image.network(
@@ -498,7 +498,7 @@ class _DocumentCardState extends State<DocumentCard> {
                             cacheWidth: 130,
                             errorBuilder: (_, __, ___) => Container(
                               color: Neon.surfaceHigh,
-                              child: const Icon(Icons.description_rounded,
+                              child: Icon(Icons.description_rounded,
                                   color: Neon.cyan, size: 24),
                             ),
                           ),
@@ -513,7 +513,7 @@ class _DocumentCardState extends State<DocumentCard> {
                         document.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Neon.textHi,
                           fontSize: 14.5,
                           fontWeight: FontWeight.w600,
@@ -522,7 +522,7 @@ class _DocumentCardState extends State<DocumentCard> {
                       if (_date.isNotEmpty) ...[
                         const SizedBox(height: 3),
                         Text(_date,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: Neon.textLo, fontSize: 12)),
                       ],
                       if (document.summary.isNotEmpty) ...[
@@ -531,7 +531,7 @@ class _DocumentCardState extends State<DocumentCard> {
                           document.summary,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Neon.textLo,
                             fontSize: 12.5,
                             height: 1.3,
@@ -542,7 +542,7 @@ class _DocumentCardState extends State<DocumentCard> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                const Icon(Icons.open_in_full_rounded,
+                Icon(Icons.open_in_full_rounded,
                     size: 16, color: Neon.textDim),
               ],
             ),
@@ -559,7 +559,7 @@ class _DocumentCardState extends State<DocumentCard> {
                     padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                   icon: _sending
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 15,
                           height: 15,
                           child: CircularProgressIndicator(
@@ -625,7 +625,7 @@ class ScriptCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.description_rounded,
+                Icon(Icons.description_rounded,
                     color: Neon.cyan, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
@@ -633,7 +633,7 @@ class ScriptCard extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Neon.textHi,
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -643,7 +643,7 @@ class ScriptCard extends StatelessWidget {
                 InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: () => Share.share(content, subject: title),
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(4),
                     child:
                         Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
@@ -654,7 +654,7 @@ class ScriptCard extends StatelessWidget {
                   InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: onClose,
-                    child: const Padding(
+                    child: Padding(
                       padding: EdgeInsets.all(4),
                       child: Icon(Icons.close_rounded,
                           color: Neon.textLo,
@@ -670,7 +670,7 @@ class ScriptCard extends StatelessWidget {
                 content,
                 maxLines: 7,
                 overflow: TextOverflow.fade,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Neon.textHi,
                   fontSize: 13.5,
                   height: 1.45,
@@ -731,7 +731,7 @@ class _TextReaderPage extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(22, 14, 22, 48),
         child: SelectableText(
           content,
-          style: const TextStyle(
+          style: TextStyle(
             color: Neon.textHi,
             fontSize: 17,
             height: 1.6,
@@ -802,7 +802,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       height: 160,
                       alignment: Alignment.center,
                       color: Neon.surfaceHigh,
-                      child: const Icon(Icons.movie_rounded,
+                      child: Icon(Icons.movie_rounded,
                           color: Neon.cyan, size: 42),
                     )
                   : GestureDetector(
@@ -823,14 +823,14 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                                 height: 200,
                                 alignment: Alignment.center,
                                 color: Neon.surfaceHigh,
-                                child: const CircularProgressIndicator(
+                                child: CircularProgressIndicator(
                                     color: Neon.violet, strokeWidth: 2.5),
                               ),
                         errorBuilder: (_, __, ___) => Container(
                           height: 120,
                           alignment: Alignment.center,
                           color: Neon.surfaceHigh,
-                          child: const Text("Couldn't load the image.",
+                          child: Text("Couldn't load the image.",
                               style: TextStyle(color: Neon.textLo)),
                         ),
                       ),
@@ -840,7 +840,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
           const SizedBox(height: 10),
           Row(
             children: [
-              const Icon(Icons.auto_awesome_rounded,
+              Icon(Icons.auto_awesome_rounded,
                   color: Neon.violet, size: 16),
               const SizedBox(width: 7),
               Expanded(
@@ -850,7 +850,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       : widget.document.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Neon.textLo,
                     fontSize: 12.5,
                     height: 1.3,
@@ -859,7 +859,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
               ),
               const SizedBox(width: 8),
               _sending
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
@@ -868,7 +868,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                   : InkWell(
                       borderRadius: BorderRadius.circular(10),
                       onTap: _share,
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.all(4),
                         child: Icon(Icons.share_rounded,
                             color: Neon.cyan, size: 20),
@@ -879,7 +879,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                 InkWell(
                   borderRadius: BorderRadius.circular(10),
                   onTap: widget.onClose,
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(4),
                     child: Icon(Icons.close_rounded,
                         color: Neon.textLo,
@@ -918,8 +918,8 @@ class _DocumentViewer extends StatelessWidget {
             fit: BoxFit.contain,
             loadingBuilder: (context, child, p) => p == null
                 ? child
-                : const CircularProgressIndicator(color: Neon.cyan),
-            errorBuilder: (_, __, ___) => const Padding(
+                : CircularProgressIndicator(color: Neon.cyan),
+            errorBuilder: (_, __, ___) => Padding(
               padding: EdgeInsets.all(24),
               child: Text("Couldn't load this document.",
                   style: TextStyle(color: Neon.textLo)),

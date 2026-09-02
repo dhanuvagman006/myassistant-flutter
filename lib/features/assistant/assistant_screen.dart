@@ -174,7 +174,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
   Widget _presenceStage(double h) {
     return Container(
       key: const ValueKey('presence'),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: RadialGradient(
           center: Alignment(0, -0.25),
           radius: 1.1,
@@ -198,63 +198,90 @@ class _AssistantScreenState extends State<AssistantScreen> {
     );
   }
 
-  /// Legibility for the text and controls laid over video.
+  /// Legibility for the text and controls laid over the stage.
+  ///
+  /// Over VIDEO this must never be white — the old light-theme wash sat on
+  /// the avatar like fog. A video call gets what every video call gets:
+  /// faint DARK edges top and bottom, and untouched picture in between.
+  /// The presence stage needs no scrim at all (dark text on light ground).
   Widget _scrims() => IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Neon.bg.withValues(alpha: 0.85),
-                Colors.transparent,
-                Neon.bg.withValues(alpha: 0.35),
-                Neon.bg.withValues(alpha: 0.95),
-              ],
-              stops: const [0.0, 0.22, 0.62, 1.0],
-            ),
-          ),
-        ),
+        child: _hasVideo
+            ? DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.30),
+                      Colors.transparent,
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.34),
+                    ],
+                    stops: const [0.0, 0.16, 0.80, 1.0],
+                  ),
+                ),
+              )
+            : const SizedBox.shrink(),
       );
 
   /* ---------------------------------------------------------------- */
   /* TOP                                                              */
   /* ---------------------------------------------------------------- */
 
-  Widget _topBar() => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 10, 12, 0),
-        child: Row(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _persona.displayName,
-                  style: const TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
+  Widget _topBar() {
+    // Over video the chrome flips to white — ink text vanished into the
+    // picture once the white scrim was removed.
+    final onVideo = _hasVideo;
+    final hi = onVideo ? Colors.white : Neon.textHi;
+    final lo = onVideo ? Colors.white70 : Neon.textLo;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 12, 0),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _persona.displayName,
+                style: TextStyle(
+                  color: hi,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
                 ),
-                const SizedBox(height: 3),
-                _statusRow(),
-              ],
-            ),
-            const Spacer(),
-            _iconButton(
-              icon: Icons.keyboard_arrow_down_rounded,
-              onTap: () => Navigator.of(context).maybePop(),
-            ),
-          ],
-        ),
-      );
+              ),
+              const SizedBox(height: 3),
+              _statusRow(lo),
+            ],
+          ),
+          const Spacer(),
+          // Face-to-face toggle: brings the video avatar into the call
+          // (or drops back to voice-only). Filled icon = face mode on.
+          _iconButton(
+            icon: engine.faceMode
+                ? Icons.videocam_rounded
+                : Icons.videocam_outlined,
+            tint: engine.faceMode ? hi : lo,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              engine.toggleFaceMode();
+            },
+          ),
+          _iconButton(
+            icon: Icons.keyboard_arrow_down_rounded,
+            tint: lo,
+            onTap: () => Navigator.of(context).maybePop(),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// Status as a live dot plus a word. Replaces the old LIVE/OFFLINE pill,
   /// which only ever said whether the socket was up — not what the
   /// assistant was actually doing, which is what the user wants to know.
-  Widget _statusRow() => Row(
+  Widget _statusRow(Color textColor) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           _pulseDot(_statusColor),
@@ -264,8 +291,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
             child: Text(
               _statusText,
               key: ValueKey(_statusText),
-              style: const TextStyle(
-                color: Neon.textLo,
+              style: TextStyle(
+                color: textColor,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0.1,
@@ -307,17 +334,17 @@ class _AssistantScreenState extends State<AssistantScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.error_outline_rounded,
+                Icon(Icons.error_outline_rounded,
                     color: Neon.error, size: 17),
                 const SizedBox(width: 9),
                 Expanded(
                   child: Text(
                     engine.errorMessage ?? '',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: Neon.textHi, fontSize: 13, height: 1.3),
                   ),
                 ),
-                const Icon(Icons.close_rounded,
+                Icon(Icons.close_rounded,
                     color: Neon.textDim, size: 16),
               ],
             ),
@@ -442,8 +469,11 @@ class _AssistantScreenState extends State<AssistantScreen> {
             child: Text(
               hint,
               key: ValueKey(hint),
-              style: const TextStyle(
-                color: Neon.textLo,
+              style: TextStyle(
+                // Sits on the dark bottom scrim over video.
+                color: _hasVideo
+                    ? Colors.white.withValues(alpha: 0.85)
+                    : Neon.textLo,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,

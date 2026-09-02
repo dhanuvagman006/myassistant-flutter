@@ -87,7 +87,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
       builder: (context, child) {
         return Theme(
           data: ThemeData.dark().copyWith(
-            colorScheme: const ColorScheme.dark(
+            colorScheme: ColorScheme.dark(
               primary: AppColors.marigold,
               onPrimary: Colors.white,
               surface: Color(0xFF1E2230),
@@ -216,13 +216,13 @@ class _SurveyScreenState extends State<SurveyScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
           children: [
-            const Text('Let me get to know you',
+            Text('Let me get to know you',
                 style: TextStyle(
                     color: Neon.textHi,
                     fontSize: 26,
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            const Text(
+            Text(
                 'A few quick things — so your assistant feels like she already knows you.',
                 style: TextStyle(color: AppColors.mist, fontSize: 14.5)),
             const SizedBox(height: 26),
@@ -242,7 +242,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Or just tell me about yourself',
+                  Text('Or just tell me about yourself',
                       style: TextStyle(
                           color: Neon.textLo,
                           fontWeight: FontWeight.w600)),
@@ -250,8 +250,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
                   TextField(
                     controller: _aboutMe,
                     maxLines: 3,
-                    style: const TextStyle(color: Neon.textHi),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: Neon.textHi),
+                    decoration: InputDecoration(
                       hintText:
                           "e.g. I'm Dhanush, a software engineer in Mangalore working on AI systems.",
                       hintStyle: TextStyle(
@@ -272,7 +272,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
                   ),
                   if (_extractNote != null)
                     Text(_extractNote!,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: Neon.textDim,
                             fontSize: 12)),
                 ],
@@ -294,7 +294,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.auto_awesome_rounded,
+                    Icon(Icons.auto_awesome_rounded,
                         color: AppColors.marigold, size: 20),
                     const SizedBox(width: 12),
                     Expanded(
@@ -313,7 +313,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
                         ),
                       ),
                     ),
-                    const Icon(Icons.calendar_month_rounded,
+                    Icon(Icons.calendar_month_rounded,
                         color: Neon.textDim, size: 18),
                   ],
                 ),
@@ -387,17 +387,17 @@ class _SurveyScreenState extends State<SurveyScreen> {
   }
 
   Widget _label(String t) => Text(t,
-      style: const TextStyle(
+      style: TextStyle(
           color: AppColors.mist, fontWeight: FontWeight.w600, fontSize: 14));
 
   Widget _field(TextEditingController c, {String? hint}) => Padding(
         padding: const EdgeInsets.only(top: 8),
         child: TextField(
           controller: c,
-          style: const TextStyle(color: Neon.textHi),
+          style: TextStyle(color: Neon.textHi),
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(color: Neon.textDim),
+            hintStyle: TextStyle(color: Neon.textDim),
             filled: true,
             fillColor: Neon.surfaceHigh,
             border: OutlineInputBorder(
