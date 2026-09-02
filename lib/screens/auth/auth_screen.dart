@@ -32,6 +32,11 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _gender; // male | female | other — picked on sign-up
   bool _busy = false;
   bool _obscure = true;
+
+  /// Explicit consent for account creation — the checkbox must be ticked
+  /// before Create account works. Sign-IN keeps the lighter "by
+  /// continuing" line; the box guards REGISTRATION.
+  bool _agree = false;
   String? _error;
 
   @override
@@ -62,6 +67,11 @@ class _AuthScreenState extends State<AuthScreen> {
 
   void _submitEmail() {
     if (!_formKey.currentState!.validate()) return;
+    if (_isSignUp && !_agree) {
+      setState(() => _error =
+          'Please accept the Terms and Privacy Policy to create your account.');
+      return;
+    }
     final auth = AuthService.instance;
     _run(() => _isSignUp
         ? auth.signUp(
@@ -144,6 +154,13 @@ class _AuthScreenState extends State<AuthScreen> {
                                       prefixIcon:
                                           Icon(Icons.person_outline_rounded),
                                     ),
+                                    // Mandatory: the assistant addresses the
+                                    // user by name everywhere; a nameless
+                                    // account reads broken from minute one.
+                                    validator: (v) =>
+                                        (v == null || v.trim().length < 2)
+                                            ? 'Please enter your name'
+                                            : null,
                                   ),
                                   const SizedBox(height: 14),
                                   // Gender — personalizes the assistant.
@@ -242,6 +259,85 @@ class _AuthScreenState extends State<AuthScreen> {
                                         color: Neon.error,
                                         fontSize: 13.5,
                                         height: 1.3)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      // REGISTRATION CONSENT — an explicit box to tick,
+                      // with both documents one tap away.
+                      if (_isSignUp) ...[
+                        const SizedBox(height: 16),
+                        InkWell(
+                          onTap: () => setState(() {
+                            _agree = !_agree;
+                            if (_agree) _error = null;
+                          }),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: Checkbox(
+                                  value: _agree,
+                                  activeColor: Neon.textHi,
+                                  checkColor: Neon.onInk,
+                                  side: BorderSide(
+                                      color: Neon.textLo, width: 1.6),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(6)),
+                                  onChanged: (v) => setState(() {
+                                    _agree = v ?? false;
+                                    if (_agree) _error = null;
+                                  }),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text.rich(
+                                  TextSpan(
+                                    text: 'I have read and accept the ',
+                                    style: TextStyle(
+                                        color: Neon.textLo,
+                                        fontSize: 12.5,
+                                        height: 1.45),
+                                    children: [
+                                      TextSpan(
+                                        text: 'Terms & Conditions',
+                                        style: TextStyle(
+                                            color: Neon.textHi,
+                                            fontWeight: FontWeight.w600,
+                                            decoration:
+                                                TextDecoration.underline),
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () => launchUrl(
+                                              Uri.parse(
+                                                  '${ApiService.baseUrl}/legal/terms'),
+                                              mode: LaunchMode
+                                                  .externalApplication),
+                                      ),
+                                      const TextSpan(text: ' and the '),
+                                      TextSpan(
+                                        text: 'Privacy Policy',
+                                        style: TextStyle(
+                                            color: Neon.textHi,
+                                            fontWeight: FontWeight.w600,
+                                            decoration:
+                                                TextDecoration.underline),
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () => launchUrl(
+                                              Uri.parse(
+                                                  '${ApiService.baseUrl}/legal/privacy'),
+                                              mode: LaunchMode
+                                                  .externalApplication),
+                                      ),
+                                      const TextSpan(text: '.'),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ],
                           ),

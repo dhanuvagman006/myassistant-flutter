@@ -5,6 +5,7 @@ import 'package:myassistant/services/api_service.dart';
 
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
+import 'app_feedback.dart';
 import 'brief_service.dart';
 
 /// Registers this device with the backend so other people's agents can
@@ -51,10 +52,14 @@ class PushService {
       // inbox and are SPOKEN by Hari — that is the product: your assistant
       // tells you, you don't read a banner.
       FirebaseMessaging.onMessage.listen((m) {
-        // App is open in the foreground — speak it right now.
+        // App is open in the foreground. DON'T speak unprompted — the user
+        // may be reading, in a meeting, on another screen. A quiet toast
+        // + the Home feed carry the news; the voice delivers it when the
+        // user opens a conversation or taps the notification.
         if (m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message arrived (foreground)');
-          AssistantEngine.instance.announceIncomingMessages();
+          AppFeedback.toast(
+              'New message from your circle — tap the mic and I\'ll read it.');
           BriefService.instance.refresh(force: true);
         }
       });

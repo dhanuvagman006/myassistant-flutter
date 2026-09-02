@@ -9,6 +9,7 @@ import '../../services/assistant_identity.dart';
 import '../../shell/home_shell.dart';
 import '../splash_screen.dart';
 import 'guide_screen.dart';
+import 'permissions_screen.dart';
 import 'welcome_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -33,10 +34,18 @@ class AssistantSetupGate extends StatefulWidget {
 
 class _AssistantSetupGateState extends State<AssistantSetupGate> {
   static const _doneKey = 'assistant_named_v1';
+  static const _welcomeKey = 'welcomed_v1';
   bool? _needed;
 
-  /// True only right after the naming step actually ran — the one moment
-  /// that earns the celebration screen. Returning users never see it.
+  /// HARD permission gate: false until every required permission is
+  /// granted. Checked on every launch, so a permission revoked later
+  /// brings the gate back instead of letting features silently fail.
+  bool _permsOk = false;
+
+  /// One welcome moment per INSTALL: brand-new accounts get it after the
+  /// naming step; a returning account on a fresh install gets it right
+  /// after sign-in (a reinstall that lands silently on the dashboard read
+  /// as broken).
   bool _celebrate = false;
 
   /// The quick guide that follows the celebration, skippable throughout.
@@ -50,8 +59,10 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
 
   Future<void> _check() async {
     bool needed = false;
+    bool welcomed = false;
     try {
       final prefs = await SharedPreferences.getInstance();
+      welcomed = prefs.getBool(_welcomeKey) == true;
       if (prefs.getBool(_doneKey) == true) {
         needed = false;
       } else {
@@ -69,7 +80,23 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
         }
       }
     } catch (_) {}
-    if (mounted) setState(() => _needed = needed);
+    final permsOk = await allRequiredPermissionsGranted();
+    if (mounted) {
+      setState(() {
+        _needed = needed;
+        _permsOk = permsOk;
+        // Returning account, fresh install → welcome now (naming flow
+        // handles its own celebration through _markDone).
+        _celebrate = !needed && !welcomed;
+      });
+    }
+  }
+
+  Future<void> _markWelcomed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_welcomeKey, true);
+    } catch (_) {}
   }
 
   Future<void> _markDone() async {
@@ -90,16 +117,22 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
     return switch (_needed) {
       null => const SplashScreen(),
       true => AssistantSetupScreen(onDone: _markDone),
-      false => _celebrate
-          ? WelcomeScreen(
-              onDone: () => setState(() {
-                    _celebrate = false;
-                    _guide = true;
-                  }))
-          : _guide
-              ? GuideScreen(
-                  onDone: () => setState(() => _guide = false))
-              : const HomeShell(),
+      false => !_permsOk
+          ? PermissionsScreen(
+              onDone: () => setState(() => _permsOk = true))
+          : _celebrate
+              ? WelcomeScreen(
+                  onDone: () {
+                    _markWelcomed();
+                    setState(() {
+                      _celebrate = false;
+                      _guide = true;
+                    });
+                  })
+              : _guide
+                  ? GuideScreen(
+                      onDone: () => setState(() => _guide = false))
+                  : const HomeShell(),
     };
   }
 }
@@ -285,9 +318,13 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                         : const Text('Continue'),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: _busy ? null : widget.onDone,
-                    child: const Text('Skip for now'),
+                  // No skip: an unnamed assistant renders as "Assistant"
+                  // everywhere and reads broken. Naming is mandatory —
+                  // renaming later by voice stays free.
+                  Text(
+                    'Required — you can rename it any time later.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Neon.textDim, fontSize: 12),
                   ),
                 ],
               ),

@@ -82,10 +82,13 @@ class _MonthCalendarState extends State<MonthCalendar> {
     return _year == now.year && _month == now.month;
   }
 
-  Future<void> _fetch() async {
-    _lastFetch = DateTime.now();
-    final j = await ApiService.getJson('/brief/calendar?y=$_year&m=$_month');
-    if (!mounted) return;
+  /// Months already seen this app-run — painting these is instant, and the
+  /// network fetch that follows quietly replaces them.
+  static final Map<String, Map<String, dynamic>> _memCache = {};
+
+  String get _cacheKey => '$_year-$_month';
+
+  Map<int, List<_CalItem>> _parse(Map<String, dynamic>? j) {
     final out = <int, List<_CalItem>>{};
     final raw = (j?['days'] as Map?) ?? {};
     raw.forEach((k, v) {
@@ -101,8 +104,30 @@ class _MonthCalendarState extends State<MonthCalendar> {
               ))
           .toList();
     });
+    return out;
+  }
+
+  Future<void> _fetch() async {
+    _lastFetch = DateTime.now();
+    // Instant paint from this run's cache while the fresh copy loads.
+    final cached = _memCache[_cacheKey];
+    if (cached != null && _days.isEmpty) {
+      setState(() {
+        _days = _parse(cached);
+        _loading = false;
+      });
+    }
+    final wanted = _cacheKey; // guard against a month switch mid-flight
+    final j = await ApiService.getJson('/brief/calendar?y=$_year&m=$_month');
+    if (!mounted || wanted != _cacheKey) return;
+    if (j == null) {
+      // Network blip: keep whatever is on screen rather than blanking it.
+      if (_loading) setState(() => _loading = false);
+      return;
+    }
+    _memCache[_cacheKey] = j;
     setState(() {
-      _days = out;
+      _days = _parse(j);
       _loading = false;
     });
   }

@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
@@ -30,29 +33,61 @@ class _UpdatesScreenState extends State<UpdatesScreen> {
   bool _loading = true;
   bool _failed = false;
 
+  static const _cacheKey = 'news_cache_v1';
+
   @override
   void initState() {
     super.initState();
+    _hydrate();
     _load();
+  }
+
+  List<_Story> _parse(Map<String, dynamic>? j) =>
+      ((j?['headlines'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((h) => _Story(
+                (h['title'] as String?) ?? '',
+                (h['source'] as String?) ?? '',
+                (h['link'] as String?) ?? '',
+              ))
+          .where((s) => s.title.isNotEmpty)
+          .toList();
+
+  /// Last-good headlines paint instantly; the live fetch replaces them.
+  Future<void> _hydrate() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final s = prefs.getString(_cacheKey);
+      if (s == null || !mounted || !_loading) return;
+      final list = _parse(jsonDecode(s) as Map<String, dynamic>);
+      if (list.isEmpty || _stories.isNotEmpty) return;
+      setState(() {
+        _stories = list;
+        _loading = false;
+      });
+    } catch (_) {}
   }
 
   Future<void> _load() async {
     final j = await ApiService.getJson('/tools/news?max=20');
     if (!mounted) return;
-    final list = ((j?['headlines'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((h) => _Story(
-              (h['title'] as String?) ?? '',
-              (h['source'] as String?) ?? '',
-              (h['link'] as String?) ?? '',
-            ))
-        .where((s) => s.title.isNotEmpty)
-        .toList();
+    final list = _parse(j);
+    if (j == null && _stories.isNotEmpty) {
+      // Network blip with cached stories on screen — keep them.
+      setState(() => _loading = false);
+      return;
+    }
     setState(() {
       _stories = list;
       _loading = false;
       _failed = j == null;
     });
+    if (j != null && list.isNotEmpty) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_cacheKey, jsonEncode(j));
+      } catch (_) {}
+    }
   }
 
   Future<void> _open(_Story s) async {

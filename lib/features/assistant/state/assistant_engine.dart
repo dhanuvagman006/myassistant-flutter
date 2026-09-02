@@ -566,7 +566,7 @@ class AssistantEngine extends ChangeNotifier {
   /// mistaken for her having finished.
   Timer? _silenceSettle;
 
-  /// The avatar's video track while BeyondPresence is rendering, else null.
+  /// The avatar's video track while HeyGen is rendering, else null.
   /// The screen paints this into AssistantFace's live layer; null simply
   /// leaves the existing portrait in place.
   lk.VideoTrack? get avatarTrack => _avatar.videoTrack;
@@ -818,8 +818,8 @@ class AssistantEngine extends ChangeNotifier {
     _silenceSettle?.cancel();
     _silenceSettle = null;
     await _liveSvc.stop();
-    // Ends the BEY session and deletes the room — this is what stops the
-    // per-minute billing, so it runs on every exit from live mode.
+    // Ends the avatar session — this is what stops the per-minute
+    // billing, so it runs on every exit from live mode.
     await _avatar.stop();
     micLevel = 0;
     _setPhase(AssistantPhase.idle, silent: true);
@@ -1340,8 +1340,7 @@ class AssistantEngine extends ChangeNotifier {
         // Voice-driven deep linking to external apps like Uber, Swiggy, Zomato.
         final url = e['url'] as String?;
         if (url != null && url.isNotEmpty) {
-          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-          // Auto-resume conversation after firing intent
+          _openExternalUrl(url);
           _setPhase(AssistantPhase.completed);
         }
         break;
@@ -1685,6 +1684,28 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
 
+    // No contacts permission = no lookup = no call. Say EXACTLY that —
+    // the worst outcome is the assistant claiming a call it never made.
+    if (!await CallService.instance.ensurePermission()) {
+      AppFeedback.toast(
+          'Contacts permission is off — the call to "$name" was NOT placed. '
+          'Enable Contacts in Settings.');
+      if (liveActive) {
+        _liveSvc.sendText(
+            '[SYSTEM] ERROR: Contacts permission is turned off on this '
+            'phone, so "$name" could not be looked up and NO call was '
+            'placed. Tell me plainly that the call failed because contacts '
+            'access is off, and that I should enable the Contacts '
+            'permission in the phone settings. Do NOT say the call was '
+            'made.');
+      } else {
+        await _speakReply(
+            "I couldn't place that call — contacts permission is turned "
+            'off. Enable it in Settings and ask me again.');
+      }
+      return;
+    }
+
     List<ContactMatch> matches = const [];
     try {
       final found = await CallService.instance.findContacts(name);
@@ -1732,14 +1753,17 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     if (matches.isEmpty) {
-      // Tell whichever brain is running, so Hari says it instead of the
-      // user waiting on a call that can never come.
+      // Tell whichever brain is running, so the assistant says it instead
+      // of the user waiting on a call that can never come.
+      AppFeedback.toast('No contact named "$name" found — no call placed.');
       if (liveActive) {
         _liveSvc.sendText(
-            '[SYSTEM] No contact named "$name" was found on the phone. '
-            'Tell me that briefly.');
+            '[SYSTEM] ERROR: No contact named "$name" was found on the '
+            'phone, so NO call was placed. Tell me that plainly — do NOT '
+            'say the call was made.');
       } else {
-        await _speakReply("I couldn't find $name in your contacts.");
+        await _speakReply("I couldn't find $name in your contacts, so no "
+            'call was placed.');
       }
       return;
     }
@@ -1786,10 +1810,15 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     final ok = await CallService.instance.call(contact.phone);
+    if (!ok) {
+      AppFeedback.toast(
+          'The phone could not start the call to ${contact.name}.');
+    }
     if (liveActive) {
       _liveSvc.sendText(ok
           ? '[SYSTEM] The phone is dialling ${contact.name} now.'
-          : '[SYSTEM] The phone could not start the call to ${contact.name}. Tell me briefly.');
+          : '[SYSTEM] ERROR: The phone could NOT start the call to '
+              '${contact.name} — no call is happening. Tell me plainly.');
     }
   }
 
@@ -1844,6 +1873,15 @@ class AssistantEngine extends ChangeNotifier {
       ]);
       return;
     }
+    if (!await CallService.instance.ensurePermission()) {
+      // The server will report "not found" — make sure the user learns the
+      // REAL reason on screen instead of blaming their address book.
+      AppFeedback.toast(
+          'Contacts permission is off — "$name" can\'t be looked up. '
+          'Enable Contacts in Settings.');
+      await _api.sendContactMatches(const []);
+      return;
+    }
     try {
       final found = await CallService.instance.findContacts(name);
       final matches = <Map<String, dynamic>>[];
@@ -1860,6 +1898,58 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   // ---------------- helpers ----------------
+
+  /// Opens a provider deep link (Swiggy, Uber, …) and NEVER fails silently.
+  ///
+  /// The server wraps Android links as `intent://…;package=…;
+  /// S.browser_fallback_url=…;end`, which url_launcher cannot always
+  /// resolve — historically this call was fire-and-forget, so "order a
+  /// biryani" could end with nothing on screen and no error anywhere.
+  /// Now: try the intent as-is, then the https link into the provider's
+  /// own app, then the browser — and if ALL of that fails, say so out
+  /// loud instead of leaving the user waiting for food that isn't coming.
+  Future<void> _openExternalUrl(String url) async {
+    // Unwrap intent:// → the target's https form, kept for fallbacks.
+    String https = url;
+    if (url.startsWith('intent://')) {
+      final fb = RegExp(r'S\.browser_fallback_url=([^;]+);').firstMatch(url);
+      https = fb != null
+          ? Uri.decodeComponent(fb.group(1)!)
+          : 'https://${url.substring(9).split('#').first}';
+    }
+
+    var ok = false;
+    if (url != https) {
+      try {
+        ok = await launchUrl(Uri.parse(url),
+            mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
+    if (!ok) {
+      // The provider's app claims its own https links (app links) — this
+      // opens Swiggy itself rather than a browser tab when installed.
+      try {
+        ok = await launchUrl(Uri.parse(https),
+            mode: LaunchMode.externalNonBrowserApplication);
+      } catch (_) {}
+    }
+    if (!ok) {
+      try {
+        ok = await launchUrl(Uri.parse(https),
+            mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
+    if (!ok) {
+      AppFeedback.toast(
+          'Could not open the app for that — nothing was ordered or booked.');
+      if (liveActive) {
+        _liveSvc.sendText(
+            '[SYSTEM] ERROR: The phone could not open the app for that '
+            'action, so NOTHING was ordered or booked. Tell me plainly '
+            'that it failed.');
+      }
+    }
+  }
 
   /// User closed the generated-image card (X or swipe) — conversation
   /// continues clean.

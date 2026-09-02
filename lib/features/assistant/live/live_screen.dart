@@ -36,7 +36,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
 
   final AvatarService _avatar = AvatarService.instance;
 
-  /// Null until BeyondPresence is actually rendering. Everything about the
+  /// Null until the avatar (HeyGen) is actually rendering. Everything about the
   /// screen falls back to the orb while it is, so a slow or unavailable
   /// avatar costs the user nothing but a plainer picture.
   lk.VideoTrack? _avatarTrack;
@@ -145,8 +145,8 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
     _pulseController.dispose();
     _liveSvc.stop();
     _avatar.onChanged = null;
-    // Ends the BEY session. Fire-and-forget: dispose cannot await, but the
-    // backend also tears the room down when the live socket closes.
+    // Ends the avatar session. Fire-and-forget: dispose cannot await, but
+    // the backend also tears it down when the live socket closes.
     _avatar.stop();
     super.dispose();
   }
@@ -195,7 +195,7 @@ class _LiveScreenState extends State<LiveScreen> with TickerProviderStateMixin {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // The avatar owns the full screen while BEY is rendering. The
+          // The avatar owns the full screen while it is rendering. The
           // ambient glow below is what audio-only mode falls back to, so
           // a missing avatar looks intentional rather than broken.
           if (_avatarTrack != null)

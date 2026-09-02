@@ -80,7 +80,7 @@ class LiveService {
   void Function()? onClosed;
   void Function(double level)? onMicLevel; // 0..1 for the orb
   void Function(bool speaking)? onSpeaking; // playback started/stopped
-  void Function(Uint8List chunk)? onAudioChunk; // For external renderer (Simli)
+  void Function(Uint8List chunk)? onAudioChunk; // For external renderer (avatar)
 
   // ---- streaming playback state ----
   bool _fsOpen = false;

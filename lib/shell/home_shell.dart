@@ -44,8 +44,9 @@ class _HomeShellState extends State<HomeShell> {
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
-    // Messages that arrived while the app was closed still get SPOKEN.
-    engine.announceIncomingMessages();
+    // Deliberately NO message announcing here: launching the app must be
+    // SILENT. Unread messages sit in the Home feed and are spoken when
+    // the user starts a conversation or taps the message notification.
     // Silent no-ops until their permissions are granted.
     UsageService.instance.syncIfPermitted();
     LocationService.instance.refresh();

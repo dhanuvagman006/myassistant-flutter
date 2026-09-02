@@ -9,15 +9,15 @@ import '../core/log.dart';
 ///
 /// The assistant's brain is unchanged: voice still goes up the /live/ws
 /// socket to Gemini. What changes is where the REPLY comes out. The
-/// backend puts Gemini's audio into a LiveKit room, BeyondPresence renders
-/// a lip-synced human against it, and this service subscribes to what BEY
+/// backend streams Gemini's audio to HeyGen, which renders
+/// a lip-synced human against it, and this service subscribes to what it
 /// publishes — video AND audio together, so the mouth cannot drift from
 /// the words. While an avatar is live the app does not play the PCM that
 /// would otherwise arrive on the socket; that is the same voice, and
 /// playing both would double it.
 ///
 /// Every failure here is non-fatal by design. If the room never comes up,
-/// or BEY never renders, live mode carries on as audio-only rather than
+/// or the avatar never renders, live mode carries on as audio-only rather than
 /// taking the conversation down with it.
 class AvatarService {
   AvatarService._();
@@ -27,7 +27,7 @@ class AvatarService {
   String? _roomName;
   lk.EventsListener<lk.RoomEvent>? _events;
 
-  /// The avatar's video track once BEY is actually rendering, else null.
+  /// The avatar's video track once it is actually rendering, else null.
   lk.VideoTrack? get videoTrack => _videoTrack;
   lk.VideoTrack? _videoTrack;
 
@@ -58,7 +58,7 @@ class AvatarService {
   /// between the video and the fallback orb.
   void Function()? onChanged;
 
-  /// True when the backend has BEY + LiveKit configured AND the avatar is
+  /// True when the backend has the avatar provider configured AND it is
   /// renderable right now. Used to decide whether to even try.
   static Future<bool> isAvailable() async {
     try {
@@ -91,14 +91,14 @@ class AvatarService {
       _room = room;
       _roomName = s['room'] as String?;
 
-      // Listen BEFORE connecting: BEY may already be publishing by the
+      // Listen BEFORE connecting: the avatar may already be publishing by the
       // time we finish the handshake, and a missed event would leave the
       // screen on the fallback orb for the whole call.
       _events = room.createListener()
         ..on<lk.TrackSubscribedEvent>((e) {
           if (e.track is lk.VideoTrack) {
             _videoTrack = e.track as lk.VideoTrack;
-            // Simli publishes 512x512 WITH SIMULCAST, and the default
+            // Providers publish WITH SIMULCAST, and the default
             // subscription lands on a lower spatial layer — measured at
             // 360x360, which is a third of the pixels for no benefit on a
             // stream that is always full-screen. Ask for the top layer
@@ -143,7 +143,7 @@ class AvatarService {
   }
 
   /// Leave and tell the backend to tear the room down. The DELETE matters
-  /// for more than tidiness: the room is what BeyondPresence bills for,
+  /// for more than tidiness: the session is what the provider bills for,
   /// so a skipped teardown is a meter left running.
   void _setSpeaking(bool v) {
     if (_isSpeaking == v) return;

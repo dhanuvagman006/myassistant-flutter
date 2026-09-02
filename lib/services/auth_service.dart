@@ -128,28 +128,52 @@ class AuthService extends ChangeNotifier {
   /// Restore the previous session on app launch.
   /// Offline-friendly: if the server can't be reached we keep the saved
   /// session instead of logging the user out.
+  ///
+  /// INSTANT START: with a cached identity this returns without touching
+  /// the network — the splash was costing every single launch a full
+  /// /auth/me round-trip (up to 8s on a weak signal). The token is still
+  /// validated, just in the background; a revoked one signs out a moment
+  /// later instead of making every honest launch pay for the check.
+  static const _userCacheKey = 'auth_user_json_v1';
+
   Future<void> init() async {
     final token = await _storage.read(key: _tokenKey);
     if (token == null) return;
     ApiService.sessionToken = token;
+    final cached = await _storage.read(key: _userCacheKey);
+    if (cached != null) {
+      try {
+        user = AppUser.fromJson(jsonDecode(cached));
+        notifyListeners();
+        _validate(token); // background — no launch stall
+        return;
+      } catch (_) {} // corrupt cache → fall through to the blocking path
+    }
+    await _validate(token);
+    notifyListeners();
+  }
+
+  Future<void> _validate(String token) async {
     try {
       final r = await http.get(
         Uri.parse('${ApiService.baseUrl}/auth/me'),
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 8));
       if (r.statusCode == 200) {
-        user = AppUser.fromJson(jsonDecode(r.body)['user']);
+        final m = jsonDecode(r.body)['user'];
+        user = AppUser.fromJson(m);
+        _storage.write(key: _userCacheKey, value: jsonEncode(m));
         // Returning user: re-assert the token. FCM rotates it on reinstall,
         // restore and app-data clear, and a stale token silently drops
         // every notification.
         PushService.instance.syncToken();
       } else if (r.statusCode == 401) {
         await _clear(); // token expired or account gone
-      } else {
+      } else if (user == null) {
         user = const AppUser(id: -1, provider: 'cached'); // server hiccup — stay signed in
       }
     } catch (_) {
-      user = const AppUser(id: -1, provider: 'cached'); // offline — stay signed in
+      user ??= const AppUser(id: -1, provider: 'cached'); // offline — stay signed in
     }
     notifyListeners();
   }
@@ -165,7 +189,9 @@ class AuthService extends ChangeNotifier {
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 8));
       if (r.statusCode == 200) {
-        user = AppUser.fromJson(jsonDecode(r.body)['user']);
+        final m = jsonDecode(r.body)['user'];
+        user = AppUser.fromJson(m);
+        _storage.write(key: _userCacheKey, value: jsonEncode(m));
         notifyListeners();
       }
     } catch (_) {}
@@ -254,6 +280,7 @@ class AuthService extends ChangeNotifier {
     user = null;
     ApiService.sessionToken = null;
     await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _userCacheKey);
   }
 
   /// Shared tail of every flow: call the backend, store token, set user.

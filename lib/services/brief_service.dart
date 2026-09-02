@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/brief.dart';
 import 'api_service.dart';
@@ -20,10 +22,27 @@ class BriefService extends ChangeNotifier {
   Timer? _auto;
   bool _fetching = false;
 
+  static const _cacheKey = 'brief_cache_v1';
+
   /// Starts periodic refresh (call once from the home screen).
   void start() {
+    _hydrate(); // paint the LAST brief instantly; the fetch replaces it
     refresh();
     _auto ??= Timer.periodic(const Duration(minutes: 5), (_) => refresh());
+  }
+
+  /// Cold-start speed: the home screen shows yesterday's last-good brief
+  /// in one frame instead of a skeleton while the network round-trips.
+  Future<void> _hydrate() async {
+    if (loaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final s = prefs.getString(_cacheKey);
+      if (s == null || loaded) return; // a fast fetch may have won the race
+      brief = TodayBrief.fromJson(jsonDecode(s) as Map<String, dynamic>);
+      loaded = true;
+      notifyListeners();
+    } catch (_) {}
   }
 
   /// Refreshes if stale; forced refresh with [force].
@@ -40,6 +59,10 @@ class BriefService extends ChangeNotifier {
         loaded = true;
         _fetchedAt = DateTime.now();
         notifyListeners();
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_cacheKey, jsonEncode(j));
+        } catch (_) {}
       }
     } catch (_) {
       // Keep showing the previous brief — a blip must not blank the home.
