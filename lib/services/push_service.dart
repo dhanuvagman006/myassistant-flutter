@@ -6,6 +6,7 @@ import 'package:myassistant/services/api_service.dart';
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import 'app_feedback.dart';
+import 'avatar_message_service.dart';
 import 'brief_service.dart';
 
 /// Registers this device with the backend so other people's agents can
@@ -67,7 +68,7 @@ class PushService {
         // User tapped the notification — the app is coming to front.
         if (m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message opened from notification');
-          AssistantEngine.instance.announceIncomingMessages();
+          _deliver(m);
           BriefService.instance.refresh(force: true);
         }
       });
@@ -75,13 +76,29 @@ class PushService {
       FirebaseMessaging.instance.getInitialMessage().then((m) {
         if (m != null && m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message launched the app');
-          AssistantEngine.instance.announceIncomingMessages();
+          _deliver(m);
         }
       });
       _listenerAttached = true;
     } catch (e) {
       AppLog.add('push', 'init failed: $e');
     }
+  }
+
+  /// A tapped agent message: avatar media (the sender's AI face/voice)
+  /// shows as a popup; anything without media is spoken by the assistant
+  /// exactly as before. The popup service reports whether it consumed
+  /// pending rows, so both can coexist in one inbox sweep.
+  Future<void> _deliver(RemoteMessage m) async {
+    if (m.data['avatar'] == '1') {
+      final shown = await AvatarMessageService.instance.showPending();
+      if (shown) {
+        // Any remaining text-only rows still deserve their voice delivery.
+        AssistantEngine.instance.announceIncomingMessages();
+        return;
+      }
+    }
+    AssistantEngine.instance.announceIncomingMessages();
   }
 
   /// Called once the user is signed in. Requests notification permission

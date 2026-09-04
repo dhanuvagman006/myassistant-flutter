@@ -7,6 +7,7 @@ import '../design/theme_controller.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import 'avatar_face_screen.dart';
+import 'avatar_identity_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
@@ -249,6 +250,39 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     ),
                   ]),
                 ],
+
+                _sectionLabel('Your avatar identity'),
+                _card(children: [
+                  InkWell(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const AvatarIdentityScreen()),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.record_voice_over_rounded,
+                          color: Neon.textHi, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Send messages as you',
+                                style: TextStyle(
+                                    color: Neon.textHi, fontSize: 14.5)),
+                            const SizedBox(height: 1),
+                            Text(
+                                'Your face and voice on messages you send '
+                                '— with your consent.',
+                                style: TextStyle(
+                                    color: Neon.textDim, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded,
+                          color: Neon.textDim, size: 20),
+                    ]),
+                  ),
+                ]),
 
                 _sectionLabel('Standing rules'),
                 Text(

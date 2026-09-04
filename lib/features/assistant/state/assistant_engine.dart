@@ -1039,6 +1039,11 @@ class AssistantEngine extends ChangeNotifier {
       final j = await ApiService.getJson('/messages/unread');
       final list = (j?['messages'] as List?)
               ?.whereType<Map<String, dynamic>>()
+              // Messages with avatar media are delivered VISUALLY by the
+              // popup (AvatarMessageService) — speaking them here would
+              // both double-deliver and mark them read before the popup
+              // ever saw them.
+              .where((m) => (m['media'] ?? '') == '')
               .toList() ??
           const [];
       if (list.isEmpty) return;

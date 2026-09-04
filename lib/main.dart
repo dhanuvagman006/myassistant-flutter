@@ -12,6 +12,7 @@ import 'services/api_service.dart';
 import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
+import 'services/avatar_message_service.dart';
 import 'services/style_prefs.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -72,6 +73,9 @@ class MyAssistantApp extends StatelessWidget {
         title: 'MyAssistant',
         debugShowCheckedModeBanner: false,
         scaffoldMessengerKey: AppFeedback.messengerKey,
+        // Lets the avatar-message popup appear from a push tap no matter
+        // which screen is on top.
+        navigatorKey: AvatarMessageService.navigatorKey,
         theme: AppTheme.light(),
         darkTheme: AppTheme.light(),
         themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself
