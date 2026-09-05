@@ -29,7 +29,16 @@ class AppLog {
     _lines.add(line);
     if (_lines.length > _cap) _lines.removeAt(0);
     revision.value++;
-    if (kDebugMode) debugPrint(line);
+    // Mirrored to the platform log in ALL builds (not just debug): release
+    // is what runs on the real phones, and "works in debug, silent in
+    // release" is exactly the class of bug this buffer exists to catch.
+    // debugPrint is stripped in release, so go straight to print.
+    if (kDebugMode) {
+      debugPrint(line);
+    } else {
+      // ignore: avoid_print
+      print('AppLog $line');
+    }
   }
 
   /// Newest last. Copy — callers can't mutate the buffer.

@@ -137,6 +137,12 @@ class AuthService extends ChangeNotifier {
   static const _userCacheKey = 'auth_user_json_v1';
 
   Future<void> init() async {
+    // A 401 mid-session means the account is gone (deleted from the admin
+    // panel) or the token died. Re-verify against /auth/me — one flaky
+    // proxy response must not log anyone out — then sign out for real, so
+    // the app returns to the login screen instead of showing a ghost
+    // account until the next cold start.
+    ApiService.onSessionRejected = _onSessionRejected;
     final token = await _storage.read(key: _tokenKey);
     if (token == null) return;
     ApiService.sessionToken = token;
@@ -274,6 +280,31 @@ class AuthService extends ChangeNotifier {
     } catch (_) {}
     await _clear();
     notifyListeners();
+  }
+
+  bool _rejectCheckRunning = false;
+
+  Future<void> _onSessionRejected() async {
+    if (_rejectCheckRunning || !isSignedIn) return;
+    _rejectCheckRunning = true;
+    try {
+      final token = ApiService.sessionToken;
+      if (token == null) return;
+      final r = await http.get(
+        Uri.parse('${ApiService.baseUrl}/auth/me'),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 8));
+      // Only an authoritative 401 signs the user out; network errors and
+      // 5xx keep the session — the account may be fine and the server not.
+      if (r.statusCode == 401) {
+        await _clear();
+        notifyListeners(); // AuthGate swaps to the login screen
+      }
+    } catch (_) {
+      // Unreachable server proves nothing about the account.
+    } finally {
+      _rejectCheckRunning = false;
+    }
   }
 
   Future<void> _clear() async {

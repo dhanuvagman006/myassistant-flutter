@@ -73,6 +73,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
   @override
   void dispose() {
     engine.removeListener(_onStateChanged);
+    // Leaving this screen ends the conversation COMPLETELY — mic off,
+    // voice cut mid-word if needed. A hot microphone behind the Home
+    // dashboard is indistinguishable from surveillance.
+    engine.leaveConversation();
     super.dispose();
   }
 
@@ -188,10 +192,15 @@ class _AssistantScreenState extends State<AssistantScreen> {
           // The assistant's living presence — an organic aura instead of a
           // spinner: it breathes at rest, ripples with the user's voice,
           // pulses when Hari speaks, swirls while thinking.
-          child: AuraCore(
-            size: h * 0.40,
-            phase: engine.connected ? engine.phase : AssistantPhase.idle,
-            level: engine.micLevel,
+          // Level updates repaint the aura alone — routing them through the
+          // engine's main listener rebuilt this whole screen ~8×/second.
+          child: ValueListenableBuilder<double>(
+            valueListenable: engine.micLevelListenable,
+            builder: (_, level, __) => AuraCore(
+              size: h * 0.40,
+              phase: engine.connected ? engine.phase : AssistantPhase.idle,
+              level: level,
+            ),
           ),
         ),
       ),
@@ -457,11 +466,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SiriOrb(
-            size: 92,
-            phase: sessionUp ? engine.phase : AssistantPhase.idle,
-            level: engine.micLevel,
-            connected: sessionUp,
+          ValueListenableBuilder<double>(
+            valueListenable: engine.micLevelListenable,
+            builder: (_, level, __) => SiriOrb(
+              size: 92,
+              phase: sessionUp ? engine.phase : AssistantPhase.idle,
+              level: level,
+              connected: sessionUp,
+            ),
           ),
           const SizedBox(height: 8),
           AnimatedSwitcher(

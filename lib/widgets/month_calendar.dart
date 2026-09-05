@@ -74,7 +74,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
   }
 
   void _onBriefChanged() {
-    if (DateTime.now().difference(_lastFetch).inSeconds > 45) _fetch();
+    // 8s, not 45: the brief refreshing right after a turn is exactly the
+    // "something was just created" signal — a new reminder must appear on
+    // the month within seconds, not whenever the old guard felt like it.
+    if (DateTime.now().difference(_lastFetch).inSeconds > 8) _fetch();
   }
 
   bool get _isCurrentMonth {

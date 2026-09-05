@@ -149,7 +149,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             widget.onDone();
                           },
                           style: FilledButton.styleFrom(
-                              backgroundColor: Neon.textHi),
+                              backgroundColor: Neon.textHi,
+                              foregroundColor: Neon.onInk),
                           child: Text('Meet $assistant'),
                         ),
                       ),

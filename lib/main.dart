@@ -13,6 +13,7 @@ import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
 import 'services/avatar_message_service.dart';
+import 'services/brief_service.dart';
 import 'services/style_prefs.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -138,6 +139,19 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Ask again whenever the app leaves the foreground (F1).
     if (state == AppLifecycleState.paused) AppLock.instance.relock();
+    // Coming BACK to the foreground refetches the home brief. Without this
+    // the dashboard showed whatever the 5-minute timer last saw, which read
+    // as "changes only appear after closing and reopening the app".
+    if (state == AppLifecycleState.resumed) {
+      BriefService.instance.refresh(force: true);
+      // Re-assert the FCM token too. Idempotent and instant when already
+      // registered; rescues devices whose launch-time registration failed
+      // (offline start) and would otherwise miss every push until the next
+      // cold start.
+      if (AuthService.instance.isSignedIn) {
+        PushService.instance.syncToken(force: true);
+      }
+    }
   }
 
   void _onAuthChanged() {

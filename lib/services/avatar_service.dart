@@ -60,12 +60,28 @@ class AvatarService {
 
   /// True when the backend has the avatar provider configured AND it is
   /// renderable right now. Used to decide whether to even try.
+  ///
+  /// Cached briefly: this probe sits on the critical path of every live
+  /// start and mode switch, and availability does not change turn-to-turn.
+  /// Whether a SESSION can actually be reserved is decided by the POST in
+  /// [start] anyway, so a stale "true" costs nothing but that attempt.
+  static bool? _availCache;
+  static DateTime? _availCheckedAt;
   static Future<bool> isAvailable() async {
+    final at = _availCheckedAt;
+    if (_availCache != null &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(minutes: 5)) {
+      return _availCache!;
+    }
     try {
       final r = await ApiService.getJson('/live/avatar');
-      return r != null && r['available'] == true;
+      final ok = r != null && r['available'] == true;
+      _availCache = ok;
+      _availCheckedAt = DateTime.now();
+      return ok;
     } catch (_) {
-      return false;
+      return false; // transient failure — don't cache it
     }
   }
 
@@ -132,9 +148,19 @@ class AvatarService {
           _setSpeaking(e.speakers.any((p) => p is lk.RemoteParticipant));
         });
 
-      await room.connect(url, token);
-      AppLog.add('avatar', 'joined ${_roomName ?? "room"}');
-      return _roomName;
+      // Connect in the BACKGROUND. The caller only needs the room NAME to
+      // hand the live socket; serialising the LiveKit handshake here kept
+      // the voice session waiting a second or more for a step it doesn't
+      // depend on. A failed connect takes the same non-fatal path as every
+      // other failure in this service — the screen just keeps the orb.
+      final name = _roomName;
+      unawaited(room.connect(url, token).then((_) {
+        AppLog.add('avatar', 'joined ${name ?? "room"}');
+      }).catchError((e) {
+        AppLog.add('avatar', 'connect failed: $e');
+        if (identical(_room, room)) stop();
+      }));
+      return name;
     } catch (e) {
       AppLog.add('avatar', 'start failed: $e');
       await stop();
@@ -164,12 +190,16 @@ class AvatarService {
     _room = null;
     _roomName = null;
     if (room != null) {
-      try {
-        await ApiService.sendJson('/live/avatar/session/$room', method: 'DELETE');
-      } catch (_) {
-        // The backend also tears down when the live socket closes, and
-        // again on its own idle timer, so a failed DELETE is not a leak.
-      }
+      // Fire-and-forget: waiting a full round-trip here serialised every
+      // voice↔face mode switch behind an HTTP DELETE. The backend also
+      // tears down when the live socket closes, and again on its own idle
+      // timer, so neither a failed nor an in-flight DELETE is a leak.
+      unawaited(() async {
+        try {
+          await ApiService.sendJson('/live/avatar/session/$room',
+              method: 'DELETE');
+        } catch (_) {}
+      }());
     }
   }
 }

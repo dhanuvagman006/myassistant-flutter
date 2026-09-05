@@ -41,6 +41,13 @@ class _HomeShellState extends State<HomeShell> {
     super.initState();
     final engine = AssistantEngine.instance;
     engine.start();
+    // A tapped message notification opens the conversation through the
+    // same route as the mic button, so the assistant pops up and speaks.
+    engine.onOpenConversation = () {
+      if (!mounted || _conversationShowing) return false;
+      _openConversation();
+      return true;
+    };
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
@@ -52,20 +59,28 @@ class _HomeShellState extends State<HomeShell> {
     LocationService.instance.refresh();
   }
 
+  /// True while the conversation route is on top — the notification-tap
+  /// hook must not stack a second copy of the screen.
+  bool _conversationShowing = false;
+
   void _openConversation() {
     HapticFeedback.mediumImpact();
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        fullscreenDialog: true,
-        transitionDuration: const Duration(milliseconds: 280),
-        pageBuilder: (_, __, ___) => const AssistantScreen(),
-        transitionsBuilder: (_, anim, __, child) => SlideTransition(
-          position: Tween(begin: const Offset(0, 0.06), end: Offset.zero)
-              .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
-          child: FadeTransition(opacity: anim, child: child),
-        ),
-      ),
-    );
+    _conversationShowing = true;
+    Navigator.of(context)
+        .push(
+          PageRouteBuilder(
+            fullscreenDialog: true,
+            transitionDuration: const Duration(milliseconds: 280),
+            pageBuilder: (_, __, ___) => const AssistantScreen(),
+            transitionsBuilder: (_, anim, __, child) => SlideTransition(
+              position: Tween(begin: const Offset(0, 0.06), end: Offset.zero)
+                  .animate(
+                      CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+              child: FadeTransition(opacity: anim, child: child),
+            ),
+          ),
+        )
+        .whenComplete(() => _conversationShowing = false);
   }
 
   @override

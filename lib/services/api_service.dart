@@ -114,12 +114,30 @@ class ApiService {
         default:
           r = await _client.post(uri, headers: headers, body: payload);
       }
-      if (r.statusCode >= 300) return null;
+      if (r.statusCode >= 300) {
+        _flagAuthFailure(r.statusCode);
+        return null;
+      }
       final decoded = r.body.isEmpty ? {} : jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
     } catch (_) {
       return null;
     }
+  }
+
+  /// Fires when the backend rejects our session token (401) — the account
+  /// was deleted, or the token expired. AuthService wires this to a
+  /// re-verify + sign-out, so a deleted user's app returns to the login
+  /// screen on its own instead of limping along on cached data until the
+  /// next cold start. Throttled: one burst of failing calls is one signal.
+  static void Function()? onSessionRejected;
+  static DateTime _lastAuthReject = DateTime.fromMillisecondsSinceEpoch(0);
+  static void _flagAuthFailure(int status) {
+    if (status != 401 || sessionToken == null) return;
+    final now = DateTime.now();
+    if (now.difference(_lastAuthReject) < const Duration(seconds: 30)) return;
+    _lastAuthReject = now;
+    onSessionRejected?.call();
   }
 
   /// Small generic GET helper (used by the live-mode availability probe).
@@ -128,7 +146,10 @@ class ApiService {
       final r = await _client
           .get(Uri.parse('$baseUrl$path'), headers: _authHeaders)
           .timeout(const Duration(seconds: 6));
-      if (r.statusCode != 200) return null;
+      if (r.statusCode != 200) {
+        _flagAuthFailure(r.statusCode);
+        return null;
+      }
       final body = jsonDecode(r.body);
       return body is Map<String, dynamic> ? body : null;
     } catch (_) {

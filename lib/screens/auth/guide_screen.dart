@@ -180,6 +180,7 @@ class _GuideScreenState extends State<GuideScreen> {
                       onPressed: _next,
                       style: FilledButton.styleFrom(
                         backgroundColor: Neon.textHi,
+                        foregroundColor: Neon.onInk,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 28, vertical: 14),
                       ),

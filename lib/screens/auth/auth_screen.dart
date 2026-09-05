@@ -346,8 +346,13 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 20),
                       FilledButton(
                         onPressed: _busy ? null : _submitEmail,
+                        // foreground must be stated WITH the background:
+                        // painting the button textHi (near-white in dark
+                        // mode) while the label kept the theme's white
+                        // default made "Create account" white-on-white.
                         style: FilledButton.styleFrom(
-                            backgroundColor: Neon.textHi),
+                            backgroundColor: Neon.textHi,
+                            foregroundColor: Neon.onInk),
                         child: _busy
                             ? SizedBox(
                                 width: 20,

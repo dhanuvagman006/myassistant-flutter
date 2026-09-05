@@ -15,10 +15,12 @@ import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/app_feedback.dart';
+import '../../../services/auth_service.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
+import '../../../services/brief_service.dart';
 import '../../../services/contacts_sync_service.dart';
 import '../../../services/live_service.dart';
 import '../../../services/usage_service.dart';
@@ -46,7 +48,15 @@ class AssistantEngine extends ChangeNotifier {
   String? errorMessage;
 
   /// Live mic loudness 0..1 while listening — drives the hero animation.
-  double micLevel = 0;
+  ///
+  /// A ValueNotifier of its own, NOT part of notifyListeners: level updates
+  /// arrive ~8×/second for the whole conversation, and pushing each one
+  /// through the engine's main listener rebuilt the entire conversation
+  /// screen (video renderer included) on every mic frame. Only the orb
+  /// cares about this number, so only the orb listens to it.
+  final ValueNotifier<double> micLevelListenable = ValueNotifier<double>(0);
+  double get micLevel => micLevelListenable.value;
+  set micLevel(double v) => micLevelListenable.value = v;
 
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
@@ -86,6 +96,21 @@ class AssistantEngine extends ChangeNotifier {
   /// because navigation needs a BuildContext, which the engine has no
   /// business holding.
   void Function()? onOpenVideoMode;
+
+  /// Set by HomeShell: opens the conversation screen (same navigation as
+  /// tapping the mic) and returns true, or returns false when it is
+  /// already on screen. A tapped message notification uses this so the
+  /// assistant POPS UP, delivers the message through the live session,
+  /// and is already listening for the reply — instead of narrating over
+  /// whatever screen happened to be open.
+  bool Function()? onOpenConversation;
+  bool requestConversationOpen() {
+    try {
+      return onOpenConversation?.call() ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// True while the local TTS is reading a reply — the avatar's mouth and
   /// the "Speaking…" pill follow THIS, because the backend has already
@@ -191,8 +216,8 @@ class AssistantEngine extends ChangeNotifier {
     _ttsActive = true;
     _setPhase(AssistantPhase.speaking, silent: true);
     void feed() {
+      // Level-only update — the orb listens to micLevelListenable directly.
       micLevel = _voice.ttsLevel.value;
-      notifyListeners();
     }
 
     _voice.ttsLevel.addListener(feed);
@@ -239,7 +264,28 @@ class AssistantEngine extends ChangeNotifier {
       // re-open the mic from the continuous loop.
       final resumed = await _endBargeWatch();
       if (!resumed) _maybeContinueListening();
+      _refreshBriefSoon();
     }
+  }
+
+  /// A finished turn may have created a reminder or commitment — reflect it
+  /// on the Home brief now instead of whenever the 5-minute timer next
+  /// fires (users read "restart the app to see it" otherwise). Throttled so
+  /// rapid back-and-forth turns don't hammer /brief.
+  DateTime _briefRefreshedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  void _refreshBriefSoon() {
+    final now = DateTime.now();
+    // 5s: just enough to collapse a rapid burst of turns into one fetch.
+    // The old 20s window meant a freshly created reminder could sit
+    // invisible on Home/calendar — "I added it but nothing changed".
+    if (now.difference(_briefRefreshedAt) < const Duration(seconds: 5)) {
+      return;
+    }
+    _briefRefreshedAt = now;
+    // Small delay so the backend has committed the turn's side effects.
+    Future.delayed(const Duration(seconds: 2), () {
+      BriefService.instance.refresh(force: true);
+    });
   }
 
   /// If the backend stream dies mid-turn the app used to sit on
@@ -292,8 +338,40 @@ class AssistantEngine extends ChangeNotifier {
     if (name != null && name.isNotEmpty) greetingName = name;
     _conversationOpen = true;
     await start();
+    // LIVE FIRST. The old order sat through the whole spoken greeting —
+    // settle delay, TTS synthesis, playback — and only then began the
+    // live connect, so the mic wasn't hot until many seconds after the
+    // screen opened. Now the session connects immediately and the live
+    // model speaks the greeting itself, so "ready to talk" arrives with
+    // the first spoken words instead of after them.
+    if (!liveActive) {
+      final ok = await _startLive();
+      if (ok) {
+        // Pending agent messages ride the live session's own prompt (the
+        // proxy loads unread rows at setup), delivered after the greeting.
+        _greetThroughLive();
+        return;
+      }
+    }
+    // Classic fallback keeps its own TTS greeting — and must also deliver
+    // pending messages itself, since only the live path gets them in-prompt.
     await _maybeGreetOnReady();
-    if (!liveActive) await _startLive();
+    unawaited(announceIncomingMessages());
+  }
+
+  /// Speaks the opening greeting through the live session's own voice.
+  /// Same epoch bookkeeping as the classic greeting, so a session greets
+  /// at most once and a real reconnect may greet again.
+  void _greetThroughLive() {
+    if (!greetingEnabled) return;
+    if (_greetedEpoch == _sessionEpoch) return;
+    if (PhoneStateGuard.instance.inCall) return;
+    _greetedEpoch = _sessionEpoch;
+    final text = greetingFor(greetingName);
+    _liveSvc.sendText(
+        'Say this greeting to me now, in my language: "$text" — and if you '
+        'were given any messages from other people to deliver, deliver them '
+        'immediately after the greeting, naming each sender.');
   }
 
   /// A call started/rang — cut all audio and the mic immediately.
@@ -445,10 +523,7 @@ class AssistantEngine extends ChangeNotifier {
       // and never apologizes into silence.
       requireLatch: auto,
       noSpeechTimeoutMs: auto ? 2500 : 4000,
-      onLevel: (l) {
-        micLevel = l;
-        notifyListeners();
-      },
+      onLevel: (l) => micLevel = l,
     );
     micLevel = 0;
     AppLog.add('latency', 'capture ${_turnClock!.elapsedMilliseconds}ms');
@@ -482,10 +557,7 @@ class AssistantEngine extends ChangeNotifier {
               partial = p;
               notifyListeners();
             },
-            onLevel: (l) {
-              micLevel = l;
-              notifyListeners();
-            },
+            onLevel: (l) => micLevel = l,
           )
           .timeout(const Duration(seconds: 6), onTimeout: () => '');
       micLevel = 0;
@@ -603,10 +675,7 @@ class AssistantEngine extends ChangeNotifier {
       notifyListeners();
     };
     _liveSvc.onMicLevel = (l) {
-      if (!_liveSvc.playing) {
-        micLevel = l;
-        notifyListeners();
-      }
+      if (!_liveSvc.playing) micLevel = l;
     };
     _liveSvc.onSpeaking = (speaking) {
       _setPhase(
@@ -669,6 +738,7 @@ class AssistantEngine extends ChangeNotifier {
       }
     };
     _liveSvc.onTurnComplete = () {
+      _refreshBriefSoon();
       // End of Hari's turn — back to listening. Same reasoning as above:
       // without local audio there is no playback-finished event to wait on.
       // NOT used to return to listening: turn_complete means Gemini stopped
@@ -703,6 +773,13 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.idle, silent: true);
       }
       notifyListeners();
+      // UNEXPECTED close only — deliberate stops clear _active before the
+      // socket closes, so they never reach this callback. Gemini live
+      // sessions have hard duration limits and mobile networks blip; both
+      // used to dump the user into the classic record→STT→TTS loop (heard
+      // as "the agent suddenly got slow and robotic"). Reconnect instead,
+      // so the conversation stays speech-to-speech.
+      _maybeReviveLive();
     };
 
     _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
@@ -810,6 +887,54 @@ class AssistantEngine extends ChangeNotifier {
       return false;
     });
     return ok;
+  }
+
+  /// One automatic reconnect after an UNEXPECTED live-session close, so a
+  /// session-duration limit or a network blip doesn't silently demote the
+  /// conversation to the classic text pipeline. Throttled hard: if live is
+  /// genuinely down (quota, outage), one failed revive per window is all we
+  /// spend on it and the classic fallback still works on the next tap.
+  DateTime _lastLiveRevive = DateTime.fromMillisecondsSinceEpoch(0);
+  void _maybeReviveLive() {
+    if (!_conversationOpen) return;
+    if (PhoneStateGuard.instance.inCall) return;
+    final now = DateTime.now();
+    if (now.difference(_lastLiveRevive) < const Duration(seconds: 20)) return;
+    _lastLiveRevive = now;
+    Future.delayed(const Duration(seconds: 1), () async {
+      if (liveActive || _liveStartResult != null) return;
+      if (PhoneStateGuard.instance.inCall) return;
+      AppLog.add('live', 'session dropped — reconnecting');
+      await _startLive();
+    });
+  }
+
+  /// The user LEFT the conversation screen — back on Home, among the
+  /// calendar and cards, nothing may keep listening or talking. Kills the
+  /// live session, any in-flight TTS, any open capture, and closes the
+  /// continuous loop so the mic cannot quietly reopen itself behind the
+  /// dashboard. Reopening the screen starts everything fresh.
+  Future<void> leaveConversation() async {
+    _conversationOpen = false;
+    _conversationEnded = true; // the loop must not resume on its own
+    _speakQueue.clear();
+    if (_bargeMonitorOn) {
+      _bargeMonitorOn = false;
+      try {
+        await _voice.stopBargeInMonitor();
+      } catch (_) {}
+    }
+    try {
+      await _voice.stopSpeaking();
+    } catch (_) {}
+    try {
+      await _voice.cancelCapture();
+    } catch (_) {}
+    if (liveActive) await stopLive();
+    _ttsActive = false;
+    micLevel = 0;
+    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
   }
 
   Future<void> stopLive() async {
@@ -1050,9 +1175,21 @@ class AssistantEngine extends ChangeNotifier {
       await ApiService.sendJson('/messages/read',
           body: {'ids': [for (final m in list) m['id']]});
 
+      // A personal relay, not a readout: "Hey Allen, Dhanush said: …".
+      // The recipient hears their own name first — that instant of "this
+      // is for me" is what makes a spoken message land as a message.
+      final meFull = (greetingName ?? AuthService.instance.user?.name ?? '')
+          .trim();
+      final me = meFull.isEmpty ? '' : meFull.split(RegExp(r'\s+')).first;
+      final hey = me.isEmpty ? 'Hey,' : 'Hey $me,';
       final lines = [
         for (final m in list)
-          '${m['from'] ?? 'Someone'} says: ${m['message'] ?? ''}'
+          '$hey ${(m['from'] as String? ?? 'Someone').split(RegExp(r'\s+')).first}'
+              // auto = composed by the other person's assistant (interim
+              // scheduling acknowledgement) — never put words in the
+              // person's own mouth.
+              '${m['auto'] == true ? "'s assistant" : ''} '
+              'said: ${m['message'] ?? ''}'
       ];
       if (liveActive) {
         // The live model owns the audio — hand it the news to deliver.
