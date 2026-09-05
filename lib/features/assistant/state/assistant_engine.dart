@@ -371,7 +371,9 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.sendText(
         'Say this greeting to me now, in my language: "$text" — and if you '
         'were given any messages from other people to deliver, deliver them '
-        'immediately after the greeting, naming each sender.');
+        'immediately after the greeting, naming each sender. If you were '
+        'given no messages, say ONLY the greeting — never mention messages, '
+        'their absence, or an empty inbox.');
   }
 
   /// A call started/rang — cut all audio and the mic immediately.
