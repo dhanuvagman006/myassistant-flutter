@@ -48,3 +48,4 @@ android/app/*.keystore
 
 # Data dumps / exports — never commit
 *.csv
+*.hprof

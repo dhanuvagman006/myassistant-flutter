@@ -23,6 +23,7 @@ import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/contacts_sync_service.dart';
 import '../../../services/live_service.dart';
+import '../../../services/voice_id_service.dart';
 import '../../../services/usage_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
@@ -74,6 +75,11 @@ class AssistantEngine extends ChangeNotifier {
   /// UI hook (registered by HomeShell): present recalled documents as the
   /// full-screen swipe gallery, over whatever screen the user is on.
   bool Function(List<UserDocument> documents)? onShowDocuments;
+
+  /// Live interpreter mode ("be my translator") — while true the speaker
+  /// gate is open to everyone and the live model translates instead of
+  /// assisting. Never survives the session it was asked in.
+  bool translatorActive = false;
 
   /// AI creation just generated for the user ("draw me a poster") — the
   /// backend saved it as a document and sent its JSON along; shown as a
@@ -674,6 +680,14 @@ class AssistantEngine extends ChangeNotifier {
     await _voice.cancelCapture();
     _resetTurn();
 
+    // "Only my voice": score every utterance against the enrolled
+    // voiceprint before it reaches the model. No-op until the user has
+    // enrolled AND switched it on in settings.
+    final voiceId = VoiceIdService.instance;
+    await voiceId.load();
+    _liveSvc.speakerScorer = voiceId.scoreUtterance;
+    _liveSvc.speakerGateEnabled = voiceId.gateEnabled;
+
     _liveSvc.onReady = () {
       _liveStartResult?.complete(true);
       _liveStartResult = null;
@@ -775,6 +789,9 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.onClosed = () {
       _liveStartResult?.complete(false);
       _liveStartResult = null;
+      // A fresh session knows nothing of interpreter mode — never let the
+      // everyone-can-talk state leak past the session it was asked in.
+      translatorActive = false;
       if (phase != AssistantPhase.idle) {
         _setPhase(AssistantPhase.idle, silent: true);
       }
@@ -923,6 +940,7 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> leaveConversation() async {
     _conversationOpen = false;
     _conversationEnded = true; // the loop must not resume on its own
+    translatorActive = false; // interpreter never outlives the screen
     _speakQueue.clear();
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
@@ -1525,6 +1543,37 @@ class AssistantEngine extends ChangeNotifier {
               UserDocument.fromJson(docJson.cast<String, dynamic>());
           generatedImagePrompt = e['prompt'] as String? ?? '';
         }
+        break;
+
+      case 'translator':
+        // Live interpreter: while on, the speaker gate opens to everyone
+        // in the room and the live model translates each utterance
+        // between the two languages instead of assisting.
+        final on = e['on'] == true;
+        translatorActive = on;
+        _liveSvc.translatorBypass = on;
+        if (liveActive) {
+          if (on) {
+            final a = (e['from'] as String?)?.trim() ?? '';
+            final b = (e['to'] as String?)?.trim() ?? '';
+            _liveSvc.sendText(
+                '[SYSTEM] INTERPRETER MODE ON between $a and $b. From now '
+                'until told otherwise, several different people will speak. '
+                'For each utterance you hear: if it is in $a, say it in $b; '
+                'if it is in $b, say it in $a. Speak ONLY the translation — '
+                'no commentary, no answering questions yourself, no '
+                'greetings. Keep names and numbers exact. If an utterance '
+                'is in neither language, translate it into $a.');
+          } else {
+            _liveSvc.sendText(
+                '[SYSTEM] INTERPRETER MODE OFF. Stop translating; go back '
+                'to being my assistant and respond only to me as usual.');
+          }
+        }
+        AppFeedback.toast(on
+            ? 'Translator on — everyone near the phone is heard.'
+            : 'Translator off.');
+        notifyListeners();
         break;
 
       case 'open_video':

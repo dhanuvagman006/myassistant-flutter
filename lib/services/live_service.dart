@@ -8,6 +8,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../core/log.dart';
 import 'api_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -136,6 +137,45 @@ class LiveService {
   /// loud place the detector could in principle stay open, so cut it.
   static const _maxUtteranceMs = 30000;
 
+  // ---- SPEAKER GATE ("only my voice") -------------------------------------
+  //
+  // When the owner has enrolled their voice and switched the gate on, an
+  // utterance is HELD back (buffered, not streamed) until a speaker-ID
+  // score against the enrolled voiceprint accepts it; someone else's
+  // speech is dropped without a byte reaching the model. Silence between
+  // utterances still streams (Google's detector needs to hear pauses).
+  // Cost: the model hears an accepted turn ~1 s later than live — only
+  // when the gate is on. With the gate OFF this path is untouched: every
+  // frame streams unconditionally exactly as before.
+  //
+  // Translator mode ([translatorBypass]) opens the gate to everyone.
+
+  /// Scores an utterance (PCM16 @16 kHz) against the enrolled voice;
+  /// null = cannot judge (treated as accept). Wired by the engine.
+  Future<double?> Function(Uint8List pcm)? speakerScorer;
+
+  /// Master switch, mirrored from VoiceIdService by the engine.
+  bool speakerGateEnabled = false;
+
+  /// Translator mode: hear EVERYONE while on.
+  bool translatorBypass = false;
+
+  bool get _gateActive =>
+      speakerGateEnabled && !translatorBypass && speakerScorer != null;
+
+  static const _gateDecideMs = 1000; // speech collected before scoring
+  static const _gateMinSpeechMs = 300; // shorter = noise blip, drop
+  static const _gateAccept = 0.42; // cosine ≥ this → the enrolled speaker
+  static const _gateSoft = 0.30; // short clips are noisy: lean to owner
+
+  _GateState _gateState = _GateState.idle;
+  BytesBuilder? _gateBuf;
+  int _gateSpeechMs = 0;
+  int _gateQuietRunMs = 0;
+  int _gateUtterId = 0; // invalidates in-flight scores on reset
+  bool _gateDeciding = false;
+  bool _gateEndedWhileDeciding = false;
+
   /// PCM16 mono @16 kHz: 32 bytes per millisecond. Deriving duration from
   /// the buffer means the thresholds above stay honest whatever chunk size
   /// the recorder happens to hand us — assuming a fixed frame length would
@@ -172,6 +212,7 @@ class LiveService {
     _belowMs = 0;
     _utteranceMs = 0;
     _noiseFloor = 0.01;
+    _gateAbort();
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
 
     // Open the gapless PCM stream player up-front, so the very first reply
@@ -261,7 +302,10 @@ class LiveService {
           // or the model hears itself. Also drop any half-open turn so we
           // do not resume mid-utterance when she finishes.
           if (playing || remoteSpeaking) {
-            if (_speaking) _endUtterance();
+            if (_speaking) {
+              _gateAbort();
+              _endUtterance();
+            }
             return;
           }
           if (l == null) return;
@@ -280,7 +324,14 @@ class LiveService {
           // did — means the pause never arrives and the turn hangs open.
           // So the audio path is unconditional; the detection below is only
           // a probe for timing logs and for driving the orb.
-          _ch?.sink.add(Uint8List.fromList(chunk));
+          //
+          // EXCEPT with the speaker gate on: speech is held until the
+          // voiceprint accepts it (silence still streams live).
+          if (_gateActive) {
+            _gateFeed(chunk, loud, ms);
+          } else {
+            _ch?.sink.add(Uint8List.fromList(chunk));
+          }
 
           if (!_speaking) {
             if (!loud) {
@@ -296,7 +347,9 @@ class LiveService {
             _speaking = true;
             _belowMs = 0;
             _utteranceMs = 0;
-            _send({'type': 'activity_start'});
+            // Gated: the marker is sent only when the speaker is accepted,
+            // together with the buffered audio.
+            if (!_gateActive) _send({'type': 'activity_start'});
             return;
           }
 
@@ -396,7 +449,158 @@ class LiveService {
     _aboveMs = 0;
     _belowMs = 0;
     _utteranceMs = 0;
-    _send({'type': 'activity_end'});
+    if (!_gateActive) {
+      _send({'type': 'activity_end'});
+      return;
+    }
+    switch (_gateState) {
+      case _GateState.accepted:
+        _send({'type': 'activity_end'});
+        _gateReset();
+        break;
+      case _GateState.holding:
+        if (_gateDeciding) {
+          // Score still in flight — remember to close the turn when it
+          // lands (flush + activity_end there).
+          _gateEndedWhileDeciding = true;
+        } else if (_gateSpeechMs >= _gateMinSpeechMs) {
+          _gateDecide(utteranceOver: true);
+        } else {
+          _gateReset(); // too short to judge — a blip, not a turn
+        }
+        break;
+      case _GateState.rejected:
+      case _GateState.idle:
+        _gateReset();
+        break;
+    }
+  }
+
+  // ---- speaker-gate internals ----
+
+  /// Routes one mic frame while the gate is on. Quiet frames between
+  /// utterances stream live; the moment loudness appears everything is
+  /// buffered until the voiceprint decides.
+  void _gateFeed(List<int> chunk, bool loud, int ms) {
+    switch (_gateState) {
+      case _GateState.idle:
+        if (!loud) {
+          _ch?.sink.add(Uint8List.fromList(chunk));
+          return;
+        }
+        _gateState = _GateState.holding;
+        _gateBuf = BytesBuilder(copy: true);
+        _gateSpeechMs = 0;
+        _gateQuietRunMs = 0;
+        _gateUtterId++;
+        _gateDeciding = false;
+        _gateEndedWhileDeciding = false;
+        _gateBuf!.add(chunk);
+        _gateSpeechMs += ms;
+        break;
+
+      case _GateState.holding:
+        _gateBuf?.add(chunk);
+        if (loud) {
+          _gateSpeechMs += ms;
+          _gateQuietRunMs = 0;
+        } else {
+          _gateQuietRunMs += ms;
+          // Loudness died before the onset detector ever confirmed speech:
+          // a door slam, a cough. Drop it and go back to streaming silence.
+          if (!_speaking && _gateQuietRunMs >= 350 && !_gateDeciding) {
+            _gateReset();
+            return;
+          }
+        }
+        // A very long hold can only mean the state machines diverged —
+        // never let the buffer grow unbounded.
+        if ((_gateBuf?.length ?? 0) > 12 * 32000) {
+          _gateReset();
+          return;
+        }
+        if (_speaking && _gateSpeechMs >= _gateDecideMs && !_gateDeciding) {
+          _gateDecide(utteranceOver: false);
+        }
+        break;
+
+      case _GateState.accepted:
+        _ch?.sink.add(Uint8List.fromList(chunk));
+        break;
+
+      case _GateState.rejected:
+        break; // someone else's voice — drop until the utterance ends
+    }
+  }
+
+  /// Scores the buffered speech. On accept, the whole buffer (including
+  /// audio that arrived while scoring) is flushed so the model hears the
+  /// complete utterance; on reject the buffer dies here.
+  void _gateDecide({required bool utteranceOver}) {
+    final scorer = speakerScorer;
+    final buf = _gateBuf;
+    if (scorer == null || buf == null) {
+      _gateReset();
+      return;
+    }
+    _gateDeciding = true;
+    _gateEndedWhileDeciding = utteranceOver;
+    final id = _gateUtterId;
+    final snapshot = buf.toBytes(); // scoring input; buffer keeps growing
+    scorer(snapshot).then((score) {
+      if (!_active || id != _gateUtterId) return; // aborted meanwhile
+      _gateDeciding = false;
+      final speechMs = _gateSpeechMs;
+      final accept = score == null ||
+          score >= _gateAccept ||
+          (score >= _gateSoft && speechMs < 800);
+      AppLog.add(
+          'voiceid',
+          'utterance ${speechMs}ms score='
+          '${score?.toStringAsFixed(2) ?? '—'} → ${accept ? 'accept' : 'reject'}');
+      final over = _gateEndedWhileDeciding || !_speaking;
+      if (accept) {
+        _send({'type': 'activity_start'});
+        final full = _gateBuf?.toBytes() ?? snapshot;
+        try {
+          _ch?.sink.add(full);
+        } catch (_) {}
+        if (over) {
+          _send({'type': 'activity_end'});
+          _gateReset();
+        } else {
+          _gateState = _GateState.accepted;
+          _gateBuf = null; // stream live from here on
+        }
+      } else {
+        if (over) {
+          _gateReset();
+        } else {
+          _gateState = _GateState.rejected;
+          _gateBuf = null;
+        }
+      }
+    }).catchError((_) {
+      if (id != _gateUtterId) return;
+      // Scoring failed — never hold the user's speech hostage.
+      _gateDeciding = false;
+      _gateReset();
+    });
+  }
+
+  /// Invalidates any in-flight score and returns the gate to idle.
+  void _gateAbort() {
+    _gateUtterId++;
+    _gateReset();
+  }
+
+  void _gateReset() {
+    _gateState = _GateState.idle;
+    _gateBuf = null;
+    _gateSpeechMs = 0;
+    _gateQuietRunMs = 0;
+    _gateDeciding = false;
+    _gateEndedWhileDeciding = false;
   }
 
   void _send(Map<String, dynamic> m) {
@@ -409,6 +613,10 @@ class LiveService {
   Future<void> stop() async {
     if (!_active && _ch == null) return;
     _active = false;
+    _gateAbort();
+    // Translator mode must never outlive the session it was asked in —
+    // the next conversation starts owner-only again.
+    translatorBypass = false;
     try {
       _ch?.sink.add(jsonEncode({'type': 'end'}));
     } catch (_) {}
@@ -541,3 +749,9 @@ class LiveService {
     return (rms * 6).clamp(0.0, 1.0);
   }
 }
+
+/// Speaker-gate lifecycle for one utterance: quiet [idle] → loudness
+/// buffers in [holding] → the voiceprint verdict streams the buffer
+/// onward ([accepted]) or discards everything until the pause
+/// ([rejected]).
+enum _GateState { idle, holding, accepted, rejected }

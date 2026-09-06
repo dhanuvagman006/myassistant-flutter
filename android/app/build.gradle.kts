@@ -37,6 +37,12 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Real phones only: x86/x86_64 are emulator ABIs, and with the
+        // onnxruntime + webrtc native libs they were ~70 MB of dead
+        // weight in every shared APK.
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     signingConfigs {

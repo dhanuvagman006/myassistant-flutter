@@ -1,11 +1,17 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
+import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
+import '../services/voice_id_service.dart';
 import 'avatar_face_screen.dart';
 import 'avatar_identity_screen.dart';
 
@@ -34,6 +40,11 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   final _newRule = TextEditingController();
   bool _loading = true;
 
+  // Voice ID ("only my voice") state — mirrors VoiceIdService.
+  bool _voiceEnrolled = false;
+  bool _voiceGateOn = false;
+  bool _enrolling = false;
+
   /// Voices the TTS + live stack actually supports, with what they sound
   /// like — a picker the user can read, not a bare dropdown.
   static const _voices = [
@@ -58,10 +69,14 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   }
 
   Future<void> _load() async {
+    final vid = VoiceIdService.instance;
+    await vid.load();
     final p = await ApiService.getJson('/profile/full');
     final r = await ApiService.getJson('/profile/instructions');
     final f = await ApiService.getJson('/live/avatar/faces');
     if (!mounted) return;
+    _voiceEnrolled = vid.enrolled;
+    _voiceGateOn = vid.gateEnabled;
     setState(() {
       _loading = false;
       final a = (p?['assistant'] as Map?) ?? {};
@@ -102,6 +117,110 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   Future<void> _removeRule(int id) async {
     await ApiService.sendJson('/profile/instructions/$id', method: 'DELETE');
     await _load();
+  }
+
+  /// Records ~9 s of the user reading a sentence and turns it into the
+  /// voiceprint. The audio is processed on the phone and thrown away —
+  /// only the numeric print is kept.
+  Future<void> _enrollVoice() async {
+    if (_enrolling) return;
+    if (AssistantEngine.instance.liveActive) {
+      _snack('Close the conversation first, then enroll.');
+      return;
+    }
+    final rec = AudioRecorder();
+    if (!await rec.hasPermission()) {
+      _snack('Microphone permission is needed to enroll.');
+      return;
+    }
+    setState(() => _enrolling = true);
+    const seconds = 9;
+    final buf = BytesBuilder(copy: true);
+    StreamSubscription<List<int>>? sub;
+    var cancelled = false;
+    try {
+      final stream = await rec.startStream(const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+      ));
+      sub = stream.listen((c) => buf.add(c));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dctx) {
+          Timer.periodic(const Duration(seconds: seconds), (t) {
+            t.cancel();
+            if (dctx.mounted) Navigator.of(dctx).pop();
+          });
+          return AlertDialog(
+            backgroundColor: Neon.surfaceHigh,
+            title: Text('Read this aloud',
+                style: TextStyle(color: Neon.textHi, fontSize: 17)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '"Hey ${AssistantIdentity.name}, this is my voice. From '
+                  'now on, listen only to me. One, two, three, four, five — '
+                  'today is a really good day."',
+                  style: TextStyle(
+                      color: Neon.textHi, fontSize: 15.5, height: 1.5),
+                ),
+                const SizedBox(height: 16),
+                LinearProgressIndicator(
+                    color: Neon.cyan, backgroundColor: Neon.bg),
+                const SizedBox(height: 10),
+                Text('Recording ${seconds}s — speak naturally.',
+                    style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  Navigator.of(dctx).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (_) {
+      _snack("Couldn't open the microphone.");
+      cancelled = true;
+    } finally {
+      try {
+        await sub?.cancel();
+        if (await rec.isRecording()) await rec.stop();
+      } catch (_) {}
+      rec.dispose();
+    }
+    if (cancelled) {
+      if (mounted) setState(() => _enrolling = false);
+      return;
+    }
+    final err = await VoiceIdService.instance.enroll(buf.toBytes());
+    if (!mounted) return;
+    if (err == null) {
+      await VoiceIdService.instance.setEnabled(true);
+      setState(() {
+        _enrolling = false;
+        _voiceEnrolled = true;
+        _voiceGateOn = true;
+      });
+      _snack('Voice saved — the assistant now responds only to you.');
+    } else {
+      setState(() => _enrolling = false);
+      _snack(err);
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -208,6 +327,77 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       _voiceCard(id, title, tagline),
                   ],
                 ),
+
+                _sectionLabel('My voice'),
+                _card(children: [
+                  Row(children: [
+                    Icon(Icons.record_voice_over_rounded,
+                        color: Neon.textHi, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Voice ID',
+                              style: TextStyle(
+                                  color: Neon.textHi,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 1),
+                          Text(
+                            _voiceEnrolled
+                                ? 'Enrolled. Stays on this phone — nothing '
+                                    'is uploaded.'
+                                : 'Record once so the assistant answers '
+                                    'only you.',
+                            style: TextStyle(
+                                color: Neon.textDim,
+                                fontSize: 12,
+                                height: 1.35),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: _enrolling ? null : _enrollVoice,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Neon.cyan,
+                        side: BorderSide(
+                            color: Neon.cyan.withValues(alpha: 0.5)),
+                      ),
+                      child: Text(_enrolling
+                          ? 'Listening…'
+                          : (_voiceEnrolled ? 'Re-record' : 'Enroll')),
+                    ),
+                  ]),
+                  if (_voiceEnrolled) ...[
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      Expanded(
+                        child: Text(
+                          'Respond only to my voice',
+                          style:
+                              TextStyle(color: Neon.textHi, fontSize: 13.5),
+                        ),
+                      ),
+                      Switch(
+                        value: _voiceGateOn,
+                        activeThumbColor: Neon.cyan,
+                        onChanged: (v) async {
+                          HapticFeedback.selectionClick();
+                          setState(() => _voiceGateOn = v);
+                          await VoiceIdService.instance.setEnabled(v);
+                        },
+                      ),
+                    ]),
+                    Text(
+                      'Asking for live translation lets everyone be heard '
+                      'until you stop it.',
+                      style: TextStyle(color: Neon.textDim, fontSize: 11.5),
+                    ),
+                  ],
+                ]),
 
                 if (_faces.isNotEmpty) ...[
                   _sectionLabel('Video avatar'),
