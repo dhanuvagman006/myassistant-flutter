@@ -71,6 +71,10 @@ class AssistantEngine extends ChangeNotifier {
   /// file") — shown as cards while the reply is spoken.
   List<UserDocument> documentCards = const [];
 
+  /// UI hook (registered by HomeShell): present recalled documents as the
+  /// full-screen swipe gallery, over whatever screen the user is on.
+  bool Function(List<UserDocument> documents)? onShowDocuments;
+
   /// AI creation just generated for the user ("draw me a poster") — the
   /// backend saved it as a document and sent its JSON along; shown as a
   /// large card until the next turn starts.
@@ -1396,6 +1400,9 @@ class AssistantEngine extends ChangeNotifier {
         // Saved documents matched by this turn (doc recall or a client's
         // case file) — pop them on screen while Hari speaks the answer.
         documentCards = UserDocument.listFromJson(e['documents']);
+        if (documentCards.isNotEmpty) {
+          onShowDocuments?.call(documentCards);
+        }
         break;
 
       case 'resolve_and_call':

@@ -433,27 +433,15 @@ class _DocumentCardState extends State<DocumentCard> {
       return;
     }
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _DocumentViewer(document: document),
+      builder: (_) => DocumentGalleryScreen(documents: [document]),
     ));
   }
 
-  /// Downloads the real bytes to a temp file with a clean, human name and
-  /// opens the system share sheet. The temp file is safe to leave — the OS
-  /// clears the cache dir; naming it well means the recipient sees
-  /// "Aadhaar Card.jpg", never "voice_save_1785…jpg".
   Future<void> _send() async {
     if (_sending) return;
     setState(() => _sending = true);
     try {
-      final file = await ApiService.downloadDocument(document.id);
-      final dir = await getTemporaryDirectory();
-      final safeName = _shareName(document, file.mime);
-      final path = '${dir.path}/$safeName';
-      await File(path).writeAsBytes(file.bytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(path, mimeType: file.mime, name: safeName)],
-        subject: document.title,
-      );
+      await shareDocumentFile(document);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -577,6 +565,23 @@ class _DocumentCardState extends State<DocumentCard> {
   }
 }
 
+/// Downloads the real bytes to a temp file with a clean, human name and
+/// opens the system share sheet. The temp file is safe to leave — the OS
+/// clears the cache dir; naming it well means the recipient sees
+/// "Aadhaar Card.jpg", never "voice_save_1785…jpg". Throws on failure so
+/// callers can show their own error UI.
+Future<void> shareDocumentFile(UserDocument document) async {
+  final file = await ApiService.downloadDocument(document.id);
+  final dir = await getTemporaryDirectory();
+  final safeName = _shareName(document, file.mime);
+  final path = '${dir.path}/$safeName';
+  await File(path).writeAsBytes(file.bytes, flush: true);
+  await Share.shareXFiles(
+    [XFile(path, mimeType: file.mime, name: safeName)],
+    subject: document.title,
+  );
+}
+
 /// A clean filename for sharing — the document's own title (so the
 /// recipient sees "Aadhaar Card.jpg", not the internal save name), with a
 /// correct extension derived from the mime type.
@@ -595,7 +600,6 @@ String _shareName(UserDocument d, String mime) {
   return base.toLowerCase().endsWith(ext) ? base : '$base$ext';
 }
 
-/// Full-screen pinch-zoom viewer for a recalled image document.
 /// A written piece Hari just COMPOSED ("generate a script for my speech")
 /// — title + preview with one tap into a full-screen reader built for
 /// actually delivering the speech: big type, scroll, copy, share.
@@ -808,8 +812,8 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                   : GestureDetector(
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              _DocumentViewer(document: widget.document),
+                          builder: (_) => DocumentGalleryScreen(
+                              documents: [widget.document]),
                         ),
                       ),
                       child: Image.network(
@@ -895,36 +899,159 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
   }
 }
 
-class _DocumentViewer extends StatelessWidget {
-  final UserDocument document;
-  const _DocumentViewer({required this.document});
+/// Full-screen gallery for recalled documents — "show me Chetan's
+/// evidence" pops this over whatever screen the user is on. Swipe
+/// sideways through the set, pinch to zoom, share the real file, close
+/// with the X, back, or a downward swipe on the black margins.
+class DocumentGalleryScreen extends StatefulWidget {
+  final List<UserDocument> documents;
+  final int initialIndex;
+  const DocumentGalleryScreen(
+      {super.key, required this.documents, this.initialIndex = 0});
+
+  @override
+  State<DocumentGalleryScreen> createState() => _DocumentGalleryScreenState();
+}
+
+class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
+  late final PageController _page =
+      PageController(initialPage: widget.initialIndex);
+  late int _index = widget.initialIndex;
+  bool _sharing = false;
+
+  UserDocument get _current => widget.documents[_index];
+
+  @override
+  void dispose() {
+    _page.dispose();
+    super.dispose();
+  }
+
+  Future<void> _share() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+    try {
+      await shareDocumentFile(_current);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't prepare that to send.")),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final docs = widget.documents;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: Text(document.title,
-            style: const TextStyle(fontSize: 16), maxLines: 1),
-      ),
-      body: Center(
-        child: InteractiveViewer(
-          maxScale: 6,
-          child: Image.network(
-            ApiService.documentFileUrl(document.id),
-            headers: ApiService.imageHeaders,
-            fit: BoxFit.contain,
-            loadingBuilder: (context, child, p) => p == null
-                ? child
-                : CircularProgressIndicator(color: Neon.cyan),
-            errorBuilder: (_, __, ___) => Padding(
-              padding: EdgeInsets.all(24),
-              child: Text("Couldn't load this document.",
-                  style: TextStyle(color: Neon.textLo)),
-            ),
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          tooltip: 'Close',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_current.title,
+                style: const TextStyle(fontSize: 16),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+            if (docs.length > 1)
+              Text('${_index + 1} of ${docs.length}',
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      color: Colors.white.withValues(alpha: 0.6))),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Share',
+            icon: _sharing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.share_rounded),
+            onPressed: _sharing ? null : _share,
           ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: Dismissible(
+        key: const ValueKey('document-gallery'),
+        direction: DismissDirection.down,
+        onDismissed: (_) => Navigator.of(context).pop(),
+        child: PageView.builder(
+          controller: _page,
+          itemCount: docs.length,
+          onPageChanged: (i) => setState(() => _index = i),
+          itemBuilder: (_, i) {
+            final d = docs[i];
+            if (d.isPdf) {
+              // No in-app PDF renderer (kept the app light) — badge + open.
+              return Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.picture_as_pdf_rounded,
+                        color: Neon.pink, size: 64),
+                    const SizedBox(height: 14),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(d.title,
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white)),
+                    ),
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.5)),
+                      ),
+                      onPressed: () => launchUrl(
+                          Uri.parse(ApiService.documentFileUrl(d.id)),
+                          mode: LaunchMode.externalApplication),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                      label: const Text('Open PDF'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return Center(
+              child: InteractiveViewer(
+                maxScale: 6,
+                child: Image.network(
+                  ApiService.documentFileUrl(d.id),
+                  headers: ApiService.imageHeaders,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, p) => p == null
+                      ? child
+                      : const Center(
+                          child: CircularProgressIndicator(
+                              color: Colors.white70)),
+                  errorBuilder: (_, __, ___) => Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text("Couldn't load this document.",
+                        style: TextStyle(color: Neon.textLo)),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/assistant/state/assistant_engine.dart';
+import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/hub_screen.dart';
@@ -48,6 +49,22 @@ class _HomeShellState extends State<HomeShell> {
       _openConversation();
       return true;
     };
+    // Recalled documents ("show me Chetan's evidence") pop up as a
+    // full-screen swipe gallery over whatever screen is on top — the
+    // conversation keeps running underneath, mic stays hot.
+    engine.onShowDocuments = (docs) {
+      if (!mounted || docs.isEmpty) return false;
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (_galleryShowing) nav.pop();
+      _galleryShowing = true;
+      nav
+          .push(MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => DocumentGalleryScreen(documents: docs),
+          ))
+          .whenComplete(() => _galleryShowing = false);
+      return true;
+    };
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
@@ -62,6 +79,10 @@ class _HomeShellState extends State<HomeShell> {
   /// True while the conversation route is on top — the notification-tap
   /// hook must not stack a second copy of the screen.
   bool _conversationShowing = false;
+
+  /// True while the document gallery is on top — a second recall replaces
+  /// the open gallery instead of stacking another.
+  bool _galleryShowing = false;
 
   void _openConversation() {
     HapticFeedback.mediumImpact();
