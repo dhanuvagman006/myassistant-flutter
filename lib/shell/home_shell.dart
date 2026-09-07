@@ -12,6 +12,7 @@ import '../screens/updates_screen.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
 import '../services/location_service.dart';
+import '../services/share_intake_service.dart';
 import '../services/usage_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -74,6 +75,8 @@ class _HomeShellState extends State<HomeShell> {
     // Silent no-ops until their permissions are granted.
     UsageService.instance.syncIfPermitted();
     LocationService.instance.refresh();
+    // Photos/PDFs shared from other apps land in the document pipeline.
+    ShareIntakeService.instance.start();
   }
 
   /// True while the conversation route is on top — the notification-tap

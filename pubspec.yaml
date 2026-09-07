@@ -95,6 +95,7 @@ dependencies:
   firebase_app_installations: ^0.4.3
   flutter_sound: ^9.28.0
   sherpa_onnx: ^1.13.7
+  receive_sharing_intent: ^1.9.0
 
 dev_dependencies:
   flutter_test:
