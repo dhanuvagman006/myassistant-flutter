@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/assistant_api.dart';
@@ -80,6 +81,65 @@ class AssistantEngine extends ChangeNotifier {
   /// gate is open to everyone and the live model translates instead of
   /// assisting. Never survives the session it was asked in.
   bool translatorActive = false;
+
+  /// Live captions (Settings toggle): the line currently being spoken by
+  /// either side, shown at the bottom of the conversation screen. Only
+  /// this notifier rebuilds — never the whole screen per fragment.
+  final ValueNotifier<CaptionLine?> caption = ValueNotifier(null);
+
+  /// Mirrored from SharedPreferences; when off, nothing is published.
+  static bool captionsEnabled = false;
+  static const _captionsPrefKey = 'captions_enabled';
+
+  static Future<void> loadCaptionPref() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      captionsEnabled = p.getBool(_captionsPrefKey) ?? false;
+    } catch (_) {}
+  }
+
+  static Future<void> setCaptionsEnabled(bool v) async {
+    captionsEnabled = v;
+    if (!v) instance.caption.value = null;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(_captionsPrefKey, v);
+    } catch (_) {}
+  }
+
+  // Per-turn transcript accumulators — Gemini streams fragments, and a
+  // caption of half a word at a time is unreadable.
+  String _capUser = '';
+  String _capHari = '';
+  bool _capLastWasUser = true;
+
+  void _captionFrom(String speaker, String fragment) {
+    if (!captionsEnabled) return;
+    if (speaker == 'you') {
+      if (!_capLastWasUser) {
+        _capUser = '';
+        _capHari = '';
+      }
+      _capLastWasUser = true;
+      _capUser += fragment;
+    } else {
+      if (_capLastWasUser) _capHari = '';
+      _capLastWasUser = false;
+      _capHari += fragment;
+    }
+    var t = (speaker == 'you' ? _capUser : _capHari).trim();
+    if (t.isEmpty) return;
+    // Captions show the TAIL — the newest words are the ones being heard.
+    if (t.length > 160) t = '…${t.substring(t.length - 160)}';
+    caption.value = CaptionLine(speaker, t);
+  }
+
+  void _clearCaption() {
+    _capUser = '';
+    _capHari = '';
+    _capLastWasUser = true;
+    caption.value = null;
+  }
 
   /// AI creation just generated for the user ("draw me a poster") — the
   /// backend saved it as a document and sent its JSON along; shown as a
@@ -318,6 +378,7 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    unawaited(loadCaptionPref());
     // The saved server override must win the race against this first
     // connect, or one launch in two would hit the wrong host.
     await ApiService.loadServerOverride();
@@ -671,6 +732,7 @@ class AssistantEngine extends ChangeNotifier {
   Future<bool> _startLive() async {
     // Live owns all audio: silence the classic loop completely first.
     _conversationEnded = true;
+    _clearCaption(); // a fresh session starts with a clean caption bar
     _speakQueue.clear();
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
@@ -709,6 +771,7 @@ class AssistantEngine extends ChangeNotifier {
     // logged for diagnostics only — the screen stays clean.
     _liveSvc.onUserText = (t) {
       AppLog.add('live', 'you: $t');
+      _captionFrom('you', t);
       // Gemini streams the user's transcript WHILE they are still talking,
       // so treating its arrival as "thinking" puts the orb in a busy state
       // during the user's own sentence. In avatar mode the turn boundaries
@@ -726,6 +789,7 @@ class AssistantEngine extends ChangeNotifier {
     };
     _liveSvc.onHariText = (t) {
       AppLog.add('live', 'hari: $t');
+      _captionFrom('hari', t);
       // With the avatar rendering, Hari's audio goes to the avatar service
       // and never reaches this app — so onSpeaking (which is driven by local
       // playback) can never fire, and the phase would stay stuck on the
@@ -941,6 +1005,7 @@ class AssistantEngine extends ChangeNotifier {
     _conversationOpen = false;
     _conversationEnded = true; // the loop must not resume on its own
     translatorActive = false; // interpreter never outlives the screen
+    _clearCaption();
     _speakQueue.clear();
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
@@ -2212,4 +2277,11 @@ class AssistantEngine extends ChangeNotifier {
         break;
     }
   }
+}
+
+/// One caption line: who is talking and the text so far this turn.
+class CaptionLine {
+  final String speaker; // 'you' | 'hari'
+  final String text;
+  const CaptionLine(this.speaker, this.text);
 }

@@ -141,6 +141,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 if (engine.errorMessage != null) _errorBanner(),
                 const Spacer(),
                 _overlayCards(h),
+                _captionBar(),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 22),
                   child: Center(child: _primaryButton()),
@@ -364,6 +365,50 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /* ---------------------------------------------------------------- */
   /* CARDS — approvals, call progress, citations                       */
   /* ---------------------------------------------------------------- */
+
+  /// Live captions (Settings toggle) — the line being spoken right now,
+  /// readable at the bottom. Rebuilds only itself, never the stage.
+  Widget _captionBar() {
+    return ValueListenableBuilder<CaptionLine?>(
+      valueListenable: engine.caption,
+      builder: (_, c, __) {
+        if (c == null || c.text.isEmpty) return const SizedBox.shrink();
+        final you = c.speaker == 'you';
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                  text: you ? 'You  ' : '${AssistantIdentity.name}  ',
+                  style: TextStyle(
+                    color: you ? Neon.cyan : Neon.textLo,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                TextSpan(
+                  text: c.text,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    height: 1.35,
+                  ),
+                ),
+              ]),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   Widget _overlayCards(double h) {
     if (engine.pendingConfirmation != null) {

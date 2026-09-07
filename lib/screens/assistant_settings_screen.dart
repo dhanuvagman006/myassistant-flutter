@@ -45,6 +45,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   bool _voiceGateOn = false;
   bool _enrolling = false;
 
+  // Live captions toggle — mirrors AssistantEngine.captionsEnabled.
+  bool _captionsOn = false;
+
   /// Voices the TTS + live stack actually supports, with what they sound
   /// like — a picker the user can read, not a bare dropdown.
   static const _voices = [
@@ -71,6 +74,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   Future<void> _load() async {
     final vid = VoiceIdService.instance;
     await vid.load();
+    await AssistantEngine.loadCaptionPref();
+    _captionsOn = AssistantEngine.captionsEnabled;
     final p = await ApiService.getJson('/profile/full');
     final r = await ApiService.getJson('/profile/instructions');
     final f = await ApiService.getJson('/live/avatar/faces');
@@ -327,6 +332,45 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       _voiceCard(id, title, tagline),
                   ],
                 ),
+
+                _sectionLabel('Conversation'),
+                _card(children: [
+                  Row(children: [
+                    Icon(Icons.closed_caption_rounded,
+                        color: Neon.textHi, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Live captions',
+                              style: TextStyle(
+                                  color: Neon.textHi,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 1),
+                          Text(
+                            'Read what both of you say at the bottom of '
+                            'the conversation screen.',
+                            style: TextStyle(
+                                color: Neon.textDim,
+                                fontSize: 12,
+                                height: 1.35),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: _captionsOn,
+                      activeThumbColor: Neon.cyan,
+                      onChanged: (v) {
+                        HapticFeedback.selectionClick();
+                        setState(() => _captionsOn = v);
+                        AssistantEngine.setCaptionsEnabled(v);
+                      },
+                    ),
+                  ]),
+                ]),
 
                 _sectionLabel('My voice'),
                 _card(children: [
