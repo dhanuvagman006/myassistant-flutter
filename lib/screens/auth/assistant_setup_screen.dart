@@ -153,6 +153,18 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
 
   static const _suggestions = ['Maya', 'Aarav', 'Zara', 'Dev', 'Ira', 'Nova'];
 
+  /// The assistant greets and speaks in this language from the very first
+  /// conversation, until the user asks it to switch (by voice).
+  String _language = 'English';
+  static const _languages = [
+    ('English', 'English'),
+    ('Kannada', 'ಕನ್ನಡ'),
+    ('Hindi', 'हिन्दी'),
+    ('Tamil', 'தமிழ்'),
+    ('Telugu', 'తెలుగు'),
+    ('Malayalam', 'മലയാളം'),
+  ];
+
   @override
   void dispose() {
     _name.dispose();
@@ -177,6 +189,11 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
       }
       return;
     }
+    // The chosen language pins every reply server-side (greeting included)
+    // until the user asks the assistant to switch. Failure is non-fatal —
+    // the assistant simply starts in its default English.
+    await ApiService.sendJson('/profile/details',
+        method: 'PUT', body: {'preferred_language': _language});
     await AssistantIdentity.set(n);
     HapticFeedback.lightImpact();
     widget.onDone();
@@ -259,6 +276,35 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                                 offset: s.length);
                             setState(() {});
                           },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Speak to me in',
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your assistant greets and talks in this language. '
+                    'Change it any time by just asking.',
+                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final (id, native) in _languages)
+                        ChoiceChip(
+                          label: Text(
+                              id == native ? id : '$native  $id'),
+                          selected: _language == id,
+                          onSelected: (_) =>
+                              setState(() => _language = id),
                         ),
                     ],
                   ),
