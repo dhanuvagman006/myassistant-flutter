@@ -141,6 +141,41 @@ class AssistantEngine extends ChangeNotifier {
     caption.value = null;
   }
 
+  /// What the assistant is doing RIGHT NOW ("Searching the web…") — a
+  /// small chip on the conversation screen, so background work never
+  /// reads as the app hanging. Null = nothing running.
+  final ValueNotifier<String?> activityLabel = ValueNotifier(null);
+
+  /// Friendly present-tense labels per tool; anything unknown says
+  /// "Working on it…" rather than leaking an internal tool name.
+  static String _labelForTool(String tool) {
+    if (tool.startsWith('web_search') || tool.startsWith('search_')) {
+      return 'Searching…';
+    }
+    if (tool.startsWith('find_') || tool.startsWith('list_')) {
+      return 'Looking that up…';
+    }
+    if (tool.startsWith('remember_') || tool.startsWith('update_')) {
+      return 'Saving…';
+    }
+    return switch (tool) {
+      'create_reminder' => 'Saving the reminder…',
+      'schedule_task' => 'Scheduling…',
+      'cancel_scheduled_task' => 'Cancelling…',
+      'send_agent_message' => 'Sending the message…',
+      'lookup_person' || 'recall_memory' => 'Checking what I know…',
+      'get_last_document' || 'associate_document' => 'Fetching the document…',
+      'daily_brief' => 'Fetching your day…',
+      'get_weather' => 'Checking the weather…',
+      'place_phone_call' => 'Setting up the call…',
+      'capture_document' => 'Opening the camera…',
+      'generate_image' || 'generate_video' => 'Creating it…',
+      'translator_mode' => 'Switching modes…',
+      'set_morning_brief' => 'Updating your brief…',
+      _ => 'Working on it…',
+    };
+  }
+
   /// AI creation just generated for the user ("draw me a poster") — the
   /// backend saved it as a document and sent its JSON along; shown as a
   /// large card until the next turn starts.
@@ -822,6 +857,8 @@ class AssistantEngine extends ChangeNotifier {
       }
     };
     _liveSvc.onTurnComplete = () {
+      // A chip that outlives its turn reads as a hang — end it with the turn.
+      activityLabel.value = null;
       _refreshBriefSoon();
       // End of Hari's turn — back to listening. Same reasoning as above:
       // without local audio there is no playback-finished event to wait on.
@@ -1006,6 +1043,7 @@ class AssistantEngine extends ChangeNotifier {
     _conversationEnded = true; // the loop must not resume on its own
     translatorActive = false; // interpreter never outlives the screen
     _clearCaption();
+    activityLabel.value = null;
     _speakQueue.clear();
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
@@ -1459,15 +1497,20 @@ class AssistantEngine extends ChangeNotifier {
         break;
 
       case 'tool_started':
+        final startedTool = e['tool'] as String? ?? '';
         activities.add(ToolActivity(
-          tool: e['tool'] as String? ?? '',
+          tool: startedTool,
           label: e['label'] as String? ?? 'Working…',
         ));
+        activityLabel.value = _labelForTool(startedTool);
         break;
 
       case 'tool_completed':
         for (final a in activities) {
           if (a.tool == e['tool'] && !a.completed) a.completed = true;
+        }
+        if (!activities.any((a) => !a.completed)) {
+          activityLabel.value = null;
         }
         break;
 
@@ -2248,6 +2291,7 @@ class AssistantEngine extends ChangeNotifier {
     callStatus = null;
     readyAudioUrl = null;
     activities.clear();
+    activityLabel.value = null;
     notifyListeners();
   }
 

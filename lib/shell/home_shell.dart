@@ -7,8 +7,8 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
+import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
-import '../screens/updates_screen.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
 import '../services/location_service.dart';
@@ -117,7 +117,7 @@ class _HomeShellState extends State<HomeShell> {
         children: const [
           HomeDashboard(),
           HubScreen(),
-          UpdatesScreen(),
+          ChatScreen(),
           AssistantSettingsScreen(),
         ],
       ),
@@ -156,8 +156,8 @@ class _HomeShellState extends State<HomeShell> {
             _navItem(
                 1, Icons.grid_view_outlined, Icons.grid_view_rounded, 'Hub'),
             const SizedBox(width: 72), // notch space for the mic
-            _navItem(2, Icons.newspaper_outlined, Icons.newspaper_rounded,
-                'Updates'),
+            _navItem(2, Icons.chat_bubble_outline_rounded,
+                Icons.chat_bubble_rounded, 'Chat'),
             _navItem(3, Icons.person_outline_rounded, Icons.person_rounded,
                 'You'),
           ],

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
 import 'diagnostics_screen.dart';
+import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'stocks_screen.dart';
 
@@ -38,6 +39,13 @@ class HubScreen extends StatelessWidget {
         Icons.folder_shared_rounded,
         Neon.pink,
         (c) => const ClientsScreen(),
+      ),
+      _Entry(
+        'Documents',
+        'Everything you saved or received',
+        Icons.description_rounded,
+        Neon.violet,
+        (c) => const DocumentsScreen(),
       ),
       _Entry(
         'Connection',

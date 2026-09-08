@@ -141,6 +141,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 if (engine.errorMessage != null) _errorBanner(),
                 const Spacer(),
                 _overlayCards(h),
+                _activityChip(),
                 _captionBar(),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 22),
@@ -365,6 +366,53 @@ class _AssistantScreenState extends State<AssistantScreen> {
   /* ---------------------------------------------------------------- */
   /* CARDS — approvals, call progress, citations                       */
   /* ---------------------------------------------------------------- */
+
+  /// "What I'm doing right now" — a small pill while a tool runs
+  /// (searching, saving, fetching), so background work never reads as
+  /// the app hanging. Rebuilds only itself.
+  Widget _activityChip() {
+    return ValueListenableBuilder<String?>(
+      valueListenable: engine.activityLabel,
+      builder: (_, label, __) => AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        child: label == null
+            ? const SizedBox.shrink()
+            : Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 13, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Neon.cyan),
+                        ),
+                        const SizedBox(width: 9),
+                        Text(
+                          label,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
 
   /// Live captions (Settings toggle) — the line being spoken right now,
   /// readable at the bottom. Rebuilds only itself, never the stage.
