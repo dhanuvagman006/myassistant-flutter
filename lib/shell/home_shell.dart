@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/neon_tokens.dart';
 import '../features/assistant/assistant_screen.dart';
@@ -77,6 +81,22 @@ class _HomeShellState extends State<HomeShell> {
     LocationService.instance.refresh();
     // Photos/PDFs shared from other apps land in the document pipeline.
     ShareIntakeService.instance.start();
+    // OEM battery managers throttle sideloaded apps into silence (pushes
+    // delayed, background killed) — ask ONCE for the exemption, a few
+    // seconds in so it never fights the launch.
+    Timer(const Duration(seconds: 4), _requestBatteryExemptionOnce);
+  }
+
+  /// One-time battery-optimization exemption request (see initState).
+  Future<void> _requestBatteryExemptionOnce() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('battery_exemption_asked_v1') == true) return;
+      await prefs.setBool('battery_exemption_asked_v1', true);
+      final status = await Permission.ignoreBatteryOptimizations.status;
+      if (status.isGranted) return;
+      await Permission.ignoreBatteryOptimizations.request();
+    } catch (_) {}
   }
 
   /// True while the conversation route is on top — the notification-tap

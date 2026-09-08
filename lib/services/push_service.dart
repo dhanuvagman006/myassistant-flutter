@@ -101,6 +101,17 @@ class PushService {
     }
   }
 
+  /// Notification permission is off — say so ONCE per app run, with the
+  /// way out, instead of failing silently forever.
+  static bool _warnedNotifications = false;
+  void _warnNotificationsOff() {
+    if (_warnedNotifications) return;
+    _warnedNotifications = true;
+    AppFeedback.toast(
+        'Notifications are off for this app — enable them in phone '
+        'Settings → Apps so messages and calls can reach you.');
+  }
+
   /// A scheduled call landing on the phone: resolve the contact locally
   /// (same fuzzy matcher live calling uses) and dial — the user watches
   /// their own phone place the call, which is exactly what they asked
@@ -181,8 +192,15 @@ class PushService {
         final status = settings.authorizationStatus;
         if (status != AuthorizationStatus.authorized &&
             status != AuthorizationStatus.provisional) {
-          AppLog.add('push', 'permission ${status.name} — no notifications');
-          return;
+          // DO NOT return: bailing out here left fresh phones (a friend's
+          // sideloaded install) completely unregistered — no token on the
+          // server, so messages, document sends and scheduled calls all
+          // silently died, not just banners. Data pushes work WITHOUT the
+          // notification permission; register anyway and tell the user
+          // how to get their banners back.
+          AppLog.add('push',
+              'permission ${status.name} — registering anyway (banners hidden)');
+          _warnNotificationsOff();
         }
       } on TimeoutException {
         AppLog.add('push', 'permission reply lost — proceeding anyway');
