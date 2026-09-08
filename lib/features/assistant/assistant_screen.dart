@@ -430,27 +430,34 @@ class _AssistantScreenState extends State<AssistantScreen> {
               color: Colors.black.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Text.rich(
-              TextSpan(children: [
-                TextSpan(
-                  text: you ? 'You  ' : '${AssistantIdentity.name}  ',
-                  style: TextStyle(
-                    color: you ? Neon.cyan : Neon.textLo,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+            // Lyrics-style: the whole turn, never elided. `reverse` keeps
+            // the newest words pinned in view as they stream in, and the
+            // user can drag up to re-read anything earlier.
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 150),
+              child: SingleChildScrollView(
+                reverse: true,
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                      text: you ? 'You  ' : '${AssistantIdentity.name}  ',
+                      style: TextStyle(
+                        color: you ? Neon.cyan : Neon.textLo,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    TextSpan(
+                      text: c.text,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13.5,
+                        height: 1.35,
+                      ),
+                    ),
+                  ]),
                 ),
-                TextSpan(
-                  text: c.text,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13.5,
-                    height: 1.35,
-                  ),
-                ),
-              ]),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         );

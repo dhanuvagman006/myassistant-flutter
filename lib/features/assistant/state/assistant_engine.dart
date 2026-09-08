@@ -129,8 +129,9 @@ class AssistantEngine extends ChangeNotifier {
     }
     var t = (speaker == 'you' ? _capUser : _capHari).trim();
     if (t.isEmpty) return;
-    // Captions show the TAIL — the newest words are the ones being heard.
-    if (t.length > 160) t = '…${t.substring(t.length - 160)}';
+    // The whole turn, lyrics-style — the bar scrolls, it never elides.
+    // A hard cap only guards against a runaway session.
+    if (t.length > 6000) t = t.substring(t.length - 6000);
     caption.value = CaptionLine(speaker, t);
   }
 
