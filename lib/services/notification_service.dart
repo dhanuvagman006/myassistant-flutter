@@ -29,12 +29,19 @@ class ReminderNotifications {
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
 
+  // v2 channel: reminders play on the ALARM stream, like a clock app —
+  // the first live test fired silently because the phone was on mute and
+  // the old channel used the notification stream, which mute silences.
+  // (A new id is required: Android freezes a channel's audio attributes
+  // at creation, so the old 'hari_reminders' can never be upgraded.)
   static const _channel = AndroidNotificationDetails(
-    'hari_reminders',
+    'hari_reminders_alarm',
     'Reminders',
     channelDescription: 'Reminders you asked your assistant to set',
-    importance: Importance.high,
+    importance: Importance.max,
     priority: Priority.high,
+    category: AndroidNotificationCategory.alarm,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
   );
 
   Future<void> init() async {
