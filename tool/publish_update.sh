@@ -28,11 +28,11 @@ scp -q "$APK" "$VPS:/tmp/hari-upload.apk"
 ssh "$VPS" "
   set -e
   POD=\$(k3s kubectl get pods -n $NS -l app=myassistant-backend -o jsonpath='{.items[0].metadata.name}')
-  k3s kubectl cp /tmp/hari-upload.apk $NS/\$POD:/tmp/hari-upload.apk
+  k3s kubectl cp /tmp/hari-upload.apk $NS/\$POD:/app/data/hari-upload.apk
   rm -f /tmp/hari-upload.apk
   k3s kubectl exec -n $NS \$POD -- node -e '
     const up = require(\"./src/routes/appUpdate\");
-    up.publish({ tmpPath: \"/tmp/hari-upload.apk\", versionCode: $CODE, versionName: \"$NAME\", changelog: $CHANGELOG_JSON })
+    up.publish({ tmpPath: \"/app/data/hari-upload.apk\", versionCode: $CODE, versionName: \"$NAME\", changelog: $CHANGELOG_JSON })
       .then(m => { console.log(\"published:\", JSON.stringify({code: m.versionCode, name: m.versionName, size: m.size, sha256: m.sha256.slice(0,12)+\"…\"})); process.exit(0); })
       .catch(e => { console.error(\"publish failed:\", e.message); process.exit(1); });
   '
