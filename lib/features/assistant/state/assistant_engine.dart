@@ -479,7 +479,9 @@ class AssistantEngine extends ChangeNotifier {
         'were given any messages from other people to deliver, deliver them '
         'immediately after the greeting, naming each sender. If you were '
         'given no messages, say ONLY the greeting — never mention messages, '
-        'their absence, or an empty inbox.');
+        'their absence, or an empty inbox. BUT if I have already spoken or '
+        'asked for something, SKIP the greeting entirely — no hello, no '
+        '"how can I help" — and simply answer what I asked.');
   }
 
   /// A call started/rang — cut all audio and the mic immediately.

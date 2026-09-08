@@ -9,6 +9,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import 'app_feedback.dart';
 import 'avatar_message_service.dart';
 import 'brief_service.dart';
+import 'call_service.dart';
 
 /// Registers this device with the backend so other people's agents can
 /// reach the user.
@@ -64,6 +65,12 @@ class PushService {
               'New message from your circle — tap the mic and I\'ll read it.');
           BriefService.instance.refresh(force: true);
         }
+        // Scheduled call, app in front: dial NOW, in front of the user —
+        // that is the whole point of scheduling it.
+        if (m.data['kind'] == 'scheduled_call') {
+          AppLog.add('push', 'scheduled call arrived (foreground)');
+          _placeScheduledCall(m);
+        }
       });
       FirebaseMessaging.onMessageOpenedApp.listen((m) {
         // User tapped the notification — the app is coming to front.
@@ -72,6 +79,10 @@ class PushService {
           _deliver(m);
           BriefService.instance.refresh(force: true);
         }
+        if (m.data['kind'] == 'scheduled_call') {
+          AppLog.add('push', 'scheduled call opened from notification');
+          _placeScheduledCall(m);
+        }
       });
       // Cold start FROM the notification (app was killed).
       FirebaseMessaging.instance.getInitialMessage().then((m) {
@@ -79,10 +90,39 @@ class PushService {
           AppLog.add('push', 'agent message launched the app');
           _deliver(m);
         }
+        if (m != null && m.data['kind'] == 'scheduled_call') {
+          AppLog.add('push', 'scheduled call launched the app');
+          _placeScheduledCall(m);
+        }
       });
       _listenerAttached = true;
     } catch (e) {
       AppLog.add('push', 'init failed: $e');
+    }
+  }
+
+  /// A scheduled call landing on the phone: resolve the contact locally
+  /// (same fuzzy matcher live calling uses) and dial — the user watches
+  /// their own phone place the call, which is exactly what they asked
+  /// for when they scheduled it. Best match wins; the user is holding
+  /// the phone and can end a wrong call in one tap.
+  Future<void> _placeScheduledCall(RemoteMessage m) async {
+    final name = (m.data['name'] ?? '').toString().trim();
+    if (name.isEmpty) return;
+    try {
+      final matches = await CallService.instance.findContacts(name);
+      if (matches.isEmpty || matches.first.phones.isEmpty) {
+        AppFeedback.toast("Couldn't find $name in your contacts to call.");
+        AppLog.add('push', 'scheduled call: no contact for "$name"');
+        return;
+      }
+      final number = matches.first.phones.first.number;
+      final ok = await CallService.instance.call(number);
+      AppLog.add('push', 'scheduled call: dial ${ok ? 'started' : 'FAILED'}');
+      if (!ok) AppFeedback.toast("Couldn't start the call to $name.");
+    } catch (e) {
+      AppLog.add('push', 'scheduled call failed: $e');
+      AppFeedback.toast("Couldn't start the call to $name.");
     }
   }
 
