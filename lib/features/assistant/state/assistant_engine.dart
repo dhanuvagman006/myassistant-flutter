@@ -909,6 +909,13 @@ class AssistantEngine extends ChangeNotifier {
       _maybeReviveLive();
     };
 
+    // Two overlapping starts used to clobber this completer — the loser
+    // timed out at 12 s and killed the WINNER's healthy session. Join the
+    // in-flight start instead.
+    if (_liveStartResult != null && !_liveStartResult!.isCompleted) {
+      return _liveStartResult!.future
+          .timeout(const Duration(seconds: 12), onTimeout: () => false);
+    }
     _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
     notifyListeners();
     _liveStartResult = Completer<bool>();
@@ -1013,6 +1020,12 @@ class AssistantEngine extends ChangeNotifier {
       _setPhase(AssistantPhase.idle, silent: true);
       return false;
     });
+    // The user may have left the screen while we were connecting; a live
+    // session with no screen is a hot mic talking behind the dashboard.
+    if (ok && !_conversationOpen) {
+      await stopLive();
+      return false;
+    }
     return ok;
   }
 
@@ -1041,12 +1054,39 @@ class AssistantEngine extends ChangeNotifier {
   /// live session, any in-flight TTS, any open capture, and closes the
   /// continuous loop so the mic cannot quietly reopen itself behind the
   /// dashboard. Reopening the screen starts everything fresh.
+  /// The account the current SSE session belongs to. HomeShell calls
+  /// [ensureFreshSession] on every appearance: after a sign-out and
+  /// sign-in as someone else, the singleton engine used to keep posting
+  /// turns into the PREVIOUS user's session forever, and the greeting
+  /// never fired again.
+  String? _sessionUid;
+
+  Future<void> ensureFreshSession() async {
+    final uid = AuthService.instance.user?.id.toString();
+    if (uid == null) return;
+    if (_sessionUid == null || _sessionUid == uid) {
+      _sessionUid = uid;
+      return;
+    }
+    AppLog.add('engine', 'account changed — rebuilding assistant session');
+    _sessionUid = uid;
+    await leaveConversation();
+    _api.close();
+    resetGreeting();
+    unawaited(_connect()); // fresh session under the new account
+  }
+
   Future<void> leaveConversation() async {
     _conversationOpen = false;
     _conversationEnded = true; // the loop must not resume on its own
     translatorActive = false; // interpreter never outlives the screen
     _clearCaption();
     activityLabel.value = null;
+    _announceEpoch++; // any in-flight message readout stops at its next line
+    _micGateWatchdog?.cancel();
+    _micGateWatchdog = null;
+    _silenceSettle?.cancel();
+    _silenceSettle = null;
     _speakQueue.clear();
     if (_bargeMonitorOn) {
       _bargeMonitorOn = false;
@@ -1282,9 +1322,14 @@ class AssistantEngine extends ChangeNotifier {
   /// from a notification). Messages are marked read immediately so a live
   /// session that starts later doesn't announce them a second time.
   bool _announcing = false;
+  /// Bumped by leaveConversation — the readout loop checks it between
+  /// messages so unread items 2 and 3 don't keep speaking over Home.
+  int _announceEpoch = 0;
+
   Future<void> announceIncomingMessages() async {
     if (_announcing) return;
     _announcing = true;
+    final epoch = _announceEpoch;
     try {
       // On a cold start from a notification tap the auth session may not
       // be loaded yet — wait for it briefly rather than fetching as nobody.
@@ -1329,6 +1374,7 @@ class AssistantEngine extends ChangeNotifier {
         return;
       }
       for (final line in lines) {
+        if (epoch != _announceEpoch) return; // user left — stop talking
         transcript.add(TranscriptEntry(TranscriptRole.assistant, line));
         notifyListeners();
         await _speakReply(line);
@@ -1688,13 +1734,11 @@ class AssistantEngine extends ChangeNotifier {
         break;
 
       case 'open_video':
-        // Voice-driven video mode: the backend recognised "open video
-        // mode". Navigation needs a BuildContext, so the screen registers
-        // [onOpenVideoMode] and performs the push itself.
-        _conversationEnded = true; // the avatar screen owns the mic now
-        _speakQueue.clear();
-        _voice.stopSpeaking();
-        onOpenVideoMode?.call();
+        // Voice-driven video mode. This used to END the conversation and
+        // call a hook NO screen ever registered — the assistant went
+        // silent and nothing opened. Face mode is an engine toggle (the
+        // same one the on-screen camera button flips), so just flip it.
+        if (!faceMode) toggleFaceMode();
         break;
 
       case 'transcript_failed':

@@ -4,6 +4,7 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/reminder.dart';
+import '../core/log.dart';
 import 'api_service.dart';
 
 /// Turns backend reminders into LOCAL notifications, so "remind me to
@@ -53,10 +54,17 @@ class ReminderNotifications {
           iOS: DarwinInitializationSettings(),
         ),
       );
-      await _plugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.requestNotificationsPermission();
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+      // The channel FCM banners land in (see manifest meta-data): named
+      // and user-tunable instead of an auto-created "Miscellaneous".
+      await android?.createNotificationChannel(const AndroidNotificationChannel(
+        'hari_default',
+        'Messages & alerts',
+        description: 'Messages from your circle, call prompts and updates',
+        importance: Importance.high,
+      ));
       _ready = true;
     } catch (_) {
       // Notifications unavailable (e.g. manifest not set up) — reminders
@@ -79,22 +87,48 @@ class ReminderNotifications {
 
     try {
       await _plugin.cancelAll();
+      // Android 14+ never auto-grants exact alarms; scheduling in exact
+      // mode without the grant THROWS. Detect once and fall back to
+      // inexact (fires within a minute or so — late beats never).
+      var mode = AndroidScheduleMode.exactAllowWhileIdle;
+      try {
+        final android = _plugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        if (android != null &&
+            await android.canScheduleExactNotifications() != true) {
+          mode = AndroidScheduleMode.inexactAllowWhileIdle;
+        }
+      } catch (_) {}
       final now = DateTime.now();
+      var scheduled = 0, failedCount = 0;
       for (final r in reminders) {
         if (r.done || r.dueAt == null || r.dueAt!.isBefore(now)) continue;
-        await _plugin.zonedSchedule(
-          r.id, // stable id → editing a reminder replaces its notification
-          'Reminder',
-          r.text,
-          tz.TZDateTime.from(r.dueAt!, tz.local),
-          const NotificationDetails(
-            android: _channel,
-            iOS: DarwinNotificationDetails(),
-          ),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        );
+        // PER-REMINDER isolation: one bad row must not abort the loop —
+        // the old whole-loop try ran after cancelAll(), so a single throw
+        // silently destroyed every scheduled reminder.
+        try {
+          await _plugin.zonedSchedule(
+            r.id, // stable id → editing a reminder replaces its notification
+            'Reminder',
+            r.text,
+            tz.TZDateTime.from(r.dueAt!, tz.local),
+            const NotificationDetails(
+              android: _channel,
+              iOS: DarwinNotificationDetails(),
+            ),
+            androidScheduleMode: mode,
+          );
+          scheduled++;
+        } catch (e) {
+          failedCount++;
+          AppLog.add('remind', 'schedule failed for #${r.id}: $e');
+        }
       }
-    } catch (_) {}
+      AppLog.add('remind',
+          'scheduled $scheduled reminder alarm(s)${failedCount > 0 ? ", $failedCount failed" : ""} (${mode == AndroidScheduleMode.exactAllowWhileIdle ? "exact" : "inexact"})');
+    } catch (e) {
+      AppLog.add('remind', 'sync failed: $e');
+    }
     return reminders;
   }
 }

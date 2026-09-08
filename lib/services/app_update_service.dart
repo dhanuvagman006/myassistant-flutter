@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:convert/convert.dart' show AccumulatorSink;
 import 'package:crypto/crypto.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
@@ -107,7 +108,12 @@ class AppUpdateService {
       // this opens the exact settings page, waits for the user to come
       // back, and then continues into the installer — instead of the
       // installer bouncing them to Settings and losing the flow.
-      if (!await Permission.requestInstallPackages.isGranted) {
+      // Android 8+ gates installs per-app; BELOW API 26 that permission
+      // does not exist (unknown-sources is one global toggle) and the
+      // permission plugin reports it permanently denied — the old check
+      // looped "allow … then Try again" forever on Android 7 phones.
+      final sdk = (await DeviceInfoPlugin().androidInfo).version.sdkInt;
+      if (sdk >= 26 && !await Permission.requestInstallPackages.isGranted) {
         AppLog.add('update', 'asking for install permission');
         final granted = await Permission.requestInstallPackages.request();
         if (!granted.isGranted) {

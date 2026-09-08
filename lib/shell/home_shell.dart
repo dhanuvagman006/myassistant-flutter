@@ -48,6 +48,7 @@ class _HomeShellState extends State<HomeShell> {
     super.initState();
     final engine = AssistantEngine.instance;
     engine.start();
+    engine.ensureFreshSession(); // account switch → new session, new greeting
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
@@ -63,12 +64,17 @@ class _HomeShellState extends State<HomeShell> {
       final nav = Navigator.of(context, rootNavigator: true);
       if (_galleryShowing) nav.pop();
       _galleryShowing = true;
+      // The pop above completes in a MICROTASK — its whenComplete used to
+      // clear the flag we just set, so a third recall stacked galleries.
+      final gen = ++_galleryGen;
       nav
           .push(MaterialPageRoute(
             fullscreenDialog: true,
             builder: (_) => DocumentGalleryScreen(documents: docs),
           ))
-          .whenComplete(() => _galleryShowing = false);
+          .whenComplete(() {
+        if (gen == _galleryGen) _galleryShowing = false;
+      });
       return true;
     };
     // The assistant's user-chosen name — every visible mention reads this.
@@ -98,10 +104,15 @@ class _HomeShellState extends State<HomeShell> {
     try {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool('battery_exemption_asked_v1') == true) return;
-      await prefs.setBool('battery_exemption_asked_v1', true);
       final status = await Permission.ignoreBatteryOptimizations.status;
-      if (status.isGranted) return;
+      if (status.isGranted) {
+        await prefs.setBool('battery_exemption_asked_v1', true);
+        return;
+      }
       await Permission.ignoreBatteryOptimizations.request();
+      // Marked AFTER the request: writing it first meant a launch that
+      // was backgrounded within 4 s never asked, and the flag said it had.
+      await prefs.setBool('battery_exemption_asked_v1', true);
     } catch (_) {}
   }
 
@@ -112,6 +123,7 @@ class _HomeShellState extends State<HomeShell> {
   /// True while the document gallery is on top — a second recall replaces
   /// the open gallery instead of stacking another.
   bool _galleryShowing = false;
+  int _galleryGen = 0;
 
   void _openConversation() {
     HapticFeedback.mediumImpact();

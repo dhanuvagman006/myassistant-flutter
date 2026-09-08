@@ -25,11 +25,10 @@ class AssistantApi {
 
   String? get sessionId => _sessionId;
 
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        if (ApiService.sessionToken != null)
-          'Authorization': 'Bearer ${ApiService.sessionToken}',
-      };
+  // The classic path used to send auth alone — no timezone (every user
+  // stamped IST), no location, and no X-App-Key fallback (dev-key builds
+  // 401'd on the session while every other screen worked).
+  Map<String, String> get _headers => ApiService.authHeaders;
 
   /// Fires every time the stream is (re)established — the UI's "connected"
   /// flag follows THIS, not just the first connect. Without it, any stream
@@ -68,6 +67,8 @@ class AssistantApi {
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     _sessionId = j['sessionId'] as String;
     _streamToken = j['streamToken'] as String;
+    _lastEventId = 0; // a fresh session has no replayable history
+    _failStreak = 0;
     _openStream(onEvent, onDisconnect);
   }
 
@@ -103,6 +104,7 @@ class AssistantApi {
         throw Exception('stream ${res.statusCode}');
       }
       AppLog.add('sse', 'stream connected');
+      _failStreak = 0; // healthy again — next drop starts the backoff over
       _onConnected?.call();
 
       String? pendingData;
@@ -133,17 +135,34 @@ class AssistantApi {
     }
   }
 
+  /// Consecutive failed attempts since the last healthy stream. Drives
+  /// the backoff, and after a few misses forces a FULL handshake — a
+  /// server that answers 500 (or a connection that dies before any HTTP
+  /// status) used to retry a dead session id every 2 s forever, which
+  /// your phone logs showed as a 30-attempts-per-minute battery drain.
+  int _failStreak = 0;
+
   void _reconnect(
     void Function(Map<String, dynamic>) onEvent,
     void Function()? onDisconnect,
   ) {
     if (_closed) return;
-    AppLog.add('sse', 'stream dropped — reconnecting in 2s');
+    _failStreak++;
+    final delay = Duration(
+        seconds: (2 << (_failStreak - 1).clamp(0, 5)).clamp(2, 60));
+    if (_failStreak >= 3) {
+      // Whatever we think we know about this session, three straight
+      // misses say otherwise — rebuild from scratch on the next attempt.
+      _sessionId = null;
+      _streamToken = null;
+      _lastEventId = 0;
+    }
+    AppLog.add('sse',
+        'stream dropped — retry ${_failStreak} in ${delay.inSeconds}s');
     onDisconnect?.call();
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(delay, () {
       if (_closed) return;
       if (_sessionId == null) {
-        // Session was rejected (server restart) — full handshake.
         connect(
           onEvent: onEvent,
           onDisconnect: onDisconnect,
@@ -210,6 +229,8 @@ class AssistantApi {
   Future<void> cancel() => _post('cancel');
 
   void close() {
+    _lastEventId = 0;
+    _failStreak = 0;
     _closed = true;
     _sseSub?.cancel();
     _sseClient?.close();

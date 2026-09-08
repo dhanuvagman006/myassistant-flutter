@@ -41,7 +41,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _load();
     // Cheap staleness guard while the tab is visible; the push nudge is
     // the real-time signal, this just keeps the list honest.
-    _poll = Timer.periodic(const Duration(seconds: 20), (_) => _load());
+    _poll = Timer.periodic(const Duration(seconds: 20), (_) {
+      // IndexedStack keeps this alive from app start: without the gate it
+      // polled the server every 20 s forever, even with the tab never
+      // opened and the app in the background. TickerMode is false for
+      // offstage IndexedStack children.
+      if (!mounted || !TickerMode.of(context)) return;
+      if (WidgetsBinding.instance.lifecycleState !=
+          AppLifecycleState.resumed) return;
+      _load();
+    });
   }
 
   @override
@@ -235,7 +244,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   void initState() {
     super.initState();
     _load();
-    _poll = Timer.periodic(const Duration(seconds: 10), (_) => _load());
+    _poll = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!mounted ||
+          WidgetsBinding.instance.lifecycleState !=
+              AppLifecycleState.resumed) return;
+      _load();
+    });
   }
 
   @override

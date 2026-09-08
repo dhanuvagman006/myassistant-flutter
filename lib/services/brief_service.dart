@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/brief.dart';
+import 'notification_service.dart';
 import 'api_service.dart';
 
 /// Fetches and caches the home screen's "Today" brief (GET /brief).
@@ -59,6 +60,12 @@ class BriefService extends ChangeNotifier {
         loaded = true;
         _fetchedAt = DateTime.now();
         notifyListeners();
+        // Re-arm the LOCAL alarms for every open reminder. This service
+        // existed fully built with ZERO callers — "remind me at 5"
+        // created rows that never rang on any device. The brief refresh
+        // already fires after every turn and on resume, so this keeps
+        // the phone's alarms in step with the server at no extra cost.
+        unawaited(ReminderNotifications.instance.sync());
         try {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(_cacheKey, jsonEncode(j));

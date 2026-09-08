@@ -28,6 +28,8 @@
      friend's" cause. Asked once, politely, after onboarding. -->
 <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+<!-- Reminders must survive a reboot: the boot receiver below re-arms them. -->
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
 <uses-permission android:name="android.permission.WAKE_LOCK"/>
 <!-- Self-hosted APK update: lets the app hand the downloaded APK to the
@@ -101,6 +103,27 @@
                 <data android:mimeType="application/pdf"/>
             </intent-filter>
         </activity>
+        <!-- Local reminder notifications: without these two receivers the
+             AlarmManager broadcast reached NO component and "remind me at
+             5" never rang — on any device, ever. -->
+        <receiver android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <!-- Push banners: a proper monochrome status icon and a named
+             channel instead of the white square in "Miscellaneous". -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_hari" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="hari_default" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

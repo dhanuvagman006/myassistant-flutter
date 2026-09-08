@@ -198,13 +198,21 @@ class LiveService {
   /// the avatar is in play. Passing it tells the backend to route Hari's
   /// voice into that room for lip-sync instead of sending PCM down this
   /// socket, so the app must not expect reply audio here in that case.
+  /// Bumped by stop(); a start() that finds the world changed after one
+  /// of its awaits cleans up whatever it opened and bails, instead of
+  /// leaving a recorder + socket + timer running ownerless forever (the
+  /// "mic stays lit after a 2-second visit" bug).
+  int _era = 0;
+
   Future<void> start({String? avatarRoom}) async {
     if (_active) return;
     _active = true;
+    final era = _era;
     if (!await _rec.hasPermission()) {
       onError?.call('Microphone permission is needed for live mode.');
       return;
     }
+    if (era != _era) return; // stopped while we awaited the permission
     playing = false;
     remoteSpeaking = false;
     _speaking = false;
@@ -611,6 +619,7 @@ class LiveService {
 
   /// Ends the session and releases the mic/speaker.
   Future<void> stop() async {
+    _era++; // any in-flight start() must now abandon itself
     if (!_active && _ch == null) return;
     _active = false;
     _gateAbort();

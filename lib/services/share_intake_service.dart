@@ -5,6 +5,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/log.dart';
 import 'api_service.dart';
+import 'auth_service.dart';
 import 'app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -53,12 +54,21 @@ class ShareIntakeService {
     'pdf': 'application/pdf',
   };
 
+  /// Anything above this never fits the server's 18 MB document cap.
+  static const _maxShareBytes = 20 * 1024 * 1024;
+
   Future<void> _handle(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
+    if (!AuthService.instance.isSignedIn) {
+      AppFeedback.toast('Sign in first, then share it again — nothing was saved.');
+      return;
+    }
     var saved = 0;
     var failed = 0;
+    var skipped = 0;
     for (final f in files) {
       if (f.type != SharedMediaType.image && f.type != SharedMediaType.file) {
+        skipped++;
         continue;
       }
       final path = f.path;
@@ -67,9 +77,15 @@ class ShareIntakeService {
       final mime = f.mimeType ?? _mimeByExt[ext];
       if (mime == null ||
           !(mime.startsWith('image/') || mime == 'application/pdf')) {
-        continue;
+        skipped++; // extension-less or exotic type — SAY so below, the old
+        continue; // silent drop looked like the share simply vanished
       }
       try {
+        if (await File(path).length() > _maxShareBytes) {
+          failed++;
+          AppFeedback.toast('That file is too large to save (20 MB max).');
+          continue;
+        }
         final bytes = await File(path).readAsBytes();
         if (bytes.isEmpty) continue;
         final name = path.split('/').last;
@@ -91,6 +107,8 @@ class ShareIntakeService {
           : "Saved $saved files to your documents — tell me who they're for.");
     } else if (failed > 0) {
       AppFeedback.toast("Couldn't save that — check your connection.");
+    } else if (skipped > 0) {
+      AppFeedback.toast("Couldn't read that file type — photos and PDFs work.");
     }
   }
 }

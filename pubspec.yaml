@@ -1,7 +1,7 @@
 name: myassistant
 description: MYASSISTANT — AI personal assistant for Android and iOS.
 publish_to: 'none'
-version: 0.2.2+4
+version: 0.2.3+5
 
 environment:
   # Color.withValues() (used throughout lib/design) requires Dart 3.6 / Flutter 3.27+
@@ -100,6 +100,7 @@ dependencies:
   open_filex: ^4.7.0
   crypto: ^3.0.7
   convert: ^3.1.2
+  device_info_plus: ^12.4.0
 
 dev_dependencies:
   flutter_test:

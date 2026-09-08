@@ -177,6 +177,12 @@ class ApiService {
         'Content-Type': 'application/json',
         if (sessionToken != null) 'Authorization': 'Bearer $sessionToken'
         else if (_appApiKey.isNotEmpty) 'X-App-Key': _appApiKey,
+        // Clock + place on EVERY call: the brief, the calendar and the
+        // classic voice path all parse times server-side, and without
+        // this header every user on earth was stamped IST (+330).
+        'X-TZ-Offset': DateTime.now().timeZoneOffset.inMinutes.toString(),
+        if (geoLat != null) 'X-Geo-Lat': geoLat!.toStringAsFixed(4),
+        if (geoLng != null) 'X-Geo-Lng': geoLng!.toStringAsFixed(4),
       };
 
   /// Chat calls also carry the user's clock + location so backend tools

@@ -289,6 +289,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
     setState(() => _busy = true);
     try {
       final note = await ApiService.addClientNote(widget.clientId, text);
+      if (!mounted) return; // user backed out while the request ran
       _noteCtl.clear();
       setState(() => _notes = [note, ..._notes]);
     } catch (_) {
@@ -633,6 +634,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                   onTap: () async {
                     try {
                       await ApiService.deleteClientNote(widget.clientId, n.id);
+                      if (!mounted) return;
                       setState(() =>
                           _notes = _notes.where((x) => x.id != n.id).toList());
                     } catch (_) {
