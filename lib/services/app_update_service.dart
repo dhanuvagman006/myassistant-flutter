@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../core/log.dart';
 import '../design/neon_tokens.dart';
@@ -102,6 +103,19 @@ class AppUpdateService {
       }
       onProgress(1);
       AppLog.add('update', 'downloaded build ${cfg.latestVersionCode}, opening installer');
+      // Android gates "install unknown apps" PER APP, once. Ask up front:
+      // this opens the exact settings page, waits for the user to come
+      // back, and then continues into the installer — instead of the
+      // installer bouncing them to Settings and losing the flow.
+      if (!await Permission.requestInstallPackages.isGranted) {
+        AppLog.add('update', 'asking for install permission');
+        final granted = await Permission.requestInstallPackages.request();
+        if (!granted.isGranted) {
+          throw Exception(
+              'allow "Install unknown apps" for this app on the settings '
+              'page, then come back and tap Try again');
+        }
+      }
       final result = await OpenFilex.open(
         file.path,
         type: 'application/vnd.android.package-archive',

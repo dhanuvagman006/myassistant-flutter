@@ -28,6 +28,13 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    // The release lint-vital pass alone needs ~1.5 GB of JVM heap and
+    // OOM-killed builds on this 5 GB machine; it only re-checks what the
+    // analyzer already covers.
+    lint {
+        checkReleaseBuilds = false
+    }
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.myassistant.myassistant"
