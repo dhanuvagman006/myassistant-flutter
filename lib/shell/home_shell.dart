@@ -13,6 +13,7 @@ import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
+import '../services/app_update_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
 import '../services/location_service.dart';
@@ -85,6 +86,11 @@ class _HomeShellState extends State<HomeShell> {
     // delayed, background killed) — ask ONCE for the exemption, a few
     // seconds in so it never fights the launch.
     Timer(const Duration(seconds: 4), _requestBatteryExemptionOnce);
+    // Self-update: offer a newer published build once per launch, after
+    // the permission prompts have had their moment.
+    Timer(const Duration(seconds: 9), () {
+      if (mounted) AppUpdateService.instance.check(context);
+    });
   }
 
   /// One-time battery-optimization exemption request (see initState).
