@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
@@ -32,38 +34,9 @@ class _StocksScreenState extends State<StocksScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: AuroraBackdrop(
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_rounded, color: Neon.textHi),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    Text(
-                      'Market & Stocks Hub',
-                      style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _body(),
-              ),
-            ],
-          ),
-        ),
-      ),
+      backgroundColor: Neon.bg,
+      appBar: appleAppBar(context, 'Market & Stocks Hub'),
+      body: SafeArea(child: _body()),
     );
   }
 
@@ -89,7 +62,7 @@ class _StocksScreenState extends State<StocksScreen> {
     final indices = (_data!['indices'] as List?) ?? const [];
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
       children: [
         if (indices.isNotEmpty)
           Padding(
@@ -106,12 +79,12 @@ class _StocksScreenState extends State<StocksScreen> {
         if (summary != null && summary.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
-            child: GlassCard(
+            child: _card(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.insights_rounded,
-                      size: 18, color: Neon.cyan),
+                  const Icon(Icons.insights_rounded,
+                      size: 18, color: AppleColors.blue),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -124,24 +97,33 @@ class _StocksScreenState extends State<StocksScreen> {
               ),
             ),
           ),
-        const SectionHeader('Top Picks to Invest (Buy)'),
+        const GroupLabel('Top Picks to Invest (Buy)'),
         ...invest.map((e) => _stockCard(e, true)),
-        const SizedBox(height: 12),
-        const SectionHeader('Stocks to Sell or Avoid'),
+        const SizedBox(height: 24),
+        const GroupLabel('Stocks to Sell or Avoid'),
         ...sell.map((e) => _stockCard(e, false)),
-        const SizedBox(height: 12),
-        const SectionHeader('Important Market News'),
+        const SizedBox(height: 24),
+        const GroupLabel('Important Market News'),
         ...news.map((e) => _newsCard(e)),
       ],
     );
   }
 
+  Widget _card({required Widget child}) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Neon.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Neon.line),
+        ),
+        child: child,
+      );
+
   Widget _stockCard(Map e, bool isBuy) {
-    final color = isBuy ? const Color(0xFF35C48D) : Neon.pink;
+    final color = isBuy ? AppleColors.green : AppleColors.red;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: GlassCard(
-        borderGradient: LinearGradient(colors: [color.withValues(alpha: 0.5), color.withValues(alpha: 0.1)]),
+      child: _card(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -156,7 +138,7 @@ class _StocksScreenState extends State<StocksScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.2),
+                    color: color.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -196,8 +178,8 @@ class _StocksScreenState extends State<StocksScreen> {
   Widget _indexChip(Map i) {
     final change = (i['change'] ?? '') as String;
     final up = !change.startsWith('-');
-    final color = up ? const Color(0xFF35C48D) : Neon.pink;
-    return GlassCard(
+    final color = up ? AppleColors.green : AppleColors.red;
+    return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -232,7 +214,7 @@ class _StocksScreenState extends State<StocksScreen> {
   Widget _newsCard(Map e) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: GlassCard(
+      child: _card(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -245,7 +227,7 @@ class _StocksScreenState extends State<StocksScreen> {
               children: [
                 Text(
                   e['source'],
-                  style: TextStyle(color: Neon.cyan, fontSize: 11),
+                  style: const TextStyle(color: AppleColors.blue, fontSize: 11),
                 ),
                 const Spacer(),
                 Text(
@@ -256,22 +238,6 @@ class _StocksScreenState extends State<StocksScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class SectionHeader extends StatelessWidget {
-  final String title;
-  const SectionHeader(this.title, {super.key});
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12, top: 8),
-      child: Text(
-        title,
-        style: TextStyle(
-            color: Neon.textDim, fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 0.5),
       ),
     );
   }

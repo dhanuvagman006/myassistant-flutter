@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../features/assistant/state/assistant_engine.dart';
@@ -160,7 +161,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
             if (dctx.mounted) Navigator.of(dctx).pop();
           });
           return AlertDialog(
-            backgroundColor: Neon.surfaceHigh,
+            backgroundColor: Neon.surface,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
             title: Text('Read this aloud',
                 style: TextStyle(color: Neon.textHi, fontSize: 17)),
             content: Column(
@@ -175,7 +178,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
                 const SizedBox(height: 16),
                 LinearProgressIndicator(
-                    color: Neon.cyan, backgroundColor: Neon.bg),
+                    color: Neon.violet, backgroundColor: Neon.bg),
                 const SizedBox(height: 10),
                 Text('Recording ${seconds}s — speak naturally.',
                     style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
@@ -232,9 +235,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          title: const Text('Assistant')),
+      appBar: appleAppBar(context, 'Assistant'),
       body: _loading
           ? Center(
               child: CircularProgressIndicator(
@@ -243,311 +244,241 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
               children: [
                 // Identity lives in the conversation, and the page says so.
-                _card(children: [
-                  Row(children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: Neon.textHi,
-                        borderRadius: BorderRadius.circular(12),
+                // Live: renaming by voice updates this card too.
+                ValueListenableBuilder<String>(
+                  valueListenable: AssistantIdentity.notifier,
+                  builder: (_, n, __) => GroupedCard(
+                    dividerInset: 60,
+                    children: [
+                      AppleRow(
+                        leading: const IconTile(
+                            Icons.auto_awesome_rounded, AppleColors.purple),
+                        title: n,
+                        subtitle: 'To rename, just say it — "your name is '
+                            'Maya from now on".',
                       ),
-                      child: Icon(Icons.auto_awesome_rounded,
-                          color: Neon.onInk, size: 19),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Live: renaming by voice updates this card too.
-                          ValueListenableBuilder<String>(
-                            valueListenable: AssistantIdentity.notifier,
-                            builder: (_, n, __) => Text(n,
-                                style: TextStyle(
-                                    color: Neon.textHi,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700)),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'To rename, just say it — "your name is Maya '
-                            'from now on".',
-                            style: TextStyle(
-                                color: Neon.textDim,
-                                fontSize: 12,
-                                height: 1.35),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ]),
-                ]),
-
-                _sectionLabel('Appearance'),
-                _card(children: [
-                  Row(children: [
-                    Icon(
-                        Neon.isDark
-                            ? Icons.nightlight_round
-                            : Icons.wb_sunny_rounded,
-                        color: Neon.textHi,
-                        size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(Neon.isDark ? 'Dark' : 'Light',
-                              style: TextStyle(
-                                  color: Neon.textHi,
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 1),
-                          Text('Tap the sky to switch.',
-                              style: TextStyle(
-                                  color: Neon.textDim, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                    const _DayNightSwitch(),
-                  ]),
-                ]),
-
-                _sectionLabel('Voice'),
-                Text(
-                  'Tap a voice — it applies to your next conversation.',
-                  style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 10),
-                GridView.count(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 2.55,
+                const SizedBox(height: 24),
+
+                const GroupLabel('Appearance'),
+                GroupedCard(
+                  dividerInset: 60,
                   children: [
-                    for (final (id, title, tagline) in _voices)
-                      _voiceCard(id, title, tagline),
+                    AppleRow(
+                      leading: IconTile(
+                          Neon.isDark
+                              ? Icons.nightlight_round
+                              : Icons.wb_sunny_rounded,
+                          AppleColors.indigo),
+                      title: Neon.isDark ? 'Dark' : 'Light',
+                      subtitle: 'Tap the sky to switch.',
+                      trailing: const _DayNightSwitch(),
+                    ),
                   ],
                 ),
+                const SizedBox(height: 24),
 
-                _sectionLabel('Conversation'),
-                _card(children: [
-                  Row(children: [
-                    Icon(Icons.closed_caption_rounded,
-                        color: Neon.textHi, size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Live captions',
-                              style: TextStyle(
-                                  color: Neon.textHi,
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 1),
-                          Text(
-                            'Read what both of you say at the bottom of '
-                            'the conversation screen.',
-                            style: TextStyle(
-                                color: Neon.textDim,
-                                fontSize: 12,
-                                height: 1.35),
-                          ),
-                        ],
+                const GroupLabel('Voice'),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, bottom: 8),
+                  child: Text(
+                    'Tap a voice — it applies to your next conversation.',
+                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                  ),
+                ),
+                GroupedCard(
+                  children: [
+                    for (final (id, title, tagline) in _voices)
+                      AppleRow(
+                        title: title,
+                        subtitle: tagline,
+                        trailing: _voice == id
+                            ? const Icon(Icons.check_rounded,
+                                color: AppleColors.blue, size: 20)
+                            : const SizedBox.shrink(),
+                        onTap: () => _pickVoice(id),
                       ),
-                    ),
-                    Switch(
-                      value: _captionsOn,
-                      activeThumbColor: Neon.cyan,
-                      onChanged: (v) {
-                        HapticFeedback.selectionClick();
-                        setState(() => _captionsOn = v);
-                        AssistantEngine.setCaptionsEnabled(v);
-                      },
-                    ),
-                  ]),
-                ]),
+                  ],
+                ),
+                const SizedBox(height: 24),
 
-                _sectionLabel('My voice'),
-                _card(children: [
-                  Row(children: [
-                    Icon(Icons.record_voice_over_rounded,
-                        color: Neon.textHi, size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Voice ID',
-                              style: TextStyle(
-                                  color: Neon.textHi,
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 1),
-                          Text(
-                            _voiceEnrolled
-                                ? 'Enrolled. Stays on this phone — nothing '
-                                    'is uploaded.'
-                                : 'Record once so the assistant answers '
-                                    'only you.',
-                            style: TextStyle(
-                                color: Neon.textDim,
-                                fontSize: 12,
-                                height: 1.35),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
-                      onPressed: _enrolling ? null : _enrollVoice,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Neon.cyan,
-                        side: BorderSide(
-                            color: Neon.cyan.withValues(alpha: 0.5)),
-                      ),
-                      child: Text(_enrolling
-                          ? 'Listening…'
-                          : (_voiceEnrolled ? 'Re-record' : 'Enroll')),
-                    ),
-                  ]),
-                  if (_voiceEnrolled) ...[
-                    const SizedBox(height: 6),
-                    Row(children: [
-                      Expanded(
-                        child: Text(
-                          'Respond only to my voice',
-                          style:
-                              TextStyle(color: Neon.textHi, fontSize: 13.5),
-                        ),
-                      ),
-                      Switch(
-                        value: _voiceGateOn,
-                        activeThumbColor: Neon.cyan,
-                        onChanged: (v) async {
+                const GroupLabel('Conversation'),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading: const IconTile(
+                          Icons.closed_caption_rounded, AppleColors.blue),
+                      title: 'Live captions',
+                      subtitle: 'Read what both of you say at the bottom of '
+                          'the conversation screen.',
+                      trailing: Switch(
+                        value: _captionsOn,
+                        activeThumbColor: Colors.white,
+                        activeTrackColor: AppleColors.green,
+                        onChanged: (v) {
                           HapticFeedback.selectionClick();
-                          setState(() => _voiceGateOn = v);
-                          await VoiceIdService.instance.setEnabled(v);
+                          setState(() => _captionsOn = v);
+                          AssistantEngine.setCaptionsEnabled(v);
                         },
                       ),
-                    ]),
-                    Text(
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                const GroupLabel('My voice'),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading: const IconTile(
+                          Icons.record_voice_over_rounded, AppleColors.teal),
+                      title: 'Voice ID',
+                      subtitle: _voiceEnrolled
+                          ? 'Enrolled. Stays on this phone — nothing '
+                              'is uploaded.'
+                          : 'Record once so the assistant answers '
+                              'only you.',
+                      trailing: OutlinedButton(
+                        onPressed: _enrolling ? null : _enrollVoice,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppleColors.blue,
+                          side: BorderSide(color: Neon.line),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Text(_enrolling
+                            ? 'Listening…'
+                            : (_voiceEnrolled ? 'Re-record' : 'Enroll')),
+                      ),
+                    ),
+                    if (_voiceEnrolled)
+                      AppleRow(
+                        title: 'Respond only to my voice',
+                        trailing: Switch(
+                          value: _voiceGateOn,
+                          activeThumbColor: Colors.white,
+                          activeTrackColor: AppleColors.green,
+                          onChanged: (v) async {
+                            HapticFeedback.selectionClick();
+                            setState(() => _voiceGateOn = v);
+                            await VoiceIdService.instance.setEnabled(v);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+                if (_voiceEnrolled)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, top: 6),
+                    child: Text(
                       'Asking for live translation lets everyone be heard '
                       'until you stop it.',
                       style: TextStyle(color: Neon.textDim, fontSize: 11.5),
                     ),
-                  ],
-                ]),
+                  ),
+                const SizedBox(height: 24),
 
                 if (_faces.isNotEmpty) ...[
-                  _sectionLabel('Video avatar'),
-                  _card(children: [
-                    InkWell(
-                      onTap: () async {
-                        final picked =
-                            await Navigator.of(context).push<String>(
-                          MaterialPageRoute(
-                            builder: (_) => AvatarFaceScreen(
-                              faces: _faces,
-                              selectedId: _avatarId,
-                            ),
-                          ),
-                        );
-                        if (picked != null && mounted) {
-                          setState(() => _avatarId = picked);
-                        }
-                      },
-                      child: Row(children: [
-                        Icon(Icons.face_retouching_natural_rounded,
-                            color: Neon.textHi, size: 20),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text('Avatar face',
-                              style: TextStyle(
-                                  color: Neon.textHi, fontSize: 14.5)),
-                        ),
-                        Text(
-                          _faceName(_avatarId),
-                          style: TextStyle(
-                              color: Neon.textLo,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(Icons.chevron_right_rounded,
-                            color: Neon.textDim, size: 20),
-                      ]),
-                    ),
-                  ]),
-                ],
-
-                _sectionLabel('Your avatar identity'),
-                _card(children: [
-                  InkWell(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => const AvatarIdentityScreen()),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.record_voice_over_rounded,
-                          color: Neon.textHi, size: 20),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  const GroupLabel('Video avatar'),
+                  GroupedCard(
+                    dividerInset: 60,
+                    children: [
+                      AppleRow(
+                        leading: const IconTile(
+                            Icons.face_retouching_natural_rounded,
+                            AppleColors.orange),
+                        title: 'Avatar face',
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text('Send messages as you',
-                                style: TextStyle(
-                                    color: Neon.textHi, fontSize: 14.5)),
-                            const SizedBox(height: 1),
                             Text(
-                                'Your face and voice on messages you send '
-                                '— with your consent.',
-                                style: TextStyle(
-                                    color: Neon.textDim, fontSize: 12)),
+                              _faceName(_avatarId),
+                              style: TextStyle(
+                                  color: Neon.textLo,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(Icons.chevron_right_rounded,
+                                color: Neon.textDim, size: 20),
                           ],
                         ),
+                        onTap: () async {
+                          final picked =
+                              await Navigator.of(context).push<String>(
+                            MaterialPageRoute(
+                              builder: (_) => AvatarFaceScreen(
+                                faces: _faces,
+                                selectedId: _avatarId,
+                              ),
+                            ),
+                          );
+                          if (picked != null && mounted) {
+                            setState(() => _avatarId = picked);
+                          }
+                        },
                       ),
-                      Icon(Icons.chevron_right_rounded,
-                          color: Neon.textDim, size: 20),
-                    ]),
+                    ],
                   ),
-                ]),
+                  const SizedBox(height: 24),
+                ],
 
-                _sectionLabel('Standing rules'),
-                Text(
-                  'Permanent instructions the assistant follows before every '
-                  'decision — e.g. "Always ask before sending messages", '
-                  '"Call me Dhanu". You can also just say these in '
-                  'conversation.',
-                  style: TextStyle(color: Neon.textDim, fontSize: 12.5),
-                ),
-                const SizedBox(height: 10),
-                ..._rules.map((r) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: Neon.surface,
-                        border: Border.all(color: Neon.line),
+                const GroupLabel('Your avatar identity'),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading: const IconTile(
+                          Icons.record_voice_over_rounded, AppleColors.green),
+                      title: 'Send messages as you',
+                      subtitle: 'Your face and voice on messages you send '
+                          '— with your consent.',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const AvatarIdentityScreen()),
                       ),
-                      child: Row(children: [
-                        Expanded(
-                            child: Text(r['instruction'] ?? '',
-                                style:
-                                    TextStyle(color: Neon.textLo))),
-                        IconButton(
-                          icon: Icon(Icons.close_rounded,
-                              size: 18, color: Neon.textDim),
-                          onPressed: () => _removeRule(r['id'] as int),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                const GroupLabel('Standing rules'),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, bottom: 8),
+                  child: Text(
+                    'Permanent instructions the assistant follows before every '
+                    'decision — e.g. "Always ask before sending messages", '
+                    '"Call me Dhanu". You can also just say these in '
+                    'conversation.',
+                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                  ),
+                ),
+                if (_rules.isNotEmpty) ...[
+                  GroupedCard(
+                    children: [
+                      for (final r in _rules)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
+                          child: Row(children: [
+                            Expanded(
+                                child: Text(r['instruction'] ?? '',
+                                    style:
+                                        TextStyle(color: Neon.textLo))),
+                            IconButton(
+                              icon: Icon(Icons.close_rounded,
+                                  size: 18, color: Neon.textDim),
+                              onPressed: () => _removeRule(r['id'] as int),
+                            ),
+                          ]),
                         ),
-                      ]),
-                    )),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Row(children: [
                   Expanded(
                     child: TextField(
@@ -560,67 +491,20 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   const SizedBox(width: 8),
                   IconButton(
                       onPressed: _addRule,
-                      icon: Icon(Icons.add_circle_rounded,
-                          color: Neon.textHi)),
+                      icon: const Icon(Icons.add_circle_rounded,
+                          color: AppleColors.blue)),
                 ]),
+                const SizedBox(height: 24),
 
-                _sectionLabel('About & legal'),
-                _card(children: [
-                  _legalLink('Privacy Policy', '/legal/privacy'),
-                  const Divider(height: 18),
-                  _legalLink('Terms & Conditions', '/legal/terms'),
-                ]),
+                const GroupLabel('About & legal'),
+                GroupedCard(
+                  children: [
+                    _legalRow('Privacy Policy', '/legal/privacy'),
+                    _legalRow('Terms & Conditions', '/legal/terms'),
+                  ],
+                ),
               ],
             ),
-    );
-  }
-
-  Widget _voiceCard(String id, String title, String tagline) {
-    final selected = _voice == id;
-    return GestureDetector(
-      onTap: () => _pickVoice(id),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected
-              ? Neon.textHi.withValues(alpha: 0.05)
-              : Neon.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected ? Neon.textHi : Neon.line,
-            width: selected ? 1.6 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 13.5,
-                        fontWeight:
-                            selected ? FontWeight.w800 : FontWeight.w600,
-                      )),
-                  const SizedBox(height: 2),
-                  Text(tagline,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: Neon.textDim, fontSize: 10.5)),
-                ],
-              ),
-            ),
-            if (selected)
-              Icon(Icons.check_circle_rounded,
-                  color: Neon.textHi, size: 17),
-          ],
-        ),
-      ),
     );
   }
 
@@ -630,33 +514,12 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     return (f['name'] as String?) ?? 'Custom';
   }
 
-  Widget _legalLink(String label, String path) => InkWell(
+  Widget _legalRow(String label, String path) => AppleRow(
+        title: label,
+        trailing: Icon(Icons.open_in_new_rounded,
+            size: 16, color: Neon.textDim),
         onTap: () => launchUrl(Uri.parse('${ApiService.baseUrl}$path'),
             mode: LaunchMode.externalApplication),
-        child: Row(children: [
-          Expanded(
-              child: Text(label,
-                  style: TextStyle(color: Neon.textHi, fontSize: 14))),
-          Icon(Icons.open_in_new_rounded,
-              size: 16, color: Neon.textDim),
-        ]),
-      );
-
-  Widget _sectionLabel(String t) => Padding(
-        padding: const EdgeInsets.only(top: 20, bottom: 8),
-        child: Text(t.toUpperCase(),
-            style: TextStyle(
-                color: Neon.textDim, fontSize: 11, letterSpacing: 1.2)),
-      );
-
-  Widget _card({required List<Widget> children}) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Neon.surface,
-          border: Border.all(color: Neon.line),
-        ),
-        child: Column(children: children),
       );
 
   InputDecoration _dec(String label, String hint) => InputDecoration(
@@ -667,7 +530,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
         filled: true,
         fillColor: Neon.surface,
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide.none),
       );
 }

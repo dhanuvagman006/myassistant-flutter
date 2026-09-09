@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -8,7 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/log.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
-import '../theme/app_theme.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ONBOARDING SURVEY — the first-run "getting to know you" screen.
@@ -86,11 +87,11 @@ class _SurveyScreenState extends State<SurveyScreen> {
       lastDate: now,
       builder: (context, child) {
         return Theme(
-          data: ThemeData.dark().copyWith(
-            colorScheme: ColorScheme.dark(
-              primary: AppColors.marigold,
+          data: ThemeData.light().copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Neon.violet,
               onPrimary: Colors.white,
-              surface: Color(0xFF1E2230),
+              surface: Neon.surface,
               onSurface: Neon.textHi,
             ),
           ),
@@ -211,20 +212,21 @@ class _SurveyScreenState extends State<SurveyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.ink,
+      backgroundColor: Neon.bg,
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
           children: [
             Text('Let me get to know you',
-                style: TextStyle(
+                style: GoogleFonts.spaceGrotesk(
                     color: Neon.textHi,
                     fontSize: 26,
+                    letterSpacing: -0.5,
                     fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
                 'A few quick things — so your assistant feels like she already knows you.',
-                style: TextStyle(color: AppColors.mist, fontSize: 14.5)),
+                style: TextStyle(color: Neon.textLo, fontSize: 14.5)),
             const SizedBox(height: 26),
             _label('Your name'),
             _field(_name, hint: 'e.g. Dhanu'),
@@ -234,8 +236,8 @@ class _SurveyScreenState extends State<SurveyScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(14),
-                color: Neon.surfaceHigh,
+                borderRadius: BorderRadius.circular(12),
+                color: Neon.surface,
                 border:
                     Border.all(color: Neon.line),
               ),
@@ -288,14 +290,14 @@ class _SurveyScreenState extends State<SurveyScreen> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   color: Neon.surfaceHigh,
                   border: Border.all(color: Neon.line),
                 ),
                 child: Row(
                   children: [
                     Icon(Icons.auto_awesome_rounded,
-                        color: AppColors.marigold, size: 20),
+                        color: Neon.violet, size: 20),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -305,7 +307,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
                         style: TextStyle(
                           color: _birthday == null
                               ? Neon.textDim
-                              : Neon.surfaceHigh,
+                              : Neon.textHi,
                           fontSize: 14.5,
                           fontWeight: _birthday == null
                               ? FontWeight.normal
@@ -334,10 +336,15 @@ class _SurveyScreenState extends State<SurveyScreen> {
                   ChoiceChip(
                     label: Text(g[0].toUpperCase() + g.substring(1)),
                     selected: _gender == g,
-                    selectedColor: AppColors.marigold,
+                    selectedColor: Neon.violet.withValues(alpha: 0.15),
+                    side: BorderSide(color: Neon.line),
+                    showCheckmark: false,
                     labelStyle: TextStyle(
-                        color: _gender == g ? Colors.white : AppColors.mist),
-                    backgroundColor: Neon.surfaceHigh,
+                        fontWeight: _gender == g
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                        color: _gender == g ? Neon.violet : Neon.textLo),
+                    backgroundColor: Neon.surface,
                     onSelected: (_) => setState(() => _gender = g),
                   ),
                   const SizedBox(width: 10),
@@ -355,30 +362,26 @@ class _SurveyScreenState extends State<SurveyScreen> {
                   FilterChip(
                     label: Text(i),
                     selected: _picked.contains(i),
-                    selectedColor: AppColors.marigold,
+                    selectedColor: Neon.violet.withValues(alpha: 0.15),
+                    side: BorderSide(color: Neon.line),
+                    showCheckmark: false,
                     labelStyle: TextStyle(
+                        fontWeight: _picked.contains(i)
+                            ? FontWeight.w600
+                            : FontWeight.w500,
                         color: _picked.contains(i)
-                            ? Colors.white
-                            : AppColors.mist),
-                    backgroundColor: Neon.surfaceHigh,
+                            ? Neon.violet
+                            : Neon.textLo),
+                    backgroundColor: Neon.surface,
                     onSelected: (v) => setState(
                         () => v ? _picked.add(i) : _picked.remove(i)),
                   ),
               ],
             ),
             const SizedBox(height: 30),
-            SizedBox(
-              height: 52,
-              child: FilledButton(
-                style:
-                    FilledButton.styleFrom(backgroundColor: AppColors.marigold),
-                onPressed: _saving ? null : _submit,
-                child: Text(_saving ? 'Saving…' : "Let's begin",
-                    style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white)),
-              ),
+            ApplePrimaryButton(
+              label: _saving ? 'Saving…' : "Let's begin",
+              onPressed: _saving ? null : _submit,
             ),
           ],
         ),
@@ -388,7 +391,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
 
   Widget _label(String t) => Text(t,
       style: TextStyle(
-          color: AppColors.mist, fontWeight: FontWeight.w600, fontSize: 14));
+          color: Neon.textLo, fontWeight: FontWeight.w600, fontSize: 14));
 
   Widget _field(TextEditingController c, {String? hint}) => Padding(
         padding: const EdgeInsets.only(top: 8),
@@ -401,7 +404,7 @@ class _SurveyScreenState extends State<SurveyScreen> {
             filled: true,
             fillColor: Neon.surfaceHigh,
             border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none),
           ),
         ),

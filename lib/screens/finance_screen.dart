@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../features/assistant/state/assistant_engine.dart';
@@ -53,6 +54,18 @@ class _FinanceScreenState extends State<FinanceScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
+      appBar: appleAppBar(context, 'Finance', actions: [
+        TextButton.icon(
+          onPressed: _planWithHari,
+          icon: const Icon(Icons.auto_awesome_rounded,
+              size: 16, color: AppleColors.blue),
+          label: Text('Plan with ${AssistantIdentity.name}',
+              style: const TextStyle(
+                  color: AppleColors.blue,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ),
+      ]),
       floatingActionButton: FloatingActionButton(
         backgroundColor: Neon.textHi,
         foregroundColor: Neon.onInk,
@@ -65,45 +78,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
         },
         child: const Icon(Icons.add_rounded),
       ),
-      body: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_rounded,
-                          color: Neon.textHi),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    Text(
-                      'Finance',
-                      style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: _planWithHari,
-                      icon: Icon(Icons.auto_awesome_rounded,
-                          size: 16, color: Neon.textHi),
-                      label: Text('Plan with ${AssistantIdentity.name}',
-                          style: TextStyle(
-                              color: Neon.textHi,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600)),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(child: _body()),
-            ],
-          ),
-        ),
+      body: SafeArea(child: _body()),
     );
   }
 
@@ -144,23 +119,23 @@ class _FinanceScreenState extends State<FinanceScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 90),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
       children: [
         _summaryCard(s),
-        const SizedBox(height: 14),
+        const SizedBox(height: 24),
         if (emis.isNotEmpty) ...[
-          const SectionHeader('EMIs — highest interest first'),
-          ...emis.map(_itemCard),
-          const SizedBox(height: 10),
+          const GroupLabel('EMIs — highest interest first'),
+          GroupedCard(children: emis.map(_itemRow).toList()),
+          const SizedBox(height: 24),
         ],
         if (incomes.isNotEmpty) ...[
-          const SectionHeader('Incoming'),
-          ...incomes.map(_itemCard),
-          const SizedBox(height: 10),
+          const GroupLabel('Incoming'),
+          GroupedCard(children: incomes.map(_itemRow).toList()),
+          const SizedBox(height: 24),
         ],
         if (expenses.isNotEmpty) ...[
-          const SectionHeader('Recurring expenses'),
-          ...expenses.map(_itemCard),
+          const GroupLabel('Recurring expenses'),
+          GroupedCard(children: expenses.map(_itemRow).toList()),
         ],
       ],
     );
@@ -187,7 +162,13 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ],
           ),
         );
-    return GlassCard(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Neon.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Neon.line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -197,7 +178,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
               cell('Out / month',
                   '₹${_fmt((s['monthly_emi'] as num? ?? 0) + (s['monthly_expense'] as num? ?? 0))}'),
               cell('Surplus', '₹${_fmt(surplus)}',
-                  color: good ? Neon.success : Neon.error),
+                  color: good ? AppleColors.green : AppleColors.red),
             ],
           ),
           if ((s['total_debt'] as num? ?? 0) > 0) ...[
@@ -210,14 +191,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
     );
   }
 
-  Widget _itemCard(Map e) {
+  Widget _itemRow(Map e) {
     final kind = e['kind'] as String? ?? '';
     final isEmi = kind == 'emi';
     final isIncome = kind == 'income';
     final color = isIncome
-        ? Neon.success
+        ? AppleColors.green
         : isEmi
-            ? Neon.error
+            ? AppleColors.red
             : Neon.textLo;
     final chips = <String>[
       if (isEmi && (e['interest_rate'] as num? ?? 0) > 0)
@@ -229,38 +210,15 @@ class _FinanceScreenState extends State<FinanceScreen> {
     return Dismissible(
       key: ValueKey('fin-${e['id']}'),
       onDismissed: (_) => _delete((e['id'] as num).toInt()),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: GlassCard(
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(e['name'] ?? '',
-                        style: TextStyle(
-                            color: Neon.textHi,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600)),
-                    if (chips.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(chips.join(' · '),
-                          style: TextStyle(
-                              color: Neon.textLo, fontSize: 12)),
-                    ],
-                  ],
-                ),
-              ),
-              Text(
-                '${isIncome ? '+' : '−'}₹${_fmt(e['amount'])}/mo',
-                style: TextStyle(
-                    color: color,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
+      child: AppleRow(
+        title: e['name'] ?? '',
+        subtitle: chips.isNotEmpty ? chips.join(' · ') : null,
+        trailing: Text(
+          '${isIncome ? '+' : '−'}₹${_fmt(e['amount'])}/mo',
+          style: TextStyle(
+              color: color,
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700),
         ),
       ),
     );
@@ -342,7 +300,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: Neon.textHi, width: 1.4),
+            borderSide: BorderSide(color: Neon.violet, width: 1.4),
           ),
         ),
       ),
@@ -355,7 +313,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     return AlertDialog(
       backgroundColor: Neon.surface,
       shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       title: Text('Add finance item',
           style: TextStyle(color: Neon.textHi, fontSize: 17)),
       content: SingleChildScrollView(
@@ -403,7 +361,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-              backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
+              backgroundColor: Neon.violet, foregroundColor: Colors.white),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Saving…' : 'Save'),
         ),

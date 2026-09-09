@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../models/user_document.dart';
@@ -86,13 +86,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     final docs = _docs;
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        surfaceTintColor: Colors.transparent,
-        title: Text('My documents',
-            style: GoogleFonts.spaceGrotesk(
-                fontWeight: FontWeight.w700, letterSpacing: -0.3)),
-      ),
+      appBar: appleAppBar(context, 'My documents'),
       body: _body(docs),
     );
   }

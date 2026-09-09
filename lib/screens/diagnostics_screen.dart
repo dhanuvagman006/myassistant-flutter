@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 
-import '../design/neon_tokens.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/log.dart';
 import 'assistant_settings_screen.dart';
 import 'mcp_servers_screen.dart';
+import '../design/apple_kit.dart';
 import '../design/gyro_motion.dart';
+import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
-import '../theme/app_theme.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  DIAGNOSTICS — "why isn't it working?", answered on the phone itself.
@@ -73,19 +73,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   Widget build(BuildContext context) {
     final engine = AssistantEngine.instance;
     return Scaffold(
-      backgroundColor: AppColors.ink,
-      appBar: AppBar(
-        backgroundColor: AppColors.ink,
-        foregroundColor: AppColors.mist,
-        title: const Text('Connection & diagnostics'),
-      ),
+      backgroundColor: Neon.bg,
+      appBar: appleAppBar(context, 'Connection & diagnostics'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Server URL',
-              style:
-                  TextStyle(color: AppColors.mist, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
+          const GroupLabel('Server URL'),
           TextField(
             controller: _url,
             style: TextStyle(color: Neon.textHi, fontSize: 14),
@@ -93,21 +86,30 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               hintText: 'https://your-server  or  http://192.168.1.5:3000',
               hintStyle: TextStyle(color: Neon.textDim),
               filled: true,
-              fillColor: Neon.surfaceHigh,
+              fillColor: Neon.surface,
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide.none),
             ),
           ),
           const SizedBox(height: 8),
           Row(children: [
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppColors.marigold),
+              style: FilledButton.styleFrom(
+                  backgroundColor: Neon.violet,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
               onPressed: _saveUrl,
               child: const Text('Save'),
             ),
             const SizedBox(width: 10),
             OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: AppleColors.blue,
+                  side: BorderSide(color: Neon.line),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
               onPressed: _checking ? null : _checkHealth,
               child: Text(_checking ? 'Checking…' : 'Test /health'),
             ),
@@ -117,11 +119,12 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             _panel(
               _healthResult!,
               color: _healthResult!.startsWith('HTTP 200')
-                  ? Colors.greenAccent
-                  : Colors.redAccent,
+                  ? AppleColors.green
+                  : AppleColors.red,
             ),
           ],
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+          const GroupLabel('Status'),
           AnimatedBuilder(
             animation: engine,
             builder: (_, __) => _panel(
@@ -130,54 +133,49 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               '\nPhase: ${engine.phase.name}'
               '${engine.errorMessage != null ? '\nLast error: ${engine.errorMessage}' : ''}',
               color:
-                  engine.connected ? Colors.greenAccent : Colors.orangeAccent,
+                  engine.connected ? AppleColors.green : AppleColors.orange,
             ),
           ),
-          const SizedBox(height: 20),
-          // MCP lives in settings, never on the live agent screen — the
-          // normal experience is "open the app and talk".
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading:
-                Icon(Icons.face_retouching_natural, color: Neon.textLo),
-            title: Text('Assistant',
-                style: TextStyle(color: Neon.textHi)),
-            subtitle: Text('Name, voice, style, standing rules',
-                style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
-            trailing: Icon(Icons.chevron_right, color: Neon.textDim),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const AssistantSettingsScreen())),
-          ),
-          const SizedBox(height: 8),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.extension_rounded, color: Neon.textLo),
-            title: Text('MCP servers',
-                style: TextStyle(color: Neon.textHi)),
-            subtitle: Text('Connect external tools (advanced)',
-                style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
-            trailing:
-                Icon(Icons.chevron_right, color: Neon.textDim),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => const McpServersScreen())),
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
           // Motion sensor actually in use. Many budget phones have no
           // gyroscope; we fall back to the accelerometer so the tilt
           // effects still work. 'none' means neither is available.
           _panel(
             'Motion sensor: ${GyroMotion.instance.sensorSource}',
             color: GyroMotion.instance.sensorSource == 'none'
-                ? Colors.orangeAccent
-                : Colors.greenAccent,
+                ? AppleColors.orange
+                : AppleColors.green,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+          // MCP lives in settings, never on the live agent screen — the
+          // normal experience is "open the app and talk".
+          const GroupLabel('Settings'),
+          GroupedCard(
+            dividerInset: 60,
+            children: [
+              AppleRow(
+                leading: const IconTile(
+                    Icons.face_retouching_natural, AppleColors.purple),
+                title: 'Assistant',
+                subtitle: 'Name, voice, style, standing rules',
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AssistantSettingsScreen())),
+              ),
+              AppleRow(
+                leading:
+                    const IconTile(Icons.extension_rounded, AppleColors.teal),
+                title: 'MCP servers',
+                subtitle: 'Connect external tools (advanced)',
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const McpServersScreen())),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('App log',
-                  style: TextStyle(
-                      color: AppColors.mist, fontWeight: FontWeight.w600)),
+              const GroupLabel('App log'),
               TextButton(
                   onPressed: () => setState(AppLog.clear),
                   child: const Text('Clear')),
@@ -202,15 +200,14 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Neon.surfaceHigh,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: (color ?? Neon.textHi).withValues(alpha: 0.25)),
+          color: Neon.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Neon.line),
         ),
         child: SelectableText(
           text,
           style: TextStyle(
-            color: (color ?? AppColors.mist).withValues(alpha: 0.95),
+            color: color ?? Neon.textLo,
             fontSize: mono ? 11.5 : 13,
             fontFamily: mono ? 'monospace' : null,
             height: 1.4,

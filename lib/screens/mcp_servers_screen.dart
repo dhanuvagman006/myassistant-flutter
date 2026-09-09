@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
 
@@ -72,12 +73,10 @@ class _McpServersScreenState extends State<McpServersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Text('MCP servers'),
-      ),
+      appBar: appleAppBar(context, 'MCP servers'),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Neon.violet,
+        foregroundColor: Colors.white,
         onPressed: _addServer,
         icon: const Icon(Icons.add),
         label: const Text('Add server'),
@@ -98,7 +97,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                   ),
                   const SizedBox(height: 16),
                   if (_error != null)
-                    _banner(_error!, Colors.orangeAccent),
+                    _banner(_error!, AppleColors.orange),
                   if (_servers.isEmpty && _error == null)
                     _banner(
                         'No servers yet. Add one to extend what your assistant can do.',
@@ -115,8 +114,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          color: c.withValues(alpha: 0.10),
-          border: Border.all(color: c.withValues(alpha: 0.4)),
+          color: Neon.surface,
+          border: Border.all(color: Neon.line),
         ),
         child: Text(text, style: TextStyle(color: c)),
       );
@@ -129,9 +128,9 @@ class _McpServersScreenState extends State<McpServersScreen> {
     final tools = (s['tools'] as List?) ?? [];
 
     final (Color dot, String label) = switch (status) {
-      'connected' => (Colors.greenAccent, 'Connected'),
-      'connecting' || 'reconnecting' => (Colors.amberAccent, 'Connecting…'),
-      'error' => (Colors.redAccent, 'Error'),
+      'connected' => (AppleColors.green, 'Connected'),
+      'connecting' || 'reconnecting' => (AppleColors.orange, 'Connecting…'),
+      'error' => (AppleColors.red, 'Error'),
       'disabled' => (Neon.textDim, 'Disabled'),
       _ => (Neon.textDim, 'Disconnected'),
     };
@@ -140,8 +139,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Neon.surfaceHigh,
+        borderRadius: BorderRadius.circular(14),
+        color: Neon.surface,
         border: Border.all(color: Neon.line),
       ),
       child: Column(
@@ -163,7 +162,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
               ),
               Switch(
                 value: enabled,
-                activeThumbColor: Neon.cyan,
+                activeThumbColor: Colors.white,
+                activeTrackColor: AppleColors.green,
                 onChanged: busy
                     ? null
                     : (v) => _act(id, '/enabled',
@@ -180,7 +180,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(s['lastError'],
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                style: const TextStyle(color: AppleColors.red, fontSize: 12)),
           ],
           if (s['hasSecrets'] == true) ...[
             const SizedBox(height: 8),
@@ -201,16 +201,16 @@ class _McpServersScreenState extends State<McpServersScreen> {
               children: tools.take(12).map<Widget>((t) {
                 final risk = t['risk'] ?? 'low';
                 final c = risk == 'high'
-                    ? Colors.redAccent
+                    ? AppleColors.red
                     : risk == 'medium'
-                        ? Colors.amberAccent
+                        ? AppleColors.orange
                         : Neon.textDim;
                 return Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: c.withValues(alpha: 0.5)),
+                    border: Border.all(color: Neon.line),
                   ),
                   child: Text(t['name'] ?? '',
                       style: TextStyle(color: c, fontSize: 11)),
@@ -236,7 +236,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                 TextButton(
                     onPressed: () => _confirmDelete(id, s['name'] ?? ''),
                     child: const Text('Remove',
-                        style: TextStyle(color: Colors.redAccent))),
+                        style: TextStyle(color: AppleColors.red))),
               ],
             ),
         ],
@@ -248,7 +248,9 @@ class _McpServersScreenState extends State<McpServersScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: const Color(0xFF17162A),
+        backgroundColor: Neon.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14)),
         title: Text('Remove $name?', style: TextStyle(color: Neon.textHi)),
         content: Text(
             'Its tools will no longer be available to your assistant. Stored credentials are deleted.',
@@ -260,7 +262,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           TextButton(
               onPressed: () => Navigator.pop(c, true),
               child: const Text('Remove',
-                  style: TextStyle(color: Colors.redAccent))),
+                  style: TextStyle(color: AppleColors.red))),
         ],
       ),
     );
@@ -276,9 +278,9 @@ class _McpServersScreenState extends State<McpServersScreen> {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF17162A),
+      backgroundColor: Neon.surface,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(14))),
       builder: (c) => StatefulBuilder(
         builder: (c, setSheet) => Padding(
           padding: EdgeInsets.fromLTRB(
@@ -315,13 +317,9 @@ class _McpServersScreenState extends State<McpServersScreen> {
                     color: Neon.textDim, fontSize: 11.5),
               ),
               const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: Neon.violet),
-                  onPressed: () => Navigator.pop(c, true),
-                  child: const Text('Add'),
-                ),
+              ApplePrimaryButton(
+                label: 'Add',
+                onPressed: () => Navigator.pop(c, true),
               ),
             ],
           ),
@@ -364,7 +362,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           filled: true,
           fillColor: Neon.surfaceHigh,
           border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
               borderSide: BorderSide.none),
         ),
       );

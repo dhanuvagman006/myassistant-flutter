@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
-import '../design/neon_widgets.dart';
+import '../design/neon_widgets.dart'
+    show NeonEmptyState, NeonErrorState, NeonLoader;
 import '../features/assistant/widgets/action_cards.dart'
     show shareDocumentFile;
 import '../models/client.dart';
@@ -76,62 +78,28 @@ class _ClientsScreenState extends State<ClientsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: Neon.bg,
+      appBar: appleAppBar(context, 'Clients & patients'),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Neon.violet,
+        foregroundColor: Colors.white,
         onPressed: _addClient,
         icon: const Icon(Icons.person_add_alt_1_rounded),
         label: const Text('Add'),
       ),
-      body: AuroraBackdrop(
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_rounded,
-                          color: Neon.textHi),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Clients & patients',
-                        style: TextStyle(
-                          color: Neon.textHi,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: AppleSearchField(
+                hint: 'Search by name, summary or tag',
+                onChanged: (v) => setState(() => _query = v),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                child: TextField(
-                  onChanged: (v) => setState(() => _query = v),
-                  style: TextStyle(color: Neon.textHi),
-                  decoration: InputDecoration(
-                    hintText: 'Search by name, summary or tag',
-                    hintStyle: TextStyle(color: Neon.textDim),
-                    prefixIcon:
-                        Icon(Icons.search_rounded, color: Neon.textDim),
-                    filled: true,
-                    fillColor: Neon.surfaceHigh,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(child: _body()),
-            ],
-          ),
+            ),
+            Expanded(child: _body()),
+          ],
         ),
       ),
     );
@@ -164,63 +132,37 @@ class _ClientsScreenState extends State<ClientsScreen> {
     return RefreshIndicator(
       color: Neon.violet,
       onRefresh: _load,
-      child: ListView.builder(
+      child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
-        itemCount: rows.length,
-        itemBuilder: (_, i) => _clientTile(rows[i]),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+        children: [
+          GroupedCard(
+            dividerInset: 60,
+            children: [for (final c in rows) _clientRow(c)],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _clientTile(Client c) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: GlassCard(
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ClientDetailScreen(clientId: c.id)));
-          _load(); // notes/docs may have changed the ordering
-        },
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: Neon.violet.withValues(alpha: 0.25),
-              child: Text(
-                c.name.isNotEmpty ? c.name[0].toUpperCase() : '?',
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(c.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: Neon.textHi,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(
-                    c.summary.isNotEmpty ? c.summary : _kindLabel(c.kind),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Neon.textLo, fontSize: 12.5),
-                  ),
-                ],
-              ),
-            ),
-            NeonChip(label: _kindLabel(c.kind)),
-          ],
+  Widget _clientRow(Client c) {
+    return AppleRow(
+      leading: CircleAvatar(
+        radius: 15,
+        backgroundColor: Neon.violet.withValues(alpha: 0.15),
+        child: Text(
+          c.name.isNotEmpty ? c.name[0].toUpperCase() : '?',
+          style: TextStyle(
+              color: Neon.violet, fontSize: 14, fontWeight: FontWeight.w700),
         ),
       ),
+      title: c.name,
+      subtitle: c.summary.isNotEmpty ? c.summary : _kindLabel(c.kind),
+      onTap: () async {
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ClientDetailScreen(clientId: c.id)));
+        _load(); // notes/docs may have changed the ordering
+      },
     );
   }
 }
@@ -330,19 +272,21 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.photo_camera_rounded, color: Neon.cyan),
+              leading: const Icon(Icons.photo_camera_rounded, color: AppleColors.blue),
               title: Text('Take a photo',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'camera'),
             ),
             ListTile(
-              leading: Icon(Icons.photo_library_rounded, color: Neon.cyan),
+              leading:
+                  const Icon(Icons.photo_library_rounded, color: AppleColors.blue),
               title: Text('Pick from gallery',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'gallery'),
             ),
             ListTile(
-              leading: Icon(Icons.picture_as_pdf_rounded, color: Neon.pink),
+              leading:
+                  const Icon(Icons.picture_as_pdf_rounded, color: AppleColors.red),
               title:
                   Text('Pick a PDF', style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'pdf'),
@@ -490,8 +434,8 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child:
-                  Text('Delete', style: TextStyle(color: Neon.error))),
+              child: const Text('Delete',
+                  style: TextStyle(color: AppleColors.red))),
         ],
       ),
     );
@@ -519,119 +463,106 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   Widget build(BuildContext context) {
     final c = _client;
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: AuroraBackdrop(
-        child: SafeArea(
-          child: c == null
-              ? (_error != null
-                  ? NeonErrorState(message: _error!, onRetry: _load)
-                  : const Center(child: NeonLoader()))
-              : Column(
+      backgroundColor: Neon.bg,
+      appBar: appleAppBar(
+        context,
+        c?.name ?? 'Case file',
+        actions: [
+          IconButton(
+              icon: Icon(Icons.edit_rounded, color: Neon.textLo, size: 20),
+              onPressed: c == null ? null : _edit),
+          IconButton(
+              icon: Icon(Icons.delete_outline_rounded,
+                  color: Neon.textLo, size: 20),
+              onPressed: c == null ? null : _delete),
+        ],
+      ),
+      body: SafeArea(
+        child: c == null
+            ? (_error != null
+                ? NeonErrorState(message: _error!, onRetry: _load)
+                : const Center(child: NeonLoader()))
+            : RefreshIndicator(
+                color: Neon.violet,
+                onRefresh: _load,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: Icon(Icons.arrow_back_rounded,
-                                color: Neon.textHi),
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
-                          Expanded(
-                            child: Text(
-                              c.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                    const GroupLabel('Details'),
+                    _detailsGroup(c),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GroupLabel(_documents.isEmpty
+                              ? 'Documents'
+                              : 'Documents (${_documents.length})'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _busy ? null : _attachDocument,
+                          icon: Icon(Icons.add_rounded,
+                              size: 16, color: Neon.violet),
+                          label: Text('Attach',
                               style: TextStyle(
-                                  color: Neon.textHi,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          IconButton(
-                              icon: Icon(Icons.edit_rounded,
-                                  color: Neon.textLo, size: 20),
-                              onPressed: _edit),
-                          IconButton(
-                              icon: Icon(Icons.delete_outline_rounded,
-                                  color: Neon.textLo, size: 20),
-                              onPressed: _delete),
-                        ],
-                      ),
+                                  color: Neon.violet,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ],
                     ),
-                    Expanded(
-                      child: RefreshIndicator(
-                        color: Neon.violet,
-                        onRefresh: _load,
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                    if (_uploading)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
                           children: [
-                            _profileCard(c),
-                            const SizedBox(height: 4),
-                            SectionHeader(
-                                _documents.isEmpty
-                                    ? 'Documents'
-                                    : 'Documents (${_documents.length})',
-                                trailing: GhostButton(
-                                    label: 'Attach',
-                                    leading: Icon(Icons.add_rounded,
-                                        size: 16, color: Neon.cyan),
-                                    onPressed: _busy ? null : _attachDocument)),
-                            if (_uploading)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Neon.violet)),
-                                    const SizedBox(width: 10),
-                                    Text('Uploading…',
-                                        style: TextStyle(
-                                            color: Neon.textLo, fontSize: 13)),
-                                  ],
-                                ),
-                              ),
-                            if (_documents.isEmpty && !_uploading)
-                              _emptyRow(
-                                Icons.description_outlined,
-                                'No documents yet',
-                                'Attach reports, prescriptions or scans. '
-                                    'They stay in ${c.name}\'s file only.',
-                              )
-                            else
-                              for (final d in _documents)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: DocumentListTile(
-                                    document: d,
-                                    onOpen: () => _openDocument(d),
-                                    onShare: () => _shareDocument(d),
-                                    onDelete: () => _deleteDocument(d),
-                                  ),
-                                ),
-                            const SectionHeader('Case notes'),
-                            _noteComposer(),
-                            if (_notes.isEmpty)
-                              _emptyRow(
-                                Icons.sticky_note_2_outlined,
-                                'No notes yet',
-                                'Dated notes you add here are read back '
-                                    'when you ask about ${c.name}.',
-                              )
-                            else
-                              for (final n in _notes) _noteTile(n),
+                            SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Neon.violet)),
+                            const SizedBox(width: 10),
+                            Text('Uploading…',
+                                style: TextStyle(
+                                    color: Neon.textLo, fontSize: 13)),
                           ],
                         ),
                       ),
-                    ),
+                    if (_documents.isEmpty && !_uploading)
+                      _emptyRow(
+                        Icons.description_outlined,
+                        'No documents yet',
+                        'Attach reports, prescriptions or scans. '
+                            'They stay in ${c.name}\'s file only.',
+                      )
+                    else
+                      for (final d in _documents)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: DocumentListTile(
+                            document: d,
+                            onOpen: () => _openDocument(d),
+                            onShare: () => _shareDocument(d),
+                            onDelete: () => _deleteDocument(d),
+                          ),
+                        ),
+                    const SizedBox(height: 24),
+                    const GroupLabel('Case notes'),
+                    _noteComposer(),
+                    if (_notes.isEmpty)
+                      _emptyRow(
+                        Icons.sticky_note_2_outlined,
+                        'No notes yet',
+                        'Dated notes you add here are read back '
+                            'when you ask about ${c.name}.',
+                      )
+                    else
+                      GroupedCard(
+                        children: [for (final n in _notes) _noteRow(n)],
+                      ),
                   ],
                 ),
-        ),
+              ),
       ),
     );
   }
@@ -640,8 +571,9 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Neon.surfaceHigh.withValues(alpha: 0.6),
+        color: Neon.surface,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Neon.line),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -693,56 +625,54 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   static String _fmtAmt(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
 
-  Widget _profileCard(Client c) {
+  Widget _detailsGroup(Client c) {
     final recallLine = _recallLine();
     final balanceLine = _balanceLine();
-    final rows = <(IconData, String)>[
-      if (recallLine.isNotEmpty) (Icons.event_repeat_rounded, recallLine),
-      if (balanceLine.isNotEmpty)
-        (Icons.currency_rupee_rounded, balanceLine),
-      if (c.summary.isNotEmpty) (Icons.info_outline_rounded, c.summary),
-      if (c.phone.isNotEmpty) (Icons.call_rounded, c.phone),
-      if (c.email.isNotEmpty) (Icons.mail_outline_rounded, c.email),
-      if (c.tags.isNotEmpty) (Icons.sell_outlined, c.tags),
-    ];
-    return GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              NeonChip(label: _kindLabel(c.kind)),
-              const Spacer(),
-              Text('Since ${_day(c.createdAt)}',
-                  style:
-                      TextStyle(color: Neon.textDim, fontSize: 12)),
-            ],
-          ),
-          if (rows.isEmpty)
-            Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('No details yet — tap the pencil to add.',
-                  style: TextStyle(color: Neon.textDim, fontSize: 13)),
-            )
-          else
-            for (final (icon, text) in rows)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(icon, size: 16, color: Neon.textLo),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(text,
-                            style: TextStyle(
-                                color: Neon.textHi, fontSize: 13.5))),
-                  ],
-                ),
-              ),
-        ],
+    final rows = <Widget>[
+      AppleRow(
+        title: _kindLabel(c.kind),
+        subtitle: 'Since ${_day(c.createdAt)}',
       ),
-    );
+      if (recallLine.isNotEmpty)
+        AppleRow(
+          leading:
+              const IconTile(Icons.event_repeat_rounded, AppleColors.orange),
+          title: recallLine,
+        ),
+      if (balanceLine.isNotEmpty)
+        AppleRow(
+          leading:
+              const IconTile(Icons.currency_rupee_rounded, AppleColors.green),
+          title: balanceLine,
+        ),
+      if (c.summary.isNotEmpty)
+        AppleRow(
+          leading: const IconTile(Icons.info_outline_rounded, AppleColors.gray),
+          title: c.summary,
+        ),
+      if (c.phone.isNotEmpty)
+        AppleRow(
+          leading: const IconTile(Icons.call_rounded, AppleColors.gray),
+          title: c.phone,
+        ),
+      if (c.email.isNotEmpty)
+        AppleRow(
+          leading: const IconTile(Icons.mail_outline_rounded, AppleColors.gray),
+          title: c.email,
+        ),
+      if (c.tags.isNotEmpty)
+        AppleRow(
+          leading: const IconTile(Icons.sell_outlined, AppleColors.gray),
+          title: c.tags,
+        ),
+    ];
+    if (rows.length == 1) {
+      rows.add(AppleRow(
+        title: 'No details yet — tap the pencil to add.',
+        titleColor: Neon.textDim,
+      ));
+    }
+    return GroupedCard(dividerInset: 60, children: rows);
   }
 
   Widget _noteComposer() {
@@ -780,41 +710,38 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
     );
   }
 
-  Widget _noteTile(ClientNote n) {
+  Widget _noteRow(ClientNote n) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: GlassCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(_day(n.createdAt),
-                    style:
-                        TextStyle(color: Neon.textDim, fontSize: 11.5)),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () async {
-                    try {
-                      await ApiService.deleteClientNote(widget.clientId, n.id);
-                      if (!mounted) return;
-                      setState(() =>
-                          _notes = _notes.where((x) => x.id != n.id).toList());
-                    } catch (_) {
-                      _toast("Couldn't delete the note.");
-                    }
-                  },
-                  child: Icon(Icons.close_rounded,
-                      size: 15, color: Neon.textDim),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(n.text,
-                style: TextStyle(
-                    color: Neon.textHi, fontSize: 13.5, height: 1.35)),
-          ],
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(_day(n.createdAt),
+                  style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () async {
+                  try {
+                    await ApiService.deleteClientNote(widget.clientId, n.id);
+                    if (!mounted) return;
+                    setState(() =>
+                        _notes = _notes.where((x) => x.id != n.id).toList());
+                  } catch (_) {
+                    _toast("Couldn't delete the note.");
+                  }
+                },
+                child:
+                    Icon(Icons.close_rounded, size: 15, color: Neon.textDim),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(n.text,
+              style: TextStyle(
+                  color: Neon.textHi, fontSize: 13.5, height: 1.35)),
+        ],
       ),
     );
   }
@@ -964,15 +891,12 @@ class _EditClientSheetState extends State<_EditClientSheet> {
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: TextStyle(color: Neon.error, fontSize: 13)),
+                style: const TextStyle(color: AppleColors.red, fontSize: 13)),
           ],
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: GradientButton(
-              label: _saving ? 'Saving…' : 'Save',
-              onPressed: _saving ? null : _save,
-            ),
+          ApplePrimaryButton(
+            label: _saving ? 'Saving…' : 'Save',
+            onPressed: _saving ? null : _save,
           ),
         ],
       ),

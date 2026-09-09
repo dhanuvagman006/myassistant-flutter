@@ -113,7 +113,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           Expanded(
             child: RefreshIndicator(
-              color: Neon.cyan,
+              color: Neon.violet,
               onRefresh: _load,
               child: _error != null
                   ? ListView(children: [
@@ -171,7 +171,9 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: Neon.surfaceHigh,
         child: Text(initial,
             style: TextStyle(
-                color: Neon.cyan, fontSize: 17, fontWeight: FontWeight.w700)),
+                color: Neon.violet,
+                fontSize: 17,
+                fontWeight: FontWeight.w700)),
       ),
       title: Text(t.name,
           maxLines: 1,
@@ -196,12 +198,12 @@ class _ChatScreenState extends State<ChatScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: Neon.cyan,
+                color: Neon.violet,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text('${t.unread}',
-                  style: TextStyle(
-                      color: Neon.onInk,
+                  style: const TextStyle(
+                      color: Colors.white,
                       fontSize: 11,
                       fontWeight: FontWeight.w700)),
             ),
@@ -381,11 +383,11 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                       decoration: InputDecoration(
                         hintText: 'Message…',
                         filled: true,
-                        fillColor: Neon.surface,
+                        fillColor: Neon.surfaceHigh,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 10),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
+                          borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide.none,
                         ),
                       ),
@@ -394,15 +396,17 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                   const SizedBox(width: 8),
                   IconButton.filled(
                     onPressed: _sending ? null : _send,
-                    style: IconButton.styleFrom(backgroundColor: Neon.cyan),
+                    style:
+                        IconButton.styleFrom(backgroundColor: Neon.violet),
                     icon: _sending
-                        ? SizedBox(
+                        ? const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Neon.onInk),
+                                strokeWidth: 2, color: Colors.white),
                           )
-                        : Icon(Icons.send_rounded, color: Neon.onInk, size: 20),
+                        : const Icon(Icons.send_rounded,
+                            color: Colors.white, size: 20),
                   ),
                 ],
               ),
@@ -415,7 +419,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 
   Widget _bubble(_ChatItem m) {
     final align = m.mine ? Alignment.centerRight : Alignment.centerLeft;
-    final bg = m.mine ? Neon.cyan.withValues(alpha: 0.16) : Neon.surface;
+    final bg = m.mine ? Neon.violet : Neon.surface;
     return Align(
       alignment: align,
       child: Container(
@@ -425,11 +429,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             maxWidth: MediaQuery.of(context).size.width * 0.78),
         decoration: BoxDecoration(
           color: bg,
+          border: m.mine ? null : Border.all(color: Neon.line),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(15),
-            topRight: const Radius.circular(15),
-            bottomLeft: Radius.circular(m.mine ? 15 : 4),
-            bottomRight: Radius.circular(m.mine ? 4 : 15),
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(m.mine ? 16 : 4),
+            bottomRight: Radius.circular(m.mine ? 4 : 16),
           ),
         ),
         child: Column(
@@ -440,7 +445,11 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text('assistant · auto-reply',
-                    style: TextStyle(color: Neon.textDim, fontSize: 10.5)),
+                    style: TextStyle(
+                        color: m.mine
+                            ? Colors.white.withValues(alpha: 0.7)
+                            : Neon.textDim,
+                        fontSize: 10.5)),
               ),
             if (m.documentId != null)
               Padding(
@@ -461,7 +470,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                         height: 60,
                         color: Neon.surfaceHigh,
                         child: Icon(Icons.description_rounded,
-                            color: Neon.cyan),
+                            color: Neon.violet),
                       ),
                     ),
                   ),
@@ -469,7 +478,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
               ),
             Text(m.text,
                 style: TextStyle(
-                    color: Neon.textHi, fontSize: 14, height: 1.35)),
+                    color: m.mine ? Colors.white : Neon.textHi,
+                    fontSize: 14,
+                    height: 1.35)),
           ],
         ),
       ),

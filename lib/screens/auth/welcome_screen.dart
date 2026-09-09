@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
 import '../../features/assistant/state/assistant_state.dart';
 import '../../features/assistant/widgets/siri_orb.dart';
@@ -143,15 +144,12 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       _stage(
                         0.6,
                         1.0,
-                        FilledButton(
+                        ApplePrimaryButton(
+                          label: 'Meet $assistant',
                           onPressed: () {
                             HapticFeedback.lightImpact();
                             widget.onDone();
                           },
-                          style: FilledButton.styleFrom(
-                              backgroundColor: Neon.textHi,
-                              foregroundColor: Neon.onInk),
-                          child: Text('Meet $assistant'),
                         ),
                       ),
                     ],

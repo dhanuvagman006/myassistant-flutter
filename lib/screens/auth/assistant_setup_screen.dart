@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/api_service.dart';
 import '../../services/assistant_identity.dart';
@@ -303,6 +304,18 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                           label: Text(
                               id == native ? id : '$native  $id'),
                           selected: _language == id,
+                          selectedColor:
+                              Neon.violet.withValues(alpha: 0.15),
+                          backgroundColor: Neon.surface,
+                          side: BorderSide(color: Neon.line),
+                          labelStyle: TextStyle(
+                              fontWeight: _language == id
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: _language == id
+                                  ? Neon.violet
+                                  : Neon.textLo),
+                          showCheckmark: false,
                           onSelected: (_) =>
                               setState(() => _language = id),
                         ),
@@ -350,19 +363,27 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                             TextStyle(color: Neon.error, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: n.isEmpty || _busy ? null : _save,
-                    style:
-                        FilledButton.styleFrom(backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
-                    child: _busy
-                        ? SizedBox(
+                  _busy
+                      ? FilledButton(
+                          onPressed: null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Neon.violet,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Neon.onInk),
-                          )
-                        : const Text('Continue'),
-                  ),
+                                strokeWidth: 2.2, color: Colors.white),
+                          ),
+                        )
+                      : ApplePrimaryButton(
+                          label: 'Continue',
+                          onPressed: n.isEmpty ? null : _save,
+                        ),
                   const SizedBox(height: 8),
                   // No skip: an unnamed assistant renders as "Assistant"
                   // everywhere and reads broken. Naming is mandatory —

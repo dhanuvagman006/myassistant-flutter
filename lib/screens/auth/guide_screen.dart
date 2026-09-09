@@ -168,8 +168,8 @@ class _GuideScreenState extends State<GuideScreen> {
                         height: 7,
                         decoration: BoxDecoration(
                           color: i == _index
-                              ? Neon.textHi
-                              : Neon.textHi.withValues(alpha: 0.18),
+                              ? Neon.violet
+                              : Neon.violet.withValues(alpha: 0.18),
                           borderRadius: BorderRadius.circular(4),
                         ),
                       ),
@@ -179,8 +179,12 @@ class _GuideScreenState extends State<GuideScreen> {
                     FilledButton(
                       onPressed: _next,
                       style: FilledButton.styleFrom(
-                        backgroundColor: Neon.textHi,
-                        foregroundColor: Neon.onInk,
+                        backgroundColor: Neon.violet,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        textStyle: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
                         padding: const EdgeInsets.symmetric(
                             horizontal: 28, vertical: 14),
                       ),

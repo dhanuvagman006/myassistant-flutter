@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/auth_service.dart';
 import '../../services/phone_verify_service.dart';
@@ -196,10 +197,8 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Neon.error.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: Neon.error.withValues(alpha: 0.35)),
+                        color: Neon.error.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(
                         children: [
@@ -219,19 +218,27 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                   ],
 
                   const SizedBox(height: 20),
-                  FilledButton(
-                    onPressed: _busy ? null : (_codeSent ? _confirm : _send),
-                    style:
-                        FilledButton.styleFrom(backgroundColor: Neon.textHi, foregroundColor: Neon.onInk),
-                    child: _busy
-                        ? SizedBox(
+                  _busy
+                      ? FilledButton(
+                          onPressed: null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Neon.violet,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const SizedBox(
                             height: 20,
                             width: 20,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Neon.onInk),
-                          )
-                        : Text(_codeSent ? 'Confirm' : 'Send code'),
-                  ),
+                                strokeWidth: 2.2, color: Colors.white),
+                          ),
+                        )
+                      : ApplePrimaryButton(
+                          label: _codeSent ? 'Confirm' : 'Send code',
+                          onPressed: _codeSent ? _confirm : _send,
+                        ),
 
                   if (_codeSent) ...[
                     const SizedBox(height: 8),

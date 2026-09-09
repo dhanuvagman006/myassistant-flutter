@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
@@ -164,7 +165,9 @@ class _AuthScreenState extends State<AuthScreen> {
                                   ),
                                   const SizedBox(height: 14),
                                   // Gender — personalizes the assistant.
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
                                     children: [
                                       for (final g in const [
                                         ('male', 'Male', Icons.male_rounded),
@@ -172,21 +175,33 @@ class _AuthScreenState extends State<AuthScreen> {
                                             Icons.female_rounded),
                                         ('other', 'Other',
                                             Icons.transgender_rounded),
-                                      ]) ...[
-                                        Expanded(
-                                          child: _GenderChip(
-                                            label: g.$2,
-                                            icon: g.$3,
-                                            selected: _gender == g.$1,
-                                            onTap: () => setState(() =>
-                                                _gender = _gender == g.$1
-                                                    ? null
-                                                    : g.$1),
-                                          ),
+                                      ])
+                                        ChoiceChip(
+                                          avatar: Icon(g.$3,
+                                              size: 16,
+                                              color: _gender == g.$1
+                                                  ? Neon.violet
+                                                  : Neon.textLo),
+                                          label: Text(g.$2),
+                                          selected: _gender == g.$1,
+                                          selectedColor: Neon.violet
+                                              .withValues(alpha: 0.15),
+                                          backgroundColor: Neon.surface,
+                                          side: BorderSide(color: Neon.line),
+                                          labelStyle: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: _gender == g.$1
+                                                  ? FontWeight.w600
+                                                  : FontWeight.w500,
+                                              color: _gender == g.$1
+                                                  ? Neon.violet
+                                                  : Neon.textLo),
+                                          showCheckmark: false,
+                                          onSelected: (_) => setState(() =>
+                                              _gender = _gender == g.$1
+                                                  ? null
+                                                  : g.$1),
                                         ),
-                                        if (g.$1 != 'other')
-                                          const SizedBox(width: 8),
-                                      ],
                                     ],
                                   ),
                                   const SizedBox(height: 14),
@@ -243,10 +258,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Neon.error.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: Neon.error.withValues(alpha: 0.35)),
+                            color: Neon.error.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Row(
                             children: [
@@ -282,8 +295,8 @@ class _AuthScreenState extends State<AuthScreen> {
                                 height: 24,
                                 child: Checkbox(
                                   value: _agree,
-                                  activeColor: Neon.textHi,
-                                  checkColor: Neon.onInk,
+                                  activeColor: Neon.violet,
+                                  checkColor: Colors.white,
                                   side: BorderSide(
                                       color: Neon.textLo, width: 1.6),
                                   shape: RoundedRectangleBorder(
@@ -344,24 +357,28 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                       ],
                       const SizedBox(height: 20),
-                      FilledButton(
-                        onPressed: _busy ? null : _submitEmail,
-                        // foreground must be stated WITH the background:
-                        // painting the button textHi (near-white in dark
-                        // mode) while the label kept the theme's white
-                        // default made "Create account" white-on-white.
-                        style: FilledButton.styleFrom(
-                            backgroundColor: Neon.textHi,
-                            foregroundColor: Neon.onInk),
-                        child: _busy
-                            ? SizedBox(
+                      _busy
+                          ? FilledButton(
+                              onPressed: null,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Neon.violet,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size.fromHeight(50),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2.2, color: Neon.onInk),
-                              )
-                            : Text(_isSignUp ? 'Create account' : 'Log in'),
-                      ),
+                                    strokeWidth: 2.2, color: Colors.white),
+                              ),
+                            )
+                          : ApplePrimaryButton(
+                              label:
+                                  _isSignUp ? 'Create account' : 'Log in',
+                              onPressed: _submitEmail,
+                            ),
 
                       const SizedBox(height: 24),
                       Row(
@@ -388,6 +405,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: OutlinedButton.styleFrom(
                           backgroundColor: Neon.surface,
                           side: BorderSide(color: Neon.line),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                       ),
@@ -483,52 +502,6 @@ class _GoogleG extends StatelessWidget {
         fontSize: 18,
         fontWeight: FontWeight.w800,
         color: Color(0xFF4285F4),
-      ),
-    );
-  }
-}
-
-/// Small selectable pill for the sign-up gender row.
-class _GenderChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-  const _GenderChip(
-      {required this.label,
-      required this.icon,
-      required this.selected,
-      required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        decoration: BoxDecoration(
-          color:
-              selected ? Neon.textHi.withValues(alpha: 0.06) : Neon.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: selected ? Neon.textHi : Neon.line,
-              width: selected ? 1.4 : 1),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon,
-                size: 16, color: selected ? Neon.textHi : Neon.textLo),
-            const SizedBox(width: 6),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight:
-                        selected ? FontWeight.w600 : FontWeight.w500,
-                    color: selected ? Neon.textHi : Neon.textLo)),
-          ],
-        ),
       ),
     );
   }
