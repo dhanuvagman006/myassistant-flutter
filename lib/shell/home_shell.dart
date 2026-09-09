@@ -11,6 +11,7 @@ import '../widgets/inline_voice.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
+import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
@@ -66,15 +67,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void _maybeEscalateInline() {
     final engine = AssistantEngine.instance;
     if (!mounted || _conversationShowing) return;
+    // A turn that needs a tappable card gets the full screen; everything
+    // else stays inline. (No state-resetting here: an eager reset during
+    // the connect window used to kill sessions as they were being born.)
     if (engine.inlineVoice && engine.pendingConfirmation != null) {
       _openConversation();
-    }
-    // Conversation fully over → the orb returns to its resting state.
-    if (engine.inlineVoice &&
-        !engine.liveActive &&
-        (engine.phase == AssistantPhase.idle ||
-            engine.phase == AssistantPhase.completed)) {
-      engine.inlineVoice = false;
     }
   }
 
@@ -227,17 +224,35 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // the dock, no second screen. Tap again to stop. HOLD: the live face
       // agent (avatar video) opens full screen.
       floatingActionButton: AssistantOrbButton(
-        onTap: () {
+        onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;
-          engine.inlineVoice = true;
-          engine.pressMic();
+          if (_conversationShowing) return;
+          // Decide by what is actually RUNNING, not by a flag that may lag:
+          // a live session, a connect in flight, or a busy classic turn all
+          // mean "tap = stop"; a resting engine means "tap = talk".
+          final running = engine.liveActive ||
+              (engine.phase != AssistantPhase.idle &&
+                  engine.phase != AssistantPhase.completed);
+          if (running) {
+            await engine.endInlineConversation();
+          } else {
+            await engine.beginInlineConversation(
+                name: AuthService.instance.user?.name);
+          }
         },
-        onLongPress: () {
+        onLongPress: () async {
           HapticFeedback.heavyImpact();
           final engine = AssistantEngine.instance;
-          engine.inlineVoice = false;
-          if (!engine.faceMode) engine.toggleFaceMode();
+          if (_conversationShowing) return;
+          // Hand the audio over cleanly, then open the screen WITH face
+          // mode set — beginConversation reserves the avatar as part of
+          // its own startup, so exactly one session comes up, with the
+          // face. (The old toggle-then-open raced two startups.)
+          if (engine.inlineVoice || engine.liveActive) {
+            await engine.endInlineConversation();
+          }
+          engine.faceMode = true;
           _openConversation();
         },
       ),

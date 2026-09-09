@@ -70,6 +70,27 @@ class AssistantEngine extends ChangeNotifier {
   /// they are the only visual feedback the user gets.
   bool inlineVoice = false;
 
+  /// Starts the inline conversation from the Home orb: the EXACT same
+  /// lifecycle as opening the conversation screen — _conversationOpen
+  /// guards the greeting, the hot-mic check and live revival — just with
+  /// no navigation. Face mode is forced off (there is no surface on Home
+  /// to render the face, and a stale flag sent every inline tap through
+  /// the slow avatar-reservation path).
+  Future<void> beginInlineConversation({String? name}) async {
+    inlineVoice = true;
+    faceMode = false;
+    notifyListeners();
+    await beginConversation(name: name);
+  }
+
+  /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
+  /// clearing _conversationOpen makes the in-flight start terminate itself
+  /// at the existing hot-mic guard instead of racing a second session.
+  Future<void> endInlineConversation() async {
+    inlineVoice = false;
+    await leaveConversation();
+  }
+
   final List<TranscriptEntry> transcript = [];
   final List<ToolActivity> activities = [];
 
@@ -1097,6 +1118,7 @@ class AssistantEngine extends ChangeNotifier {
 
   Future<void> leaveConversation() async {
     _conversationOpen = false;
+    inlineVoice = false;
     _conversationEnded = true; // the loop must not resume on its own
     translatorActive = false; // interpreter never outlives the screen
     _clearCaption();
@@ -1127,6 +1149,10 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> stopLive() async {
+    // Any deliberate live stop ends the inline (Home-orb) conversation —
+    // a phone call, a hold-for-face handover, a tap-to-stop. The flag must
+    // never outlive the audio, or the orb's next tap toggles the wrong way.
+    inlineVoice = false;
     _micGateWatchdog?.cancel();
     _micGateWatchdog = null;
     _silenceSettle?.cancel();
@@ -1208,6 +1234,7 @@ class AssistantEngine extends ChangeNotifier {
 
     final text = greetingFor(greetingName);
     transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
+    _captionFrom('hari', text);
     _setPhase(AssistantPhase.speaking, silent: true);
     notifyListeners();
 
@@ -1532,6 +1559,7 @@ class AssistantEngine extends ChangeNotifier {
         _failedTurns = 0; // a real transcript — the service is healthy
         final said = e['text'] as String? ?? '';
         transcript.add(TranscriptEntry(TranscriptRole.user, said));
+        _captionFrom('you', said);
         // A goodbye closes the continuous loop: Hari still answers this
         // turn (so she can say goodbye back), but won't reopen the mic.
         if (isFarewell(said)) _conversationEnded = true;
