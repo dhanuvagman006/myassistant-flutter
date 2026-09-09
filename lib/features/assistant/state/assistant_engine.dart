@@ -809,6 +809,17 @@ class AssistantEngine extends ChangeNotifier {
   /// if it failed (so the caller can fall back to the classic loop without
   /// the user ever seeing an error).
   Future<bool> _startLive() async {
+    // A previous session may still be tearing down (leaving the face
+    // screen fires leaveConversation without awaiting it). Starting the
+    // mic while LiveKit/audio release is mid-flight wedges the recorder —
+    // wait it out, plus a short settle for the native audio session.
+    final teardown = _liveTeardown;
+    if (teardown != null) {
+      try {
+        await teardown.timeout(const Duration(seconds: 6));
+      } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 350));
+    }
     // Live owns all audio: silence the classic loop completely first.
     _conversationEnded = true;
     _clearCaption(); // a fresh session starts with a clean caption bar
@@ -1149,7 +1160,21 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> stopLive() async {
+  /// The in-flight live/audio teardown, if any. A new session start MUST
+  /// wait for it: LiveKit room exit and the native audio session release
+  /// take real time, and starting the mic mid-teardown is the "stuck mic"
+  /// error seen when tapping the orb right after leaving the face screen.
+  Future<void>? _liveTeardown;
+
+  Future<void> stopLive() {
+    final f = _stopLiveInner();
+    _liveTeardown = f.whenComplete(() {
+      if (identical(_liveTeardown, f)) _liveTeardown = null;
+    });
+    return f;
+  }
+
+  Future<void> _stopLiveInner() async {
     // Any deliberate live stop ends the inline (Home-orb) conversation —
     // a phone call, a hold-for-face handover, a tap-to-stop. The flag must
     // never outlive the audio, or the orb's next tap toggles the wrong way.
