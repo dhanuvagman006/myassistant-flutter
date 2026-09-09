@@ -66,10 +66,12 @@ class _SplashScreenState extends State<SplashScreen>
                 },
               ),
               const SizedBox(height: Neon.s6),
-              GradientText(
+              Text(
                 'MYASSISTANT',
                 style: Theme.of(context).textTheme.headlineSmall!.copyWith(
-                    letterSpacing: 4, fontWeight: FontWeight.w700),
+                    color: Neon.textHi,
+                    letterSpacing: 4,
+                    fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: Neon.s2),
               Text('Booting your assistant…',
