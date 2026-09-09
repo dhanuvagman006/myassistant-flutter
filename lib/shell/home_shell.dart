@@ -112,20 +112,24 @@ class _HomeShellState extends State<HomeShell> {
     });
   }
 
-  /// One-time battery-optimization exemption request (see initState).
+  /// Battery-optimization exemption — the difference between pushes that
+  /// arrive and a Samsung that puts the app to sleep after a few hours.
+  /// Asking once-ever was the bug: one dismissed dialog and notifications
+  /// silently died forever. Now: skip while granted, otherwise re-ask at
+  /// most once a week until it is granted.
   Future<void> _requestBatteryExemptionOnce() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('battery_exemption_asked_v1') == true) return;
       final status = await Permission.ignoreBatteryOptimizations.status;
-      if (status.isGranted) {
-        await prefs.setBool('battery_exemption_asked_v1', true);
-        return;
-      }
+      if (status.isGranted) return;
+      final lastAsk = prefs.getInt('battery_exemption_last_ask') ?? 0;
+      final week = const Duration(days: 7).inMilliseconds;
+      if (DateTime.now().millisecondsSinceEpoch - lastAsk < week) return;
       await Permission.ignoreBatteryOptimizations.request();
       // Marked AFTER the request: writing it first meant a launch that
       // was backgrounded within 4 s never asked, and the flag said it had.
-      await prefs.setBool('battery_exemption_asked_v1', true);
+      await prefs.setInt('battery_exemption_last_ask',
+          DateTime.now().millisecondsSinceEpoch);
     } catch (_) {}
   }
 
