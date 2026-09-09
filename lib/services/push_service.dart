@@ -7,6 +7,7 @@ import 'package:myassistant/services/api_service.dart';
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import 'app_feedback.dart';
+import 'app_update_service.dart';
 import 'notification_service.dart';
 import 'avatar_message_service.dart';
 import 'brief_service.dart';
@@ -77,6 +78,14 @@ class PushService {
         // app — the app must. Silently dropping them here is why "send
         // from the admin panel" showed nothing whenever the app was open.
         final kind = (m.data['kind'] ?? '').toString();
+        // A release announcement IS the trigger: start the update flow the
+        // moment it lands (the sheet auto-downloads) — no reopen, no
+        // background-swipe dance. The banner would be redundant noise.
+        if (kind == 'app_update') {
+          AppLog.add('push', 'update announced — checking now');
+          _checkForUpdateNow();
+          return;
+        }
         final n = m.notification;
         if (n != null &&
             kind != 'agent_message' &&
@@ -90,6 +99,10 @@ class PushService {
       });
       FirebaseMessaging.onMessageOpenedApp.listen((m) {
         // User tapped the notification — the app is coming to front.
+        if (m.data['kind'] == 'app_update') {
+          AppLog.add('push', 'update notification tapped');
+          _checkForUpdateNow();
+        }
         if (m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message opened from notification');
           _deliver(m);
@@ -102,6 +115,10 @@ class PushService {
       });
       // Cold start FROM the notification (app was killed).
       FirebaseMessaging.instance.getInitialMessage().then((m) {
+        if (m != null && m.data['kind'] == 'app_update') {
+          AppLog.add('push', 'update notification launched the app');
+          _checkForUpdateNow();
+        }
         if (m != null && m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message launched the app');
           _deliver(m);
@@ -282,6 +299,17 @@ class PushService {
     } catch (e) {
       AppLog.add('push', 'sync failed: $e');
     }
+  }
+
+  /// Runs the update flow over whatever screen is up. Small delay so a
+  /// cold start has a navigator before the sheet tries to show.
+  void _checkForUpdateNow() {
+    Future.delayed(const Duration(seconds: 2), () {
+      final ctx = AvatarMessageService.navigatorKey.currentContext;
+      if (ctx != null) {
+        AppUpdateService.instance.check(ctx, force: true);
+      }
+    });
   }
 
   int _sendAttempts = 0;

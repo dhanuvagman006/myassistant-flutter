@@ -45,7 +45,9 @@ class AppUpdateService {
   Future<void> check(BuildContext context, {bool force = false}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_sheetShowing) return;
-    if (!force && now - _lastCheckMs < 30 * 60 * 1000) return;
+    // Short throttle: back-to-back releases used to hide behind a 30-min
+    // window, so a resumed app missed the newer one until a full restart.
+    if (!force && now - _lastCheckMs < 2 * 60 * 1000) return;
     _lastCheckMs = now;
     try {
       final r = await http
