@@ -16,6 +16,7 @@ import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
+import '../../../services/sms_service.dart';
 import '../widgets/action_cards.dart' show shareDocumentFile;
 import '../../../services/app_feedback.dart';
 import '../../../services/auth_service.dart';
@@ -1716,6 +1717,46 @@ class AssistantEngine extends ChangeNotifier {
           person: e['person'] as String?,
           source: e['source'] as String? ?? 'camera',
         );
+        break;
+
+      case 'send_sms':
+        // Delivery ladder, rung two: the recipient isn't an app user, so
+        // the phone itself sends the message as a plain SMS — no taps.
+        // The REAL result is recorded and, on failure, spoken: the tool
+        // already told the user "sending as a text", so silence on an
+        // error would be a lie.
+        {
+          final to = (e['to'] ?? '').toString();
+          final who = (e['name'] ?? 'them').toString();
+          final msg = (e['message'] ?? '').toString();
+          SmsService.instance.send(to, msg).then((err) async {
+            final ok = err == null;
+            AppFeedback.toast(
+                ok ? 'Text sent to $who.' : "Couldn't text $who — $err.");
+            try {
+              await ApiService.sendJson('/outcomes', method: 'POST', body: {
+                'kind': 'message',
+                'target': who,
+                'status': ok ? 'completed' : 'failed',
+                if (!ok) 'reason': err,
+                'detail': 'SMS',
+              });
+            } catch (_) {}
+            if (!ok) {
+              final line =
+                  '[SYSTEM] ERROR: the SMS to $who FAILED — $err. It was NOT '
+                  'sent; tell me plainly and suggest fixing the permission '
+                  'or trying again.';
+              if (liveActive) {
+                _liveSvc.sendText(line);
+              } else {
+                try {
+                  await _api.sendText(line);
+                } catch (_) {}
+              }
+            }
+          });
+        }
         break;
 
       case 'share_document':

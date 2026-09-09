@@ -46,6 +46,34 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/sms")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "sendSms" -> result.success(
+                        sendSms(
+                            call.argument<String>("to") ?: "",
+                            call.argument<String>("body") ?: ""
+                        )
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /** True automatic SMS — SmsManager sends without opening any app.
+     *  Runtime SEND_SMS permission is checked/asked on the Dart side. */
+    private fun sendSms(to: String, body: String): Boolean {
+        return try {
+            @Suppress("DEPRECATION")
+            val sm = android.telephony.SmsManager.getDefault()
+            val parts = sm.divideMessage(body)
+            if (parts.size > 1) sm.sendMultipartTextMessage(to, null, parts, null, null)
+            else sm.sendTextMessage(to, null, body, null, null)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun hasUsagePermission(): Boolean {
