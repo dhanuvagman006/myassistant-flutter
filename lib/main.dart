@@ -1,3 +1,4 @@
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
@@ -52,6 +53,9 @@ Future<void> main() async {
   // Runtime server override (Diagnostics screen) — must resolve before
   // the first request, or the engine would connect to the wrong host.
   ApiService.loadServerOverride();
+  PackageInfo.fromPlatform().then((i) {
+    ApiService.appBuild = int.tryParse(i.buildNumber);
+  }).catchError((_) {});
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
   runApp(const MyAssistantApp());
 }

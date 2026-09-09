@@ -58,6 +58,9 @@ class ApiService {
     return 'https://api.hariassistant.tech';
   }
 
+  /// This install's Android versionCode (set once at startup).
+  static int? appBuild;
+
   static String? _runtimeBaseUrl;
 
   /// The URL every request uses right now.
@@ -182,6 +185,9 @@ class ApiService {
         // classic voice path all parse times server-side, and without
         // this header every user on earth was stamped IST (+330).
         'X-TZ-Offset': DateTime.now().timeZoneOffset.inMinutes.toString(),
+        // Which build THIS install is — lets the server gate capabilities
+        // (e.g. auto-SMS) so it never promises what the app can't do.
+        if (appBuild != null) 'X-App-Build': appBuild.toString(),
         if (geoLat != null) 'X-Geo-Lat': geoLat!.toStringAsFixed(4),
         if (geoLng != null) 'X-Geo-Lng': geoLng!.toStringAsFixed(4),
       };

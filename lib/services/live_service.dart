@@ -261,7 +261,8 @@ class LiveService {
             '&lng=${ApiService.geoLng!.toStringAsFixed(4)}'
         : '';
     final uri =
-        Uri.parse('$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo');
+        Uri.parse(
+        '$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo&build=${ApiService.appBuild ?? 0}');
 
     try {
       _ch = WebSocketChannel.connect(uri);
