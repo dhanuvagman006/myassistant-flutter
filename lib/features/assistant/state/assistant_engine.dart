@@ -16,6 +16,7 @@ import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
+import '../widgets/action_cards.dart' show shareDocumentFile;
 import '../../../services/app_feedback.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/assistant_identity.dart';
@@ -1682,6 +1683,24 @@ class AssistantEngine extends ChangeNotifier {
           person: e['person'] as String?,
           source: e['source'] as String? ?? 'camera',
         );
+        break;
+
+      case 'share_document':
+        // "Send Ramesh his report on WhatsApp" — the server picked the
+        // file from the patient's case; the phone downloads the real bytes
+        // and opens the share sheet. The user's tap on a chat is what
+        // actually sends it, so nothing here claims delivery.
+        {
+          final doc = e['document'];
+          if (doc is Map) {
+            final d = UserDocument.fromJson(doc.cast<String, dynamic>());
+            documentCards = [d];
+            notifyListeners();
+            shareDocumentFile(d).catchError((_) {
+              AppFeedback.toast("Couldn't prepare that file to share.");
+            });
+          }
+        }
         break;
 
       case 'document_filed':

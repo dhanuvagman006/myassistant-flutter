@@ -540,8 +540,14 @@ class ApiService {
   }
 
   /// The full case file: profile + notes (newest first) + linked documents.
-  static Future<({Client client, List<ClientNote> notes, List<UserDocument> documents})>
-      fetchClientProfile(int id) async {
+  static Future<
+      ({
+        Client client,
+        List<ClientNote> notes,
+        List<UserDocument> documents,
+        Map<String, dynamic>? recall,
+        double balance,
+      })> fetchClientProfile(int id) async {
     final r = await _client
         .get(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
@@ -551,6 +557,8 @@ class ApiService {
       client: Client.fromJson(j['client'] as Map<String, dynamic>),
       notes: ClientNote.listFromJson(j['notes']),
       documents: UserDocument.listFromJson(j['documents']),
+      recall: j['recall'] is Map ? (j['recall'] as Map).cast<String, dynamic>() : null,
+      balance: (j['balance'] as num?)?.toDouble() ?? 0,
     );
   }
 

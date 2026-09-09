@@ -256,6 +256,8 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   Client? _client;
   List<ClientNote> _notes = const [];
   List<UserDocument> _documents = const [];
+  Map<String, dynamic>? _recall; // next pending recall, from the server
+  double _balance = 0; // outstanding dues (positive = they owe)
   String? _error;
   bool _busy = false;
   bool _uploading = false;
@@ -292,6 +294,8 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         _client = p.client;
         _notes = p.notes;
         _documents = p.documents;
+        _recall = p.recall;
+        _balance = p.balance;
         _error = null;
       });
     } catch (_) {
@@ -665,8 +669,37 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
     );
   }
 
+  String _recallLine() {
+    final r = _recall;
+    if (r == null) return '';
+    final due = (r['dueAt'] as num?)?.toInt() ?? 0;
+    if (due <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(due);
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final note = (r['note'] ?? '').toString();
+    return 'Next recall: ${d.day} ${months[d.month - 1]} ${d.year}'
+        '${note.isNotEmpty ? ' — $note' : ''}';
+  }
+
+  String _balanceLine() {
+    if (_balance > 0) return 'Owes ₹${_fmtAmt(_balance)}';
+    if (_balance < 0) return 'In credit ₹${_fmtAmt(-_balance)}';
+    return '';
+  }
+
+  static String _fmtAmt(double v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
+
   Widget _profileCard(Client c) {
+    final recallLine = _recallLine();
+    final balanceLine = _balanceLine();
     final rows = <(IconData, String)>[
+      if (recallLine.isNotEmpty) (Icons.event_repeat_rounded, recallLine),
+      if (balanceLine.isNotEmpty)
+        (Icons.currency_rupee_rounded, balanceLine),
       if (c.summary.isNotEmpty) (Icons.info_outline_rounded, c.summary),
       if (c.phone.isNotEmpty) (Icons.call_rounded, c.phone),
       if (c.email.isNotEmpty) (Icons.mail_outline_rounded, c.email),
