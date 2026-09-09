@@ -65,6 +65,11 @@ class AssistantEngine extends ChangeNotifier {
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
 
+  /// True while the HOME orb is running the conversation inline (no
+  /// conversation screen). Captions are always produced in this mode —
+  /// they are the only visual feedback the user gets.
+  bool inlineVoice = false;
+
   final List<TranscriptEntry> transcript = [];
   final List<ToolActivity> activities = [];
 
@@ -128,7 +133,7 @@ class AssistantEngine extends ChangeNotifier {
   bool _capLastWasUser = true;
 
   void _captionFrom(String speaker, String fragment) {
-    if (!captionsEnabled) return;
+    if (!captionsEnabled && !inlineVoice) return;
     if (speaker == 'you') {
       if (!_capLastWasUser) {
         _capUser = '';

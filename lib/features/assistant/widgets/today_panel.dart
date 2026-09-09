@@ -210,13 +210,6 @@ class TodayBriefBody extends StatelessWidget {
                     // in the Updates tab now; Home is the user's own life.
                     const SizedBox(height: 18),
                     const MonthCalendar(),
-                    if (b.people.isNotEmpty) ...[
-                      const SizedBox(height: 18),
-                      _sectionTitle(Icons.group_rounded,
-                          'Your circle on the app', Neon.lime),
-                      const SizedBox(height: 8),
-                      _peopleRow(b),
-                    ],
                   ],
                 ],
               );
@@ -517,42 +510,6 @@ class TodayBriefBody extends StatelessWidget {
         ),
       );
 
-  Widget _peopleRow(TodayBrief b) {
-    return SizedBox(
-      height: 64,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: b.people.length.clamp(0, 12),
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, i) {
-          final p = b.people[i];
-          return GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              _openPersonSheet(context, p);
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _initialsDot(p.name, Neon.gVioletPink, size: 40),
-                const SizedBox(height: 5),
-                SizedBox(
-                  width: 52,
-                  child: Text(
-                    p.name.split(' ').first,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Neon.textLo, fontSize: 10.5),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   static Widget _initialsDot(String name, Gradient g, {double size = 34}) {
     final parts =
@@ -601,14 +558,6 @@ class TodayBriefBody extends StatelessWidget {
 ///  through their assistant, or call them. Their agent is on the app, which
 ///  is exactly why they're in this row.
 /// ─────────────────────────────────────────────────────────────────────────
-void _openPersonSheet(BuildContext context, CirclePerson p) {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.35),
-    builder: (_) => _PersonSheet(person: p),
-  );
-}
 
 class _PersonSheet extends StatefulWidget {
   const _PersonSheet({required this.person});

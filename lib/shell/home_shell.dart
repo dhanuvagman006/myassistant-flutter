@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/neon_tokens.dart';
 import '../widgets/contact_picker_sheet.dart';
+import '../widgets/inline_voice.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/assistant/state/assistant_engine.dart';
+import '../features/assistant/state/assistant_state.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
@@ -57,7 +59,23 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    AssistantEngine.instance.removeListener(_maybeEscalateInline);
     super.dispose();
+  }
+
+  void _maybeEscalateInline() {
+    final engine = AssistantEngine.instance;
+    if (!mounted || _conversationShowing) return;
+    if (engine.inlineVoice && engine.pendingConfirmation != null) {
+      _openConversation();
+    }
+    // Conversation fully over → the orb returns to its resting state.
+    if (engine.inlineVoice &&
+        !engine.liveActive &&
+        (engine.phase == AssistantPhase.idle ||
+            engine.phase == AssistantPhase.completed)) {
+      engine.inlineVoice = false;
+    }
   }
 
   int _tab = HomeShell.lastTab;
@@ -100,6 +118,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // Duplicate contact names ("call Manish" with three Manishes) resolve
     // by TAP, not by a spoken back-and-forth: the sheet pops instantly over
     // whatever screen is on top and one tap places the call.
+    // An inline turn that needs a CARD (a confirmation to tap) can't show
+    // it on Home — the conversation screen opens just for those.
+    engine.addListener(_maybeEscalateInline);
     engine.onPickContact = (spokenName, matches, onChosen) {
       if (!mounted) {
         onChosen(null);
@@ -186,34 +207,39 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: Neon.bg,
       extendBody: true,
-      body: IndexedStack(
-        index: _tab,
-        children: const [
-          HomeDashboard(),
-          HubScreen(),
-          ChatScreen(),
-          AssistantSettingsScreen(),
+      body: Stack(
+        children: [
+          IndexedStack(
+            index: _tab,
+            children: const [
+              HomeDashboard(),
+              HubScreen(),
+              ChatScreen(),
+              AssistantSettingsScreen(),
+            ],
+          ),
+          // Floating captions for the inline (no-screen) conversation.
+          const InlineCaptionOverlay(),
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      floatingActionButton: GestureDetector(
-        onTap: _openConversation,
-        child: Container(
-          width: 64,
-          height: 64,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Neon.textHi,
-            boxShadow: [
-              BoxShadow(
-                color: Neon.textHi.withValues(alpha: 0.28),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Icon(Icons.mic_rounded, color: Neon.onInk, size: 30),
-        ),
+      // TAP: talk right here — the orb wakes in place, captions float above
+      // the dock, no second screen. Tap again to stop. HOLD: the live face
+      // agent (avatar video) opens full screen.
+      floatingActionButton: AssistantOrbButton(
+        onTap: () {
+          HapticFeedback.mediumImpact();
+          final engine = AssistantEngine.instance;
+          engine.inlineVoice = true;
+          engine.pressMic();
+        },
+        onLongPress: () {
+          HapticFeedback.heavyImpact();
+          final engine = AssistantEngine.instance;
+          engine.inlineVoice = false;
+          if (!engine.faceMode) engine.toggleFaceMode();
+          _openConversation();
+        },
       ),
       bottomNavigationBar: BottomAppBar(
         color: Neon.surface,
