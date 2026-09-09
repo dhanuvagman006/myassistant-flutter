@@ -1,5 +1,6 @@
 
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
@@ -208,8 +209,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
         child: Container(
-          // The page behind fades — the conversation takes the stage.
-          color: Colors.black.withValues(alpha: 0.55),
+          // A deep fade — the page behind must never compete with the
+          // words. The conversation owns the stage.
+          color: Colors.black.withValues(alpha: 0.8),
           alignment: Alignment.center,
           padding: const EdgeInsets.fromLTRB(28, 80, 28, 160),
           child: AnimatedSwitcher(
@@ -221,14 +223,14 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
               textAlign: TextAlign.center,
               maxLines: 8,
               overflow: TextOverflow.fade,
-              style: TextStyle(
+              style: GoogleFonts.spaceGrotesk(
                 color: _fromUser
-                    ? Colors.white.withValues(alpha: 0.65)
+                    ? Colors.white.withValues(alpha: 0.6)
                     : Colors.white,
-                fontSize: _fromUser ? 20 : 26,
-                height: 1.4,
-                fontWeight: _fromUser ? FontWeight.w500 : FontWeight.w600,
-                letterSpacing: -0.3,
+                fontSize: _fromUser ? 21 : 28,
+                height: 1.35,
+                fontWeight: _fromUser ? FontWeight.w500 : FontWeight.w700,
+                letterSpacing: -0.4,
               ),
             ),
           ),

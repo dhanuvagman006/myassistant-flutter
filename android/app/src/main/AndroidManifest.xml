@@ -14,6 +14,7 @@
 <uses-permission android:name="android.permission.READ_CONTACTS"/>
 <uses-permission android:name="android.permission.CALL_PHONE"/>
 <uses-permission android:name="android.permission.SEND_SMS"/>
+<uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
 <!-- Network state — required for WebRTC ICE candidate gathering -->
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
@@ -104,6 +105,10 @@
                 <data android:mimeType="application/pdf"/>
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false" />
         <!-- Local reminder notifications: without these two receivers the
              AlarmManager broadcast reached NO component and "remind me at
              5" never rang — on any device, ever. -->

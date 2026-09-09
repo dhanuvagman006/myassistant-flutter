@@ -47,6 +47,19 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/updater")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "install" -> result.success(
+                        ApkInstaller.install(
+                            applicationContext,
+                            call.argument<String>("path") ?: ""
+                        )
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/sms")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

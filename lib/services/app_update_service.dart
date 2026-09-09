@@ -5,6 +5,7 @@ import 'package:convert/convert.dart' show AccumulatorSink;
 import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -27,6 +28,9 @@ import 'api_service.dart';
 ///  latestVersionCode + apkUrl + apkSha256; GET /app/latest.apk serves.
 /// ─────────────────────────────────────────────────────────────────────────
 class AppUpdateService {
+  /// Set per check(): the sheet starts the update on its own.
+  static bool _autoStart = false;
+  static bool get autoStart => _autoStart;
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
@@ -60,6 +64,7 @@ class AppUpdateService {
 
       final forced = cfg.forceUpdateBelow > current;
       _sheetShowing = true;
+      _autoStart = true; // hands-free: the sheet begins updating by itself
       await showModalBottomSheet<void>(
         context: context,
         isDismissible: !forced,
@@ -129,12 +134,24 @@ class AppUpdateService {
               'page, then come back and tap Try again');
         }
       }
-      final result = await OpenFilex.open(
-        file.path,
-        type: 'application/vnd.android.package-archive',
-      );
-      if (result.type != ResultType.done) {
-        throw Exception('installer: ${result.message}');
+      // HANDS-FREE INSTALL. A PackageInstaller session with
+      // USER_ACTION_NOT_REQUIRED updates silently on Android 12+ once this
+      // app is its own installer of record — which the first such install
+      // establishes (that one shows the system's single confirmation).
+      // From then on, updates apply themselves; the app simply restarts
+      // as the new version.
+      AppLog.add('update', 'committing install session');
+      final started = await const MethodChannel('hari/updater')
+          .invokeMethod<bool>('install', {'path': file.path});
+      if (started != true) {
+        // Session refused (odd OEM) — fall back to the tap-through installer.
+        final result = await OpenFilex.open(
+          file.path,
+          type: 'application/vnd.android.package-archive',
+        );
+        if (result.type != ResultType.done) {
+          throw Exception('installer: ${result.message}');
+        }
       }
     } finally {
       client.close();
@@ -154,6 +171,18 @@ class _UpdateSheet extends StatefulWidget {
 class _UpdateSheetState extends State<_UpdateSheet> {
   double? _progress; // null = not started
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Zero-effort updates: the download starts the moment the sheet
+    // appears — no button hunting. The sheet stays as a progress surface.
+    if (AppUpdateService.autoStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _progress == null) _update();
+      });
+    }
+  }
 
   Future<void> _update() async {
     setState(() {
