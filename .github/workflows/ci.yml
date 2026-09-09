@@ -27,7 +27,8 @@ jobs:
       - run: flutter pub get
 
       # Warnings are fatal on purpose — the tree stays warning-clean.
-      - run: flutter analyze
+      # Style infos (prefer_const etc.) are advisory, not build-breakers.
+      - run: flutter analyze --no-fatal-infos
 
       # No test suite exists yet; add `flutter test` back when it does.
 
