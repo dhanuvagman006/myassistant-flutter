@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -147,9 +146,10 @@ class _HaloPainter extends CustomPainter {
   bool shouldRepaint(_HaloPainter old) => old.t != t;
 }
 
-/// Floating caption pill above the dock: shows what is being said while
-/// the inline conversation runs, and slips away shortly after both sides
-/// go quiet (or instantly when the session ends).
+/// Center-screen live captions, lyrics-style: while the inline
+/// conversation runs the page behind dims, and what is being said appears
+/// large in the middle of the screen — the assistant's words bright, the
+/// user's own words softer. Everything fades away when the session ends.
 class InlineCaptionOverlay extends StatefulWidget {
   const InlineCaptionOverlay({super.key});
 
@@ -159,10 +159,14 @@ class InlineCaptionOverlay extends StatefulWidget {
 
 class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
   final engine = AssistantEngine.instance;
-  Timer? _fade;
-  bool _visible = false;
   String _text = '';
   bool _fromUser = false;
+
+  bool get _active =>
+      engine.inlineVoice &&
+      (engine.liveActive ||
+          (engine.phase != AssistantPhase.idle &&
+              engine.phase != AssistantPhase.completed));
 
   @override
   void initState() {
@@ -175,65 +179,56 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
   void dispose() {
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
-    _fade?.cancel();
     super.dispose();
   }
 
   void _onCaption() {
-    if (!mounted || !engine.inlineVoice) return;
+    if (!mounted) return;
     final c = engine.caption.value;
     if (c == null || c.text.trim().isEmpty) return;
     setState(() {
       _text = c.text.trim();
       _fromUser = c.speaker == 'you';
-      _visible = true;
-    });
-    // Quiet for a few seconds → the pill slips away on its own.
-    _fade?.cancel();
-    _fade = Timer(const Duration(seconds: 4), () {
-      if (mounted) setState(() => _visible = false);
     });
   }
 
   void _onEngine() {
     if (!mounted) return;
-    // Session over (or the full screen took over) — captions leave at once.
-    if (!engine.inlineVoice || (!engine.liveActive && !engine.phase.busy)) {
-      if (_visible) setState(() => _visible = false);
-    }
+    // Session over → the words leave with it.
+    if (!_active && _text.isNotEmpty) _text = '';
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
+    final show = _active;
     return IgnorePointer(
-      child: AnimatedSlide(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
-        offset: _visible ? Offset.zero : const Offset(0, 0.3),
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 260),
-          opacity: _visible ? 1 : 0,
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(24, 0, 24, 118),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              constraints: const BoxConstraints(maxWidth: 420),
-              decoration: BoxDecoration(
-                color: Neon.textHi.withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                _text,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Neon.onInk,
-                  fontSize: 14,
-                  height: 1.35,
-                  fontStyle: _fromUser ? FontStyle.italic : FontStyle.normal,
-                ),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+        opacity: show ? 1 : 0,
+        child: Container(
+          // The page behind fades — the conversation takes the stage.
+          color: Colors.black.withValues(alpha: 0.55),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.fromLTRB(28, 80, 28, 160),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOut,
+            child: Text(
+              _text,
+              key: ValueKey('$_fromUser|$_text'),
+              textAlign: TextAlign.center,
+              maxLines: 8,
+              overflow: TextOverflow.fade,
+              style: TextStyle(
+                color: _fromUser
+                    ? Colors.white.withValues(alpha: 0.65)
+                    : Colors.white,
+                fontSize: _fromUser ? 20 : 26,
+                height: 1.4,
+                fontWeight: _fromUser ? FontWeight.w500 : FontWeight.w600,
+                letterSpacing: -0.3,
               ),
             ),
           ),
