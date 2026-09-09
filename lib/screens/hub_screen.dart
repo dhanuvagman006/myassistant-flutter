@@ -10,121 +10,161 @@ import 'stocks_screen.dart';
 
 /// HUB TAB — every feature as a front door.
 ///
-/// Finance, markets, clients and tools used to hide behind small buttons
-/// under the orb; here each one gets a real card with room to explain
-/// itself — the "super-app" surface investors can actually see.
+/// Apple-style grouped lists (the iOS Settings pattern): plain ground,
+/// white rounded groups, one row per destination with a small solid-color
+/// icon tile, hairline separators and a chevron. No decoration that
+/// doesn't inform — the calm look is the design.
 class HubScreen extends StatelessWidget {
   const HubScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final entries = [
-      _Entry(
-        'Finance',
-        'EMIs, incomes & payoff plans',
-        Icons.account_balance_wallet_rounded,
-        Neon.violet,
-        (c) => const FinanceScreen(),
-      ),
-      _Entry(
-        'Markets',
-        'Live stocks & AI analysis',
-        Icons.trending_up_rounded,
-        Neon.cyan,
-        (c) => const StocksScreen(),
-      ),
-      _Entry(
-        'Clients & patients',
-        'Case files & their documents',
-        Icons.folder_shared_rounded,
-        Neon.pink,
-        (c) => const ClientsScreen(),
-      ),
-      _Entry(
-        'My documents',
-        'Your own scans, IDs & files',
-        Icons.description_rounded,
-        Neon.violet,
-        (c) => const DocumentsScreen(),
-      ),
-      _Entry(
-        'Connection',
-        'Server & diagnostics',
-        Icons.settings_ethernet_rounded,
-        Neon.lime,
-        (c) => const DiagnosticsScreen(),
-      ),
-    ];
-
     return SafeArea(
       bottom: false,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 120),
         children: [
-          Text(
-            'Hub',
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 27,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.5,
-              color: Neon.textHi,
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 20),
+            child: Text(
+              'Hub',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 32,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.6,
+                color: Neon.textHi,
+              ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text('Everything your assistant can run for you.',
-              style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
-          const SizedBox(height: 18),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            mainAxisSpacing: 14,
-            crossAxisSpacing: 14,
-            childAspectRatio: 1.0,
-            children: [for (final e in entries) _card(context, e)],
+          _group(context, 'Practice', [
+            _Row(
+              'Clients & patients',
+              'Case files, notes and their documents',
+              Icons.folder_shared_rounded,
+              const Color(0xFF007AFF),
+              (c) => const ClientsScreen(),
+            ),
+            _Row(
+              'My documents',
+              'Your own scans, IDs and files',
+              Icons.description_rounded,
+              const Color(0xFF34C759),
+              (c) => const DocumentsScreen(),
+            ),
+          ]),
+          _group(context, 'Money', [
+            _Row(
+              'Finance',
+              'EMIs, incomes and payoff plans',
+              Icons.account_balance_wallet_rounded,
+              const Color(0xFFAF52DE),
+              (c) => const FinanceScreen(),
+            ),
+            _Row(
+              'Markets',
+              'Live stocks and analysis',
+              Icons.trending_up_rounded,
+              const Color(0xFFFF9500),
+              (c) => const StocksScreen(),
+            ),
+          ]),
+          _group(context, 'System', [
+            _Row(
+              'Connection',
+              'Server and diagnostics',
+              Icons.settings_ethernet_rounded,
+              const Color(0xFF8E8E93),
+              (c) => const DiagnosticsScreen(),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _group(BuildContext context, String title, List<_Row> rows) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 16, bottom: 7),
+            child: Text(
+              title.toUpperCase(),
+              style: TextStyle(
+                color: Neon.textDim,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+          Material(
+            color: Neon.surface,
+            borderRadius: BorderRadius.circular(14),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0)
+                    Padding(
+                      // Hairline inset to align with the text, iOS-style.
+                      padding: const EdgeInsets.only(left: 60),
+                      child: Divider(height: 1, thickness: 0.5, color: Neon.line),
+                    ),
+                  _rowTile(context, rows[i]),
+                ],
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _card(BuildContext context, _Entry e) {
+  Widget _rowTile(BuildContext context, _Row r) {
     return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(builder: e.builder)),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Neon.line),
-          boxShadow: Neon.cardShadow,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      onTap: () =>
+          Navigator.of(context).push(MaterialPageRoute(builder: r.builder)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
+        child: Row(
           children: [
             Container(
-              width: 44,
-              height: 44,
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
-                color: e.color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
+                color: r.color,
+                borderRadius: BorderRadius.circular(7),
               ),
-              child: Icon(e.icon, color: e.color, size: 23),
+              child: Icon(r.icon, color: Colors.white, size: 18),
             ),
-            const Spacer(),
-            Text(e.title,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 3),
-            Text(e.subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: Neon.textLo, fontSize: 12, height: 1.3)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    r.title,
+                    style: TextStyle(
+                      color: Neon.textHi,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    r.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: Neon.textDim, size: 20),
           ],
         ),
       ),
@@ -132,11 +172,11 @@ class HubScreen extends StatelessWidget {
   }
 }
 
-class _Entry {
+class _Row {
   final String title;
   final String subtitle;
   final IconData icon;
   final Color color;
   final Widget Function(BuildContext) builder;
-  const _Entry(this.title, this.subtitle, this.icon, this.color, this.builder);
+  const _Row(this.title, this.subtitle, this.icon, this.color, this.builder);
 }
