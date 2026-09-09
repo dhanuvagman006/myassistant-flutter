@@ -7,6 +7,7 @@ import 'package:myassistant/services/api_service.dart';
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import 'app_feedback.dart';
+import 'notification_service.dart';
 import 'avatar_message_service.dart';
 import 'brief_service.dart';
 import 'call_service.dart';
@@ -70,6 +71,21 @@ class PushService {
         if (m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call arrived (foreground)');
           _placeScheduledCall(m);
+        }
+        // EVERYTHING ELSE (admin notices, update announcements, task
+        // outcomes…): Android does not display pushes for a foregrounded
+        // app — the app must. Silently dropping them here is why "send
+        // from the admin panel" showed nothing whenever the app was open.
+        final kind = (m.data['kind'] ?? '').toString();
+        final n = m.notification;
+        if (n != null &&
+            kind != 'agent_message' &&
+            kind != 'scheduled_call') {
+          AppLog.add('push', 'displaying foreground push (kind=$kind)');
+          ReminderNotifications.instance.showNow(
+            n.title ?? 'MyAssistant',
+            n.body ?? '',
+          );
         }
       });
       FirebaseMessaging.onMessageOpenedApp.listen((m) {

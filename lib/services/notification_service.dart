@@ -79,6 +79,34 @@ class ReminderNotifications {
     }
   }
 
+  /// Show a notification RIGHT NOW on the general channel. Used for
+  /// pushes that arrive while the app is in the foreground — Android
+  /// hands those to the app instead of displaying them, and swallowing
+  /// them made every admin/server notification invisible whenever the
+  /// app was open (which is exactly when people test).
+  Future<void> showNow(String title, String body) async {
+    if (!_ready) await init();
+    if (!_ready) return;
+    try {
+      await _plugin.show(
+        DateTime.now().millisecondsSinceEpoch & 0x7fffffff,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hari_default',
+            'Messages & alerts',
+            channelDescription:
+                'Messages from your circle, call prompts and updates',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(),
+        ),
+      );
+    } catch (_) {}
+  }
+
   /// Pull reminders from the backend and (re)schedule notifications.
   /// Fire-and-forget safe; call after sign-in, after every assistant
   /// answer, and whenever the Today screen edits a reminder.
