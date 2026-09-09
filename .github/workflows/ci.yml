@@ -26,6 +26,13 @@ jobs:
 
       - run: flutter pub get
 
+      # Firebase client config is gitignored; CI gets it from the repo
+      # secret so the debug build compiles exactly like a local one.
+      - name: Write google-services.json
+        run: echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+
       # Warnings are fatal on purpose — the tree stays warning-clean.
       # Style infos (prefer_const etc.) are advisory, not build-breakers.
       - run: flutter analyze --no-fatal-infos
