@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
-import 'package:flutter/services.dart';
 
 import 'design/theme_controller.dart';
 import 'screens/auth/auth_screen.dart';

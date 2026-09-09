@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show Color, Brightness;
+import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
