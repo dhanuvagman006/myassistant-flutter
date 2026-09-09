@@ -41,12 +41,31 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning to the foreground re-checks for a published update (the
+    // service throttles to every 30 min) — a phone that keeps the app in
+    // memory for days used to miss releases entirely.
+    if (state == AppLifecycleState.resumed && mounted) {
+      Timer(const Duration(seconds: 2), () {
+        if (mounted) AppUpdateService.instance.check(context);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   int _tab = HomeShell.lastTab;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting

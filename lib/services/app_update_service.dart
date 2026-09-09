@@ -30,14 +30,19 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  bool _checkedThisLaunch = false;
+  int _lastCheckMs = 0;
+  bool _sheetShowing = false;
 
-  /// Once per launch: compare the running build number with the newest
-  /// published one and offer the update. Silent on any failure — an
-  /// update check must never get in the way of using the app.
-  Future<void> check(BuildContext context) async {
-    if (_checkedThisLaunch) return;
-    _checkedThisLaunch = true;
+  /// Compare the running build number with the newest published one and
+  /// offer the update. Called on launch AND whenever the app returns to
+  /// the foreground — a phone that keeps the app in memory for days used
+  /// to never see new releases. Throttled to once per 30 minutes; silent
+  /// on any failure — a check must never get in the way of using the app.
+  Future<void> check(BuildContext context, {bool force = false}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_sheetShowing) return;
+    if (!force && now - _lastCheckMs < 30 * 60 * 1000) return;
+    _lastCheckMs = now;
     try {
       final r = await http
           .get(Uri.parse('${ApiService.baseUrl}/config'))
@@ -54,6 +59,7 @@ class AppUpdateService {
       if (!context.mounted) return;
 
       final forced = cfg.forceUpdateBelow > current;
+      _sheetShowing = true;
       await showModalBottomSheet<void>(
         context: context,
         isDismissible: !forced,
@@ -64,6 +70,7 @@ class AppUpdateService {
         ),
         builder: (_) => _UpdateSheet(config: cfg, forced: forced),
       );
+      _sheetShowing = false;
     } catch (e) {
       AppLog.add('update', 'check failed: $e');
     }
