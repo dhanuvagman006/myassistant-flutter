@@ -906,8 +906,17 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
 class DocumentGalleryScreen extends StatefulWidget {
   final List<UserDocument> documents;
   final int initialIndex;
+
+  /// When given, a Delete action appears. It must perform the deletion
+  /// (with its own confirmation) and return true ONLY when the server
+  /// confirmed — the gallery then drops the page, or closes if empty.
+  final Future<bool> Function(UserDocument)? onDelete;
+
   const DocumentGalleryScreen(
-      {super.key, required this.documents, this.initialIndex = 0});
+      {super.key,
+      required this.documents,
+      this.initialIndex = 0,
+      this.onDelete});
 
   @override
   State<DocumentGalleryScreen> createState() => _DocumentGalleryScreenState();
@@ -918,8 +927,28 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
       PageController(initialPage: widget.initialIndex);
   late int _index = widget.initialIndex;
   bool _sharing = false;
+  bool _deleting = false;
+  late final List<UserDocument> _docs = List.of(widget.documents);
 
-  UserDocument get _current => widget.documents[_index];
+  UserDocument get _current => _docs[_index];
+
+  Future<void> _delete() async {
+    final cb = widget.onDelete;
+    if (cb == null || _deleting) return;
+    setState(() => _deleting = true);
+    bool ok = false;
+    try {
+      ok = await cb(_current);
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+    if (!ok || !mounted) return;
+    setState(() {
+      _docs.removeAt(_index);
+      if (_index >= _docs.length) _index = _docs.length - 1;
+    });
+    if (_docs.isEmpty) Navigator.of(context).pop();
+  }
 
   @override
   void dispose() {
@@ -945,7 +974,7 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final docs = widget.documents;
+    final docs = _docs;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -984,6 +1013,19 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                 : const Icon(Icons.share_rounded),
             onPressed: _sharing ? null : _share,
           ),
+          if (widget.onDelete != null)
+            IconButton(
+              tooltip: 'Delete',
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.delete_outline_rounded),
+              onPressed: _deleting ? null : _delete,
+            ),
           const SizedBox(width: 4),
         ],
       ),

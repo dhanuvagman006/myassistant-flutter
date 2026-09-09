@@ -50,3 +50,56 @@ class UserDocument {
         .toList(growable: false);
   }
 }
+
+/// Where the server ACTUALLY filed an upload — read from the response, never
+/// assumed. `filedUnder` is 'client' (in [clientName]'s case file) or
+/// 'personal' (My documents). [clientCandidates] is non-empty when a spoken
+/// person name matched several clients, so nothing was linked.
+class DocumentUploadResult {
+  final UserDocument document;
+  final String filedUnder;
+  final int? clientId;
+  final String? clientName;
+  final List<String> clientCandidates;
+
+  const DocumentUploadResult({
+    required this.document,
+    required this.filedUnder,
+    this.clientId,
+    this.clientName,
+    this.clientCandidates = const [],
+  });
+
+  bool get filedUnderClient => filedUnder == 'client' && clientId != null;
+
+  factory DocumentUploadResult.fromJson(Map<String, dynamic> j) {
+    final client = j['client'];
+    final cands = j['clientCandidates'];
+    return DocumentUploadResult(
+      document: UserDocument.fromJson(
+          (j['document'] as Map).cast<String, dynamic>()),
+      filedUnder: (j['filedUnder'] ?? (client is Map ? 'client' : 'personal'))
+          .toString(),
+      clientId: client is Map ? (client['id'] as num?)?.toInt() : null,
+      clientName: client is Map ? client['name']?.toString() : null,
+      clientCandidates: cands is List
+          ? cands
+              .whereType<Map>()
+              .map((m) => (m['name'] ?? '').toString())
+              .where((n) => n.isNotEmpty)
+              .toList(growable: false)
+          : const [],
+    );
+  }
+}
+
+/// A non-200 from POST /docs — nothing was saved. [message] is the server's
+/// own explanation when it gave one (e.g. the account's document limit).
+class DocumentUploadException implements Exception {
+  final int statusCode;
+  final String message;
+  const DocumentUploadException(this.statusCode, this.message);
+
+  @override
+  String toString() => 'DocumentUploadException($statusCode, $message)';
+}

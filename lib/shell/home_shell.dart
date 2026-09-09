@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/neon_tokens.dart';
+import '../widgets/contact_picker_sheet.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
@@ -76,6 +77,18 @@ class _HomeShellState extends State<HomeShell> {
         if (gen == _galleryGen) _galleryShowing = false;
       });
       return true;
+    };
+    // Duplicate contact names ("call Manish" with three Manishes) resolve
+    // by TAP, not by a spoken back-and-forth: the sheet pops instantly over
+    // whatever screen is on top and one tap places the call.
+    engine.onPickContact = (spokenName, matches, onChosen) {
+      if (!mounted) {
+        onChosen(null);
+        return;
+      }
+      ContactPickerSheet.show(context,
+              spokenName: spokenName, matches: matches)
+          .then(onChosen);
     };
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();

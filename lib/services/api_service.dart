@@ -15,6 +15,7 @@ import '../models/reminder.dart';
 import '../models/user_document.dart';
 import '../models/vision_result.dart';
 import '../models/remote_config.dart';
+import 'document_events.dart';
 import 'style_prefs.dart';
 
 /// All network traffic goes app → backend → AI providers.
@@ -404,6 +405,32 @@ class ApiService {
     String note = '',
     int? clientId,
     String? person, // whose records this belongs to ("Prasant")
+  }) async =>
+      (await uploadDocumentDetailed(
+        bytes: bytes,
+        filename: filename,
+        mimeType: mimeType,
+        note: note,
+        clientId: clientId,
+        person: person,
+      ))
+          .document;
+
+  /// Same upload, but returns WHERE the server actually filed it — the
+  /// case file it landed in (if any), or the ambiguous candidates when a
+  /// spoken person name matched several clients. Callers use this to tell
+  /// the user the truth ("Saved to Manish's file" vs "Saved to your
+  /// documents") instead of assuming.
+  ///
+  /// Throws [DocumentUploadException] with the server's message on any
+  /// non-200 — nothing was saved in that case.
+  static Future<DocumentUploadResult> uploadDocumentDetailed({
+    required List<int> bytes,
+    required String filename,
+    required String mimeType,
+    String note = '',
+    int? clientId,
+    String? person,
   }) async {
     final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/docs'))
       ..headers.addAll(Map.of(_authHeaders)..remove('Content-Type'))
@@ -416,24 +443,44 @@ class ApiService {
     }
     final resp = await _client.send(req).timeout(const Duration(seconds: 90));
     final body = await resp.stream.bytesToString();
-    if (resp.statusCode != 200) throw Exception('docs ${resp.statusCode}');
-    return UserDocument.fromJson(
-        (jsonDecode(body) as Map<String, dynamic>)['document']
-            as Map<String, dynamic>);
+    if (resp.statusCode != 200) {
+      throw DocumentUploadException(resp.statusCode, _errorMessage(body));
+    }
+    final j = jsonDecode(body) as Map<String, dynamic>;
+    final result = DocumentUploadResult.fromJson(j);
+    DocumentEvents.bump();
+    return result;
   }
 
+  static String _errorMessage(String body) {
+    try {
+      final j = jsonDecode(body);
+      if (j is Map && j['error'] is String) return j['error'] as String;
+    } catch (_) {}
+    return '';
+  }
+
+  /// The user's OWN documents only (My documents) — never anything filed
+  /// under a client/patient; those are read through [fetchClientProfile].
   static Future<List<UserDocument>> fetchDocuments() async {
     final r = await _client
-        .get(Uri.parse('$baseUrl/docs'), headers: _authHeaders)
+        .get(Uri.parse('$baseUrl/docs?scope=personal'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) throw Exception('docs ${r.statusCode}');
     return UserDocument.listFromJson(jsonDecode(r.body)['documents']);
   }
 
+  /// Permanently deletes a document from the account. Throws unless the
+  /// server confirmed the deletion (404 = it was already gone, treated as
+  /// success so a retry can't get stuck).
   static Future<void> deleteDocument(int id) async {
-    await _client
+    final r = await _client
         .delete(Uri.parse('$baseUrl/docs/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200 && r.statusCode != 404) {
+      throw Exception('docs ${r.statusCode}');
+    }
+    DocumentEvents.bump();
   }
 
   /// URL of the original file bytes (use with [imageHeaders] for auth).
@@ -520,10 +567,16 @@ class ApiService {
 
   /// Deletes the person's card + notes. Their saved documents are KEPT
   /// (just unlinked) — the server never destroys files on card deletion.
+  /// Deletes the case file AND the documents filed in it (the UI's
+  /// confirmation says so). Throws unless the server confirmed.
   static Future<void> deleteClient(int id) async {
-    await _client
+    final r = await _client
         .delete(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
+        .timeout(const Duration(seconds: 30));
+    if (r.statusCode != 200 && r.statusCode != 404) {
+      throw Exception('clients ${r.statusCode}');
+    }
+    DocumentEvents.bump();
   }
 
   static Future<ClientNote> addClientNote(int clientId, String text) async {

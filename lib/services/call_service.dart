@@ -166,14 +166,24 @@ class CallService {
       if (s > 0) scored.add((s, c));
     }
     scored.sort((a, b) => b.$1 - a.$1);
-    // Keep everything within 20 points of the best (close calls only).
     if (scored.isEmpty) return const [];
+    // Keep everything within 20 points of the best (close calls only), and
+    // ALWAYS keep every exact namesake — three real people called "Manish"
+    // must all reach the picker, never be silently narrowed to one.
     final top = scored.first.$1;
-    return scored
-        .where((e) => e.$1 >= top - 20)
-        .map((e) => e.$2)
-        .take(4)
-        .toList();
+    final kept = scored.where((e) => e.$1 >= top - 20).map((e) => e.$2);
+    // The same person saved twice (SIM + Google) is ONE choice, not two:
+    // collapse rows with the same name and the same number.
+    final seen = <String>{};
+    final out = <Contact>[];
+    for (final c in kept) {
+      final key =
+          '${_norm(c.displayName)}|${bestNumber(c).replaceAll(RegExp(r"[^0-9]"), "")}';
+      if (!seen.add(key)) continue;
+      out.add(c);
+      if (out.length == 6) break;
+    }
+    return out;
   }
 
   /// From a pending shortlist, pick whichever the user's reply names.

@@ -15,6 +15,7 @@ import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
+import '../../../services/document_events.dart';
 import '../../../services/app_feedback.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/assistant_identity.dart';
@@ -72,6 +73,18 @@ class AssistantEngine extends ChangeNotifier {
   /// Saved documents recalled by this turn ("pull up patient Ramesh's
   /// file") — shown as cards while the reply is spoken.
   List<UserDocument> documentCards = const [];
+
+  /// Shows the duplicate-name contact picker. Set by the app shell; the
+  /// callback receives the spoken name, the candidates, and a sink for the
+  /// user's tap (null = dismissed).
+  void Function(String spokenName, List<ContactMatch> matches,
+      void Function(ContactMatch?) onChosen)? onPickContact;
+
+  /// The name the current call lookup is resolving ("Manish").
+  String _pendingLookupName = '';
+
+  /// Server-side id of the call outcome row awaiting the phone's verdict.
+  int? _pendingCallOutcomeId;
 
   /// UI hook (registered by HomeShell): present recalled documents as the
   /// full-screen swipe gallery, over whatever screen the user is on.
@@ -1419,12 +1432,7 @@ class AssistantEngine extends ChangeNotifier {
       _localCallFlow = false;
       final who = pending?.contact?.name ?? 'them';
       if (approved && (pending?.contact?.phone.isNotEmpty ?? false)) {
-        final ok = await CallService.instance.call(pending!.contact!.phone);
-        if (liveActive) {
-          _liveSvc.sendText(ok
-              ? '[SYSTEM] The call to $who is being placed on the phone now.'
-              : '[SYSTEM] The phone could not start the call to $who. Tell me briefly.');
-        }
+        await _dialAndReport(pending!.contact!);
       } else if (liveActive) {
         _liveSvc.sendText('[SYSTEM] I declined the call to $who. Acknowledge briefly.');
       }
@@ -1442,7 +1450,7 @@ class AssistantEngine extends ChangeNotifier {
     if (approved &&
         pending?.action == 'call' &&
         (pending?.contact?.phone.isNotEmpty ?? false)) {
-      await CallService.instance.call(pending!.contact!.phone);
+      await _dialAndReport(pending!.contact!);
     }
   }
 
@@ -1595,6 +1603,7 @@ class AssistantEngine extends ChangeNotifier {
         break;
 
       case 'contact_lookup':
+        _pendingLookupName = e['name'] as String? ?? '';
         // Contacts live on THIS device — resolve the name here and post
         // the matches back so the backend can continue the flow.
         _resolveContacts(e['name'] as String? ?? '');
@@ -1611,6 +1620,10 @@ class AssistantEngine extends ChangeNotifier {
             .whereType<Map<String, dynamic>>()
             .map(ContactMatch.fromJson)
             .toList();
+        // Several people share the name — ask with a TAP, not a spoken
+        // round-trip. The sheet pops over whatever screen is on top and
+        // one tap places the call.
+        _offerContactPicker();
         break;
 
       case 'contact_not_found':
@@ -1636,6 +1649,22 @@ class AssistantEngine extends ChangeNotifier {
           status: e['status'] as String? ?? '',
           contactName: e['contact_name'] as String? ?? '',
         );
+        final oid = (e['outcome_id'] as num?)?.toInt();
+        if (oid != null) _pendingCallOutcomeId = oid;
+        break;
+
+      case 'place_call':
+        // The user picked a contact from the duplicate-name sheet, so the
+        // choice IS the confirmation — dial straight away, no second tap.
+        {
+          final c = e['contact'];
+          if (c is Map) {
+            _pendingCallOutcomeId =
+                (e['outcome_id'] as num?)?.toInt() ?? _pendingCallOutcomeId;
+            _dialAndReport(
+                ContactMatch.fromJson(c.cast<String, dynamic>()));
+          }
+        }
         break;
 
       case 'analyze_camera':
@@ -1649,10 +1678,27 @@ class AssistantEngine extends ChangeNotifier {
         // this" and asks the device to open the camera/gallery and file the shot.
         _captureDocument(
           e['note'] as String? ?? '',
-          clientId: e['client_id'] as int?,
+          clientId: (e['client_id'] as num?)?.toInt(),
           person: e['person'] as String?,
           source: e['source'] as String? ?? 'camera',
         );
+        break;
+
+      case 'document_filed':
+        // The agent moved a saved document into a client's case file
+        // (file_document_under_client) and the server CONFIRMED it. Refresh
+        // any open document list and show it on screen.
+        {
+          final client = e['client'];
+          final name = client is Map ? (client['name'] ?? '').toString() : '';
+          final doc = e['document'];
+          if (doc is Map) {
+            documentCards = [UserDocument.fromJson(doc.cast<String, dynamic>())];
+            notifyListeners();
+          }
+          DocumentEvents.bump();
+          if (name.isNotEmpty) AppFeedback.toast("Filed under $name.");
+        }
         break;
 
       case 'open_usage_access':
@@ -1953,7 +1999,7 @@ class AssistantEngine extends ChangeNotifier {
       notifyListeners();
       try {
         final bytes = await shot.readAsBytes();
-        final doc = await ApiService.uploadDocument(
+        final result = await ApiService.uploadDocumentDetailed(
           bytes: bytes,
           filename: 'Capture.jpg',
           mimeType: 'image/jpeg',
@@ -1961,34 +2007,61 @@ class AssistantEngine extends ChangeNotifier {
           clientId: clientId,
           person: person,
         );
-        documentCards = [doc];
+        documentCards = [result.document];
         notifyListeners();
+
+        // Report WHERE the server actually filed it — never where we hoped.
+        // A named patient who isn't in the user's clients means the shot is
+        // in My documents, and the user must hear that, not "saved to X".
+        final String toast;
+        final String spoken;
+        if (result.filedUnderClient) {
+          toast = "Saved to ${result.clientName}'s file.";
+          spoken = "Saved to ${result.clientName}'s file.";
+        } else if (result.clientCandidates.length > 1) {
+          final names = result.clientCandidates.join(' and ');
+          toast = 'Saved to your documents — "$person" matched $names.';
+          spoken = 'Saved to your documents for now — $names both match '
+              '"$person". Tell me which one and I\'ll file it.';
+        } else if (person != null && person.trim().isNotEmpty) {
+          toast = 'Saved to your documents — no client named "$person".';
+          spoken = "I saved it to your documents, but I couldn't find a "
+              "client or patient named $person. Add them from the Clients "
+              "screen and I'll file it there.";
+        } else {
+          toast = 'Saved to your documents.';
+          spoken = 'Saved to your documents. Ask me about it anytime.';
+        }
         // Visible proof on WHATEVER screen the user is on — the scan from
         // the Home tab used to end with a voice line and nothing else,
         // which read as "nothing was saved".
-        AppFeedback.toast(person == null
-            ? 'Saved to your documents — ask about it anytime.'
-            : "Saved to $person's records.");
+        AppFeedback.toast(toast);
         if (liveActive) {
           // Prime the live model: it confirms the save itself AND knows to
           // use get_last_document for follow-ups ("what does it say?").
           _liveSvc.sendText(
-              '[SYSTEM] I just scanned and saved a document to my records; '
-              'it is being analyzed right now. When I ask about "the image/'
-              'photo/document I just scanned" or what it says, call the '
-              'get_last_document tool and answer from its text. Acknowledge '
-              'the save to me now in one short sentence.');
+              '[SYSTEM] I just scanned a document. Server result: "$spoken" '
+              'It is being analyzed right now. If I ask to save/put/file '
+              '"this" under a client or patient, call file_document_under_client '
+              '(do not open the camera). When I ask about "the image/photo/'
+              'document I just scanned" or what it says, call get_last_document '
+              'and answer from its text. Now tell me the server result above '
+              'in one short sentence, in my language.');
           _setPhase(AssistantPhase.listening, silent: true);
           notifyListeners();
         } else {
-          await _sayFromCamera(person == null
-              ? "Saved and filed. Ask me about it anytime."
-              : "Saved to $person's records.");
+          await _sayFromCamera(spoken);
         }
+      } on DocumentUploadException catch (e) {
+        final why = e.message.isNotEmpty
+            ? e.message
+            : 'the server refused the upload (${e.statusCode})';
+        AppFeedback.toast("Couldn't save the scan — $why.");
+        await _sayFromCamera("I couldn't save that — $why. Nothing was saved.");
       } catch (_) {
         AppFeedback.toast("Couldn't save the scan — check your connection.");
         await _sayFromCamera(
-            "I couldn't save that — please check your connection and try again.");
+            "I couldn't save that — please check your connection and try again. Nothing was saved.");
       }
       _setPhase(AssistantPhase.completed);
     } finally {
@@ -2128,7 +2201,9 @@ class AssistantEngine extends ChangeNotifier {
     } else {
       _localCallFlow = true; // chooseContact routes back here
       ambiguousContacts = matches.take(6).toList();
+      _pendingLookupName = name;
       notifyListeners();
+      _offerContactPicker();
     }
   }
 
@@ -2164,17 +2239,100 @@ class AssistantEngine extends ChangeNotifier {
       }
     }
 
-    final ok = await CallService.instance.call(contact.phone);
+    await _dialAndReport(contact);
+  }
+
+  /// Places the call and reports what ACTUALLY happened.
+  ///
+  /// The dialer returning true only means the intent was accepted, so the
+  /// phone's own call state is the witness: a call that really starts
+  /// within a few seconds is `connected`, otherwise `unconfirmed`. The
+  /// result goes to the server (admin "Task outcomes") and to the model,
+  /// so the assistant never claims a call it cannot prove.
+  Future<void> _dialAndReport(ContactMatch contact) async {
+    final who = contact.name.isEmpty ? 'them' : contact.name;
+    bool ok = false;
+    try {
+      ok = await CallService.instance.call(contact.phone);
+    } catch (_) {
+      ok = false;
+    }
     if (!ok) {
-      AppFeedback.toast(
-          'The phone could not start the call to ${contact.name}.');
+      AppFeedback.toast('The phone could not start the call to $who.');
+      await _reportCallResult(who, 'failed',
+          reason: 'the phone could not start the call');
+      if (liveActive) {
+        _liveSvc.sendText(
+            '[SYSTEM] ERROR: The phone could NOT start the call to $who — '
+            'no call is happening. Tell me plainly.');
+      }
+      return;
     }
+
+    // Watch the phone's real call state briefly (the guard is already
+    // running for TTS muting) before deciding what to report.
+    var connected = false;
+    for (var i = 0; i < 12; i++) {
+      if (PhoneStateGuard.instance.inCall) {
+        connected = true;
+        break;
+      }
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+    await _reportCallResult(who, connected ? 'connected' : 'unconfirmed',
+        reason: connected ? '' : 'the phone never reported a call starting');
     if (liveActive) {
-      _liveSvc.sendText(ok
-          ? '[SYSTEM] The phone is dialling ${contact.name} now.'
-          : '[SYSTEM] ERROR: The phone could NOT start the call to '
-              '${contact.name} — no call is happening. Tell me plainly.');
+      _liveSvc.sendText(connected
+          ? '[SYSTEM] The call to $who started on the phone.'
+          : '[SYSTEM] The dialer opened for $who but the phone never '
+              'confirmed a call started — do NOT claim the call happened.');
     }
+  }
+
+  /// Records the true result of a call attempt on the account, so "did my
+  /// call to Allen go through?" and the admin panel both see the same fact.
+  Future<void> _reportCallResult(String who, String status,
+      {String reason = ''}) async {
+    final id = _pendingCallOutcomeId;
+    _pendingCallOutcomeId = null;
+    if (id != null) {
+      try {
+        await _api.callResult(
+            outcomeId: id, status: status, reason: reason, contactName: who);
+        return;
+      } catch (_) {
+        // Session gone (live mode, expired sid) — fall through to the
+        // account-level endpoint so the outcome is never lost.
+      }
+    }
+    try {
+      await ApiService.sendJson('/outcomes', method: 'POST', body: {
+        'kind': 'call',
+        'target': who,
+        'status': status,
+        if (reason.isNotEmpty) 'reason': reason,
+      });
+    } catch (_) {}
+  }
+
+  /// Pops the duplicate-name picker and acts on the tap immediately.
+  void _offerContactPicker() {
+    final list = ambiguousContacts;
+    if (list.isEmpty) return;
+    final show = onPickContact;
+    if (show == null) return;
+    show(_pendingLookupName, List.of(list), (chosen) {
+      ambiguousContacts = const [];
+      notifyListeners();
+      if (chosen == null) {
+        // Dismissed: nothing is dialled, and the flow is closed out so the
+        // assistant doesn't sit waiting on a choice that never comes.
+        _localCallFlow = false;
+        cancelAction();
+        return;
+      }
+      chooseContact(chosen);
+    });
   }
 
   /// Follows a server-placed relay call to its real end, keeping the

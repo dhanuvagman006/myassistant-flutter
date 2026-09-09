@@ -226,6 +226,20 @@ class AssistantApi {
 
   Future<void> confirm(bool approved) => _post('confirm', {'approved': approved});
 
+  /// The phone reporting what REALLY happened after it was asked to dial.
+  Future<void> callResult({
+    required int outcomeId,
+    required String status,
+    String reason = '',
+    String contactName = '',
+  }) =>
+      _post('call_result', {
+        'outcome_id': outcomeId,
+        'status': status,
+        if (reason.isNotEmpty) 'reason': reason,
+        if (contactName.isNotEmpty) 'contact_name': contactName,
+      });
+
   Future<void> cancel() => _post('cancel');
 
   void close() {

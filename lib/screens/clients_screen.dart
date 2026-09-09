@@ -4,10 +4,13 @@ import 'package:image_picker/image_picker.dart';
 
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
-import '../features/assistant/widgets/action_cards.dart';
+import '../features/assistant/widgets/action_cards.dart'
+    show shareDocumentFile;
 import '../models/client.dart';
 import '../models/user_document.dart';
 import '../services/api_service.dart';
+import '../services/document_events.dart';
+import '../widgets/document_tile.dart';
 
 /// PROFESSIONAL MODE — the case-file workspace.
 ///
@@ -151,9 +154,10 @@ class _ClientsScreenState extends State<ClientsScreen> {
     if (rows.isEmpty) {
       return NeonEmptyState(
         icon: Icons.folder_shared_rounded,
-        title: _query.isEmpty ? 'No case files yet' : 'No matches',
+        title: _query.isEmpty ? 'No clients or patients yet' : 'No matches',
         body: _query.isEmpty
-            ? 'Add a patient or client, or just say:\n"note for patient Ramesh: first visit today"'
+            ? 'Add a patient or client to keep their documents and notes '
+                'in one place, separate from your own documents.'
             : 'Nobody matches "$_query".',
       );
     }
@@ -254,18 +258,30 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   List<UserDocument> _documents = const [];
   String? _error;
   bool _busy = false;
+  bool _uploading = false;
   final _noteCtl = TextEditingController();
+  int _seenVersion = DocumentEvents.version.value;
 
   @override
   void initState() {
     super.initState();
+    // Reload when a document is filed here from elsewhere — e.g. the
+    // assistant's "save this in Manish's section" while this file is open.
+    DocumentEvents.version.addListener(_onDocumentsChanged);
     _load();
   }
 
   @override
   void dispose() {
+    DocumentEvents.version.removeListener(_onDocumentsChanged);
     _noteCtl.dispose();
     super.dispose();
+  }
+
+  void _onDocumentsChanged() {
+    if (DocumentEvents.version.value == _seenVersion) return;
+    _seenVersion = DocumentEvents.version.value;
+    _load();
   }
 
   Future<void> _load() async {
@@ -365,21 +381,70 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       return;
     }
 
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _uploading = true;
+    });
     try {
-      await ApiService.uploadDocument(
+      final result = await ApiService.uploadDocumentDetailed(
         bytes: bytes,
         filename: filename,
         mimeType: mime,
         note: 'Filed under ${_client?.name ?? "this case"}',
         clientId: widget.clientId,
       );
-      await _load(); // pull the fresh linked list (analysis lands later)
-      _toast('Saved to the case file.');
+      _seenVersion = DocumentEvents.version.value; // our own bump
+      // The server tells us where it filed it. Anything but THIS case file
+      // is a failure from the user's point of view — say so.
+      if (result.filedUnderClient && result.clientId == widget.clientId) {
+        await _load(); // pull the fresh linked list (analysis lands later)
+        _toast('Saved to ${_client?.name ?? "this"}\'s file.');
+      } else {
+        await _load();
+        _toast("The document was saved but not to this file. Please check My documents.");
+      }
+    } on DocumentUploadException catch (e) {
+      _toast(e.message.isNotEmpty
+          ? "Upload failed: ${e.message}"
+          : "Upload failed (${e.statusCode}). Nothing was saved.");
     } catch (_) {
-      _toast("Upload failed. Please try again.");
+      _toast("Upload failed. Check your connection and try again.");
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _uploading = false;
+        });
+      }
+    }
+  }
+
+  /// Deletes a document from this case file — and from the account.
+  Future<bool> _deleteDocument(UserDocument d) async {
+    final ok = await confirmDeleteDocument(context, d,
+        where: "${_client?.name ?? 'this'}'s file");
+    if (!ok || !mounted) return false;
+    try {
+      await ApiService.deleteDocument(d.id);
+      _seenVersion = DocumentEvents.version.value;
+      if (!mounted) return true;
+      setState(() => _documents =
+          _documents.where((x) => x.id != d.id).toList(growable: false));
+      return true;
+    } catch (_) {
+      _toast("Couldn't delete. Check your connection and try again.");
+      return false;
+    }
+  }
+
+  void _openDocument(UserDocument d) =>
+      openDocument(context, d, within: _documents, onDelete: _deleteDocument);
+
+  Future<void> _shareDocument(UserDocument d) async {
+    try {
+      await shareDocumentFile(d);
+    } catch (_) {
+      _toast("Couldn't prepare that to share.");
     }
   }
 
@@ -397,16 +462,23 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   }
 
   Future<void> _delete() async {
+    final n = _documents.length;
+    final docsLine = n == 0
+        ? ''
+        : n == 1
+            ? ' and the 1 document filed in it'
+            : ' and the $n documents filed in it';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: Neon.surface,
-        title: Text('Delete this case file?',
+        surfaceTintColor: Colors.transparent,
+        title: Text('Delete ${_client?.name ?? 'this case file'}?',
             style: TextStyle(color: Neon.textHi)),
         content: Text(
-          'The card and its notes are removed. Saved documents are KEPT '
-          'in your documents — only the link to this person is removed.',
-          style: TextStyle(color: Neon.textLo),
+          'This permanently removes the case file, its notes$docsLine. '
+          'This cannot be undone.',
+          style: TextStyle(color: Neon.textLo, height: 1.4),
         ),
         actions: [
           TextButton(
@@ -493,34 +565,59 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                           children: [
                             _profileCard(c),
                             const SizedBox(height: 4),
-                            SectionHeader('Documents',
+                            SectionHeader(
+                                _documents.isEmpty
+                                    ? 'Documents'
+                                    : 'Documents (${_documents.length})',
                                 trailing: GhostButton(
                                     label: 'Attach',
+                                    leading: Icon(Icons.add_rounded,
+                                        size: 16, color: Neon.cyan),
                                     onPressed: _busy ? null : _attachDocument)),
-                            if (_documents.isEmpty)
+                            if (_uploading)
                               Padding(
-                                padding: EdgeInsets.symmetric(vertical: 6),
-                                child: Text(
-                                  'Nothing filed yet. Attach reports, '
-                                  'prescriptions, contracts…',
-                                  style: TextStyle(
-                                      color: Neon.textDim, fontSize: 13),
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Row(
+                                  children: [
+                                    SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Neon.violet)),
+                                    const SizedBox(width: 10),
+                                    Text('Uploading…',
+                                        style: TextStyle(
+                                            color: Neon.textLo, fontSize: 13)),
+                                  ],
                                 ),
+                              ),
+                            if (_documents.isEmpty && !_uploading)
+                              _emptyRow(
+                                Icons.description_outlined,
+                                'No documents yet',
+                                'Attach reports, prescriptions or scans. '
+                                    'They stay in ${c.name}\'s file only.',
                               )
                             else
                               for (final d in _documents)
-                                DocumentCard(document: d),
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: DocumentListTile(
+                                    document: d,
+                                    onOpen: () => _openDocument(d),
+                                    onShare: () => _shareDocument(d),
+                                    onDelete: () => _deleteDocument(d),
+                                  ),
+                                ),
                             const SectionHeader('Case notes'),
                             _noteComposer(),
                             if (_notes.isEmpty)
-                              Padding(
-                                padding: EdgeInsets.symmetric(vertical: 6),
-                                child: Text(
-                                  'No notes yet. You can also add one by '
-                                  'voice: "note for patient <name>: …"',
-                                  style: TextStyle(
-                                      color: Neon.textDim, fontSize: 13),
-                                ),
+                              _emptyRow(
+                                Icons.sticky_note_2_outlined,
+                                'No notes yet',
+                                'Dated notes you add here are read back '
+                                    'when you ask about ${c.name}.',
                               )
                             else
                               for (final n in _notes) _noteTile(n),
@@ -531,6 +628,39 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                   ],
                 ),
         ),
+      ),
+    );
+  }
+
+  Widget _emptyRow(IconData icon, String title, String body) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Neon.surfaceHigh.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Neon.textDim),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(body,
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: 12.5, height: 1.35)),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -771,7 +901,6 @@ class _EditClientSheetState extends State<_EditClientSheet> {
                 'client',
                 'student',
                 'customer',
-                'other'
               ])
                 ChoiceChip(
                   label: Text(_kindLabel(k)),
