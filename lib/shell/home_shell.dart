@@ -11,6 +11,7 @@ import '../widgets/inline_voice.dart';
 import '../features/assistant/assistant_screen.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
+import '../core/log.dart';
 import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
@@ -227,13 +228,25 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;
-          if (_conversationShowing) return;
+          if (_conversationShowing) {
+            // Self-heal: if the flag says the conversation screen is up but
+            // the navigator has nothing to pop, the flag is stale (seen
+            // once after an in-place update) — reset it and serve the tap
+            // instead of silently ignoring the user's main button.
+            if (!Navigator.of(context, rootNavigator: true).canPop()) {
+              AppLog.add('orb', 'stale conversation flag — self-healed');
+              _conversationShowing = false;
+            } else {
+              return;
+            }
+          }
           // Decide by what is actually RUNNING, not by a flag that may lag:
           // a live session, a connect in flight, or a busy classic turn all
           // mean "tap = stop"; a resting engine means "tap = talk".
           final running = engine.liveActive ||
               (engine.phase != AssistantPhase.idle &&
                   engine.phase != AssistantPhase.completed);
+          AppLog.add('orb', running ? 'tap → stop' : 'tap → start');
           if (running) {
             await engine.endInlineConversation();
           } else {
@@ -244,7 +257,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         onLongPress: () async {
           HapticFeedback.heavyImpact();
           final engine = AssistantEngine.instance;
-          if (_conversationShowing) return;
+          if (_conversationShowing) {
+            if (!Navigator.of(context, rootNavigator: true).canPop()) {
+              AppLog.add('orb', 'stale conversation flag — self-healed');
+              _conversationShowing = false;
+            } else {
+              return;
+            }
+          }
           // Hand the audio over cleanly, then open the screen WITH face
           // mode set — beginConversation reserves the avatar as part of
           // its own startup, so exactly one session comes up, with the
