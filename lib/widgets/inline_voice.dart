@@ -200,38 +200,83 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     setState(() {});
   }
 
+  /// The whole turn split into spoken lines. The LAST one is what is
+  /// being said right now — the transcript streams in step with the
+  /// voice — so it gets the spotlight and earlier lines recede above it,
+  /// karaoke-style. This is also the fix for long answers: only the
+  /// trailing lines render, so the view can never jam on a wall of text.
+  List<String> _lines() {
+    final parts = _text
+        .split(RegExp(r'(?<=[.!?।…])\s+'))
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    return parts;
+  }
+
   @override
   Widget build(BuildContext context) {
     final show = _active;
+    final lines = _lines();
+    final current = lines.isNotEmpty ? lines.last : '';
+    final previous =
+        lines.length > 1 ? lines.sublist(lines.length - 3 < 0 ? 0 : lines.length - 3, lines.length - 1) : const <String>[];
     return IgnorePointer(
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
         child: Container(
-          // A deep fade — the page behind must never compete with the
-          // words. The conversation owns the stage.
+          // A deep fade — the page behind must never compete with the words.
           color: Colors.black.withValues(alpha: 0.8),
           alignment: Alignment.center,
           padding: const EdgeInsets.fromLTRB(28, 80, 28, 160),
-          child: AnimatedSwitcher(
+          child: AnimatedSize(
             duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOut,
-            child: Text(
-              _text,
-              key: ValueKey('$_fromUser|$_text'),
-              textAlign: TextAlign.center,
-              maxLines: 8,
-              overflow: TextOverflow.fade,
-              style: GoogleFonts.spaceGrotesk(
-                color: _fromUser
-                    ? Colors.white.withValues(alpha: 0.6)
-                    : Colors.white,
-                fontSize: _fromUser ? 21 : 28,
-                height: 1.35,
-                fontWeight: _fromUser ? FontWeight.w500 : FontWeight.w700,
-                letterSpacing: -0.4,
-              ),
+            curve: Curves.easeOut,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Earlier lines recede upward, dimmed — context, not focus.
+                for (final l in previous)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Text(
+                      l,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white.withValues(alpha: 0.32),
+                        fontSize: 19,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                // The line being spoken RIGHT NOW — the spotlight.
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeOut,
+                  child: Text(
+                    current,
+                    key: ValueKey('$_fromUser|$current'),
+                    textAlign: TextAlign.center,
+                    maxLines: 5,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.spaceGrotesk(
+                      color: _fromUser
+                          ? Colors.white.withValues(alpha: 0.62)
+                          : Colors.white,
+                      fontSize: _fromUser ? 22 : 30,
+                      height: 1.3,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
