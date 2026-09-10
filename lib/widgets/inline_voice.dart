@@ -1,4 +1,6 @@
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -163,6 +165,51 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
   String _text = '';
   bool _fromUser = false;
 
+  /// SPEECH-PACED REVEAL. The transcript arrives at GENERATION speed —
+  /// seconds ahead of the audio — so showing it raw makes the lyrics run
+  /// ahead of the voice. Instead the assistant's text is released at
+  /// speaking rate, only while the voice is actually playing, and snapped
+  /// to complete when the turn ends. The user's own words are already
+  /// real-time and bypass pacing.
+  static const double _charsPerSecond = 15;
+  double _budget = 0; // characters released so far
+  DateTime _lastTick = DateTime.now();
+  Timer? _pacer;
+
+  void _ensurePacer() {
+    _pacer ??= Timer.periodic(const Duration(milliseconds: 200), (_) {
+      final now = DateTime.now();
+      final dt = now.difference(_lastTick).inMilliseconds / 1000.0;
+      _lastTick = now;
+      if (!mounted) return;
+      final speaking = engine.phase == AssistantPhase.speaking;
+      if (!_fromUser && speaking && _budget < _text.length) {
+        _budget = (_budget + dt * _charsPerSecond)
+            .clamp(0, _text.length.toDouble());
+        setState(() {});
+      } else if (!_fromUser && !speaking && !engine.phase.busy) {
+        // Turn is over — whatever remains lands at once, in sync with the
+        // silence, never trailing into the next exchange.
+        if (_budget < _text.length) {
+          _budget = _text.length.toDouble();
+          setState(() {});
+        }
+      }
+    });
+  }
+
+  /// The paced view of the text: everything for the user's own words,
+  /// the released prefix (whole words) for the assistant's.
+  String _visibleText() {
+    if (_fromUser || _budget >= _text.length) return _text;
+    var cut = _budget.floor().clamp(0, _text.length);
+    // Extend to the end of the current word so words never appear cut.
+    while (cut < _text.length && _text[cut] != ' ') {
+      cut++;
+    }
+    return _text.substring(0, cut);
+  }
+
   bool get _active =>
       engine.inlineVoice &&
       (engine.liveActive ||
@@ -180,6 +227,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
   void dispose() {
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
+    _pacer?.cancel();
     super.dispose();
   }
 
@@ -187,10 +235,26 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     if (!mounted) return;
     final c = engine.caption.value;
     if (c == null || c.text.trim().isEmpty) return;
+    final t = c.text.trim();
+    final fromUser = c.speaker == 'you';
     setState(() {
-      _text = c.text.trim();
-      _fromUser = c.speaker == 'you';
+      // A NEW turn (speaker flip, or text that isn't an extension of the
+      // old) restarts the release from zero; an extension keeps pace.
+      if (fromUser != _fromUser || !t.startsWith(_visibleAnchor())) {
+        _budget = 0;
+        _lastTick = DateTime.now();
+      }
+      _text = t;
+      _fromUser = fromUser;
     });
+    _ensurePacer();
+  }
+
+  /// A short stable prefix of the current text, used to detect whether an
+  /// update extends the same turn or starts a new one.
+  String _visibleAnchor() {
+    final n = _text.length < 24 ? _text.length : 24;
+    return _text.substring(0, n);
   }
 
   void _onEngine() {
@@ -200,18 +264,36 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     setState(() {});
   }
 
-  /// The whole turn split into spoken lines. The LAST one is what is
-  /// being said right now — the transcript streams in step with the
-  /// voice — so it gets the spotlight and earlier lines recede above it,
-  /// karaoke-style. This is also the fix for long answers: only the
-  /// trailing lines render, so the view can never jam on a wall of text.
+  /// The whole turn as LYRIC LINES. Sentences first, then any long
+  /// sentence is wrapped into ~60-character lines at word boundaries —
+  /// so every line is short enough to show WHOLE, nothing is ever
+  /// clipped, and a monologue scrolls upward line by line exactly like a
+  /// lyrics view. The last line is what is being spoken right now.
+  static const _maxLine = 60;
+
   List<String> _lines() {
-    final parts = _text
-        .split(RegExp(r'(?<=[.!?।…])\s+'))
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    return parts;
+    final out = <String>[];
+    for (final sentence in _visibleText().split(RegExp(r'(?<=[.!?।…])\s+'))) {
+      final t = sentence.trim();
+      if (t.isEmpty) continue;
+      if (t.length <= _maxLine) {
+        out.add(t);
+        continue;
+      }
+      var line = '';
+      for (final w in t.split(RegExp(r'\s+'))) {
+        if (line.isEmpty) {
+          line = w;
+        } else if (line.length + 1 + w.length <= _maxLine) {
+          line = '$line $w';
+        } else {
+          out.add(line);
+          line = w;
+        }
+      }
+      if (line.isNotEmpty) out.add(line);
+    }
+    return out;
   }
 
   @override
@@ -219,8 +301,10 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     final show = _active;
     final lines = _lines();
     final current = lines.isNotEmpty ? lines.last : '';
-    final previous =
-        lines.length > 1 ? lines.sublist(lines.length - 3 < 0 ? 0 : lines.length - 3, lines.length - 1) : const <String>[];
+    final start = lines.length - 4 < 0 ? 0 : lines.length - 4;
+    final previous = lines.length > 1
+        ? lines.sublist(start, lines.length - 1)
+        : const <String>[];
     return IgnorePointer(
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 280),
@@ -238,16 +322,17 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Earlier lines recede upward, dimmed — context, not focus.
+                // Lines are pre-wrapped to lyric length, so every one
+                // shows WHOLE — clipping history was how real content got
+                // hidden behind an ellipsis.
                 for (final l in previous)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.only(bottom: 16),
                     child: Text(
                       l,
                       textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.spaceGrotesk(
-                        color: Colors.white.withValues(alpha: 0.32),
+                        color: Colors.white.withValues(alpha: 0.38),
                         fontSize: 19,
                         height: 1.3,
                         fontWeight: FontWeight.w600,
@@ -263,8 +348,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
                     current,
                     key: ValueKey('$_fromUser|$current'),
                     textAlign: TextAlign.center,
-                    maxLines: 5,
-                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.spaceGrotesk(
                       color: _fromUser
                           ? Colors.white.withValues(alpha: 0.62)
