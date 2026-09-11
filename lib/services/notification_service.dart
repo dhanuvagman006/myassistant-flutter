@@ -34,15 +34,33 @@ class ReminderNotifications {
   // the old channel used the notification stream, which mute silences.
   // (A new id is required: Android freezes a channel's audio attributes
   // at creation, so the old 'hari_reminders' can never be upgraded.)
-  static const _channel = AndroidNotificationDetails(
+  // WAKE-UP reminders: the alarm stream (audible on a muted phone), max
+  // importance, and a full-screen intent so a locked or sleeping phone
+  // shows the alarm instead of a banner nobody sees. Reserved for
+  // reminders the user explicitly asked to be woken for.
+  static const _alarmChannel = AndroidNotificationDetails(
     'hari_reminders_alarm',
-    'Reminders',
-    channelDescription: 'Reminders you asked your assistant to set',
+    'Wake-up reminders',
+    channelDescription: 'Reminders you asked to be woken for',
     importance: Importance.max,
     priority: Priority.high,
     category: AndroidNotificationCategory.alarm,
     audioAttributesUsage: AudioAttributesUsage.alarm,
+    fullScreenIntent: true,
   );
+
+  // ORDINARY reminders: a normal notification on the notification stream.
+  // An app that blares an alarm for "buy milk" gets uninstalled, so this
+  // is the default and the loud channel is opt-in.
+  static const _softChannel = AndroidNotificationDetails(
+    'hari_reminders_soft',
+    'Reminders',
+    channelDescription: 'Everyday reminders you asked your assistant to set',
+    importance: Importance.defaultImportance,
+    priority: Priority.defaultPriority,
+    category: AndroidNotificationCategory.reminder,
+  );
+
 
   Future<void> init() async {
     if (_ready) return;
@@ -66,6 +84,21 @@ class ReminderNotifications {
       await android?.requestNotificationsPermission();
       // The channel FCM banners land in (see manifest meta-data): named
       // and user-tunable instead of an auto-created "Miscellaneous".
+      // Both reminder channels are created up front so their names and
+      // importance are what the user sees in Android's settings — and so
+      // the loud one can be turned down there without losing the quiet one.
+      await android?.createNotificationChannel(const AndroidNotificationChannel(
+        'hari_reminders_soft',
+        'Reminders',
+        description: 'Everyday reminders you asked your assistant to set',
+        importance: Importance.defaultImportance,
+      ));
+      await android?.createNotificationChannel(const AndroidNotificationChannel(
+        'hari_reminders_alarm',
+        'Wake-up reminders',
+        description: 'Reminders you asked to be woken for — these ring like an alarm',
+        importance: Importance.max,
+      ));
       await android?.createNotificationChannel(const AndroidNotificationChannel(
         'hari_default',
         'Messages & alerts',
@@ -147,9 +180,9 @@ class ReminderNotifications {
             'Reminder',
             r.text,
             tz.TZDateTime.from(r.dueAt!, tz.local),
-            const NotificationDetails(
-              android: _channel,
-              iOS: DarwinNotificationDetails(),
+            NotificationDetails(
+              android: r.isAlarm ? _alarmChannel : _softChannel,
+              iOS: const DarwinNotificationDetails(),
             ),
             androidScheduleMode: mode,
           );
