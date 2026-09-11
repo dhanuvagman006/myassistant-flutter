@@ -51,7 +51,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // Returning to the foreground re-checks for a published update (the
     // service throttles to every 30 min) — a phone that keeps the app in
     // memory for days used to miss releases entirely.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      AssistantEngine.instance.onAppPaused();
+    }
     if (state == AppLifecycleState.resumed && mounted) {
+      // A voice session interrupted by another app is rebuilt here —
+      // coming back from Instagram used to leave the orb unable to speak.
+      AssistantEngine.instance.onAppResumed();
       Timer(const Duration(seconds: 2), () {
         if (mounted) AppUpdateService.instance.check(context);
       });

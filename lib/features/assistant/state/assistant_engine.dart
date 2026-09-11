@@ -1838,6 +1838,10 @@ class AssistantEngine extends ChangeNotifier {
         // Voice-driven deep linking to external apps like Uber, Swiggy, Zomato.
         final url = e['url'] as String?;
         if (url != null && url.isNotEmpty) {
+          // We are sending them out of the app on purpose — mark it so
+          // the return trip rebuilds the voice session instead of
+          // resuming a socket Android has already torn down.
+          _leftForExternalApp = true;
           _openExternalUrl(url);
           _setPhase(AssistantPhase.completed);
         }
@@ -2420,6 +2424,63 @@ class AssistantEngine extends ChangeNotifier {
           await _api.sendText(report);
         } catch (_) {}
       }
+    }
+  }
+
+  /// True while the user is deliberately in ANOTHER app because we sent
+  /// them there (Instagram, a map, a web page). Their voice session is
+  /// expected to be interrupted, so coming back must rebuild it rather
+  /// than limp along on a half-dead socket.
+  bool _leftForExternalApp = false;
+  DateTime? _backgroundedAt;
+
+  /// The app went to the background. Android suspends the microphone and
+  /// will quietly drop the live socket, so remember when it happened.
+  void onAppPaused() {
+    _backgroundedAt = DateTime.now();
+  }
+
+  /// The app came back to the foreground.
+  ///
+  /// Returning from Instagram (or any app we opened) used to leave the
+  /// orb spinning on a session whose audio was gone: it looked connected,
+  /// the mic was shut, and nothing spoke. Any voice session that was
+  /// interrupted for more than a moment is now rebuilt from scratch —
+  /// two seconds of reconnect beats a conversation that cannot talk.
+  Future<void> onAppResumed() async {
+    final away = _backgroundedAt == null
+        ? Duration.zero
+        : DateTime.now().difference(_backgroundedAt!);
+    _backgroundedAt = null;
+    final wasExternal = _leftForExternalApp;
+    _leftForExternalApp = false;
+    if (!_conversationOpen && !inlineVoice) return;
+
+    // Clear the flags that gate the microphone. A pause mid-reply leaves
+    // remoteSpeaking set, which mutes the user permanently.
+    _liveSvc.remoteSpeaking = false;
+    _deviceFlowActive = false;
+    _micGateWatchdog?.cancel();
+    _micGateWatchdog = null;
+    _silenceSettle?.cancel();
+    _silenceSettle = null;
+
+    final interrupted = wasExternal || away.inSeconds >= 2;
+    if (!interrupted) return;
+
+    AppLog.add('live', 'resumed after ${away.inSeconds}s — rebuilding session');
+    if (liveActive) await stopLive();
+    micLevel = 0;
+    _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
+    final ok = await _startLive();
+    if (!ok) {
+      // Live could not come back (network still settling). Leave the orb
+      // resting rather than pretending: the next tap starts a fresh
+      // session, which is the behaviour the user expects anyway.
+      inlineVoice = false;
+      _setPhase(AssistantPhase.idle, silent: true);
+      notifyListeners();
     }
   }
 
