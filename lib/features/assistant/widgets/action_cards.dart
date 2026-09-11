@@ -1134,6 +1134,11 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                 ),
               );
             }
+            if (d.mime.startsWith('video/')) {
+              // Without this an MP4 fell through to Image.network and drew
+              // the broken-image placeholder full screen.
+              return _GalleryVideo(key: ValueKey('gv-${d.id}'), document: d);
+            }
             return Center(
               child: InteractiveViewer(
                 maxScale: 6,
@@ -1155,6 +1160,86 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+
+/// One video page inside the full-screen gallery. Owns its controller so
+/// swiping between pages cannot leave a player running off screen.
+class _GalleryVideo extends StatefulWidget {
+  final UserDocument document;
+  const _GalleryVideo({super.key, required this.document});
+
+  @override
+  State<_GalleryVideo> createState() => _GalleryVideoState();
+}
+
+class _GalleryVideoState extends State<_GalleryVideo> {
+  VideoPlayerController? _c;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  Future<void> _start() async {
+    try {
+      final c = VideoPlayerController.networkUrl(
+        Uri.parse(ApiService.documentFileUrl(widget.document.id)),
+        httpHeaders: ApiService.imageHeaders,
+      );
+      _c = c;
+      await c.initialize();
+      await c.setLooping(true);
+      await c.play();
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) {
+      return const Center(
+        child: Icon(Icons.movie_rounded, color: Colors.white54, size: 64),
+      );
+    }
+    final c = _c;
+    if (c == null || !c.value.isInitialized) {
+      return const Center(
+          child: CircularProgressIndicator(color: Colors.white70));
+    }
+    return Center(
+      child: GestureDetector(
+        onTap: () => setState(
+            () => c.value.isPlaying ? c.pause() : c.play()),
+        child: AspectRatio(
+          aspectRatio: c.value.aspectRatio,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              VideoPlayer(c),
+              if (!c.value.isPlaying)
+                Container(
+                  alignment: Alignment.center,
+                  color: Colors.black26,
+                  child: const Icon(Icons.play_arrow_rounded,
+                      color: Colors.white, size: 64),
+                ),
+            ],
+          ),
         ),
       ),
     );

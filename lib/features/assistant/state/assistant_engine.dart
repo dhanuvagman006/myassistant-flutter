@@ -1726,7 +1726,9 @@ class AssistantEngine extends ChangeNotifier {
         // case file) — pop them on screen while Hari speaks the answer.
         documentCards = UserDocument.listFromJson(e['documents']);
         if (documentCards.isNotEmpty) {
-          onShowDocuments?.call(documentCards);
+          // Already on screen full size — do not ALSO throw the
+          // conversation view over Home for the same documents.
+          _shownFullScreen = onShowDocuments?.call(documentCards) ?? false;
         }
         break;
 
@@ -1961,11 +1963,30 @@ class AssistantEngine extends ChangeNotifier {
       case 'show_video':
         // generate_image / generate_video: the result is already saved as
         // a document server-side; its client JSON rides in the action.
-        final docJson = e['document'];
-        if (docJson is Map) {
-          generatedImage =
-              UserDocument.fromJson(docJson.cast<String, dynamic>());
-          generatedImagePrompt = e['prompt'] as String? ?? '';
+        //
+        // STRAIGHT TO FULL SCREEN, wherever the user is. It used to land
+        // in a half-height card inside the conversation screen with the
+        // prompt printed under it — so on Home, where that card does not
+        // exist, the assistant announced an image nobody could see. The
+        // gallery route pops over whatever is on top, the conversation
+        // keeps running underneath and the mic stays hot.
+        //
+        // Exactly ONE presentation: no card, no prompt caption, nothing to
+        // escalate. Two ways to show the same picture is where the glitches
+        // were coming from.
+        {
+          final docJson = e['document'];
+          if (docJson is Map) {
+            final doc = UserDocument.fromJson(docJson.cast<String, dynamic>());
+            final shown = onShowDocuments?.call([doc]) ?? false;
+            _shownFullScreen = shown;
+            if (!shown) {
+              // No host to pop a gallery over (rare) — fall back to the
+              // in-conversation card rather than dropping it silently.
+              generatedImage = doc;
+              generatedImagePrompt = e['prompt'] as String? ?? '';
+            }
+          }
         }
         break;
 
@@ -2951,10 +2972,17 @@ class AssistantEngine extends ChangeNotifier {
   /// every time someone asks about flight times would be worse than the
   /// bug this fixes. Only the things the assistant says are "on your
   /// screen" count.
+  /// Set when this turn's result was already put on screen full size by
+  /// the gallery. Without it, a recalled document opened the gallery AND
+  /// pushed the conversation view over Home behind it — two presentations
+  /// of one thing, which is what the glitchiness was.
+  bool _shownFullScreen = false;
+
   bool get hasVisualResult =>
-      generatedImage != null ||
-      presentedText != null ||
-      documentCards.isNotEmpty;
+      !_shownFullScreen &&
+      (generatedImage != null ||
+          presentedText != null ||
+          documentCards.isNotEmpty);
 
   /// User closed the generated-image card (X or swipe) — conversation
   /// continues clean.
@@ -2972,6 +3000,7 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   void _resetTurn() {
+    _shownFullScreen = false;
     _speakQueue.clear();
     _liveEntry = null;
     errorMessage = null;
