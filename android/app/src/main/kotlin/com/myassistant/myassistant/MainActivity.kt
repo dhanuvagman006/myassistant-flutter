@@ -5,6 +5,7 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.net.ConnectivityManager
 import android.os.Process
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -54,6 +55,16 @@ class MainActivity : FlutterFragmentActivity() {
                         applicationContext,
                         call.argument<String>("path") ?: ""
                     ) { ok -> result.success(ok) }
+                    // Is the connection one the user pays for by the
+                    // megabyte? A ~200 MB update must not start itself on
+                    // mobile data. Unknown state is treated as metered:
+                    // the cost of asking is a tap, the cost of guessing
+                    // wrong is the user's data plan.
+                    "isMetered" -> {
+                        val cm = applicationContext
+                            .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                        result.success(cm?.isActiveNetworkMetered ?: true)
+                    }
                     else -> result.notImplemented()
                 }
             }

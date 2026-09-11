@@ -13,6 +13,10 @@ class RemoteConfig {
   final String? apkUrl;
   final String? apkSha256;
 
+  /// Bytes. Shown before a download the user has to agree to — nobody
+  /// should tap "Update now" on mobile data without knowing the size.
+  final int apkSize;
+
   const RemoteConfig({
     this.latestVersionCode = 1,
     this.latestVersionName = '0.1.0',
@@ -22,6 +26,7 @@ class RemoteConfig {
     this.features = const {},
     this.apkUrl,
     this.apkSha256,
+    this.apkSize = 0,
   });
 
   factory RemoteConfig.fromJson(Map<String, dynamic> j) => RemoteConfig(
@@ -33,6 +38,7 @@ class RemoteConfig {
         features: Map<String, bool>.from(j['features'] ?? const {}),
         apkUrl: j['apkUrl'],
         apkSha256: j['apkSha256'],
+        apkSize: (j['apkSize'] as num?)?.toInt() ?? 0,
       );
 
   bool isEnabled(String feature) => features[feature] == true;
