@@ -2856,33 +2856,61 @@ class AssistantEngine extends ChangeNotifier {
   /// own app, then the browser — and if ALL of that fails, say so out
   /// loud instead of leaving the user waiting for food that isn't coming.
   Future<void> _openExternalUrl(String url) async {
-    // Unwrap intent:// → the target's https form, kept for fallbacks.
-    String https = url;
+    // AN INTENT URI IS NOT A WEB ADDRESS.
+    //
+    // Tools that reach the phone's own apps — the clock for alarms and
+    // timers, the launcher for Home, an app's settings page — send
+    // `intent://#Intent;action=…;end`, which has no host. This code used
+    // to synthesise an https URL from that empty host and hand "https://"
+    // to a browser: asking for an alarm at 5:50 opened Brave, and because
+    // the tool had already reported success the assistant said the alarm
+    // was set. It had not been.
+    //
+    // Intent URIs now go to the platform, which is what parses them. Only
+    // a REAL fallback URL declared in the URI is ever opened as a page.
     if (url.startsWith('intent://')) {
+      var launched = false;
+      try {
+        launched = await const MethodChannel('hari/intent')
+                .invokeMethod<bool>('launch', {'uri': url}) ??
+            false;
+      } catch (e) {
+        AppLog.add('intent', 'native launch failed: $e');
+      }
+      if (launched) return;
+
       final fb = RegExp(r'S\.browser_fallback_url=([^;]+);').firstMatch(url);
-      https = fb != null
-          ? Uri.decodeComponent(fb.group(1)!)
-          : 'https://${url.substring(9).split('#').first}';
+      if (fb != null) {
+        // The URI itself named a web page to use instead — that one is
+        // legitimate to open.
+        await _openExternalUrl(Uri.decodeComponent(fb.group(1)!));
+        return;
+      }
+      // Nothing on this phone can do it. Say so, and retract the record —
+      // never open a browser as a consolation prize.
+      final action =
+          RegExp(r'action=([^;]+);').firstMatch(url)?.group(1) ?? 'that';
+      AppFeedback.toast("This phone has no app that can do that.");
+      _reportDeviceFailure('open_url',
+          target: action, reason: 'no app on the phone can handle it');
+      await _tellModel(
+          '[SYSTEM] ERROR: nothing on this phone could perform "$action", so '
+          'it did NOT happen — no alarm, timer or screen was opened. Tell me '
+          'plainly that it failed and do not claim it worked.');
+      return;
     }
 
+    // An ordinary web or app link.
     var ok = false;
-    if (url != https) {
+    // The provider's app claims its own https links (app links) — this
+    // opens Swiggy itself rather than a browser tab when installed.
+    try {
+      ok = await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalNonBrowserApplication);
+    } catch (_) {}
+    if (!ok) {
       try {
         ok = await launchUrl(Uri.parse(url),
-            mode: LaunchMode.externalApplication);
-      } catch (_) {}
-    }
-    if (!ok) {
-      // The provider's app claims its own https links (app links) — this
-      // opens Swiggy itself rather than a browser tab when installed.
-      try {
-        ok = await launchUrl(Uri.parse(https),
-            mode: LaunchMode.externalNonBrowserApplication);
-      } catch (_) {}
-    }
-    if (!ok) {
-      try {
-        ok = await launchUrl(Uri.parse(https),
             mode: LaunchMode.externalApplication);
       } catch (_) {}
     }
@@ -2892,13 +2920,12 @@ class AssistantEngine extends ChangeNotifier {
       // The server recorded this as done the moment it dispatched it. Tell
       // it the truth so the log stops claiming a success, and so the next
       // turn cannot say it opened.
-      _reportDeviceFailure('open_url', target: https, reason: 'nothing could open that link');
-      if (liveActive) {
-        _liveSvc.sendText(
-            '[SYSTEM] ERROR: The phone could not open the app for that '
-            'action, so NOTHING was ordered or booked. Tell me plainly '
-            'that it failed.');
-      }
+      _reportDeviceFailure('open_url',
+          target: url, reason: 'nothing could open that link');
+      await _tellModel(
+          '[SYSTEM] ERROR: The phone could not open the app for that action, '
+          'so NOTHING was ordered, booked or opened. Tell me plainly that it '
+          'failed.');
     }
   }
 

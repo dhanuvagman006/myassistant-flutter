@@ -69,6 +69,47 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
+        // INTENT URIs. Tools that reach the phone's own apps — the clock for
+        // alarms and timers, the launcher for Home, an app's settings page —
+        // send an `intent://#Intent;action=…;end` URI. These have no host,
+        // and url_launcher could not open them: the Dart fallback then
+        // synthesised "https://" out of the empty host and handed THAT to a
+        // browser. Asking for an alarm opened Brave, and because the tool
+        // had already reported success the assistant said the alarm was set.
+        //
+        // Intent.parseUri is what the URI format was designed for. It also
+        // tells us honestly whether anything can handle it, so a phone with
+        // no clock app produces a failure the user is told about rather than
+        // a browser window.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/intent")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "launch" -> {
+                        val uri = call.argument<String>("uri") ?: ""
+                        if (uri.isEmpty()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val intent = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME)
+                            // Never let a crafted URI hand our own components a
+                            // task: an intent URI is external input.
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            intent.selector = null
+                            if (intent.resolveActivity(packageManager) == null) {
+                                result.success(false)
+                            } else {
+                                applicationContext.startActivity(intent)
+                                result.success(true)
+                            }
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/device")
             .setMethodCallHandler { call, result ->
                 val ctx = applicationContext
