@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/neon_tokens.dart';
+import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
 import '../widgets/inline_voice.dart';
 import '../features/assistant/assistant_screen.dart';
@@ -56,6 +57,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       AssistantEngine.instance.onAppPaused();
     }
     if (state == AppLifecycleState.resumed && mounted) {
+      // Adaptive theme: an app left open (or backgrounded) across dusk
+      // catches up the moment it is looked at again.
+      ThemeController.refresh();
       // A voice session interrupted by another app is rebuilt here —
       // coming back from Instagram used to leave the orb unable to speak.
       AssistantEngine.instance.onAppResumed();

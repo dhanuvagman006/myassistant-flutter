@@ -83,6 +83,16 @@ class AssistantEngine extends ChangeNotifier {
     faceMode = false;
     notifyListeners();
     await beginConversation(name: name);
+    // If nothing came up — no live session and no listening turn — the tap
+    // achieved nothing. Reset so the orb is honestly idle and the next tap
+    // is a clean attempt, and tell the user rather than leaving a dead orb.
+    if (!liveActive && !phase.busy && phase != AssistantPhase.listening) {
+      inlineVoice = false;
+      _setPhase(AssistantPhase.idle, silent: true);
+      notifyListeners();
+      AppLog.add('orb', 'start produced no session');
+      AppFeedback.toast("Couldn't start the conversation — tap again.");
+    }
   }
 
   /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
@@ -966,8 +976,13 @@ class AssistantEngine extends ChangeNotifier {
     // timed out at 12 s and killed the WINNER's healthy session. Join the
     // in-flight start instead.
     if (_liveStartResult != null && !_liveStartResult!.isCompleted) {
-      return _liveStartResult!.future
+      final joined = _liveStartResult!;
+      final ok = await joined.future
           .timeout(const Duration(seconds: 12), onTimeout: () => false);
+      // A join that timed out means that attempt is dead. Drop it so the
+      // user's next tap starts a fresh session instead of joining it again.
+      if (!ok && identical(_liveStartResult, joined)) _liveStartResult = null;
+      return ok;
     }
     _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
     notifyListeners();
@@ -1169,7 +1184,8 @@ class AssistantEngine extends ChangeNotifier {
 
   Future<void> stopLive() {
     final f = _stopLiveInner();
-    _liveTeardown = f.whenComplete(() {
+    _liveTeardown = f;
+    f.whenComplete(() {
       if (identical(_liveTeardown, f)) _liveTeardown = null;
     });
     return f;
@@ -1180,6 +1196,15 @@ class AssistantEngine extends ChangeNotifier {
     // a phone call, a hold-for-face handover, a tap-to-stop. The flag must
     // never outlive the audio, or the orb's next tap toggles the wrong way.
     inlineVoice = false;
+    // SETTLE A START THAT IS IN FLIGHT. A connect interrupted by a stop
+    // (tap-to-stop, a resume rebuild) used to leave this completer pending
+    // forever; every later tap then JOINED that dead future, waited out
+    // its timeout and gave up — the orb sat white and deaf no matter how
+    // many times it was pressed.
+    if (_liveStartResult != null && !_liveStartResult!.isCompleted) {
+      _liveStartResult!.complete(false);
+    }
+    _liveStartResult = null;
     _micGateWatchdog?.cancel();
     _micGateWatchdog = null;
     _silenceSettle?.cancel();
@@ -2448,13 +2473,18 @@ class AssistantEngine extends ChangeNotifier {
   /// interrupted for more than a moment is now rebuilt from scratch —
   /// two seconds of reconnect beats a conversation that cannot talk.
   Future<void> onAppResumed() async {
-    final away = _backgroundedAt == null
+    final pausedAt = _backgroundedAt;
+    final away = pausedAt == null
         ? Duration.zero
-        : DateTime.now().difference(_backgroundedAt!);
+        : DateTime.now().difference(pausedAt);
     _backgroundedAt = null;
     final wasExternal = _leftForExternalApp;
     _leftForExternalApp = false;
     if (!_conversationOpen && !inlineVoice) return;
+    // A resume with no matching pause is a UI flicker (a dialog, a
+    // permission sheet), not a trip to another app. Rebuilding there
+    // killed healthy sessions mid-sentence.
+    if (pausedAt == null) return;
 
     // Clear the flags that gate the microphone. A pause mid-reply leaves
     // remoteSpeaking set, which mutes the user permanently.
@@ -2465,7 +2495,8 @@ class AssistantEngine extends ChangeNotifier {
     _silenceSettle?.cancel();
     _silenceSettle = null;
 
-    final interrupted = wasExternal || away.inSeconds >= 2;
+    final interrupted = (wasExternal && away.inMilliseconds >= 800) ||
+        away.inSeconds >= 2;
     if (!interrupted) return;
 
     AppLog.add('live', 'resumed after ${away.inSeconds}s — rebuilding session');

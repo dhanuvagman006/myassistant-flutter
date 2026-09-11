@@ -263,20 +263,36 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 const SizedBox(height: 24),
 
                 const GroupLabel('Appearance'),
-                GroupedCard(
-                  dividerInset: 60,
-                  children: [
-                    AppleRow(
-                      leading: IconTile(
-                          Neon.isDark
-                              ? Icons.nightlight_round
-                              : Icons.wb_sunny_rounded,
-                          AppleColors.indigo),
-                      title: Neon.isDark ? 'Dark' : 'Light',
-                      subtitle: 'Tap the sky to switch.',
-                      trailing: const _DayNightSwitch(),
-                    ),
-                  ],
+                ValueListenableBuilder<ThemeMode3>(
+                  valueListenable: ThemeController.mode,
+                  builder: (_, mode, __) => GroupedCard(
+                    dividerInset: 60,
+                    children: [
+                      AppleRow(
+                        leading: IconTile(Icons.brightness_auto_rounded,
+                            AppleColors.indigo),
+                        title: 'Adaptive',
+                        subtitle:
+                            'Light through the day, dark after 7 pm — automatically.',
+                        trailing: _themeTick(mode == ThemeMode3.adaptive),
+                        onTap: () => ThemeController.setMode(ThemeMode3.adaptive),
+                      ),
+                      AppleRow(
+                        leading:
+                            IconTile(Icons.wb_sunny_rounded, AppleColors.orange),
+                        title: 'Light',
+                        trailing: _themeTick(mode == ThemeMode3.light),
+                        onTap: () => ThemeController.setMode(ThemeMode3.light),
+                      ),
+                      AppleRow(
+                        leading:
+                            IconTile(Icons.nightlight_round, AppleColors.gray),
+                        title: 'Dark',
+                        trailing: _themeTick(mode == ThemeMode3.dark),
+                        onTap: () => ThemeController.setMode(ThemeMode3.dark),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 24),
 
@@ -535,96 +551,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       );
 }
 
-/// ─────────────────────────────────────────────────────────────────────────
-///  DAY/NIGHT SWITCH — a little sky you tap. Light: pale morning with a
-///  sun. Dark: ink night with a moon and stars. The knob drifts across
-///  like the hours passing. Pure ornament wrapped around one boolean.
-/// ─────────────────────────────────────────────────────────────────────────
-class _DayNightSwitch extends StatelessWidget {
-  const _DayNightSwitch();
+/// Check mark on the selected appearance row.
+Widget _themeTick(bool on) => on
+    ? Icon(Icons.check_rounded, color: Neon.violet, size: 20)
+    : const SizedBox(width: 20);
 
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: ThemeController.dark,
-      builder: (_, dark, __) => GestureDetector(
-        onTap: () {
-          HapticFeedback.mediumImpact();
-          ThemeController.toggle();
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          width: 64,
-          height: 34,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(100),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: dark
-                  ? const [Color(0xFF141A33), Color(0xFF0B0D18)]
-                  : const [Color(0xFFBFDFFF), Color(0xFFE8F3FF)],
-            ),
-            border: Border.all(color: Neon.line),
-          ),
-          child: Stack(
-            children: [
-              // Stars come out at night.
-              for (final (dx, dy, s) in const [
-                (0.22, 0.30, 2.0),
-                (0.38, 0.62, 1.5),
-                (0.30, 0.18, 1.2),
-              ])
-                AnimatedOpacity(
-                  duration: const Duration(milliseconds: 300),
-                  opacity: dark ? 0.9 : 0.0,
-                  child: Align(
-                    alignment: Alignment(dx * 2 - 1, dy * 2 - 1),
-                    child: Container(
-                      width: s,
-                      height: s,
-                      decoration: const BoxDecoration(
-                          color: Colors.white, shape: BoxShape.circle),
-                    ),
-                  ),
-                ),
-              AnimatedAlign(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeOutCubic,
-                alignment:
-                    dark ? Alignment.centerRight : Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.all(3),
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: dark
-                          ? const Color(0xFFE8EAF6)
-                          : const Color(0xFFFFC531),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (dark
-                                  ? const Color(0xFFE8EAF6)
-                                  : const Color(0xFFFFB020))
-                              .withValues(alpha: 0.45),
-                          blurRadius: 8,
-                        ),
-                      ],
-                    ),
-                    child: dark
-                        ? const Icon(Icons.nightlight_round,
-                            size: 15, color: Color(0xFF141A33))
-                        : null,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
