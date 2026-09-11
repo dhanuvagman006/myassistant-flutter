@@ -79,21 +79,56 @@ class AssistantEngine extends ChangeNotifier {
   /// to render the face, and a stale flag sent every inline tap through
   /// the slow avatar-reservation path).
   Future<void> beginInlineConversation({String? name}) async {
+    // A second tap while a start is still running must not stack another
+    // one on top of it — that is how several half-started sessions used to
+    // fight over the microphone.
+    if (_starting) {
+      AppLog.add('orb', 'start already in progress — ignoring tap');
+      return;
+    }
+    _starting = true;
     inlineVoice = true;
     faceMode = false;
     notifyListeners();
-    await beginConversation(name: name);
+    try {
+      // HARD CEILING. Any await inside the start path (recorder release, a
+      // socket that never answers, a wedged plugin) used to hang the tap
+      // forever: the orb sat white, every later tap logged "start" and
+      // nothing followed. 20 s is far longer than a healthy connect.
+      await beginConversation(name: name).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () {
+          AppLog.add('orb', 'start timed out after 20s');
+        },
+      );
+    } catch (e) {
+      AppLog.add('orb', 'start failed: $e');
+    } finally {
+      _starting = false;
+    }
     // If nothing came up — no live session and no listening turn — the tap
     // achieved nothing. Reset so the orb is honestly idle and the next tap
     // is a clean attempt, and tell the user rather than leaving a dead orb.
     if (!liveActive && !phase.busy && phase != AssistantPhase.listening) {
       inlineVoice = false;
+      // Release anything the failed attempt may still be holding, so the
+      // NEXT tap begins from a clean slate rather than inheriting a half
+      // dead session.
+      try {
+        await _liveSvc.stop();
+      } catch (_) {}
+      try {
+        await _voice.cancelCapture();
+      } catch (_) {}
       _setPhase(AssistantPhase.idle, silent: true);
       notifyListeners();
       AppLog.add('orb', 'start produced no session');
       AppFeedback.toast("Couldn't start the conversation — tap again.");
     }
   }
+
+  /// True while a start is running, so taps cannot pile up.
+  bool _starting = false;
 
   /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
   /// clearing _conversationOpen makes the in-flight start terminate itself
@@ -820,6 +855,7 @@ class AssistantEngine extends ChangeNotifier {
   /// if it failed (so the caller can fall back to the classic loop without
   /// the user ever seeing an error).
   Future<bool> _startLive() async {
+    AppLog.add('live', 'start: begin');
     // A previous session may still be tearing down (leaving the face
     // screen fires leaveConversation without awaiting it). Starting the
     // mic while LiveKit/audio release is mid-flight wedges the recorder —
@@ -839,9 +875,20 @@ class AssistantEngine extends ChangeNotifier {
       _bargeMonitorOn = false;
       await _voice.stopBargeInMonitor();
     }
-    await _voice.stopSpeaking();
-    await _voice.cancelCapture();
+    // Each of these touches a platform plugin, and a wedged recorder used
+    // to stall here with no trace. Bounded and logged.
+    try {
+      await _voice.stopSpeaking().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      AppLog.add('live', 'start: stopSpeaking stalled — continuing');
+    }
+    try {
+      await _voice.cancelCapture().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      AppLog.add('live', 'start: cancelCapture stalled — continuing');
+    }
     _resetTurn();
+    AppLog.add('live', 'start: audio released');
 
     // "Only my voice": score every utterance against the enrolled
     // voiceprint before it reaches the model. No-op until the user has
@@ -1071,8 +1118,16 @@ class AssistantEngine extends ChangeNotifier {
           'Face mode isn\'t available right now — continuing voice-only.');
     }
 
-    await _liveSvc.start(avatarRoom: avatarRoom);
+    AppLog.add('live', 'start: opening socket');
+    try {
+      await _liveSvc.start(avatarRoom: avatarRoom).timeout(
+        const Duration(seconds: 12),
+      );
+    } catch (e) {
+      AppLog.add('live', 'start: socket did not open ($e)');
+    }
     if (!_liveSvc.active) {
+      AppLog.add('live', 'start: socket inactive — giving up');
       _liveStartResult?.complete(false);
       _liveStartResult = null;
       await _avatar.stop(); // socket never came up — don't leave a paid room
@@ -1088,6 +1143,7 @@ class AssistantEngine extends ChangeNotifier {
       _setPhase(AssistantPhase.idle, silent: true);
       return false;
     });
+    AppLog.add('live', 'start: ready=$ok');
     // The user may have left the screen while we were connecting; a live
     // session with no screen is a hot mic talking behind the dashboard.
     if (ok && !_conversationOpen) {
