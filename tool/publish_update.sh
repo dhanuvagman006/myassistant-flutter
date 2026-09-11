@@ -38,6 +38,25 @@ shift 2
 CHANGELOG_JSON="$(printf '%s\n' "$@" | python3 -c 'import json,sys; print(json.dumps([l for l in sys.stdin.read().split("\n") if l.strip()]))')"
 
 [ -f "$APK" ] || { echo "no APK at $APK — run flutter build apk first" >&2; exit 1; }
+
+# THE APK MUST DECLARE THE CODE WE ARE ADVERTISING. The app decides it is
+# out of date by comparing /config's latestVersionCode against its OWN
+# embedded versionCode. Publish 24 while the file still says 23 and every
+# installed app downloads ~200 MB, installs it, restarts still saying 23,
+# and starts over — a loop nothing breaks. Cheap to check, so check.
+AAPT="$(ls "$HOME"/Android/Sdk/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"
+if [ -n "$AAPT" ]; then
+  EMBEDDED="$("$AAPT" dump badging "$APK" 2>/dev/null |
+    sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)"
+  if [ -n "$EMBEDDED" ] && [ "$EMBEDDED" != "$CODE" ]; then
+    echo "REFUSING: the APK declares versionCode $EMBEDDED but you asked to publish $CODE." >&2
+    echo "  Bump pubspec (version: x.y.z+$CODE) and rebuild, or publish $EMBEDDED." >&2
+    exit 1
+  fi
+  echo "→ APK declares versionCode ${EMBEDDED:-?} — matches"
+else
+  echo "→ warning: aapt2 not found, could not verify the APK's versionCode" >&2
+fi
 echo "→ uploading $(du -h "$APK" | cut -f1) APK as build $CODE ($NAME)"
 SCP_HOST="$VPS"
 case "$VPS" in *:*:*) SCP_HOST="root@[${VPS#root@}]";; esac
