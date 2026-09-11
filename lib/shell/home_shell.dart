@@ -9,7 +9,7 @@ import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
 import '../widgets/inline_voice.dart';
-import '../features/assistant/assistant_screen.dart';
+import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
 import '../core/log.dart';
@@ -32,7 +32,8 @@ import '../services/usage_service.dart';
 ///  Three tabs (Home · Hub · You) with the mic docked centre-stage: the
 ///  dashboard is the resting state, and the voice conversation is a
 ///  full-screen moment you summon — not a wall you live behind.
-///  All boot work that used to live in AssistantScreen happens here,
+///  All boot work that used to live in the old conversation screen
+///  happens here,
 ///  because this is now the first screen after sign-in.
 /// ─────────────────────────────────────────────────────────────────────────
 class HomeShell extends StatefulWidget {
@@ -79,27 +80,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    AssistantEngine.instance.removeListener(_maybeEscalateInline);
     super.dispose();
   }
 
-  void _maybeEscalateInline() {
-    final engine = AssistantEngine.instance;
-    if (!mounted || _conversationShowing) return;
-    // A turn that needs a tappable card gets the full screen; everything
-    // else stays inline. (No state-resetting here: an eager reset during
-    // the connect window used to kill sessions as they were being born.)
-    //
-    // ANYTHING TO LOOK AT counts, not only something to tap. A generated
-    // image, a document, a written piece or search results were all
-    // announced — "your image is on the screen" — while the user sat on
-    // Home with the orb, where none of those cards exist. Live mode counts
-    // too: that is the surface every one of those complaints came from.
-    final voice = engine.inlineVoice || engine.liveActive;
-    if (voice && (engine.pendingConfirmation != null || engine.hasVisualResult)) {
-      _openConversation();
-    }
-  }
+
 
   int _tab = HomeShell.lastTab;
 
@@ -114,8 +98,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
-      if (!mounted || _conversationShowing) return false;
-      _openConversation();
+      if (!mounted) return false;
+      _startConversation();
       return true;
     };
     // Recalled documents ("show me Chetan's evidence") pop up as a
@@ -144,7 +128,6 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // whatever screen is on top and one tap places the call.
     // An inline turn that needs a CARD (a confirmation to tap) can't show
     // it on Home — the conversation screen opens just for those.
-    engine.addListener(_maybeEscalateInline);
     engine.onPickContact = (spokenName, matches, onChosen) {
       if (!mounted) {
         onChosen(null);
@@ -199,31 +182,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   /// True while the conversation route is on top — the notification-tap
   /// hook must not stack a second copy of the screen.
-  bool _conversationShowing = false;
 
   /// True while the document gallery is on top — a second recall replaces
   /// the open gallery instead of stacking another.
   bool _galleryShowing = false;
   int _galleryGen = 0;
 
-  void _openConversation() {
+  /// A tapped message notification used to open the conversation screen
+  /// so the assistant could speak. The conversation now happens in place,
+  /// so it just starts one.
+  Future<void> _startConversation() async {
     HapticFeedback.mediumImpact();
-    _conversationShowing = true;
-    Navigator.of(context)
-        .push(
-          PageRouteBuilder(
-            fullscreenDialog: true,
-            transitionDuration: const Duration(milliseconds: 280),
-            pageBuilder: (_, __, ___) => const AssistantScreen(),
-            transitionsBuilder: (_, anim, __, child) => SlideTransition(
-              position: Tween(begin: const Offset(0, 0.06), end: Offset.zero)
-                  .animate(
-                      CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
-              child: FadeTransition(opacity: anim, child: child),
-            ),
-          ),
-        )
-        .whenComplete(() => _conversationShowing = false);
+    final engine = AssistantEngine.instance;
+    if (engine.liveActive || engine.inlineVoice) return;
+    await engine.beginInlineConversation(name: AuthService.instance.user?.name);
   }
 
   @override
@@ -244,28 +216,24 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           ),
           // Floating captions for the inline (no-screen) conversation.
           const InlineCaptionOverlay(),
+          // The cards a turn produces — a confirmation to tap, a call in
+          // progress, a written piece, search results. These lived only
+          // inside the old conversation screen, which is why Home had to
+          // throw that screen over itself the moment a turn needed a tap.
+          const AssistantResultOverlay(),
         ],
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       // TAP: talk right here — the orb wakes in place, captions float above
-      // the dock, no second screen. Tap again to stop. HOLD: the live face
-      // agent (avatar video) opens full screen.
+      // the dock, no second screen. Tap again to stop.
+      //
+      // There is no second screen any more, so the stale-flag self-heal
+      // that used to guard both handlers is gone with it — the orb now
+      // answers every tap, which is what it should always have done.
       floatingActionButton: AssistantOrbButton(
         onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;
-          if (_conversationShowing) {
-            // Self-heal: if the flag says the conversation screen is up but
-            // the navigator has nothing to pop, the flag is stale (seen
-            // once after an in-place update) — reset it and serve the tap
-            // instead of silently ignoring the user's main button.
-            if (!Navigator.of(context, rootNavigator: true).canPop()) {
-              AppLog.add('orb', 'stale conversation flag — self-healed');
-              _conversationShowing = false;
-            } else {
-              return;
-            }
-          }
           // Decide by what is actually RUNNING, not by a flag that may lag:
           // a live session, a connect in flight, or a busy classic turn all
           // mean "tap = stop"; a resting engine means "tap = talk".
@@ -280,26 +248,18 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 name: AuthService.instance.user?.name);
           }
         },
+        // HOLD used to open the conversation screen with the avatar face.
+        // That screen is gone, and face mode is off server-side anyway
+        // (features.face_mode is false), so a hold would have opened an
+        // empty room. It ends the conversation instead — the one thing a
+        // deliberate long press on a live mic should reliably do.
         onLongPress: () async {
           HapticFeedback.heavyImpact();
           final engine = AssistantEngine.instance;
-          if (_conversationShowing) {
-            if (!Navigator.of(context, rootNavigator: true).canPop()) {
-              AppLog.add('orb', 'stale conversation flag — self-healed');
-              _conversationShowing = false;
-            } else {
-              return;
-            }
-          }
-          // Hand the audio over cleanly, then open the screen WITH face
-          // mode set — beginConversation reserves the avatar as part of
-          // its own startup, so exactly one session comes up, with the
-          // face. (The old toggle-then-open raced two startups.)
           if (engine.inlineVoice || engine.liveActive) {
+            AppLog.add('orb', 'hold → stop');
             await engine.endInlineConversation();
           }
-          engine.faceMode = true;
-          _openConversation();
         },
       ),
       bottomNavigationBar: BottomAppBar(

@@ -1726,9 +1726,7 @@ class AssistantEngine extends ChangeNotifier {
         // case file) — pop them on screen while Hari speaks the answer.
         documentCards = UserDocument.listFromJson(e['documents']);
         if (documentCards.isNotEmpty) {
-          // Already on screen full size — do not ALSO throw the
-          // conversation view over Home for the same documents.
-          _shownFullScreen = onShowDocuments?.call(documentCards) ?? false;
+          onShowDocuments?.call(documentCards);
         }
         break;
 
@@ -1979,7 +1977,6 @@ class AssistantEngine extends ChangeNotifier {
           if (docJson is Map) {
             final doc = UserDocument.fromJson(docJson.cast<String, dynamic>());
             final shown = onShowDocuments?.call([doc]) ?? false;
-            _shownFullScreen = shown;
             if (!shown) {
               // No host to pop a gallery over (rare) — fall back to the
               // in-conversation card rather than dropping it silently.
@@ -2960,32 +2957,6 @@ class AssistantEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// TRUE WHEN THIS TURN PRODUCED SOMETHING TO LOOK AT.
-  ///
-  /// The assistant would say "your image is on the screen" while the user
-  /// was on Home with the orb, where no card is rendered — so there was no
-  /// screen, and the reply was a lie the app told on its behalf. Home
-  /// escalates to the conversation view on this, exactly as it already did
-  /// for a confirmation that needs a tap.
-  /// Search results are deliberately NOT here. A web answer is SPOKEN —
-  /// the list is a supporting visual, and throwing a full screen over Home
-  /// every time someone asks about flight times would be worse than the
-  /// bug this fixes. Only the things the assistant says are "on your
-  /// screen" count.
-  /// Set when this turn's result was already put on screen full size by
-  /// the gallery. Without it, a recalled document opened the gallery AND
-  /// pushed the conversation view over Home behind it — two presentations
-  /// of one thing, which is what the glitchiness was.
-  bool _shownFullScreen = false;
-
-  bool get hasVisualResult =>
-      !_shownFullScreen &&
-      (generatedImage != null ||
-          presentedText != null ||
-          documentCards.isNotEmpty);
-
-  /// User closed the generated-image card (X or swipe) — conversation
-  /// continues clean.
   void dismissGeneratedImage() {
     generatedImage = null;
     generatedImagePrompt = '';
@@ -3000,7 +2971,6 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   void _resetTurn() {
-    _shownFullScreen = false;
     _speakQueue.clear();
     _liveEntry = null;
     errorMessage = null;

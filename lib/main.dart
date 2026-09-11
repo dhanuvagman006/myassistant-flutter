@@ -62,7 +62,7 @@ Future<void> main() async {
 
 /// The live call IS the app: after the security gates the user lands
 /// directly in a live voice conversation with their assistant
-/// (AssistantScreen). Voice mode, history, clients, settings and MCP are
+/// (HomeShell). Voice mode, history, clients, settings and MCP are
 /// secondary screens behind ⋯ More.
 class MyAssistantApp extends StatelessWidget {
   const MyAssistantApp({super.key});
