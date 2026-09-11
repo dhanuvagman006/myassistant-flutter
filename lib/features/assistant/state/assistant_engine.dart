@@ -2946,11 +2946,15 @@ class AssistantEngine extends ChangeNotifier {
   /// screen, and the reply was a lie the app told on its behalf. Home
   /// escalates to the conversation view on this, exactly as it already did
   /// for a confirmation that needs a tap.
+  /// Search results are deliberately NOT here. A web answer is SPOKEN —
+  /// the list is a supporting visual, and throwing a full screen over Home
+  /// every time someone asks about flight times would be worse than the
+  /// bug this fixes. Only the things the assistant says are "on your
+  /// screen" count.
   bool get hasVisualResult =>
       generatedImage != null ||
       presentedText != null ||
-      documentCards.isNotEmpty ||
-      searchResults.isNotEmpty;
+      documentCards.isNotEmpty;
 
   /// User closed the generated-image card (X or swipe) — conversation
   /// continues clean.
