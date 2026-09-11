@@ -88,6 +88,7 @@ class AppUpdateService {
   Future<void> downloadAndInstall(
     RemoteConfig cfg, {
     required void Function(double) onProgress,
+    void Function()? onInstalling,
   }) async {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/update-${cfg.latestVersionCode}.apk');
@@ -143,6 +144,7 @@ class AppUpdateService {
       // From then on, updates apply themselves; the app simply restarts
       // as the new version.
       AppLog.add('update', 'committing install session');
+      onInstalling?.call();
       final started = await const MethodChannel('hari/updater')
           .invokeMethod<bool>('install', {'path': file.path});
       if (started != true) {
@@ -173,6 +175,10 @@ class _UpdateSheet extends StatefulWidget {
 class _UpdateSheetState extends State<_UpdateSheet> {
   double? _progress; // null = not started
   String? _error;
+  // The install itself is silent and takes a while: Android replaces the
+  // app, the screen drops to the launcher and the app reopens by itself.
+  // Without a visible "installing" state that looked like a crash.
+  bool _installing = false;
 
   @override
   void initState() {
@@ -197,14 +203,21 @@ class _UpdateSheetState extends State<_UpdateSheet> {
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
+        onInstalling: () {
+          if (mounted) setState(() => _installing = true);
+        },
       );
-      // The installer is now in front; the sheet has done its job.
-      if (mounted) Navigator.of(context).pop();
+      // DO NOT close the sheet. Android is now installing in the
+      // background and will restart the app when it finishes; leaving the
+      // "Installing…" panel up is what tells the user the screen going
+      // dark for a moment is the update, not a crash.
+      if (mounted) setState(() => _installing = true);
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = "Couldn't update: ${e.toString().replaceFirst('Exception: ', '')}";
           _progress = null;
+          _installing = false;
         });
       }
     }
@@ -250,16 +263,44 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                   style: TextStyle(color: Neon.error, fontSize: 12.5)),
             ],
             const SizedBox(height: 16),
-            if (busy) ...[
+            if (_installing) ...[
+              Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.4, color: Neon.violet),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Installing the update…',
+                      style: TextStyle(
+                          color: Neon.textHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'The app will close and reopen by itself in a moment. '
+                'Nothing is lost — this is the update finishing.',
+                style: TextStyle(
+                    color: Neon.textLo, fontSize: 12.5, height: 1.35),
+              ),
+            ] else if (busy) ...[
               LinearProgressIndicator(
                 value: _progress == 0 ? null : _progress,
-                color: Neon.cyan,
-                backgroundColor: Neon.bg,
+                color: Neon.violet,
+                backgroundColor: Neon.surfaceHigh,
               ),
               const SizedBox(height: 8),
               Text(
                 _progress! >= 1
-                    ? 'Verified — opening the installer…'
+                    ? 'Verified — starting the install…'
                     : 'Downloading ${(_progress! * 100).toStringAsFixed(0)}%',
                 style: TextStyle(color: Neon.textDim, fontSize: 12.5),
               ),

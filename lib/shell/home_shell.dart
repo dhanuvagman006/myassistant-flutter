@@ -47,6 +47,13 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
+  /// The cached profile is written once at sign-in and can go stale — a
+  /// renamed account kept being greeted by its old name. One quiet
+  /// round-trip at startup keeps the spoken name current.
+  void _refreshProfileOnce() {
+    AuthService.instance.refreshUser().catchError((_) {});
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Returning to the foreground re-checks for a published update (the
@@ -93,6 +100,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _refreshProfileOnce();
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting
