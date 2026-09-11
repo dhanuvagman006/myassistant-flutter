@@ -16,6 +16,7 @@ import '../../../core/log.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
+import '../../../services/device_control_service.dart';
 import '../../../services/sms_service.dart';
 import '../widgets/action_cards.dart' show shareDocumentFile;
 import '../../../services/app_feedback.dart';
@@ -1744,6 +1745,13 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
+      case 'phone_control':
+        // Flashlight / volume / media / battery / settings — executed on
+        // the device with the REAL result reported back; a control that
+        // failed is said to have failed, never assumed.
+        _handlePhoneControl(e);
+        break;
+
       case 'send_sms':
         // Delivery ladder, rung two: the recipient isn't an app user, so
         // the phone itself sends the message as a plain SMS — no taps.
@@ -2358,6 +2366,61 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     await _dialAndReport(contact);
+  }
+
+  Future<void> _handlePhoneControl(Map<String, dynamic> e) async {
+    final dc = DeviceControlService.instance;
+    final action = (e['action'] ?? '').toString();
+    bool ok = false;
+    String? report; // a [SYSTEM] line the model needs to answer with
+    switch (action) {
+      case 'flashlight_on':
+        ok = await dc.torch(true);
+      case 'flashlight_off':
+        ok = await dc.torch(false);
+      case 'volume_set':
+        ok = await dc.volume('set', value: (e['value'] as num?)?.toInt() ?? 50);
+      case 'volume_up':
+        ok = await dc.volume('up');
+      case 'volume_down':
+        ok = await dc.volume('down');
+      case 'mute':
+        ok = await dc.volume('mute');
+      case 'unmute':
+        ok = await dc.volume('unmute');
+      case 'media_play':
+        ok = await dc.media('play');
+      case 'media_pause':
+        ok = await dc.media('pause');
+      case 'media_next':
+        ok = await dc.media('next');
+      case 'media_previous':
+        ok = await dc.media('previous');
+      case 'battery':
+        final pct = await dc.battery();
+        ok = pct != null;
+        report = pct != null
+            ? '[SYSTEM] Battery is at $pct percent. Tell me in one short sentence.'
+            : '[SYSTEM] ERROR: battery level could not be read.';
+      case 'open_settings':
+        ok = await dc.openPanel((e['panel'] ?? 'settings').toString());
+      default:
+        ok = false;
+    }
+    if (report == null && !ok) {
+      report =
+          '[SYSTEM] ERROR: the phone could not perform "$action" — tell me plainly.';
+      AppFeedback.toast("Couldn't do that on this phone.");
+    }
+    if (report != null) {
+      if (liveActive) {
+        _liveSvc.sendText(report);
+      } else {
+        try {
+          await _api.sendText(report);
+        } catch (_) {}
+      }
+    }
   }
 
   /// Places the call and reports what ACTUALLY happened.

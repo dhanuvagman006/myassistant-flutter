@@ -58,6 +58,25 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/device")
+            .setMethodCallHandler { call, result ->
+                val ctx = applicationContext
+                when (call.method) {
+                    "torch" -> result.success(
+                        DeviceControl.torch(ctx, call.argument<Boolean>("on") == true))
+                    "volume" -> result.success(
+                        DeviceControl.volume(ctx,
+                            call.argument<String>("mode") ?: "",
+                            call.argument<Int>("value") ?: 0))
+                    "media" -> result.success(
+                        DeviceControl.media(ctx, call.argument<String>("key") ?: ""))
+                    "battery" -> result.success(DeviceControl.battery(ctx))
+                    "openPanel" -> result.success(
+                        DeviceControl.openPanel(ctx, call.argument<String>("panel") ?: ""))
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/sms")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
