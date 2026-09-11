@@ -12,7 +12,23 @@
 # (version: x.y.z+N → N) and be greater than what users are running.
 set -euo pipefail
 
-VPS="root@200.141.9.112"
+# The VPS is reachable three ways and which one works depends on the
+# network: native IPv6 (Hostinger), the hostname (via NAT64 on IPv6-only
+# networks), or the raw IPv4. Publishing used to die whenever the first
+# choice was unroutable, so pick the first host that actually answers.
+pick_vps() {
+  for h in "root@[2a02:4780:63:17ab::1]" "root@api.hariassistant.tech" "root@200.141.9.112"; do
+    bare="${h#root@}"; bare="${bare#[}"; bare="${bare%]}"
+    if ssh -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new         "root@$bare" true >/dev/null 2>&1; then
+      printf '%s' "root@$bare"
+      return 0
+    fi
+  done
+  echo "cannot reach the server on IPv6, hostname or IPv4 — check the network" >&2
+  exit 1
+}
+VPS="$(pick_vps)"
+echo "→ server: $VPS"
 NS="myassistant"
 APK="$(dirname "$0")/../build/app/outputs/flutter-apk/app-release.apk"
 
@@ -23,7 +39,9 @@ CHANGELOG_JSON="$(printf '%s\n' "$@" | python3 -c 'import json,sys; print(json.d
 
 [ -f "$APK" ] || { echo "no APK at $APK — run flutter build apk first" >&2; exit 1; }
 echo "→ uploading $(du -h "$APK" | cut -f1) APK as build $CODE ($NAME)"
-scp -q "$APK" "$VPS:/tmp/hari-upload.apk"
+SCP_HOST="$VPS"
+case "$VPS" in *:*:*) SCP_HOST="root@[${VPS#root@}]";; esac
+scp -q "$APK" "$SCP_HOST:/tmp/hari-upload.apk"
 
 ssh "$VPS" "
   set -e
