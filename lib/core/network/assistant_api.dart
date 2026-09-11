@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../services/api_service.dart';
+import '../../services/device_capabilities.dart';
 import '../log.dart';
 
 /// Thin client for the backend's /assistant module.
@@ -70,6 +71,10 @@ class AssistantApi {
     _lastEventId = 0; // a fresh session has no replayable history
     _failStreak = 0;
     _openStream(onEvent, onDisconnect);
+    // WHAT THIS PHONE CAN DO, once per session and never blocking it. The
+    // server otherwise knows only the build number and will happily offer
+    // a capability whose permission the user revoked months ago.
+    DeviceCapabilities.report(reportCapabilities);
   }
 
   void _openStream(
@@ -158,7 +163,7 @@ class AssistantApi {
       _lastEventId = 0;
     }
     AppLog.add('sse',
-        'stream dropped — retry ${_failStreak} in ${delay.inSeconds}s');
+        'stream dropped — retry $_failStreak in ${delay.inSeconds}s');
     onDisconnect?.call();
     Future.delayed(delay, () {
       if (_closed) return;
@@ -239,6 +244,33 @@ class AssistantApi {
         if (reason.isNotEmpty) 'reason': reason,
         if (contactName.isNotEmpty) 'contact_name': contactName,
       });
+
+  /// The phone reporting that a DEVICE ACTION did not happen.
+  ///
+  /// Only calls used to report back. Everything else the phone was asked
+  /// to do — open an app, open a link, start navigation, play music, set
+  /// an alarm, toggle a control — was recorded as succeeding the moment
+  /// the server dispatched it, and stayed that way. If the app was not
+  /// installed or the deep link went nowhere, the user watched it fail
+  /// and the record said it worked.
+  Future<void> deviceResult({
+    required String tool,
+    required bool ok,
+    String target = '',
+    String reason = '',
+  }) =>
+      _post('device_result', {
+        'tool': tool,
+        'ok': ok,
+        if (target.isNotEmpty) 'target': target,
+        if (reason.isNotEmpty) 'reason': reason,
+      });
+
+  /// What this install can actually DO: its build and which Android
+  /// permissions the user has granted. Posted once per session so the
+  /// server stops offering capabilities this phone will silently drop.
+  Future<void> reportCapabilities(Map<String, dynamic> caps) =>
+      _post('capabilities', caps);
 
   Future<void> cancel() => _post('cancel');
 

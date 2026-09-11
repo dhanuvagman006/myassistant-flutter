@@ -10,6 +10,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/log.dart';
 import 'api_service.dart';
+import 'device_capabilities.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
@@ -260,9 +261,21 @@ class LiveService {
         ? '&lat=${ApiService.geoLat!.toStringAsFixed(4)}'
             '&lng=${ApiService.geoLng!.toStringAsFixed(4)}'
         : '';
+    // WHAT THIS PHONE CAN DO rides on the URL, because a socket has no
+    // request body to post it in. Without it live mode offers tools whose
+    // permission the user denied, then apologises after trying.
+    var caps = '';
+    try {
+      final c = await DeviceCapabilities.collect();
+      final granted = (c['granted'] as List).join(',');
+      final denied = (c['denied'] as List).join(',');
+      caps = '&granted=${Uri.encodeComponent(granted)}'
+          '&denied=${Uri.encodeComponent(denied)}';
+    } catch (_) {}
     final uri =
         Uri.parse(
-        '$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo&build=${ApiService.appBuild ?? 0}');
+        '$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo'
+        '&build=${ApiService.appBuild ?? 0}$caps');
 
     try {
       _ch = WebSocketChannel.connect(uri);

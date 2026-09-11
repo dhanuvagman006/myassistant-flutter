@@ -1826,6 +1826,16 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
+      case 'ask_about_image':
+        // look_at_screenshot: they pick a picture they already have and we
+        // answer about it. The server's screenshot mode existed for months
+        // with nothing on this side to reach it.
+        _askAboutImage(
+          question: e['question'] as String? ?? '',
+          source: e['source'] as String? ?? 'gallery',
+        );
+        break;
+
       case 'phone_control':
         // Flashlight / volume / media / battery / settings — executed on
         // the device with the REAL result reported back; a control that
@@ -2170,6 +2180,99 @@ class AssistantEngine extends ChangeNotifier {
   /// deterministically: the camera opens immediately, no voice turn needed.
   Future<void> startScan() => _captureDocument('');
 
+  /// LOOK AT A PICTURE THEY ALREADY HAVE and answer about it.
+  ///
+  /// Mirrors _captureDocument's device-flow discipline — the picker owns
+  /// the screen, so the continuous mic loop is held shut for the whole
+  /// thing; without that the next turn is shutter noise and the assistant
+  /// says it could not hear.
+  ///
+  /// The answer comes back as a [SYSTEM] line rather than being spoken
+  /// here, so it goes through the same turn the model is already in and
+  /// the reply is subject to every gate: it is the model's sentence, from
+  /// a real result, not text this file invented.
+  Future<void> _askAboutImage({
+    required String question,
+    String source = 'gallery',
+  }) async {
+    _deviceFlowActive = true;
+    final liveGated = liveActive;
+    if (liveGated) _liveSvc.remoteSpeaking = true;
+    try {
+      await _voice.stopSpeaking();
+      XFile? shot;
+      try {
+        shot = await ImagePicker().pickImage(
+          source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+          maxWidth: 1920,
+          maxHeight: 1920,
+          imageQuality: 85,
+        );
+      } catch (e) {
+        AppLog.add('vision', 'picker failed: $e');
+        _reportDeviceFailure('look_at_screenshot', reason: 'the picker would not open');
+        await _tellModel(
+            '[SYSTEM] ERROR: the gallery would not open, so NO image was '
+            'read. Say so plainly.');
+        _setPhase(AssistantPhase.completed);
+        return;
+      }
+      if (shot == null) {
+        await _tellModel(
+            '[SYSTEM] The user closed the picker without choosing an image. '
+            'Nothing was read. Acknowledge briefly and move on.');
+        _setPhase(AssistantPhase.completed);
+        return;
+      }
+
+      _setPhase(AssistantPhase.thinking, silent: true);
+      notifyListeners();
+      try {
+        final bytes = await shot.readAsBytes();
+        final res = await ApiService.visionAsk(
+          bytes: bytes,
+          filename: 'screenshot.jpg',
+          mimeType: 'image/jpeg',
+          mode: 'screenshot',
+          question: question,
+        );
+        final answer = res.answer.trim();
+        if (answer.isEmpty) {
+          _reportDeviceFailure('look_at_screenshot',
+              reason: 'nothing could be read from the image');
+          await _tellModel(
+              '[SYSTEM] ERROR: nothing could be read from that image. Say so '
+              'and offer to try another one.');
+        } else {
+          await _tellModel(
+              '[SYSTEM] The image the user picked says this — answer them '
+              'from IT and nothing else:\n$answer');
+        }
+      } catch (e) {
+        AppLog.add('vision', 'screenshot ask failed: $e');
+        _reportDeviceFailure('look_at_screenshot', reason: '$e');
+        await _tellModel(
+            '[SYSTEM] ERROR: the image could not be read ($e). NOTHING was '
+            'understood; do not guess what it showed.');
+      }
+    } finally {
+      _deviceFlowActive = false;
+      if (liveGated) _liveSvc.remoteSpeaking = false;
+    }
+  }
+
+  /// Hand a [SYSTEM] line to whichever surface is live, so a device result
+  /// re-enters the same conversation instead of becoming a dead end.
+  Future<void> _tellModel(String line) async {
+    if (liveActive) {
+      _liveSvc.sendText(line);
+      return;
+    }
+    try {
+      await _api.sendText(line);
+    } catch (_) {}
+  }
+
   /// Voice-driven document capture: open the camera or gallery, then file the shot
   /// into document memory with the user's own words as the note (so "the
   /// receipt I saved after the doctor" is findable later). No manual entry.
@@ -2496,6 +2599,8 @@ class AssistantEngine extends ChangeNotifier {
       report =
           '[SYSTEM] ERROR: the phone could not perform "$action" — tell me plainly.';
       AppFeedback.toast("Couldn't do that on this phone.");
+      _reportDeviceFailure('phone_control', target: action,
+          reason: 'the phone refused or could not do it');
     }
     if (report != null) {
       if (liveActive) {
@@ -2784,6 +2889,10 @@ class AssistantEngine extends ChangeNotifier {
     if (!ok) {
       AppFeedback.toast(
           'Could not open the app for that — nothing was ordered or booked.');
+      // The server recorded this as done the moment it dispatched it. Tell
+      // it the truth so the log stops claiming a success, and so the next
+      // turn cannot say it opened.
+      _reportDeviceFailure('open_url', target: https, reason: 'nothing could open that link');
       if (liveActive) {
         _liveSvc.sendText(
             '[SYSTEM] ERROR: The phone could not open the app for that '
@@ -2791,6 +2900,16 @@ class AssistantEngine extends ChangeNotifier {
             'that it failed.');
       }
     }
+  }
+
+  /// Tell the server a device action failed. Fire and forget: a failed
+  /// report must never turn into a second visible failure.
+  void _reportDeviceFailure(String tool, {String target = '', String reason = ''}) {
+    try {
+      _api
+          .deviceResult(tool: tool, ok: false, target: target, reason: reason)
+          .catchError((_) {});
+    } catch (_) {}
   }
 
   /// User closed the generated-image card (X or swipe) — conversation

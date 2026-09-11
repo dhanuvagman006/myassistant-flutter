@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/log.dart';
+import '../features/assistant/state/assistant_engine.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
 import 'app_feedback.dart';
@@ -45,6 +46,33 @@ class ShareIntakeService {
     _started = false;
   }
 
+  bool _lastWasText = false;
+
+  /// A shared URL or passage of text. A link becomes "read this page and
+  /// tell me what it says"; a passage becomes the thing to talk about.
+  /// Either way the assistant handles it in a normal turn, so the answer
+  /// is subject to the same gates as anything else it says.
+  Future<bool> _handleSharedText(String raw) async {
+    final text = raw.trim();
+    if (text.isEmpty) return false;
+    _lastWasText = true;
+    // A share often arrives as "Some title https://example.com/x" — take
+    // the URL when there is one, so read_webpage gets something usable.
+    final url = RegExp(r'https?://\S+').firstMatch(text)?.group(0);
+    final ask = url != null
+        ? 'Read this page and tell me what it says: $url'
+        : 'Here is something I shared with you — summarise it for me:\n$text';
+    try {
+      await AssistantEngine.instance.askAssistant(ask);
+      AppFeedback.toast(url != null ? 'Reading that page…' : 'Reading that…');
+      return true;
+    } catch (e) {
+      AppLog.add('share', 'shared text failed: $e');
+      AppFeedback.toast("Couldn't hand that to the assistant — try again.");
+      return false;
+    }
+  }
+
   static const _mimeByExt = {
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
@@ -67,6 +95,17 @@ class ShareIntakeService {
     var failed = 0;
     var skipped = 0;
     for (final f in files) {
+      // A SHARED LINK IS A QUESTION, NOT A DOCUMENT. "Share → Hari" from a
+      // browser hands over a URL; filing that as a file would save nothing
+      // and answer nothing. It goes to the assistant, which reads the page.
+      if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
+        if (await _handleSharedText(f.path)) {
+          saved++;
+        } else {
+          skipped++;
+        }
+        continue;
+      }
       if (f.type != SharedMediaType.image && f.type != SharedMediaType.file) {
         skipped++;
         continue;
@@ -100,6 +139,10 @@ class ShareIntakeService {
         failed++;
         AppLog.add('share', 'upload failed: $e');
       }
+    }
+    if (_lastWasText) {
+      _lastWasText = false;
+      return; // its own message was already shown
     }
     if (saved > 0) {
       AppFeedback.toast(saved == 1
