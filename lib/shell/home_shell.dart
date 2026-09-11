@@ -89,7 +89,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // A turn that needs a tappable card gets the full screen; everything
     // else stays inline. (No state-resetting here: an eager reset during
     // the connect window used to kill sessions as they were being born.)
-    if (engine.inlineVoice && engine.pendingConfirmation != null) {
+    //
+    // ANYTHING TO LOOK AT counts, not only something to tap. A generated
+    // image, a document, a written piece or search results were all
+    // announced — "your image is on the screen" — while the user sat on
+    // Home with the orb, where none of those cards exist. Live mode counts
+    // too: that is the surface every one of those complaints came from.
+    final voice = engine.inlineVoice || engine.liveActive;
+    if (voice && (engine.pendingConfirmation != null || engine.hasVisualResult)) {
       _openConversation();
     }
   }

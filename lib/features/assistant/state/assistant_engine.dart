@@ -2939,6 +2939,19 @@ class AssistantEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// TRUE WHEN THIS TURN PRODUCED SOMETHING TO LOOK AT.
+  ///
+  /// The assistant would say "your image is on the screen" while the user
+  /// was on Home with the orb, where no card is rendered — so there was no
+  /// screen, and the reply was a lie the app told on its behalf. Home
+  /// escalates to the conversation view on this, exactly as it already did
+  /// for a confirmation that needs a tap.
+  bool get hasVisualResult =>
+      generatedImage != null ||
+      presentedText != null ||
+      documentCards.isNotEmpty ||
+      searchResults.isNotEmpty;
+
   /// User closed the generated-image card (X or swipe) — conversation
   /// continues clean.
   void dismissGeneratedImage() {

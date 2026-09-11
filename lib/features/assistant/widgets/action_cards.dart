@@ -12,6 +12,7 @@ import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
+import 'package:video_player/video_player.dart';
 
 /// Shared glass card chrome for the dark assistant screen.
 class _Glass extends StatelessWidget {
@@ -766,6 +767,39 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
 
   bool get _isVideo => widget.document.mime.startsWith('video/');
 
+  // A generated video used to render as a static film icon — there was no
+  // way to watch the thing the assistant had just said was on screen.
+  VideoPlayerController? _video;
+  bool _videoFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isVideo) _startVideo();
+  }
+
+  @override
+  void dispose() {
+    _video?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startVideo() async {
+    try {
+      final c = VideoPlayerController.networkUrl(
+        Uri.parse(ApiService.documentFileUrl(widget.document.id)),
+        httpHeaders: ApiService.imageHeaders,
+      );
+      _video = c;
+      await c.initialize();
+      await c.setLooping(true);
+      await c.play();
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted) setState(() => _videoFailed = true);
+    }
+  }
+
   Future<void> _share() async {
     if (_sending) return;
     setState(() => _sending = true);
@@ -802,13 +836,40 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: _isVideo
-                  ? Container(
-                      height: 160,
-                      alignment: Alignment.center,
-                      color: Neon.surfaceHigh,
-                      child: Icon(Icons.movie_rounded,
-                          color: Neon.cyan, size: 42),
-                    )
+                  ? (_video != null && _video!.value.isInitialized
+                      ? GestureDetector(
+                          onTap: () => setState(() {
+                            _video!.value.isPlaying
+                                ? _video!.pause()
+                                : _video!.play();
+                          }),
+                          child: AspectRatio(
+                            aspectRatio: _video!.value.aspectRatio,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                VideoPlayer(_video!),
+                                if (!_video!.value.isPlaying)
+                                  Container(
+                                    alignment: Alignment.center,
+                                    color: Colors.black26,
+                                    child: const Icon(Icons.play_arrow_rounded,
+                                        color: Colors.white, size: 54),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : Container(
+                          height: 160,
+                          alignment: Alignment.center,
+                          color: Neon.surfaceHigh,
+                          child: _videoFailed
+                              ? Icon(Icons.movie_rounded,
+                                  color: Neon.cyan, size: 42)
+                              : CircularProgressIndicator(
+                                  strokeWidth: 2.4, color: Neon.violet),
+                        ))
                   : GestureDetector(
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
