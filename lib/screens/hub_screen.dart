@@ -7,6 +7,7 @@ import 'diagnostics_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'stocks_screen.dart';
+import 'studio/studio_screen.dart';
 
 /// HUB TAB — every feature as a front door.
 ///
@@ -50,6 +51,15 @@ class HubScreen extends StatelessWidget {
               Icons.description_rounded,
               const Color(0xFF34C759),
               (c) => const DocumentsScreen(),
+            ),
+          ]),
+          _group(context, 'Looks', [
+            _Row(
+              'Style Studio',
+              'Try on outfits and hairstyles on your own photo',
+              Icons.auto_awesome_rounded,
+              const Color(0xFFAF52DE),
+              (c) => const StudioScreen(),
             ),
           ]),
           _group(context, 'Money', [
