@@ -882,6 +882,12 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                         headers: ApiService.imageHeaders,
                         fit: BoxFit.cover,
                         width: double.infinity,
+                        // Card preview, not the viewer — 900 px is past
+                        // any phone's card width. The FULL-SCREEN gallery
+                        // further down is deliberately left uncapped
+                        // because it pinch-zooms to 6x, where a cap shows
+                        // up immediately as mush.
+                        cacheWidth: 900,
                         loadingBuilder: (context, child, p) => p == null
                             ? child
                             : Container(

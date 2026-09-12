@@ -10,7 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
 
   # Networking — talks to the backend only; AI keys never live in the app
   http: ^1.2.2
@@ -29,11 +28,10 @@ dependencies:
   # backend /tts endpoint). flutter_tts stays as an offline fallback.
   audioplayers: ^6.1.0
 
-  # Screen-off wake word: on-device detection (Porcupine). NOTE: the mic
-  # foreground service (flutter_foreground_task) was REMOVED for now — its
-  # hard-coded Java 1.8 broke builds on AGP 9. Wake word works while the
-  # app is open; screen-off listening returns when the plugin ships a fix.
-  porcupine_flutter: ^3.0.4
+  # NOTE: there is no wake word today. Porcupine was removed (2026-09-12) —
+  # it was declared but never imported, so it only added native weight.
+  # VoiceService still carries an STT-based wake-word helper, but nothing
+  # calls it: the app is tap-to-talk. Re-add a wake engine when that changes.
 
   # Local storage for session + cached config
   shared_preferences: ^2.3.2
@@ -41,9 +39,8 @@ dependencies:
   # Gyroscope — 3D parallax tilt + dynamic light/shadow on cards (GyroTilt)
   sensors_plus: ^6.1.0
 
-  # Regional language from location (Karnataka -> Kannada etc.)
+  # Coarse location, for location-aware answers ("weather here").
   geolocator: ^13.0.1
-  geocoding: ^3.0.0
 
   # Cloud speech-to-text (Whisper via backend /stt) — records the
   # question as m4a; auto language detection, replaces flaky on-device
@@ -65,9 +62,6 @@ dependencies:
   phone_state: ^2.0.1
   permission_handler: ^11.3.1
 
-  # Real-time avatar WebView (BeyondPresence via LiveKit — served by backend)
-  webview_flutter: ^4.10.0
-
   # Reminder notifications — fire even when the app is closed.
   # PINNED to 19.x: v18 still REQUIRES uiLocalNotificationDateInterpretation
   # (removed in 19), and v20+ has further breaking changes — our
@@ -77,7 +71,6 @@ dependencies:
   flutter_timezone: ^3.0.1
 
   url_launcher: ^6.3.0
-  logging: ^1.2.0
            # opens App Store on iOS
 
   # Sign-in (F1) — email + Google + Apple, verified by the backend
@@ -124,6 +117,3 @@ flutter:
     # On-device speaker-ID model (sherpa-onnx CAM++ zh/en) — voice
     # enrollment + owner-only listening. Runs fully offline.
     - assets/models/
-    # Optional licensed portraits (assistant_female.jpg / assistant_male.jpg).
-    # The app runs without them — AssistantFace falls back automatically.
-    - assets/avatar/

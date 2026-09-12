@@ -284,12 +284,6 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get micBusy => phase == AssistantPhase.listening;
 
-  /// Set by the assistant screen: opens the human-avatar video call when the
-  /// user asks for it by voice ("open video mode"). Lives here as a hook
-  /// because navigation needs a BuildContext, which the engine has no
-  /// business holding.
-  void Function()? onOpenVideoMode;
-
   /// Set by HomeShell: opens the conversation screen (same navigation as
   /// tapping the mic) and returns true, or returns false when it is
   /// already on screen. A tapped message notification uses this so the
@@ -837,8 +831,9 @@ class AssistantEngine extends ChangeNotifier {
   Timer? _silenceSettle;
 
   /// The avatar's video track while HeyGen is rendering, else null.
-  /// The screen paints this into AssistantFace's live layer; null simply
-  /// leaves the existing portrait in place.
+  /// NOTE: nothing renders this today — the screen that painted it was
+  /// removed with the old conversation UI. The track is still produced, so
+  /// a future avatar surface can read it without re-plumbing the engine.
   lk.VideoTrack? get avatarTrack => _avatar.videoTrack;
 
   Completer<bool>? _liveStartResult;
