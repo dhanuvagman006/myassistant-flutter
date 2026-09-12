@@ -89,11 +89,17 @@ class BriefService extends ChangeNotifier {
     brief.promises.remove(p);
     notifyListeners();
     if (p.id == null) return; // pre-upgrade payload — refresh will resync
-    if (kind == 'done') {
-      await ApiService.sendJson('/commitments/${p.id}/done');
-    } else {
-      await ApiService.sendJson('/commitments/${p.id}', method: 'DELETE');
-    }
+    // Wrapped like deleteReminder below, which always had this. Without it
+    // a failed write threw out of an optimistic gesture nobody is awaiting,
+    // so the card was already gone and the error had nowhere to surface.
+    // The next refresh reconciles the row either way.
+    try {
+      if (kind == 'done') {
+        await ApiService.sendJson('/commitments/${p.id}/done');
+      } else {
+        await ApiService.sendJson('/commitments/${p.id}', method: 'DELETE');
+      }
+    } catch (_) {}
   }
 
   /// Same optimistic treatment for reminder rows on the agenda.

@@ -103,8 +103,19 @@ class ApiService {
   /// Generic JSON request helper (POST/PUT/DELETE) used by MCP settings.
   /// Returns the decoded body, or null on any failure — callers surface a
   /// friendly message rather than an exception.
+  ///
+  /// [timeout] exists because this was the ONE helper here without one.
+  /// Dart's http client has no default request deadline, so a half-open
+  /// socket — the ordinary case of walking out of wifi range — left the
+  /// request pending until the OS gave up minutes later. On the last
+  /// onboarding step that meant a spinner that never resolved and an
+  /// account that could not be finished; on Chat it meant a send button
+  /// that span forever. Every caller already treats null as failure and
+  /// says so, so a deadline simply lets them reach that path.
   static Future<Map<String, dynamic>?> sendJson(String path,
-      {String method = 'POST', Object? body}) async {
+      {String method = 'POST',
+      Object? body,
+      Duration timeout = const Duration(seconds: 20)}) async {
     try {
       final uri = Uri.parse('$baseUrl$path');
       final headers = {..._authHeaders, 'Content-Type': 'application/json'};
@@ -112,11 +123,11 @@ class ApiService {
       late final http.Response r;
       switch (method) {
         case 'PUT':
-          r = await _client.put(uri, headers: headers, body: payload);
+          r = await _client.put(uri, headers: headers, body: payload).timeout(timeout);
         case 'DELETE':
-          r = await _client.delete(uri, headers: headers, body: payload);
+          r = await _client.delete(uri, headers: headers, body: payload).timeout(timeout);
         default:
-          r = await _client.post(uri, headers: headers, body: payload);
+          r = await _client.post(uri, headers: headers, body: payload).timeout(timeout);
       }
       if (r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);

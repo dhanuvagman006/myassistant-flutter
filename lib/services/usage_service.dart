@@ -69,7 +69,10 @@ class UsageService {
         });
       }
       if (days.isEmpty) return;
-      final r = await ApiService.sendJson('/usage', body: {'days': days});
+      // A bulk upload of several days of per-app stats, not an
+      // interactive write — it gets a longer deadline than the default.
+      final r = await ApiService.sendJson('/usage',
+          body: {'days': days}, timeout: const Duration(seconds: 45));
       if (r != null) {
         await prefs.setInt(
             'usage_synced_at', DateTime.now().millisecondsSinceEpoch);

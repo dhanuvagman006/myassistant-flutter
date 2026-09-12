@@ -136,6 +136,14 @@ class AuthService extends ChangeNotifier {
   /// later instead of making every honest launch pay for the check.
   static const _userCacheKey = 'auth_user_json_v1';
 
+  /// True once [init] has finished its first run for this process.
+  ///
+  /// The app root rebuilds its whole tree on a theme change, which
+  /// destroys and recreates AuthGate — so without this the splash screen
+  /// reappeared and the session was restored again every time the theme
+  /// flipped, which adaptive mode does on its own at dusk and dawn.
+  bool restored = false;
+
   Future<void> init() async {
     // A 401 mid-session means the account is gone (deleted from the admin
     // panel) or the token died. Re-verify against /auth/me — one flaky
@@ -144,18 +152,23 @@ class AuthService extends ChangeNotifier {
     // account until the next cold start.
     ApiService.onSessionRejected = _onSessionRejected;
     final token = await _storage.read(key: _tokenKey);
-    if (token == null) return;
+    if (token == null) {
+      restored = true;
+      return;
+    }
     ApiService.sessionToken = token;
     final cached = await _storage.read(key: _userCacheKey);
     if (cached != null) {
       try {
         user = AppUser.fromJson(jsonDecode(cached));
+        restored = true;
         notifyListeners();
         _validate(token); // background — no launch stall
         return;
       } catch (_) {} // corrupt cache → fall through to the blocking path
     }
     await _validate(token);
+    restored = true;
     notifyListeners();
   }
 

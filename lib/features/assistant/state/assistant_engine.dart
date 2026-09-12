@@ -258,6 +258,9 @@ class AssistantEngine extends ChangeNotifier {
       'place_phone_call' => 'Setting up the call…',
       'capture_document' => 'Opening the camera…',
       'generate_image' || 'generate_video' => 'Creating it…',
+      // A multi-step plan runs several tools behind this one label, so it
+      // says so — 'Working on it…' for twenty seconds reads as a hang.
+      'start_task' => 'Working through the steps…',
       'translator_mode' => 'Switching modes…',
       'set_morning_brief' => 'Updating your brief…',
       _ => 'Working on it…',

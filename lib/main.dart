@@ -117,7 +117,13 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
-  bool _restoring = true;
+  /// A theme change rebuilds the entire tree from the root (see the
+  /// KeyedSubtree in [MyAssistantApp]), so this State is recreated even
+  /// though the app never left the foreground. Restoring the session is a
+  /// once-per-process job: re-running it flashed the splash screen over a
+  /// live app and re-ran the launch sequence behind it. Adaptive theme
+  /// does that flip on its own at dusk and dawn.
+  late bool _restoring = !AuthService.instance.restored;
 
   @override
   void initState() {
@@ -125,9 +131,11 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this); // F1 — relock on background
     AppLock.instance.addListener(_onAuthChanged);
     AuthService.instance.addListener(_onAuthChanged);
-    AuthService.instance.init().whenComplete(() {
-      if (mounted) setState(() => _restoring = false);
-    });
+    if (_restoring) {
+      AuthService.instance.init().whenComplete(() {
+        if (mounted) setState(() => _restoring = false);
+      });
+    }
   }
 
   @override

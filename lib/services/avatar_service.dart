@@ -91,7 +91,9 @@ class AvatarService {
   Future<String?> start() async {
     await stop();
     try {
-      final s = await ApiService.sendJson('/live/avatar/session', method: 'POST');
+      // Creating the remote avatar session is a slow third-party call.
+      final s = await ApiService.sendJson('/live/avatar/session',
+          method: 'POST', timeout: const Duration(seconds: 45));
       if (s == null) return null;
       final url = s['url'] as String?;
       final token = s['token'] as String?;

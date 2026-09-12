@@ -91,7 +91,6 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _refreshProfileOnce();
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting
@@ -137,6 +136,33 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               spokenName: spokenName, matches: matches)
           .then(onChosen);
     };
+    _bootOnce();
+  }
+
+  /// Everything below runs ONCE per process, not once per HomeShell.
+  ///
+  /// A theme change rebuilds the app from the root, so this State is
+  /// recreated while the app is sitting in the user's hand — and adaptive
+  /// mode, the default, flips the theme on its own at 19:00 and 06:00.
+  /// Without this guard each flip re-fired the whole launch sequence:
+  /// a second /auth/me, a fresh profile fetch, a GPS fix, a usage upload,
+  /// and a re-armed update check that could throw its dialog over
+  /// whatever the user was doing — including a live conversation.
+  ///
+  /// The engine callbacks above are deliberately NOT in here: they close
+  /// over this State's context and must be re-pointed at the new one.
+  ///
+  /// Keyed on the ACCOUNT, not a bare bool: signing out and back in as
+  /// someone else also rebuilds this State, and that genuinely does need
+  /// the launch sequence again — otherwise the new user would be greeted
+  /// under the previous user's assistant name. Same rule the engine uses
+  /// for its session (ensureFreshSession).
+  static String? _bootedUid;
+  void _bootOnce() {
+    final uid = AuthService.instance.user?.id.toString();
+    if (uid == null || _bootedUid == uid) return;
+    _bootedUid = uid;
+    _refreshProfileOnce();
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
