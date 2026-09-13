@@ -269,11 +269,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           // the cards, clear of the dock. Without this a web search — now
           // the default for anything that could have changed, not a last
           // resort — was four silent seconds that read as a frozen app.
-          const Positioned(
+          Positioned(
             left: 0,
             right: 0,
-            bottom: 92,
-            child: Align(
+            // CLEAR OF THE MIC, measured from the orb rather than from the
+            // screen edge. The orb is a 76dp centre-docked FAB, so at
+            // bottom: 92 the pill sat BEHIND it — on a gesture-nav phone
+            // roughly 30 of its 42dp were covered and the text band was
+            // almost entirely hidden. The animation the whole feature
+            // exists for was invisible on the devices most people have.
+            bottom: 124 + MediaQuery.of(context).viewPadding.bottom,
+            child: const Align(
               alignment: Alignment.center,
               child: AssistantActivityPill(),
             ),

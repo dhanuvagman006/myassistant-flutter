@@ -45,21 +45,12 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
   void initState() {
     super.initState();
     engine.activityLabel.addListener(_onLabel);
-    // The shell can be rebuilt mid-turn (a theme flip, a tab restore) with
-    // a tool already running, and the listener alone would never fire for
-    // the label that is ALREADY set.
-    _label = engine.activityLabel.value;
-    if (_label != null) {
-      _since = DateTime.now();
-      _spin.repeat();
-      _tick = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) {
-          if (mounted) setState(() {});
-        },
-      );
-    }
+    // The shell can be rebuilt mid-turn — a theme flip remounts the whole
+    // tree — with a tool already running, and the listener alone would
+    // never fire for a label that is ALREADY set.
+    _adopt(engine.activityLabel.value);
   }
+
 
   @override
   void dispose() {
@@ -71,32 +62,48 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
 
   void _onLabel() {
     if (!mounted) return;
-    final next = engine.activityLabel.value;
-    setState(() {
-      if (next != null && _label == null) _since = DateTime.now();
-      if (next == null) _since = null;
-      _label = next;
-    });
+    setState(() => _adopt(engine.activityLabel.value));
+  }
+
+  /// Take on whatever the engine reports, from BOTH entry points, so the
+  /// two can never drift apart — they did, and the initState path was the
+  /// one missing the stale cut-off.
+  void _adopt(String? next) {
+    // Reset the clock on any change of label, AND when it has already
+    // expired. The engine sets activityLabel on every tool_started but
+    // clears it only once every activity has completed, so two overlapping
+    // tools hand over A -> B with no null between; keying off "was null"
+    // left the clock running from A, and a tool that had just started
+    // announced itself as "Still ..." from its first frame.
+    //
+    // The expiry half matters more. If a tool_completed is ever dropped
+    // the label sticks, the pill hides itself at _staleAfter — and the
+    // next search sets the very same string, so without this there is no
+    // change to detect, no reset, and the pill never appears again for
+    // the rest of the session.
+    if (next != _label || (next != null && _elapsed >= _staleAfter)) {
+      _since = next == null ? null : DateTime.now();
+    }
+    _label = next;
     _tick?.cancel();
+    if (next == null) {
+      _spin.stop();
+      return;
+    }
+    if (!_spin.isAnimating) _spin.repeat();
     // A LONG LOOKUP HAS TO KEEP SAYING SOMETHING. A label frozen at
     // "Searching…" for eight seconds reads as a hang just like no label
     // at all, so the wording changes as the seconds pass.
-    if (next != null) {
-      if (!_spin.isAnimating) _spin.repeat();
-      _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) return;
-        setState(() {});
-        // Past the stale cut-off the pill is hidden anyway; keeping a
-        // timer and a 60 fps animation alive behind it costs battery for
-        // nothing.
-        if (_elapsed >= _staleAfter) {
-          _tick?.cancel();
-          _spin.stop();
-        }
-      });
-    } else {
-      _spin.stop();
-    }
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+      // Past the cut-off the pill is hidden anyway; a 1 Hz rebuild and a
+      // 60 fps repaint behind it cost battery for nothing.
+      if (_elapsed >= _staleAfter) {
+        _tick?.cancel();
+        _spin.stop();
+      }
+    });
   }
 
   /// The label, with its trailing ellipsis removed — the animated dots
