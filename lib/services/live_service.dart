@@ -109,6 +109,12 @@ class LiveService {
   // speech is "clearly louder than this room currently is".
   double _noiseFloor = 0.01; // running estimate of the room
   bool _speaking = false; // is the user mid-utterance right now?
+
+  /// How much louder than ordinary speech detection a sound must be to
+  /// count as talking OVER her, rather than her own voice leaking back
+  /// through the echo canceller. Tuned conservatively: missing a quiet
+  /// barge-in is recoverable, interrupting herself is not.
+  static const double _bargeInFactor = 2.2;
   int _aboveMs = 0; // consecutive audio above the speech threshold
   int _belowMs = 0; // consecutive audio below it
   int _utteranceMs = 0; // length of the current utterance
@@ -320,13 +326,49 @@ class LiveService {
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
         try {
-          // While Hari is audible her voice must never go back up the mic,
-          // or the model hears itself. Also drop any half-open turn so we
-          // do not resume mid-utterance when she finishes.
+          // WHILE SHE IS SPEAKING, THE AUDIO STILL GOES UP. That is the
+          // whole of barge-in.
+          //
+          // This used to `return` without sending, so not one microphone
+          // frame reached Google while she talked. Google's detector is
+          // what decides an interruption happened — it cannot decide that
+          // about audio it never receives — so `interrupted` never fired,
+          // and talking over her did nothing. Every other piece was
+          // already in place: automaticActivityDetection is enabled with
+          // HIGH start sensitivity, the proxy forwards sc.interrupted, and
+          // live_service cuts playback on it. Only the frames were missing.
+          //
+          // Her own voice does not come back up this path: the recorder is
+          // voiceCommunication with echoCancel and noiseSuppress, which is
+          // hardware AEC — the reason that configuration was chosen.
+          //
+          // The local probe is still suppressed. It exists to drive the orb
+          // and the timing logs, and running it against playback would have
+          // it open utterances at the loudspeaker.
           if (playing || remoteSpeaking) {
             if (_speaking) {
               _gateAbort();
               _endUtterance();
+            }
+            // LOCAL playback only. In avatar mode the voice comes out of
+            // the loudspeaker through LiveKit, which is NOT what the
+            // recorder's echo canceller is referenced against — streaming
+            // then would feed the avatar's own voice back and she would
+            // interrupt herself. That path keeps the hard mute.
+            //
+            // And even locally, only audio clearly LOUDER than the echo
+            // residue goes up. Hardware AEC removes most of her voice but
+            // not all of it, and a phone at full volume with a weak
+            // canceller would otherwise let her interrupt herself — the
+            // exact failure the old hard mute was guarding against. A real
+            // person talking over her clears this comfortably; what leaks
+            // back through the canceller does not.
+            if (!remoteSpeaking && !_gateActive && l != null) {
+              final bargeFloor = math.max(
+                _noiseFloor * _speechFactor * _bargeInFactor,
+                _minSpeechLevel * 2.0,
+              );
+              if (l > bargeFloor) _ch?.sink.add(Uint8List.fromList(chunk));
             }
             return;
           }

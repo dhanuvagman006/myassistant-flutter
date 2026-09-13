@@ -150,6 +150,39 @@ class AssistantEngine extends ChangeNotifier {
     await leaveConversation();
   }
 
+  /// Set when the assistant's voice changed mid-call. Consumed at the end
+  /// of the turn that announced it, because the new voice only takes
+  /// effect in a NEW live session.
+  bool _pendingVoiceRestart = false;
+
+  /// Rebuild the live session so a new voice is actually heard.
+  ///
+  /// Deliberately NOT a general-purpose restart: it keeps `inlineVoice`
+  /// set across the gap so the orb does not flick back to its resting
+  /// state, and it gives the loudspeaker a moment to drain so the last
+  /// word of the confirmation is not clipped.
+  Future<void> _rebuildLiveForVoice() async {
+    if (!_pendingVoiceRestart) return;
+    _pendingVoiceRestart = false;
+    if (!liveActive) return;
+    AppLog.add('live', 'rebuilding session for the new voice');
+    try {
+      // Let the tail of the spoken confirmation play out.
+      await Future.delayed(const Duration(milliseconds: 900));
+      await leaveConversation();
+      // leaveConversation clears inlineVoice; the user has not asked to
+      // stop talking, so put it back before starting again.
+      inlineVoice = true;
+      await beginInlineConversation();
+      AppLog.add('live', 'session rebuilt — new voice active');
+    } catch (e) {
+      AppLog.add('live', 'voice rebuild failed: $e');
+      // A failed rebuild must not leave the user in a dead session.
+      inlineVoice = false;
+      notifyListeners();
+    }
+  }
+
   final List<TranscriptEntry> transcript = [];
   final List<ToolActivity> activities = [];
 
@@ -995,6 +1028,9 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.listening, silent: true);
         notifyListeners();
       }
+      // The voice was changed during this turn — now that it has finished
+      // speaking, rebuild the session so the new voice is the one heard.
+      if (_pendingVoiceRestart) unawaited(_rebuildLiveForVoice());
     };
     _liveSvc.onInterrupted = () {
       _setPhase(AssistantPhase.listening, silent: true);
@@ -2021,6 +2057,53 @@ class AssistantEngine extends ChangeNotifier {
           _leftForExternalApp = true;
           _openExternalUrl(url);
           _setPhase(AssistantPhase.completed);
+        }
+        break;
+
+      case 'open_any_app':
+        // ANY app on the phone, resolved BY THE PHONE. The server has no
+        // list to be missing from — it passes the spoken name through and
+        // Android matches it against what is actually installed. A miss
+        // is reported honestly so the assistant says it plainly instead of
+        // claiming an app opened.
+        {
+          final want = (e['name'] as String? ?? '').trim();
+          _leftForExternalApp = true;
+          const MethodChannel('hari/intent')
+              .invokeMethod<String>('launchApp', {'name': want})
+              .then((opened) {
+            if (opened == null || opened.isEmpty) {
+              _leftForExternalApp = false;
+              AppFeedback.toast('$want isn\'t installed on this phone.');
+              _reportDeviceFailure('open_named_app',
+                  target: want, reason: 'no app by that name is installed');
+              _tellModel(
+                  '[SYSTEM] ERROR: "$want" is NOT installed on this phone, so '
+                  'nothing opened. Tell the user plainly that they do not have '
+                  'it, and do NOT open or claim to open anything else.');
+            } else {
+              AppLog.add('intent', 'opened $opened');
+            }
+          }).catchError((e) {
+            _leftForExternalApp = false;
+            AppLog.add('intent', 'launchApp failed: $e');
+            _reportDeviceFailure('open_named_app',
+                target: want, reason: 'the phone could not launch it');
+          });
+        }
+        _setPhase(AssistantPhase.completed);
+        break;
+
+      case 'live_voice_changed':
+        // Gemini Live fixes the voice in the setup message, so the running
+        // session keeps the old one however many times the profile
+        // changes. The session has to be rebuilt — but NOT now: the
+        // confirmation ("give me a second to switch over") is still being
+        // spoken, and tearing the socket down here cuts off the sentence
+        // announcing the change. The flag is consumed at turn end.
+        if (liveActive) {
+          _pendingVoiceRestart = true;
+          AppLog.add('live', 'voice changed — session rebuild queued');
         }
         break;
 

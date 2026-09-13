@@ -41,6 +41,17 @@
      system installer. Remove for Play Store builds. -->
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <queries>
+        <!-- EVERY LAUNCHABLE APP ON THE PHONE.
+             Android 11+ hides installed packages unless they are declared
+             here, so "open BigBasket" could only ever work against a
+             hardcoded list. This filter grants visibility of apps that
+             have a launcher icon — which is exactly the set a person means
+             when they say "open X" — without QUERY_ALL_PACKAGES, whose
+             broad access needs a Play Store justification. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

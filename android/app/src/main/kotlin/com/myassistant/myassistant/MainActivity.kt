@@ -106,6 +106,61 @@ class MainActivity : FlutterFragmentActivity() {
                             result.success(false)
                         }
                     }
+                    // OPEN ANY INSTALLED APP BY THE NAME A PERSON USES.
+                    //
+                    // The phone is the only thing that knows what is on it,
+                    // so resolution happens here rather than against a list
+                    // on the server. Matching is deliberately forgiving —
+                    // people say "BigBasket" for "BigBasket: Grocery Store"
+                    // — and ranked, so the closest label wins rather than
+                    // whichever package happened to be enumerated first.
+                    "launchApp" -> {
+                        val want = (call.argument<String>("name") ?: "")
+                            .lowercase().replace(Regex("[^a-z0-9]"), "")
+                        if (want.isEmpty()) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        val pm = packageManager
+                        val main = Intent(Intent.ACTION_MAIN)
+                            .addCategory(Intent.CATEGORY_LAUNCHER)
+                        val apps = pm.queryIntentActivities(main, 0)
+                        var bestPkg: String? = null
+                        var bestLabel: String? = null
+                        var bestScore = -1
+                        for (ri in apps) {
+                            val label = ri.loadLabel(pm).toString()
+                            val norm = label.lowercase().replace(Regex("[^a-z0-9]"), "")
+                            if (norm.isEmpty()) continue
+                            // exact > prefix > contains. Longer labels lose
+                            // ties so "Uber" beats "Uber Driver".
+                            val score = when {
+                                norm == want -> 1000
+                                norm.startsWith(want) -> 700 - label.length
+                                want.startsWith(norm) -> 600 - label.length
+                                norm.contains(want) -> 400 - label.length
+                                else -> -1
+                            }
+                            if (score > bestScore) {
+                                bestScore = score
+                                bestPkg = ri.activityInfo.packageName
+                                bestLabel = label
+                            }
+                        }
+                        val pkg = bestPkg
+                        if (pkg == null || bestScore < 0) {
+                            result.success(null) // not installed — caller says so
+                        } else {
+                            val launch = pm.getLaunchIntentForPackage(pkg)
+                            if (launch == null) {
+                                result.success(null)
+                            } else {
+                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                applicationContext.startActivity(launch)
+                                result.success(bestLabel)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
