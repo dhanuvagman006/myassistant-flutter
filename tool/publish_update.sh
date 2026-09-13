@@ -37,6 +37,15 @@ NAME="${2:?versionName required (e.g. 0.2.1)}"
 shift 2
 CHANGELOG_JSON="$(printf '%s\n' "$@" | python3 -c 'import json,sys; print(json.dumps([l for l in sys.stdin.read().split("\n") if l.strip()]))')"
 
+# THE CHANGELOG IS INTERPOLATED INTO A SINGLE-QUOTED `node -e` BLOCK, so a
+# single apostrophe in it ends that quote and the whole script becomes
+# invalid JavaScript. Build 36 failed exactly that way on the word
+# "today's" — and because the failure happens INSIDE the ssh heredoc, the
+# APK uploads fine, the registration dies, and the release silently does
+# not happen. Base64 has no quotes, no backslashes and no dollar signs, so
+# it survives every layer of quoting between here and the pod.
+CHANGELOG_B64="$(printf '%s' "$CHANGELOG_JSON" | base64 | tr -d '\n')"
+
 [ -f "$APK" ] || { echo "no APK at $APK — run flutter build apk first" >&2; exit 1; }
 
 # THE APK MUST DECLARE THE CODE WE ARE ADVERTISING. The app decides it is
@@ -69,7 +78,8 @@ ssh "$VPS" "
   rm -f /tmp/hari-upload.apk
   k3s kubectl exec -n $NS \$POD -- node -e '
     const up = require(\"./src/routes/appUpdate\");
-    up.publish({ tmpPath: \"/app/data/hari-upload.apk\", versionCode: $CODE, versionName: \"$NAME\", changelog: $CHANGELOG_JSON })
+    const changelog = JSON.parse(Buffer.from(\"$CHANGELOG_B64\", \"base64\").toString(\"utf8\"));
+    up.publish({ tmpPath: \"/app/data/hari-upload.apk\", versionCode: $CODE, versionName: \"$NAME\", changelog })
       .then(m => { console.log(\"published:\", JSON.stringify({code: m.versionCode, name: m.versionName, size: m.size, sha256: m.sha256.slice(0,12)+\"…\"})); process.exit(0); })
       .catch(e => { console.error(\"publish failed:\", e.message); process.exit(1); });
   '
