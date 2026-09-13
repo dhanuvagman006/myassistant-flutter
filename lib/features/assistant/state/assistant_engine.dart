@@ -28,6 +28,7 @@ import '../../../screens/diagnostics_screen.dart';
 import '../../../screens/mcp_servers_screen.dart';
 import '../../../models/user_document.dart';
 import '../../../models/news_item.dart';
+import '../../../models/schedule_item.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
 import '../../../services/device_control_service.dart';
@@ -279,6 +280,25 @@ class AssistantEngine extends ChangeNotifier {
   /// What the assistant is doing RIGHT NOW ("Searching the web…") — a
   /// small chip on the conversation screen, so background work never
   /// reads as the app hanging. Null = nothing running.
+  /// THE DAY'S COMMITMENTS, held for the panel. Same reasoning as the
+  /// headlines: a list read aloud tells the user nothing they can act on,
+  /// so the voice gives the count and the next one or two while the whole
+  /// day sits on screen.
+  List<ScheduleItem> scheduleItems = const [];
+  String scheduleDay = '';
+
+  /// Sources that could not be read. A failed calendar is NOT an empty
+  /// calendar, and the panel says so rather than looking complete.
+  List<String> scheduleFailed = const [];
+
+  void clearSchedule() {
+    if (scheduleItems.isEmpty) return;
+    scheduleItems = const [];
+    scheduleDay = '';
+    scheduleFailed = const [];
+    notifyListeners();
+  }
+
   /// TODAY'S HEADLINES, held for the panel. Ten of them read aloud takes
   /// over a minute and nobody remembers the fourth, so the list lives on
   /// screen and the voice covers only the top few.
@@ -471,15 +491,7 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     _voice.ttsLevel.addListener(feed);
-    // NOT DURING THE APP-OPEN GREETING. Barge-in exists so the user can
-    // talk over a reply they asked for; a hello nobody requested has
-    // nothing to interrupt into. Arming it here was actively harmful,
-    // measured on a real device: the greeting began, the monitor tripped
-    // on the phone's own speaker, _endBargeWatch called pressMic, live
-    // mode started and released the audio device — so the greeting died
-    // with "0 frames delivered" (never audible) AND the mic went hot on
-    // app open, which is the exact thing silent boot existed to prevent.
-    if (!_openGreetingSpeaking) _beginBargeWatch();
+    _beginBargeWatch();
     String? pendingPath;
     try {
       // PIPELINE: keep one sentence's synthesis running AHEAD of playback so
@@ -705,13 +717,7 @@ class AssistantEngine extends ChangeNotifier {
       // reconnect after a real drop can greet again, while rebuilds,
       // setState and navigation cannot (they never reach this line).
       _sessionEpoch++;
-      // Opened the app and said nothing yet → greet. Already in a
-      // conversation → the existing path, which may also open the mic.
-      if (_conversationOpen) {
-        _maybeGreetOnReady();
-      } else {
-        greetOnAppOpen();
-      }
+      _maybeGreetOnReady();
     } catch (e) {
       connected = false;
       errorMessage = 'Could not reach the assistant service.';
@@ -1385,22 +1391,6 @@ class AssistantEngine extends ChangeNotifier {
   /// Set false to suppress the automatic greeting entirely.
   bool greetingEnabled = true;
 
-  /// THE APP-OPEN GREETING SPEAKS, BUT MUST NOT OPEN THE MIC.
-  ///
-  /// Boot was deliberately silent because a hot mic behind the dashboard
-  /// read as "is it listening right now or not?" — and that reasoning still
-  /// holds. The greeting itself was never the problem; the mic was. So the
-  /// greeting is allowed and the continuous loop that normally follows any
-  /// spoken reply is suppressed for exactly this one utterance
-  /// (continuousConversation defaults to true, so without this the
-  /// greeting would reopen the mic and bring the old confusion straight
-  /// back).
-  bool _openGreetingSpeaking = false;
-
-  /// Once per app launch, not once per reconnect — a dropped socket coming
-  /// back should not say good evening a second time.
-  bool _openGreetedThisLaunch = false;
-
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
   /// Time-appropriate greeting text starting with Hello.
@@ -1425,36 +1415,21 @@ class AssistantEngine extends ChangeNotifier {
   /// a turn is in flight, live mode owns the audio, or a phone call is
   /// active. If the session drops before the audio starts, the greeting is
   /// abandoned rather than spoken into a dead session (§4).
-  Future<void> _maybeGreetOnReady({bool fromAppOpen = false}) async {
+  Future<void> _maybeGreetOnReady() async {
     if (!greetingEnabled) return;
-    // Silent until the user opens the orb — EXCEPT on app open, where the
-    // greeting is the point and the mic stays shut (see
-    // _openGreetingSpeaking).
-    if (!_conversationOpen && !fromAppOpen) return;
+    if (!_conversationOpen) return;         // silent until the orb opens
     if (!connected) return;                 // never greet while offline
     final epoch = _sessionEpoch;
-    // _greetedEpoch belongs to the CONVERSATION greeting — the one the orb
-    // gives you when you tap it. The launch greeting is a different event
-    // with its own guard (_openGreetedThisLaunch), and must not consume
-    // this one: doing so meant saying hello at startup silently cancelled
-    // the hello you get when you actually press the mic, which is the one
-    // that matters more.
-    if (!fromAppOpen && _greetedEpoch == epoch) return;
+    if (_greetedEpoch == epoch) return;     // once per real session
     if (phase.busy || liveActive || _liveStartResult != null) return;
     if (PhoneStateGuard.instance.inCall) return;
-    if (!fromAppOpen) _greetedEpoch = epoch; // claim before awaiting
+    _greetedEpoch = epoch;                  // claim before awaiting
 
     // Small settle so a reconnect storm cannot start speech mid-flap.
     await Future.delayed(const Duration(milliseconds: 600));
     // Re-verify: the session may have dropped during the settle.
     if (!connected || _sessionEpoch != epoch || phase.busy || liveActive) {
-      // Abandoned before it spoke — release whichever guard was claimed so
-      // the greeting can be tried again.
-      if (fromAppOpen) {
-        _openGreetedThisLaunch = false;
-      } else if (_sessionEpoch == epoch) {
-        _greetedEpoch = -1;
-      }
+      if (_sessionEpoch == epoch) _greetedEpoch = -1; // allow a later retry
       return;
     }
 
@@ -1468,29 +1443,6 @@ class AssistantEngine extends ChangeNotifier {
     // Mom" over the greeting cuts it off and is processed normally.
     _speakQueue.add(text);
     await _drainSpeech();
-  }
-
-  /// THE APP OPENED AND NOBODY HAS SPOKEN YET — say hello first.
-  ///
-  /// Speaks only; the mic is not opened and the continuous loop does not
-  /// start. The user taps the orb when they want to reply, exactly as
-  /// before. Refuses on a second launch-greeting, during a call, while
-  /// offline, or if anything is already in flight (all enforced by
-  /// _maybeGreetOnReady).
-  Future<void> greetOnAppOpen({String? name}) async {
-    if (_openGreetedThisLaunch) return;
-    if (name != null && name.isNotEmpty) greetingName = name;
-    // "Good evening, there" is a worse hello than none. The signed-in
-    // user's name is already known by the time the socket is up.
-    if ((greetingName ?? '').trim().isEmpty) {
-      greetingName = AuthService.instance.user?.name;
-    }
-    _openGreetedThisLaunch = true;
-    _openGreetingSpeaking = true;
-    await _maybeGreetOnReady(fromAppOpen: true);
-    // If the greeting was refused it never reached _drainSpeech, so the
-    // flag would sit set and swallow the FIRST real turn's mic reopen.
-    _openGreetingSpeaking = false;
   }
 
   /// Kept for the screen to nudge a greeting once the user's name is
@@ -1564,13 +1516,6 @@ class AssistantEngine extends ChangeNotifier {
   /// Called when a reply has finished being spoken. Re-opens the mic unless
   /// something else legitimately owns the turn.
   void _maybeContinueListening() {
-    // The app-open greeting is a one-way hello. conversationActive is true
-    // by default, so without this the greeting would hand straight over to
-    // an open mic nobody asked for.
-    if (_openGreetingSpeaking) {
-      _openGreetingSpeaking = false;
-      return;
-    }
     if (!conversationActive) return;
     // A barge-in already schedules its own capture — don't double-start.
     if (_bargedIn || _bargeMonitorOn) return;
@@ -2228,6 +2173,18 @@ class AssistantEngine extends ChangeNotifier {
         if (newName != null && newName.isNotEmpty) {
           AssistantIdentity.set(newName);
         }
+        break;
+
+      case 'show_schedule':
+        scheduleItems = ((e['items'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ScheduleItem.fromJson)
+            .where((x) => x.title.isNotEmpty)
+            .toList(growable: false);
+        scheduleDay = e['day'] as String? ?? 'today';
+        scheduleFailed = ((e['failed'] as List?) ?? const [])
+            .whereType<String>()
+            .toList(growable: false);
         break;
 
       case 'show_news':

@@ -11,6 +11,7 @@ import '../widgets/contact_picker_sheet.dart';
 import '../widgets/inline_voice.dart';
 import '../widgets/activity_pill.dart';
 import '../widgets/news_panel.dart';
+import '../widgets/schedule_panel.dart';
 import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
@@ -113,6 +114,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting
+    _autoOpenConversation();
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
@@ -236,6 +238,31 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   /// A tapped message notification used to open the conversation screen
   /// so the assistant could speak. The conversation now happens in place,
   /// so it just starts one.
+  /// THE ORB STARTS ITSELF WHEN THE APP OPENS.
+  ///
+  /// Exactly the same path as tapping it: the assistant greets, then keeps
+  /// listening until the user taps to stop. The alternative tried first —
+  /// a passive spoken hello with the mic shut — was worse in both
+  /// directions: you heard the greeting twice (once at launch, once on the
+  /// orb) and still had to tap before it would listen.
+  ///
+  /// PROCESS-level, not per-State: a theme flip recreates this State
+  /// (KeyedSubtree in MyAssistantApp), and reopening the microphone every
+  /// time someone switches to dark mode would be its own bug.
+  static bool _autoOpened = false;
+
+  void _autoOpenConversation() {
+    if (_autoOpened) return;
+    _autoOpened = true;
+    // After the first frame: the shell is mounted and the engine's session
+    // has had a moment to come up. beginInlineConversation carries its own
+    // 20 s ceiling and its own in-call and already-running guards.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startConversation();
+    });
+  }
+
   Future<void> _startConversation() async {
     HapticFeedback.mediumImpact();
     final engine = AssistantEngine.instance;
@@ -268,6 +295,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           const AssistantResultOverlay(),
           // Today's headlines, over everything but the activity pill.
           const NewsPanel(),
+          // The day's commitments, same layer as the headlines.
+          const SchedulePanel(),
           // WHAT IT IS DOING, WHILE IT DOES IT. Sits above the captions and
           // the cards, clear of the dock. Without this a web search — now
           // the default for anything that could have changed, not a last
