@@ -27,6 +27,7 @@ import '../../../screens/stocks_screen.dart';
 import '../../../screens/diagnostics_screen.dart';
 import '../../../screens/mcp_servers_screen.dart';
 import '../../../models/user_document.dart';
+import '../../../models/news_item.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
 import '../../../services/device_control_service.dart';
@@ -278,6 +279,19 @@ class AssistantEngine extends ChangeNotifier {
   /// What the assistant is doing RIGHT NOW ("Searching the web…") — a
   /// small chip on the conversation screen, so background work never
   /// reads as the app hanging. Null = nothing running.
+  /// TODAY'S HEADLINES, held for the panel. Ten of them read aloud takes
+  /// over a minute and nobody remembers the fourth, so the list lives on
+  /// screen and the voice covers only the top few.
+  List<NewsItem> newsItems = const [];
+  String newsTopic = '';
+
+  void clearNews() {
+    if (newsItems.isEmpty) return;
+    newsItems = const [];
+    newsTopic = '';
+    notifyListeners();
+  }
+
   final ValueNotifier<String?> activityLabel = ValueNotifier(null);
 
   /// Friendly present-tense labels per tool; anything unknown says
@@ -2139,6 +2153,18 @@ class AssistantEngine extends ChangeNotifier {
         if (newName != null && newName.isNotEmpty) {
           AssistantIdentity.set(newName);
         }
+        break;
+
+      case 'show_news':
+        // show_news: the headlines panel. The spoken half of the turn
+        // arrives separately as sentences, so the list is up before the
+        // assistant has finished the first line about it.
+        newsItems = ((e['items'] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(NewsItem.fromJson)
+            .where((n) => n.title.isNotEmpty)
+            .toList(growable: false);
+        newsTopic = e['topic'] as String? ?? '';
         break;
 
       case 'show_text':

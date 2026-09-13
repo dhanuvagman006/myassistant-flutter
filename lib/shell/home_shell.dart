@@ -10,6 +10,7 @@ import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
 import '../widgets/inline_voice.dart';
 import '../widgets/activity_pill.dart';
+import '../widgets/news_panel.dart';
 import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
@@ -265,6 +266,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           // inside the old conversation screen, which is why Home had to
           // throw that screen over itself the moment a turn needed a tap.
           const AssistantResultOverlay(),
+          // Today's headlines, over everything but the activity pill.
+          const NewsPanel(),
           // WHAT IT IS DOING, WHILE IT DOES IT. Sits above the captions and
           // the cards, clear of the dock. Without this a web search — now
           // the default for anything that could have changed, not a last
