@@ -144,7 +144,8 @@ class AppUpdateService {
           .get(Uri.parse('${ApiService.baseUrl}/config'))
           .timeout(const Duration(seconds: 10));
       if (r.statusCode != 200) return;
-      final cfg = RemoteConfig.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
+      final cfg =
+          RemoteConfig.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
       if (cfg.apkUrl == null || cfg.apkUrl!.isEmpty) return;
 
       final info = await PackageInfo.fromPlatform();
@@ -183,6 +184,11 @@ class AppUpdateService {
       _autoStart = forced || unmetered;
       await showModalBottomSheet<void>(
         context: context,
+        // WITHOUT THIS THE SHEET IS CAPPED AT 56% OF THE SCREEN and
+        // anything past that edge is simply clipped — which is how a
+        // six-line changelog hid the "Update now" button completely. The
+        // sheet now sizes to its content, bounded below.
+        isScrollControlled: true,
         isDismissible: !forced,
         enableDrag: !forced,
         backgroundColor: Neon.surface,
@@ -250,7 +256,8 @@ class AppUpdateService {
         throw const _UpdateCancelled();
       }
       onProgress(1);
-      AppLog.add('update', 'downloaded build ${cfg.latestVersionCode}, opening installer');
+      AppLog.add('update',
+          'downloaded build ${cfg.latestVersionCode}, opening installer');
       // Android gates "install unknown apps" PER APP, once. Ask up front:
       // this opens the exact settings page, waits for the user to come
       // back, and then continues into the installer — instead of the
@@ -362,11 +369,16 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       if (mounted) setState(() => _installing = true);
     } on _UpdateCancelled {
       // The user stopped it. Not an error, and nothing to report.
-      if (mounted) setState(() { _progress = null; _installing = false; });
+      if (mounted)
+        setState(() {
+          _progress = null;
+          _installing = false;
+        });
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = "Couldn't update: ${e.toString().replaceFirst('Exception: ', '')}";
+          _error =
+              "Couldn't update: ${e.toString().replaceFirst('Exception: ', '')}";
           _progress = null;
           _installing = false;
         });
@@ -376,7 +388,11 @@ class _UpdateSheetState extends State<_UpdateSheet> {
 
   Future<void> _cancel() async {
     await AppUpdateService.instance.cancelDownload();
-    if (mounted) setState(() { _progress = null; _installing = false; });
+    if (mounted)
+      setState(() {
+        _progress = null;
+        _installing = false;
+      });
   }
 
   static String _size(int bytes) {
@@ -392,134 +408,162 @@ class _UpdateSheetState extends State<_UpdateSheet> {
     final cfg = widget.config;
     final busy = _progress != null;
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Icon(Icons.system_update_rounded, color: Neon.cyan, size: 26),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Update available — v${cfg.latestVersionName}',
+      child: ConstrainedBox(
+        // Never taller than most of the screen; the notes scroll inside it.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.82,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.system_update_rounded, color: Neon.cyan, size: 26),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Update available — v${cfg.latestVersionName}',
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ]),
+              // THE ONLY PART THAT MAY GROW. The title above and the
+              // buttons below are pinned; release notes of any length scroll
+              // in here instead of displacing the thing the user opened the
+              // sheet to press.
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (cfg.changelog.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        for (final line in cfg.changelog.take(12))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text('•  $line',
+                                style: TextStyle(
+                                    color: Neon.textLo,
+                                    fontSize: 13.5,
+                                    height: 1.35)),
+                          ),
+                      ],
+                      if (widget.forced) ...[
+                        const SizedBox(height: 10),
+                        Text('This update is required to keep using the app.',
+                            style:
+                                TextStyle(color: Neon.error, fontSize: 12.5)),
+                      ],
+                      if (!busy &&
+                          !AppUpdateService.autoStart &&
+                          cfg.apkSize > 0) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          "${_size(cfg.apkSize)} download — you're on mobile data, so "
+                          "it won't start until you say so.",
+                          style: TextStyle(
+                              color: Neon.textDim,
+                              fontSize: 12.5,
+                              height: 1.35),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (_installing) ...[
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.4, color: Neon.violet),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Installing the update…',
+                        style: TextStyle(
+                            color: Neon.textHi,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'The app will close and reopen by itself in a moment. '
+                  'Nothing is lost — this is the update finishing.',
                   style: TextStyle(
-                      color: Neon.textHi,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700),
+                      color: Neon.textLo, fontSize: 12.5, height: 1.35),
                 ),
-              ),
-            ]),
-            if (cfg.changelog.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              for (final line in cfg.changelog.take(6))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text('•  $line',
-                      style: TextStyle(
-                          color: Neon.textLo, fontSize: 13.5, height: 1.35)),
+              ] else if (busy) ...[
+                LinearProgressIndicator(
+                  value: _progress == 0 ? null : _progress,
+                  color: Neon.violet,
+                  backgroundColor: Neon.surfaceHigh,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _progress! >= 1
+                            ? 'Verified — starting the install…'
+                            : 'Downloading ${(_progress! * 100).toStringAsFixed(0)}%'
+                                '${cfg.apkSize > 0 ? ' of ${_size(cfg.apkSize)}' : ''}',
+                        style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                      ),
+                    ),
+                    // A download in progress must be stoppable. Closing the
+                    // sheet used to leave it running to completion and
+                    // install anyway.
+                    if (!widget.forced && _progress! < 1)
+                      TextButton(
+                        onPressed: () async {
+                          await _cancel();
+                          if (context.mounted) Navigator.of(context).pop();
+                        },
+                        child: const Text('Cancel'),
+                      ),
+                  ],
+                ),
+              ],
+              if (_error != null) ...[
+                Text(_error!,
+                    style: TextStyle(color: Neon.error, fontSize: 12.5)),
+                const SizedBox(height: 10),
+              ],
+              if (!busy)
+                Row(
+                  children: [
+                    if (!widget.forced)
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Later'),
+                      ),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: _update,
+                      style: FilledButton.styleFrom(
+                          backgroundColor: Neon.textHi,
+                          foregroundColor: Neon.onInk),
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: Text(_error == null ? 'Update now' : 'Try again'),
+                    ),
+                  ],
                 ),
             ],
-            if (widget.forced) ...[
-              const SizedBox(height: 10),
-              Text('This update is required to keep using the app.',
-                  style: TextStyle(color: Neon.error, fontSize: 12.5)),
-            ],
-            if (!busy && !AppUpdateService.autoStart && cfg.apkSize > 0) ...[
-              const SizedBox(height: 10),
-              Text(
-                "${_size(cfg.apkSize)} download — you're on mobile data, so "
-                "it won't start until you say so.",
-                style: TextStyle(
-                    color: Neon.textDim, fontSize: 12.5, height: 1.35),
-              ),
-            ],
-            const SizedBox(height: 16),
-            if (_installing) ...[
-              Row(
-                children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2.4, color: Neon.violet),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Installing the update…',
-                      style: TextStyle(
-                          color: Neon.textHi,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'The app will close and reopen by itself in a moment. '
-                'Nothing is lost — this is the update finishing.',
-                style: TextStyle(
-                    color: Neon.textLo, fontSize: 12.5, height: 1.35),
-              ),
-            ] else if (busy) ...[
-              LinearProgressIndicator(
-                value: _progress == 0 ? null : _progress,
-                color: Neon.violet,
-                backgroundColor: Neon.surfaceHigh,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _progress! >= 1
-                          ? 'Verified — starting the install…'
-                          : 'Downloading ${(_progress! * 100).toStringAsFixed(0)}%'
-                              '${cfg.apkSize > 0 ? ' of ${_size(cfg.apkSize)}' : ''}',
-                      style: TextStyle(color: Neon.textDim, fontSize: 12.5),
-                    ),
-                  ),
-                  // A download in progress must be stoppable. Closing the
-                  // sheet used to leave it running to completion and
-                  // install anyway.
-                  if (!widget.forced && _progress! < 1)
-                    TextButton(
-                      onPressed: () async {
-                        await _cancel();
-                        if (context.mounted) Navigator.of(context).pop();
-                      },
-                      child: const Text('Cancel'),
-                    ),
-                ],
-              ),
-            ],
-            if (_error != null) ...[
-              Text(_error!, style: TextStyle(color: Neon.error, fontSize: 12.5)),
-              const SizedBox(height: 10),
-            ],
-            if (!busy)
-              Row(
-                children: [
-                  if (!widget.forced)
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Later'),
-                    ),
-                  const Spacer(),
-                  FilledButton.icon(
-                    onPressed: _update,
-                    style: FilledButton.styleFrom(
-                        backgroundColor: Neon.textHi,
-                        foregroundColor: Neon.onInk),
-                    icon: const Icon(Icons.download_rounded, size: 18),
-                    label: Text(_error == null ? 'Update now' : 'Try again'),
-                  ),
-                ],
-              ),
-          ],
+          ),
         ),
       ),
     );

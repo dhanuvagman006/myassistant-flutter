@@ -46,6 +46,26 @@ CHANGELOG_JSON="$(printf '%s\n' "$@" | python3 -c 'import json,sys; print(json.d
 # it survives every layer of quoting between here and the pod.
 CHANGELOG_B64="$(printf '%s' "$CHANGELOG_JSON" | base64 | tr -d '\n')"
 
+# THE RELEASE NOTES ARE RENDERED BY THE APP THE USER IS ALREADY RUNNING,
+# not by the one being shipped — so a layout fix can never reach the people
+# who need it. Build 36 shipped six long lines and pushed the "Update now"
+# button off the bottom of the sheet on a Galaxy M15: the update was
+# offered and could not be accepted. Keep them short enough for the oldest
+# client still in the field.
+CL_LINES=$#
+CL_LONGEST=0
+for line in "$@"; do
+  n=${#line}
+  [ "$n" -gt "$CL_LONGEST" ] && CL_LONGEST=$n
+done
+if [ "$CL_LINES" -gt 4 ] || [ "$CL_LONGEST" -gt 100 ]; then
+  echo "REFUSING: $CL_LINES changelog lines, longest $CL_LONGEST chars." >&2
+  echo "  Older clients clip the sheet and hide the install button." >&2
+  echo "  Use at most 4 lines of at most 100 characters." >&2
+  exit 1
+fi
+echo "→ changelog: $CL_LINES lines, longest $CL_LONGEST chars — fits"
+
 [ -f "$APK" ] || { echo "no APK at $APK — run flutter build apk first" >&2; exit 1; }
 
 # THE APK MUST DECLARE THE CODE WE ARE ADVERTISING. The app decides it is
