@@ -1458,9 +1458,29 @@ class AssistantEngine extends ChangeNotifier {
   /// the LIVE session when one is up (she answers by voice, tools and all),
   /// otherwise the classic SSE session — so a button tap and a spoken
   /// request are the same thing to the rest of the system.
+  /// The same canned request sent twice, a second apart, most recently
+  /// from a double-tapped "Brief me": the user heard their whole agenda
+  /// read out, then heard it read out again. Every entry point to a turn
+  /// goes through here, so the guard belongs here rather than on the one
+  /// button that exposed it.
+  ///
+  /// Keyed on the TEXT, not a plain in-flight flag: asking two different
+  /// things in quick succession is legitimate, and dropping the second
+  /// would be its own bug.
+  String? _lastAsk;
+  DateTime _lastAskAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _askDedupeWindow = Duration(seconds: 4);
+
   Future<void> askAssistant(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
+    final now = DateTime.now();
+    if (t == _lastAsk && now.difference(_lastAskAt) < _askDedupeWindow) {
+      AppLog.add('ask', 'ignored a repeat of "${t.length > 40 ? '${t.substring(0, 40)}…' : t}"');
+      return;
+    }
+    _lastAsk = t;
+    _lastAskAt = now;
     if (liveActive) {
       _liveSvc.sendText(t);
       return;
@@ -1919,7 +1939,19 @@ class AssistantEngine extends ChangeNotifier {
       case 'open_usage_access':
         // Screen-time needs the Usage access switch, which lives in a
         // system settings screen no dialog can replace — take them there.
-        UsageService.instance.openSettings();
+        //
+        // The RESULT is reported now. It used to be discarded, so the
+        // server never learned the screen had opened and the claim check
+        // treated "I'm opening those settings" as unbacked — the assistant
+        // then apologised three times running for something that had
+        // worked. Only a real failure is reported, matching every other
+        // device action.
+        UsageService.instance.openSettings().then((opened) {
+          if (!opened) {
+            _reportDeviceFailure('enable_usage_tracking',
+                reason: 'this phone has no Usage access settings screen');
+          }
+        });
         _setPhase(AssistantPhase.completed);
         break;
 

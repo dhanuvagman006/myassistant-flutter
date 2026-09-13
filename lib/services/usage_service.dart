@@ -30,10 +30,17 @@ class UsageService {
   }
 
   /// Opens the Usage access settings screen (the only way to grant).
-  Future<void> openSettings() async {
+  /// Returns whether the settings screen actually opened. The Android side
+  /// has always reported this honestly; it was thrown away here, so a phone
+  /// that could not open Usage access looked identical to one that did —
+  /// and the assistant, with nothing to go on, apologised for a screen that
+  /// was in fact already open in front of the user.
+  Future<bool> openSettings() async {
     try {
-      await _ch.invokeMethod('openSettings');
-    } catch (_) {}
+      return await _ch.invokeMethod<bool>('openSettings') ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Push today + yesterday to the backend, at most once per hour.
