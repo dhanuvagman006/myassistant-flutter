@@ -471,7 +471,15 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     _voice.ttsLevel.addListener(feed);
-    _beginBargeWatch();
+    // NOT DURING THE APP-OPEN GREETING. Barge-in exists so the user can
+    // talk over a reply they asked for; a hello nobody requested has
+    // nothing to interrupt into. Arming it here was actively harmful,
+    // measured on a real device: the greeting began, the monitor tripped
+    // on the phone's own speaker, _endBargeWatch called pressMic, live
+    // mode started and released the audio device — so the greeting died
+    // with "0 frames delivered" (never audible) AND the mic went hot on
+    // app open, which is the exact thing silent boot existed to prevent.
+    if (!_openGreetingSpeaking) _beginBargeWatch();
     String? pendingPath;
     try {
       // PIPELINE: keep one sentence's synthesis running AHEAD of playback so
