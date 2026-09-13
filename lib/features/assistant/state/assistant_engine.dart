@@ -697,7 +697,13 @@ class AssistantEngine extends ChangeNotifier {
       // reconnect after a real drop can greet again, while rebuilds,
       // setState and navigation cannot (they never reach this line).
       _sessionEpoch++;
-      _maybeGreetOnReady();
+      // Opened the app and said nothing yet → greet. Already in a
+      // conversation → the existing path, which may also open the mic.
+      if (_conversationOpen) {
+        _maybeGreetOnReady();
+      } else {
+        greetOnAppOpen();
+      }
     } catch (e) {
       connected = false;
       errorMessage = 'Could not reach the assistant service.';
@@ -1371,6 +1377,22 @@ class AssistantEngine extends ChangeNotifier {
   /// Set false to suppress the automatic greeting entirely.
   bool greetingEnabled = true;
 
+  /// THE APP-OPEN GREETING SPEAKS, BUT MUST NOT OPEN THE MIC.
+  ///
+  /// Boot was deliberately silent because a hot mic behind the dashboard
+  /// read as "is it listening right now or not?" — and that reasoning still
+  /// holds. The greeting itself was never the problem; the mic was. So the
+  /// greeting is allowed and the continuous loop that normally follows any
+  /// spoken reply is suppressed for exactly this one utterance
+  /// (continuousConversation defaults to true, so without this the
+  /// greeting would reopen the mic and bring the old confusion straight
+  /// back).
+  bool _openGreetingSpeaking = false;
+
+  /// Once per app launch, not once per reconnect — a dropped socket coming
+  /// back should not say good evening a second time.
+  bool _openGreetedThisLaunch = false;
+
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
   /// Time-appropriate greeting text starting with Hello.
@@ -1395,9 +1417,12 @@ class AssistantEngine extends ChangeNotifier {
   /// a turn is in flight, live mode owns the audio, or a phone call is
   /// active. If the session drops before the audio starts, the greeting is
   /// abandoned rather than spoken into a dead session (§4).
-  Future<void> _maybeGreetOnReady() async {
+  Future<void> _maybeGreetOnReady({bool fromAppOpen = false}) async {
     if (!greetingEnabled) return;
-    if (!_conversationOpen) return;         // silent until the user opens the orb
+    // Silent until the user opens the orb — EXCEPT on app open, where the
+    // greeting is the point and the mic stays shut (see
+    // _openGreetingSpeaking).
+    if (!_conversationOpen && !fromAppOpen) return;
     if (!connected) return;                 // never greet while offline
     final epoch = _sessionEpoch;
     if (_greetedEpoch == epoch) return;     // once per real session
@@ -1423,6 +1448,29 @@ class AssistantEngine extends ChangeNotifier {
     // Mom" over the greeting cuts it off and is processed normally.
     _speakQueue.add(text);
     await _drainSpeech();
+  }
+
+  /// THE APP OPENED AND NOBODY HAS SPOKEN YET — say hello first.
+  ///
+  /// Speaks only; the mic is not opened and the continuous loop does not
+  /// start. The user taps the orb when they want to reply, exactly as
+  /// before. Refuses on a second launch-greeting, during a call, while
+  /// offline, or if anything is already in flight (all enforced by
+  /// _maybeGreetOnReady).
+  Future<void> greetOnAppOpen({String? name}) async {
+    if (_openGreetedThisLaunch) return;
+    if (name != null && name.isNotEmpty) greetingName = name;
+    // "Good evening, there" is a worse hello than none. The signed-in
+    // user's name is already known by the time the socket is up.
+    if ((greetingName ?? '').trim().isEmpty) {
+      greetingName = AuthService.instance.user?.name;
+    }
+    _openGreetedThisLaunch = true;
+    _openGreetingSpeaking = true;
+    await _maybeGreetOnReady(fromAppOpen: true);
+    // If the greeting was refused it never reached _drainSpeech, so the
+    // flag would sit set and swallow the FIRST real turn's mic reopen.
+    _openGreetingSpeaking = false;
   }
 
   /// Kept for the screen to nudge a greeting once the user's name is
@@ -1496,6 +1544,13 @@ class AssistantEngine extends ChangeNotifier {
   /// Called when a reply has finished being spoken. Re-opens the mic unless
   /// something else legitimately owns the turn.
   void _maybeContinueListening() {
+    // The app-open greeting is a one-way hello. conversationActive is true
+    // by default, so without this the greeting would hand straight over to
+    // an open mic nobody asked for.
+    if (_openGreetingSpeaking) {
+      _openGreetingSpeaking = false;
+      return;
+    }
     if (!conversationActive) return;
     // A barge-in already schedules its own capture — don't double-start.
     if (_bargedIn || _bargeMonitorOn) return;
