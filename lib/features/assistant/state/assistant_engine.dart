@@ -1433,16 +1433,28 @@ class AssistantEngine extends ChangeNotifier {
     if (!_conversationOpen && !fromAppOpen) return;
     if (!connected) return;                 // never greet while offline
     final epoch = _sessionEpoch;
-    if (_greetedEpoch == epoch) return;     // once per real session
+    // _greetedEpoch belongs to the CONVERSATION greeting — the one the orb
+    // gives you when you tap it. The launch greeting is a different event
+    // with its own guard (_openGreetedThisLaunch), and must not consume
+    // this one: doing so meant saying hello at startup silently cancelled
+    // the hello you get when you actually press the mic, which is the one
+    // that matters more.
+    if (!fromAppOpen && _greetedEpoch == epoch) return;
     if (phase.busy || liveActive || _liveStartResult != null) return;
     if (PhoneStateGuard.instance.inCall) return;
-    _greetedEpoch = epoch;                  // claim before awaiting
+    if (!fromAppOpen) _greetedEpoch = epoch; // claim before awaiting
 
     // Small settle so a reconnect storm cannot start speech mid-flap.
     await Future.delayed(const Duration(milliseconds: 600));
     // Re-verify: the session may have dropped during the settle.
     if (!connected || _sessionEpoch != epoch || phase.busy || liveActive) {
-      if (_sessionEpoch == epoch) _greetedEpoch = -1; // allow a later retry
+      // Abandoned before it spoke — release whichever guard was claimed so
+      // the greeting can be tried again.
+      if (fromAppOpen) {
+        _openGreetedThisLaunch = false;
+      } else if (_sessionEpoch == epoch) {
+        _greetedEpoch = -1;
+      }
       return;
     }
 
