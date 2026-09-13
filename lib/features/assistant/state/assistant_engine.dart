@@ -717,7 +717,15 @@ class AssistantEngine extends ChangeNotifier {
       // reconnect after a real drop can greet again, while rebuilds,
       // setState and navigation cannot (they never reach this line).
       _sessionEpoch++;
-      _maybeGreetOnReady();
+      // NOT WHILE A CONVERSATION IS OPENING. beginConversation sets
+      // _conversationOpen before awaiting start(), so on first launch this
+      // connect lands mid-setup: the classic TTS greeting would start,
+      // claim the epoch so _greetThroughLive skips, and then live would
+      // release the audio device out from under speech already playing —
+      // measured, one second apart. Whichever path beginConversation
+      // chooses will greet; its own classic fallback still calls this
+      // directly when live cannot start.
+      if (!_starting) _maybeGreetOnReady();
     } catch (e) {
       connected = false;
       errorMessage = 'Could not reach the assistant service.';
