@@ -43,6 +43,12 @@ class HomeShell extends StatefulWidget {
   /// mode in the You tab doesn't dump the user back on Home.
   static int lastTab = 0;
 
+  /// A tab the ASSISTANT was asked to open ("open my settings"). The shell
+  /// listens and switches; a notifier rather than a plain field because
+  /// the request arrives from a voice turn, long after this State was
+  /// built, and nothing else would tell it to rebuild.
+  static final ValueNotifier<int?> requestedTab = ValueNotifier<int?>(null);
+
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
@@ -79,6 +85,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    HomeShell.requestedTab.removeListener(_onTabRequested);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -87,10 +94,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   int _tab = HomeShell.lastTab;
 
+  void _onTabRequested() {
+    final want = HomeShell.requestedTab.value;
+    if (want == null || !mounted) return;
+    HomeShell.requestedTab.value = null; // consume, so it fires once
+    if (want < 0 || want > 3 || want == _tab) return;
+    HomeShell.lastTab = want;
+    setState(() => _tab = want);
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    HomeShell.requestedTab.addListener(_onTabRequested);
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting

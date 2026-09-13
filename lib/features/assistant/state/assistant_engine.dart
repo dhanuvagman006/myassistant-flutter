@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+// material re-exports foundation, and carries MaterialPageRoute /
+// WidgetBuilder for opening the app's own screens by voice.
+import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -13,6 +15,16 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
+// Screens and settings reachable BY VOICE (open_app_screen / set_theme).
+import '../../../services/avatar_message_service.dart';
+import '../../../design/theme_controller.dart';
+import '../../../shell/home_shell.dart';
+import '../../../screens/documents_screen.dart';
+import '../../../screens/clients_screen.dart';
+import '../../../screens/finance_screen.dart';
+import '../../../screens/stocks_screen.dart';
+import '../../../screens/diagnostics_screen.dart';
+import '../../../screens/mcp_servers_screen.dart';
 import '../../../models/user_document.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
@@ -1936,6 +1948,50 @@ class AssistantEngine extends ChangeNotifier {
         }
         break;
 
+      case 'set_theme':
+        // "Switch to dark mode" — spoken, and applied without opening a
+        // settings screen. ThemeController persists it and repaints the
+        // whole tree, exactly as the toggle in the You tab does.
+        {
+          final mode = e['mode'] as String? ?? '';
+          final target = switch (mode) {
+            'dark' => ThemeMode3.dark,
+            'light' => ThemeMode3.light,
+            'adaptive' => ThemeMode3.adaptive,
+            _ => null,
+          };
+          if (target != null) {
+            ThemeController.setMode(target);
+          } else {
+            _reportDeviceFailure('set_app_theme',
+                target: mode, reason: 'not a theme this app has');
+          }
+        }
+        _setPhase(AssistantPhase.completed);
+        break;
+
+      case 'open_app_screen':
+        // A screen inside THIS app, opened by voice. The four main tabs go
+        // through the shell; everything else is a pushed route.
+        {
+          final screen = e['screen'] as String? ?? '';
+          const tabs = {'home': 0, 'hub': 1, 'chat': 2, 'settings': 3};
+          if (tabs.containsKey(screen)) {
+            HomeShell.requestedTab.value = tabs[screen];
+          } else {
+            final nav = AvatarMessageService.navigatorKey.currentState;
+            final builder = _appScreenBuilder(screen);
+            if (nav == null || builder == null) {
+              _reportDeviceFailure('open_app_screen',
+                  target: screen, reason: 'that screen is not available');
+            } else {
+              nav.push(MaterialPageRoute(builder: builder));
+            }
+          }
+        }
+        _setPhase(AssistantPhase.completed);
+        break;
+
       case 'open_usage_access':
         // Screen-time needs the Usage access switch, which lives in a
         // system settings screen no dialog can replace — take them there.
@@ -2976,6 +3032,20 @@ class AssistantEngine extends ChangeNotifier {
           'failed.');
     }
   }
+
+  /// The app's own screens that a voice command may open. Returning null
+  /// for anything unknown is deliberate: the tool already validates its
+  /// enum, and a screen that cannot be built must be reported as a
+  /// failure rather than silently doing nothing.
+  WidgetBuilder? _appScreenBuilder(String screen) => switch (screen) {
+        'documents' => (_) => const DocumentsScreen(),
+        'clients' => (_) => const ClientsScreen(),
+        'finance' => (_) => const FinanceScreen(),
+        'stocks' => (_) => const StocksScreen(),
+        'diagnostics' => (_) => const DiagnosticsScreen(),
+        'mcp' => (_) => const McpServersScreen(),
+        _ => null,
+      };
 
   /// Tell the server a device action failed. Fire and forget: a failed
   /// report must never turn into a second visible failure.
