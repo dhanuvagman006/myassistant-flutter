@@ -143,7 +143,9 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
       child: AnimatedSlide(
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        offset: show ? Offset.zero : const Offset(0, 0.6),
+        // Enters from ABOVE: the pill sits at the top of the screen, and
+        // sliding up out of nowhere would read as coming from the dock.
+        offset: show ? Offset.zero : const Offset(0, -0.6),
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 220),
           opacity: show ? 1 : 0,

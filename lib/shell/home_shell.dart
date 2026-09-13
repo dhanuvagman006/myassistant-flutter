@@ -272,13 +272,15 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           Positioned(
             left: 0,
             right: 0,
-            // CLEAR OF THE MIC, measured from the orb rather than from the
-            // screen edge. The orb is a 76dp centre-docked FAB, so at
-            // bottom: 92 the pill sat BEHIND it — on a gesture-nav phone
-            // roughly 30 of its 42dp were covered and the text band was
-            // almost entirely hidden. The animation the whole feature
-            // exists for was invisible on the devices most people have.
-            bottom: 124 + MediaQuery.of(context).viewPadding.bottom,
+            // AT THE TOP, because the bottom of this screen is crowded and
+            // every bottom position collided with something. The Scaffold
+            // paints bottomNavigationBar and the FAB AFTER the body, so a
+            // pill in the body is covered by the 76dp centre-docked orb;
+            // moving it clear of the orb then put it across the result and
+            // confirmation cards, which sit at padding.bottom + 84. The
+            // top is empty, is never overdrawn by the dock or the cards,
+            // and is where a status banner belongs anyway.
+            top: 10 + MediaQuery.of(context).viewPadding.top,
             child: const Align(
               alignment: Alignment.center,
               child: AssistantActivityPill(),
