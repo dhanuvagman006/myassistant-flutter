@@ -17,6 +17,7 @@ import '../../../core/network/assistant_api.dart';
 import '../../../core/log.dart';
 // Screens and settings reachable BY VOICE (open_app_screen / set_theme).
 import '../../../services/avatar_message_service.dart';
+import '../../../services/notification_service.dart';
 import '../../../design/theme_controller.dart';
 import '../../../shell/home_shell.dart';
 import '../../../screens/documents_screen.dart';
@@ -502,6 +503,18 @@ class AssistantEngine extends ChangeNotifier {
       _refreshBriefSoon();
     }
   }
+
+  /// Tools that change what should be ringing on this phone. Anything
+  /// here re-arms the local alarms as soon as the tool reports back,
+  /// rather than waiting for a throttled brief refresh.
+  static bool _remindersTouchedBy(String? tool) => const {
+        'create_reminder',
+        'update_reminder',
+        'set_alarm',
+        'schedule_task',
+        'cancel_scheduled_task',
+        'schedule_patient_recall',
+      }.contains(tool ?? '');
 
   /// A finished turn may have created a reminder or commitment — reflect it
   /// on the Home brief now instead of whenever the 5-minute timer next
@@ -1773,6 +1786,18 @@ class AssistantEngine extends ChangeNotifier {
       case 'tool_completed':
         for (final a in activities) {
           if (a.tool == e['tool'] && !a.completed) a.completed = true;
+        }
+        // ARM THE ALARM NOW, NOT WHEN THE BRIEF NEXT REFRESHES.
+        //
+        // Local alarms were only re-armed inside BriefService.refresh,
+        // which is throttled — 5 s in the engine, and 2 minutes in the
+        // service itself. Three reminders set in under a minute meant the
+        // last one's refresh was throttled away and its alarm was never
+        // scheduled: "remind me at 12:40", set at 12:39:52, never rang.
+        // A reminder set for a few seconds from now has to be armed in
+        // those few seconds.
+        if (_remindersTouchedBy(e['tool'] as String?)) {
+          unawaited(ReminderNotifications.instance.sync());
         }
         if (!activities.any((a) => !a.completed)) {
           activityLabel.value = null;
