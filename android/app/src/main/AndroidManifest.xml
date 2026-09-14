@@ -52,6 +52,21 @@
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
         </intent>
+        <!-- THE PHONE'S CLOCK. Android 11+ hides activities this app has
+             not declared an interest in, and resolveActivity then returns
+             null for a clock that is plainly installed — which is why
+             "set a timer for 3 minutes" came back "I can't do that on
+             this phone" on a Samsung with Samsung Clock sitting right
+             there. `am start` from a shell is unrestricted, so the intents
+             tested fine by hand and failed from inside the app. -->
+        <intent><action android:name="android.intent.action.SET_ALARM"/></intent>
+        <intent><action android:name="android.intent.action.SET_TIMER"/></intent>
+        <intent><action android:name="android.intent.action.DISMISS_ALARM"/></intent>
+        <intent><action android:name="android.intent.action.SNOOZE_ALARM"/></intent>
+        <intent><action android:name="android.intent.action.DISMISS_TIMER"/></intent>
+        <intent><action android:name="android.intent.action.SHOW_ALARMS"/></intent>
+        <intent><action android:name="android.intent.action.SHOW_TIMERS"/></intent>
+        <intent><action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH"/></intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

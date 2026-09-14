@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.os.Process
 import android.provider.Settings
+import android.util.Log
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -96,11 +97,25 @@ class MainActivity : FlutterFragmentActivity() {
                             // task: an intent URI is external input.
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             intent.selector = null
+                            // TRY IT, DO NOT PRE-JUDGE IT.
+                            //
+                            // resolveActivity answers from what this app is
+                            // ALLOWED TO SEE, not from what is installed, so
+                            // an undeclared intent reads as "no such app" on
+                            // a phone that has one. Every action we fire is
+                            // declared in <queries> now, but a null result is
+                            // no longer treated as proof: the launch is
+                            // attempted and only a real
+                            // ActivityNotFoundException counts as failure.
                             if (intent.resolveActivity(packageManager) == null) {
-                                result.success(false)
-                            } else {
+                                Log.w("hari/intent", "resolveActivity null; trying anyway: $uri")
+                            }
+                            try {
                                 applicationContext.startActivity(intent)
                                 result.success(true)
+                            } catch (e: android.content.ActivityNotFoundException) {
+                                Log.w("hari/intent", "no activity for $uri")
+                                result.success(false)
                             }
                         } catch (e: Exception) {
                             result.success(false)
