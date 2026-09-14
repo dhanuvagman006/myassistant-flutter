@@ -40,6 +40,21 @@
 <!-- Self-hosted APK update: lets the app hand the downloaded APK to the
      system installer. Remove for Play Store builds. -->
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- SETTING AN ALARM OR A TIMER NEEDS PERMISSION, not just visibility.
+         Android names it outright and we never declared it:
+
+           SecurityException: Permission Denial: starting Intent
+           { act=android.intent.action.SET_TIMER
+             cmp=com.sec.android.app.clockpackage/.TimerCTSHandleActivity }
+           requires com.android.alarm.permission.SET_ALARM
+
+         This is why `adb shell am start` succeeded every single time while
+         the app never could — the shell holds the permission and we did
+         not. It is a normal install-time permission with no runtime
+         prompt, so declaring it is the whole fix. The <queries> block
+         below lets us SEE the clock; this lets us START it. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
+
     <queries>
         <!-- EVERY LAUNCHABLE APP ON THE PHONE.
              Android 11+ hides installed packages unless they are declared
