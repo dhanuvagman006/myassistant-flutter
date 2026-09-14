@@ -3194,7 +3194,15 @@ class AssistantEngine extends ChangeNotifier {
     //
     // Intent URIs now go to the platform, which is what parses them. Only
     // a REAL fallback URL declared in the URI is ever opened as a page.
-    if (url.startsWith('intent://')) {
+    // BOTH FORMS. The server used to emit `intent://#Intent;…` and now
+    // emits `intent:#Intent;…` — the slashes made parseUri treat
+    // everything before #Intent as a DATA uri, which no clock intent
+    // filter matches. Testing that server change never exercised this
+    // line, so the new URLs stopped matching here, skipped the native
+    // launcher entirely and fell through to the web-link path, which
+    // cannot open them. Matching the scheme rather than the slashes means
+    // neither side can break the other again.
+    if (url.startsWith('intent:')) {
       var launched = false;
       try {
         launched = await const MethodChannel('hari/intent')

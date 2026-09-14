@@ -97,6 +97,14 @@ class MainActivity : FlutterFragmentActivity() {
                             // task: an intent URI is external input.
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             intent.selector = null
+                            // `intent://#Intent;…` parses with data set to
+                            // "intent://" itself, and an action-only filter
+                            // (every clock intent) cannot match an intent
+                            // that carries data. It is an artefact of the
+                            // URI syntax, never something a caller meant.
+                            if (intent.data?.scheme == "intent") {
+                                intent.data = null
+                            }
                             // TRY IT, DO NOT PRE-JUDGE IT.
                             //
                             // resolveActivity answers from what this app is
