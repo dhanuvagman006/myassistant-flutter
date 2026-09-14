@@ -646,8 +646,28 @@ class AssistantEngine extends ChangeNotifier {
   /// Speaks the opening greeting through the live session's own voice.
   /// Same epoch bookkeeping as the classic greeting, so a session greets
   /// at most once and a real reconnect may greet again.
+  /// When the greeting was last actually spoken. Opening the mic and
+  /// SAYING HELLO are different things, and only one of them should happen
+  /// every time the app comes forward.
+  DateTime _lastGreetedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Long enough that flicking to another app and back is silent, short
+  /// enough that coming back to the app later is still greeted.
+  static const _greetCooldown = Duration(minutes: 15);
+
   void _greetThroughLive() {
     if (!greetingEnabled) return;
+    // FOUR GREETINGS IN SIX MINUTES, observed in a real transcript — every
+    // app switch produced another "Good morning, Dhanush!". Each one is a
+    // model turn generated and spoken from scratch for a fixed sentence,
+    // so it was wasteful as well as wearing. The session still opens and
+    // the microphone is still live; it simply does not announce itself
+    // again when it only just did.
+    if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) {
+      AppLog.add('greet', 'skipped — greeted recently');
+      return;
+    }
+    _lastGreetedAt = DateTime.now();
     // EVERY TIME THE CONVERSATION OPENS, not once per session.
     //
     // The old guard was keyed to _sessionEpoch, which only advances when

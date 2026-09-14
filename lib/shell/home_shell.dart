@@ -269,7 +269,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final engine = AssistantEngine.instance;
     if (engine.liveActive || engine.inlineVoice) return;
     final now = DateTime.now();
-    if (now.difference(_lastAutoOpen) < const Duration(seconds: 30)) return;
+    // Short guard only against pause/resume thrash (a permission dialog, a
+    // notification shade). Whether the assistant SPEAKS on reopening is a
+    // separate decision, made in the engine — the microphone coming back
+    // every time is the point of this path.
+    if (now.difference(_lastAutoOpen) < const Duration(seconds: 5)) return;
     _lastAutoOpen = now;
     _startConversation();
   }
