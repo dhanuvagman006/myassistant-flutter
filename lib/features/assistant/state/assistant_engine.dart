@@ -36,6 +36,7 @@ import '../../../services/sms_service.dart';
 import '../widgets/action_cards.dart' show shareDocumentFile;
 import '../../../services/app_feedback.dart';
 import '../../../services/auth_service.dart';
+import '../../../services/app_update_service.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/call_service.dart';
 import '../../../services/phone_state_guard.dart';
@@ -2216,6 +2217,22 @@ class AssistantEngine extends ChangeNotifier {
         scheduleFailed = ((e['failed'] as List?) ?? const [])
             .whereType<String>()
             .toList(growable: false);
+        break;
+
+      case 'check_for_update':
+        // THE USER ASKED FOR THE UPDATE, so this bypasses the ordinary
+        // throttle — a check that silently declines because one ran two
+        // minutes ago looks exactly like the feature not working.
+        // The sheet needs a BuildContext; the app's global navigator key
+        // is the only one an engine method can reach.
+        {
+          final ctx = AvatarMessageService.navigatorKey.currentContext;
+          if (ctx != null) {
+            unawaited(AppUpdateService.instance.check(ctx, force: true));
+          } else {
+            AppLog.add('update', 'no context to show the update sheet');
+          }
+        }
         break;
 
       case 'show_news':
