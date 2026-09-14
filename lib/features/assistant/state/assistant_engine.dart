@@ -2168,12 +2168,36 @@ class AssistantEngine extends ChangeNotifier {
           final extras = (e['extras'] as Map?)?.cast<String, dynamic>() ?? {};
           if (action.isNotEmpty) {
             const MethodChannel('hari/intent')
-                .invokeMethod<bool>('clockIntent', {'action': action, 'extras': extras})
-                .then((ok) {
-              AppLog.add('clock', '$action -> ${ok == true ? "started" : "FAILED"}');
-              if (ok != true) {
-                _reportDeviceFailure('clock_intent',
-                    target: action, reason: 'the clock app did not accept it');
+                .invokeMethod<Map<Object?, Object?>>(
+                    'clockIntent', {'action': action, 'extras': extras})
+                .then((res) {
+              final ok = res?['ok'] == true;
+              final reason = (res?['reason'] as String?) ?? 'failed';
+              AppLog.add('clock', '$action -> ${ok ? "started" : "FAILED ($reason)"}');
+              if (ok) return;
+              _reportDeviceFailure('clock_intent', target: action, reason: reason);
+              // WHAT THE USER CAN ACTUALLY DO ABOUT IT.
+              //
+              // SET_ALARM is an install-time permission: Android grants it
+              // when the app declares it and there is no runtime dialog to
+              // show. So an older build genuinely cannot be fixed from
+              // here — the honest remedy is the update, and the assistant
+              // offers it rather than leaving the user to guess.
+              if (reason == 'needs_alarm_permission') {
+                AppFeedback.toast(
+                    'This version cannot set alarms — update the app to enable it.');
+                _tellModel(
+                    '[SYSTEM] ERROR: this build of the app is not permitted to set '
+                    'alarms or timers, so NOTHING was set. Tell them in one line '
+                    'that it needs a newer version, then call update_app to put '
+                    'the installer on screen. Do NOT tell them to hunt through '
+                    'settings — there is no permission switch for this one.');
+              } else if (reason == 'no_clock_app') {
+                AppFeedback.toast('No clock app on this phone.');
+                _tellModel(
+                    '[SYSTEM] ERROR: this phone has no clock app that can handle '
+                    '"$action", so NOTHING was set. Say that plainly.');
+              } else {
                 _tellModel(
                     '[SYSTEM] ERROR: the phone refused "$action", so NOTHING was '
                     'set. Say plainly that it did not work. Do not claim it did.');

@@ -122,10 +122,22 @@ class MainActivity : FlutterFragmentActivity() {
                             Log.i("hari/clock", "starting $action extras=$extras")
                             applicationContext.startActivity(intent)
                             Log.i("hari/clock", "started $action")
-                            result.success(true)
+                            result.success(mapOf("ok" to true))
                         } catch (e: Throwable) {
-                            Log.w("hari/clock", "FAILED $action: ${e.javaClass.simpleName}: ${e.message}")
-                            result.success(false)
+                            // A REASON, NOT JUST A NO. Returning a bare false
+                            // is what hid a permission denial for five
+                            // releases — the app could not tell "no clock
+                            // installed" from "not allowed to use it", so it
+                            // reported the wrong thing to the user either way.
+                            val msg = e.message ?: ""
+                            val kind = when {
+                                e is SecurityException && msg.contains("SET_ALARM") -> "needs_alarm_permission"
+                                e is SecurityException -> "not_permitted"
+                                e is android.content.ActivityNotFoundException -> "no_clock_app"
+                                else -> "failed"
+                            }
+                            Log.w("hari/clock", "FAILED $action [$kind]: ${e.javaClass.simpleName}: $msg")
+                            result.success(mapOf("ok" to false, "reason" to kind, "detail" to msg.take(200)))
                         }
                     }
                     "launch" -> {
