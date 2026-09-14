@@ -53,9 +53,24 @@ Future<void> main() async {
   // Runtime server override (Diagnostics screen) — must resolve before
   // the first request, or the engine would connect to the wrong host.
   ApiService.loadServerOverride();
-  PackageInfo.fromPlatform().then((i) {
-    ApiService.appBuild = int.tryParse(i.buildNumber);
-  }).catchError((_) {});
+  // AWAITED, AND IT HAS TO BE. This used to be fire-and-forget alongside
+  // runApp, which is a race: the session POST, the capability report and
+  // the live socket all go out within the first second, and on a phone
+  // where the platform channel answers a moment later they carry no
+  // X-App-Build header at all. The server then records build 0 — and
+  // every build gate reads that as "too old", which is how the client was
+  // told his up-to-date app needed updating before it could open anything.
+  //
+  // He lost this race on all 288 of his turns while another tester on the
+  // same APK never did, because it is decided by device timing and nothing
+  // else. One platform channel call costs a few milliseconds; a build the
+  // server never learns costs the feature.
+  try {
+    final info = await PackageInfo.fromPlatform();
+    ApiService.appBuild = int.tryParse(info.buildNumber);
+  } catch (_) {
+    // Unknown build is survivable; a wrong one is not.
+  }
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
   runApp(const MyAssistantApp());
 }
