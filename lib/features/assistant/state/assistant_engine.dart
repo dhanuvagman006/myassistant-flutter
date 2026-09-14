@@ -647,7 +647,19 @@ class AssistantEngine extends ChangeNotifier {
   /// at most once and a real reconnect may greet again.
   void _greetThroughLive() {
     if (!greetingEnabled) return;
-    if (_greetedEpoch == _sessionEpoch) return;
+    // EVERY TIME THE CONVERSATION OPENS, not once per session.
+    //
+    // The old guard was keyed to _sessionEpoch, which only advances when
+    // the SSE socket reconnects. Coming back to an app Android had kept in
+    // memory reuses the same epoch, so the orb would reopen and then say
+    // nothing — "everytime i open the app i need the greeting, even if i
+    // don't remove it from background".
+    //
+    // Nothing is lost by dropping it: this runs only from
+    // beginConversation, after a live session has actually started, and
+    // beginInlineConversation's _starting flag already refuses a second
+    // overlapping open. _greetedEpoch is still stamped so the classic
+    // fallback cannot add a second greeting later in the same session.
     if (PhoneStateGuard.instance.inCall) return;
     _greetedEpoch = _sessionEpoch;
     final text = greetingFor(greetingName);
@@ -2955,14 +2967,22 @@ class AssistantEngine extends ChangeNotifier {
     _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
     final ok = await _startLive();
-    if (!ok) {
-      // Live could not come back (network still settling). Leave the orb
-      // resting rather than pretending: the next tap starts a fresh
-      // session, which is the behaviour the user expects anyway.
-      inlineVoice = false;
-      _setPhase(AssistantPhase.idle, silent: true);
-      notifyListeners();
+    if (ok) {
+      // AND GREET AGAIN. This rebuild is what actually runs when the app
+      // comes back from the background with a session still open — the
+      // shell's own reopen path sees liveActive and steps aside. Without
+      // this the orb came back silent, which is precisely "it failed to
+      // greet me when I open the app" for anyone who does not swipe the
+      // app away first.
+      _greetThroughLive();
+      return;
     }
+    // Live could not come back (network still settling). Leave the orb
+    // resting rather than pretending: the next tap starts a fresh
+    // session, which is the behaviour the user expects anyway.
+    inlineVoice = false;
+    _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
   }
 
   /// Places the call and reports what ACTUALLY happened.
