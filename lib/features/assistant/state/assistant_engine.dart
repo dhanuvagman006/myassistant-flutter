@@ -2158,6 +2158,34 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed);
         break;
 
+      case 'clock_intent':
+        // Alarms and timers no longer travel as an intent URI — see the
+        // Kotlin handler. The action and its extras go across as data and
+        // the Intent is built natively, so nothing has to survive a URI
+        // parser on the way.
+        {
+          final action = e['action'] as String? ?? '';
+          final extras = (e['extras'] as Map?)?.cast<String, dynamic>() ?? {};
+          if (action.isNotEmpty) {
+            const MethodChannel('hari/intent')
+                .invokeMethod<bool>('clockIntent', {'action': action, 'extras': extras})
+                .then((ok) {
+              AppLog.add('clock', '$action -> ${ok == true ? "started" : "FAILED"}');
+              if (ok != true) {
+                _reportDeviceFailure('clock_intent',
+                    target: action, reason: 'the clock app did not accept it');
+                _tellModel(
+                    '[SYSTEM] ERROR: the phone refused "$action", so NOTHING was '
+                    'set. Say plainly that it did not work. Do not claim it did.');
+              }
+            }).catchError((err) {
+              AppLog.add('clock', '$action -> channel error: $err');
+            });
+          }
+          _setPhase(AssistantPhase.completed);
+        }
+        break;
+
       case 'open_url':
         // Voice-driven deep linking to external apps like Uber, Swiggy, Zomato.
         final url = e['url'] as String?;

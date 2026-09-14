@@ -37,7 +37,8 @@ class MainActivity : FlutterFragmentActivity() {
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             )
                             result.success(true)
-                        } catch (e: Exception) {
+                        } catch (e: Throwable) {
+                            Log.w("hari/intent", "launch failed: ${e.javaClass.simpleName}: ${e.message}")
                             result.success(false)
                         }
                     }
@@ -85,6 +86,48 @@ class MainActivity : FlutterFragmentActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/intent")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    // THE CLOCK, WITHOUT A URI IN SIGHT.
+                    //
+                    // Four releases were lost to Intent.parseUri: the "//"
+                    // that silently became a data uri no clock filter can
+                    // match, an app-side prefix check the server change
+                    // then bypassed, and finally a throw from parseUri
+                    // itself that the old catch swallowed without a word.
+                    // An alarm is an action and three extras; encoding
+                    // that as a URI only to parse it back was a lossy
+                    // round trip through a parser nobody here controls.
+                    //
+                    // Every failure below is logged AND returned. A silent
+                    // `catch { false }` is what made this take four tries.
+                    "clockIntent" -> {
+                        val action = call.argument<String>("action") ?: ""
+                        val extras = call.argument<Map<String, Any>>("extras") ?: emptyMap()
+                        if (action.isEmpty()) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val intent = Intent(action)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            for ((k, v) in extras) {
+                                when (v) {
+                                    is Int -> intent.putExtra(k, v)
+                                    is Long -> intent.putExtra(k, v.toInt())
+                                    is Double -> intent.putExtra(k, v.toInt())
+                                    is Boolean -> intent.putExtra(k, v)
+                                    is String -> intent.putExtra(k, v)
+                                    else -> Log.w("hari/clock", "skipped extra $k (${v?.javaClass})")
+                                }
+                            }
+                            Log.i("hari/clock", "starting $action extras=$extras")
+                            applicationContext.startActivity(intent)
+                            Log.i("hari/clock", "started $action")
+                            result.success(true)
+                        } catch (e: Throwable) {
+                            Log.w("hari/clock", "FAILED $action: ${e.javaClass.simpleName}: ${e.message}")
+                            result.success(false)
+                        }
+                    }
                     "launch" -> {
                         val uri = call.argument<String>("uri") ?: ""
                         if (uri.isEmpty()) {
@@ -125,7 +168,8 @@ class MainActivity : FlutterFragmentActivity() {
                                 Log.w("hari/intent", "no activity for $uri")
                                 result.success(false)
                             }
-                        } catch (e: Exception) {
+                        } catch (e: Throwable) {
+                            Log.w("hari/intent", "launch failed: ${e.javaClass.simpleName}: ${e.message}")
                             result.success(false)
                         }
                     }
