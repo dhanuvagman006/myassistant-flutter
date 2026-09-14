@@ -1786,6 +1786,17 @@ class AssistantEngine extends ChangeNotifier {
       case 'user_transcript':
         partial = '';
         _failedTurns = 0; // a real transcript — the service is healthy
+        // A NEW QUESTION RETIRES THE LAST ANSWER'S CARDS.
+        //
+        // _resetTurn does this, but it only runs on the classic path — a
+        // live session never called it between turns, so citation and
+        // document cards from turn one were still on screen at turn five.
+        // Reported from the device: saying "hello" showed CPR steps and two
+        // evidence-law sections left over from a much earlier question.
+        // The news and schedule panels are deliberately NOT cleared here —
+        // they are dismissed by the user, and a follow-up question about a
+        // story must not close the story.
+        _clearAnswerCards();
         final said = e['text'] as String? ?? '';
         transcript.add(TranscriptEntry(TranscriptRole.user, said));
         _captionFrom('you', said);
@@ -3241,6 +3252,26 @@ class AssistantEngine extends ChangeNotifier {
   void dismissPresentedText() {
     presentedTitle = null;
     presentedText = null;
+    notifyListeners();
+  }
+
+  /// The cards that belong to ONE answer — cleared when the next question
+  /// starts. Separate from _resetTurn, which also tears down turn state
+  /// that a live session manages itself.
+  void _clearAnswerCards() {
+    if (searchResults.isEmpty &&
+        documentCards.isEmpty &&
+        presentedText == null &&
+        generatedImage == null) {
+      return;
+    }
+    searchQuery = null;
+    searchResults = const [];
+    documentCards = const [];
+    presentedTitle = null;
+    presentedText = null;
+    generatedImage = null;
+    generatedImagePrompt = '';
     notifyListeners();
   }
 

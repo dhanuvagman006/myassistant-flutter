@@ -80,6 +80,13 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // A voice session interrupted by another app is rebuilt here —
       // coming back from Instagram used to leave the orb unable to speak.
       AssistantEngine.instance.onAppResumed();
+      // "OPEN THE APP" MEANS BRINGING IT TO THE FOREGROUND, not starting a
+      // fresh process. _autoOpened is process-level (it has to be — a theme
+      // flip recreates this State), so on its own the orb only ever started
+      // itself on a cold launch. Coming back to an app Android kept in
+      // memory did nothing, which is exactly what "it failed to greet me
+      // when I open the app" looked like.
+      _reopenConversationOnResume();
       Timer(const Duration(seconds: 2), () {
         if (mounted) AppUpdateService.instance.check(context);
       });
@@ -251,6 +258,22 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   /// time someone switches to dark mode would be its own bug.
   static bool _autoOpened = false;
 
+  /// Re-open on resume when nothing is running. Throttled so a rapid
+  /// pause/resume (a notification shade, a permission dialog) cannot
+  /// thrash the microphone, and skipped entirely while a session is
+  /// already live — returning from another app must not interrupt a
+  /// conversation that survived the trip.
+  DateTime _lastAutoOpen = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _reopenConversationOnResume() {
+    final engine = AssistantEngine.instance;
+    if (engine.liveActive || engine.inlineVoice) return;
+    final now = DateTime.now();
+    if (now.difference(_lastAutoOpen) < const Duration(seconds: 30)) return;
+    _lastAutoOpen = now;
+    _startConversation();
+  }
+
   void _autoOpenConversation() {
     if (_autoOpened) return;
     _autoOpened = true;
@@ -259,6 +282,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // 20 s ceiling and its own in-call and already-running guards.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _lastAutoOpen = DateTime.now();
       _startConversation();
     });
   }
