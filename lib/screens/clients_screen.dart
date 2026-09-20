@@ -304,7 +304,11 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       if (source == 'pdf') {
         final picked = await FilePicker.platform.pickFiles(
             type: FileType.custom,
-            allowedExtensions: ['pdf'],
+            // Not PDFs only: a case file is as likely to be a Word draft,
+            // a fee sheet or a deck, and the server reads all of them.
+            allowedExtensions: const [
+              'pdf', 'docx', 'xlsx', 'pptx', 'csv', 'txt', 'rtf'
+            ],
             withData: true);
         final f = (picked != null && picked.files.isNotEmpty)
             ? picked.files.first
@@ -312,7 +316,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         if (f?.bytes == null) return;
         bytes = f!.bytes!;
         filename = f.name;
-        mime = 'application/pdf';
+        mime = mimeForFilename(f.name);
       } else {
         final shot = await ImagePicker().pickImage(
           source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,

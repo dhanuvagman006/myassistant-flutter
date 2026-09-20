@@ -82,7 +82,32 @@ class ShareIntakeService {
     'webp': 'image/webp',
     'heic': 'image/heic',
     'pdf': 'application/pdf',
+    // Office and plain-text files: the server reads the words out of
+    // these before understanding them, so a shared spreadsheet or deck is
+    // as answerable as a photographed report.
+    'docx':
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'pptx':
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'csv': 'text/csv',
+    'tsv': 'text/tab-separated-values',
+    'txt': 'text/plain',
+    'md': 'text/markdown',
+    'json': 'application/json',
+    'rtf': 'application/rtf',
   };
+
+  /// Types the server will store. Anything else is reported as skipped
+  /// rather than silently dropped.
+  static bool _acceptable(String mime) =>
+      mime.startsWith('image/') ||
+      mime == 'application/pdf' ||
+      _mimeByExt.containsValue(mime) ||
+      mime == 'application/msword' ||
+      mime == 'application/vnd.ms-excel' ||
+      mime == 'application/vnd.ms-powerpoint';
 
   /// Anything above this never fits the server's 18 MB document cap.
   static const _maxShareBytes = 20 * 1024 * 1024;
@@ -116,8 +141,7 @@ class ShareIntakeService {
       if (path.isEmpty) continue;
       final ext = path.split('.').last.toLowerCase();
       final mime = f.mimeType ?? _mimeByExt[ext];
-      if (mime == null ||
-          !(mime.startsWith('image/') || mime == 'application/pdf')) {
+      if (mime == null || !_acceptable(mime)) {
         skipped++; // extension-less or exotic type — SAY so below, the old
         continue; // silent drop looked like the share simply vanished
       }

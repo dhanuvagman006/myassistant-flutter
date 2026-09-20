@@ -9,6 +9,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../design/gyro_tilt.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/user_document.dart';
+// openDocument/documentGlyph live with the document tiles. The import
+// is circular (document_tile imports this file for the gallery and the
+// share helper) — Dart resolves that fine, and one shared open path is
+// worth it: the two used to diverge, and this card still carried the
+// launchUrl bug that made every saved PDF answer "sign in required".
+import '../../../widgets/document_tile.dart'
+    show openDocument, documentGlyph;
 import '../../../services/api_service.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
@@ -426,17 +433,7 @@ class _DocumentCardState extends State<DocumentCard> {
     return '${d.day}/${d.month}/${d.year}';
   }
 
-  void _open(BuildContext context) {
-    final url = ApiService.documentFileUrl(document.id);
-    if (document.isPdf) {
-      // No in-app PDF renderer (kept the app light) — hand to the system.
-      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      return;
-    }
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => DocumentGalleryScreen(documents: [document]),
-    ));
-  }
+  void _open(BuildContext context) => openDocument(context, document);
 
   Future<void> _send() async {
     if (_sending) return;
@@ -472,12 +469,14 @@ class _DocumentCardState extends State<DocumentCard> {
                   child: SizedBox(
                     width: 56,
                     height: 56,
-                    child: document.isPdf
-                        ? Container(
-                            color: Neon.surfaceHigh,
-                            child: Icon(Icons.picture_as_pdf_rounded,
-                                color: Neon.pink, size: 26),
-                          )
+                    child: !document.isImage
+                        ? Builder(builder: (_) {
+                            final g = documentGlyph(document);
+                            return Container(
+                              color: Neon.surfaceHigh,
+                              child: Icon(g.icon, color: g.color, size: 26),
+                            );
+                          })
                         : Image.network(
                             ApiService.documentFileUrl(document.id),
                             headers: ApiService.imageHeaders,

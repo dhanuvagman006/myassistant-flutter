@@ -771,6 +771,28 @@ class LiveService {
   }
 
   /// Ends the session and releases the mic/speaker.
+  /// STOP MAKING NOISE, KEEP THE SESSION.
+  ///
+  /// Used when the app leaves the screen (another app, an incoming call,
+  /// the home gesture): her voice must stop mid-word, and the microphone
+  /// must stop sending — a phone in a pocket should not be streaming a
+  /// conversation. The socket stays open, so coming straight back finds
+  /// the same session rather than a reconnect.
+  Future<void> silence() async {
+    try {
+      await _micSub?.cancel();
+      _micSub = null;
+      if (await _rec.isRecording()) await _rec.stop();
+    } catch (_) {}
+    try {
+      // clear: true drops what is already queued, or she carries on
+      // speaking from the buffer after the screen is gone.
+      await _stopPlayback(clear: true);
+    } catch (_) {}
+    remoteSpeaking = false;
+    onSpeaking?.call(false);
+  }
+
   Future<void> stop() async {
     _era++; // any in-flight start() must now abandon itself
     if (!_active && _ch == null) return;

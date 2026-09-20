@@ -54,8 +54,11 @@ String documentDateLabel(UserDocument d) {
 void openDocument(BuildContext context, UserDocument d,
     {List<UserDocument>? within,
     Future<bool> Function(UserDocument)? onDelete}) {
-  if (d.isPdf) {
-    _openPdf(context, d);
+  // Only images live in the in-app gallery. PDFs, and now the decks,
+  // documents and sheets the assistant writes, go to whichever app on the
+  // phone can open that type.
+  if (!d.isImage) {
+    _openFile(context, d);
     return;
   }
   final list = within ?? [d];
@@ -78,7 +81,7 @@ void openDocument(BuildContext context, UserDocument d,
 /// 2026-09-20). Images never hit this because they are fetched in-app
 /// with auth headers. So: fetch the bytes with auth, write them to the
 /// cache, and hand THAT file to whichever viewer the phone has.
-Future<void> _openPdf(BuildContext context, UserDocument d) async {
+Future<void> _openFile(BuildContext context, UserDocument d) async {
   AppFeedback.toast('Opening…');
   try {
     final file = await ApiService.downloadDocument(d.id);
@@ -87,15 +90,55 @@ Future<void> _openPdf(BuildContext context, UserDocument d) async {
         .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
         .trim();
     final path =
-        '${dir.path}/${safe.isEmpty ? 'document' : safe}-${d.id}.pdf';
+        '${dir.path}/${safe.isEmpty ? 'document' : safe}-${d.id}${d.fileExtension}';
     await File(path).writeAsBytes(file.bytes, flush: true);
-    final res = await OpenFilex.open(path, type: 'application/pdf');
+    final res = await OpenFilex.open(path, type: d.mime);
     if (res.type != ResultType.done) {
-      AppFeedback.toast(
-          'No app on this phone can open PDFs — install a PDF reader.');
+      // Not an error the user caused, and not a dead end: Share hands the
+      // same file to Google Slides/Docs/Sheets, Drive or WhatsApp, which
+      // is how most phones open these without an Office app installed.
+      AppFeedback.toast(d.isPdf
+          ? 'No app on this phone can open PDFs — install a PDF reader.'
+          : 'No app here opens a ${documentTypeLabel(d)} — use Share to open it in Google ${d.kind == 'sheet' ? 'Sheets' : d.kind == 'slides' ? 'Slides' : 'Docs'} or Drive.');
     }
   } catch (_) {
     AppFeedback.toast("Couldn't open that document — try again.");
+  }
+}
+
+/// Human name for the file type, used in labels and error copy.
+String documentTypeLabel(UserDocument d) {
+  switch (d.kind) {
+    case 'pdf':
+      return 'PDF';
+    case 'slides':
+      return 'PowerPoint';
+    case 'doc':
+      return 'Word document';
+    case 'sheet':
+      return d.mime == 'text/csv' ? 'CSV' : 'Excel sheet';
+    case 'text':
+      return 'Text file';
+    default:
+      return '';
+  }
+}
+
+/// Icon + colour for a file that cannot be previewed as an image.
+({IconData icon, Color color}) documentGlyph(UserDocument d) {
+  switch (d.kind) {
+    case 'pdf':
+      return (icon: Icons.picture_as_pdf_rounded, color: Neon.pink);
+    case 'slides':
+      return (icon: Icons.slideshow_rounded, color: Neon.violet);
+    case 'doc':
+      return (icon: Icons.description_rounded, color: Neon.cyan);
+    case 'sheet':
+      return (icon: Icons.table_chart_rounded, color: Neon.lime);
+    case 'text':
+      return (icon: Icons.notes_rounded, color: Neon.textLo);
+    default:
+      return (icon: Icons.insert_drive_file_rounded, color: Neon.textLo);
   }
 }
 
@@ -128,7 +171,7 @@ Future<bool> confirmDeleteDocument(BuildContext context, UserDocument d,
   return ok == true;
 }
 
-/// Thumbnail: image preview, or a PDF glyph on a neutral ground.
+/// Thumbnail: image preview, or a type glyph on a neutral ground.
 class DocumentThumb extends StatelessWidget {
   final UserDocument document;
   final double radius;
@@ -144,12 +187,14 @@ class DocumentThumb extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: SizedBox.expand(
-        child: document.isPdf
-            ? Container(
-                color: Neon.surfaceHigh,
-                child: Icon(Icons.picture_as_pdf_rounded,
-                    color: Neon.pink, size: 28),
-              )
+        child: !document.isImage
+            ? Builder(builder: (_) {
+                final g = documentGlyph(document);
+                return Container(
+                  color: Neon.surfaceHigh,
+                  child: Icon(g.icon, color: g.color, size: 28),
+                );
+              })
             : Image.network(
                 ApiService.documentFileUrl(document.id),
                 headers: ApiService.imageHeaders,
@@ -233,7 +278,12 @@ class DocumentListTile extends StatelessWidget {
     final d = document;
     final cat = documentCategoryLabel(d.category);
     final date = documentDateLabel(d);
-    final meta = [if (date.isNotEmpty) date, if (cat.isNotEmpty) cat].join(' · ');
+    final type = documentTypeLabel(d);
+    final meta = [
+      if (date.isNotEmpty) date,
+      if (cat.isNotEmpty) cat,
+      if (cat.isEmpty && type.isNotEmpty) type,
+    ].join(' · ');
     return Material(
       color: Neon.surface,
       borderRadius: BorderRadius.circular(16),
@@ -297,7 +347,13 @@ class DocumentGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final d = document;
-    final date = documentDateLabel(d);
+    // The file TYPE matters more than the date on a grid of thumbnails
+    // that all look alike — a deck and a sheet are otherwise two identical
+    // tiles. Images keep the plain date; they show what they are.
+    final type = documentTypeLabel(d);
+    final date = [if (type.isNotEmpty) type, documentDateLabel(d)]
+        .where((s) => s.isNotEmpty)
+        .join(' · ');
     return Material(
       color: Neon.surface,
       borderRadius: BorderRadius.circular(16),

@@ -73,8 +73,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // Returning to the foreground re-checks for a published update (the
     // service throttles to every 30 min) — a phone that keeps the app in
     // memory for days used to miss releases entirely.
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    // PAUSED ONLY, NOT INACTIVE. `inactive` fires for anything that
+    // merely covers the window — the notification shade, a permission
+    // sheet, the app switcher preview, even a swipe gesture. Silencing
+    // the session for those tore the microphone down dozens of times a
+    // day; `paused` is the state that actually means "gone".
+    if (state == AppLifecycleState.paused) {
       AssistantEngine.instance.onAppPaused();
     }
     if (state == AppLifecycleState.resumed && mounted) {

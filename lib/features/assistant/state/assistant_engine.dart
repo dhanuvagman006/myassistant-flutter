@@ -3159,7 +3159,31 @@ class AssistantEngine extends ChangeNotifier {
   /// will quietly drop the live socket, so remember when it happened.
   void onAppPaused() {
     _backgroundedAt = DateTime.now();
+    // GO QUIET THE INSTANT THE APP LEAVES THE SCREEN.
+    //
+    // This only recorded the time, so she kept talking into a phone call,
+    // over another app, or into a pocket after the user swiped away — the
+    // single rudest thing an assistant can do, and reported as exactly
+    // that (2026-09-20). Audio stops here; the SESSION is left alone,
+    // because onAppResumed already rebuilds it, and a caller returning in
+    // two seconds should find the conversation still there.
+    //
+    // Deliberately not awaited: pause handlers must not block, and every
+    // one of these is safe to fire and forget.
+    unawaited(_voice.stopSpeaking().catchError((_) {}));
+    if (liveActive) {
+      // Remember that WE broke it. silence() tears the microphone down,
+      // so the session that comes back is not the one that left, however
+      // brief the trip — the resume path must rebuild it rather than
+      // trust the "was it long enough" heuristic below.
+      _silencedForBackground = true;
+      unawaited(_liveSvc.silence().catchError((_) {}));
+    }
   }
+
+  /// True while a backgrounded session is waiting to be rebuilt: the mic
+  /// was stopped on the way out and nothing else will restart it.
+  bool _silencedForBackground = false;
 
   /// The app came back to the foreground.
   ///
@@ -3191,11 +3215,22 @@ class AssistantEngine extends ChangeNotifier {
     _silenceSettle?.cancel();
     _silenceSettle = null;
 
-    final interrupted = (wasExternal && away.inMilliseconds >= 800) ||
+    // A session we silenced ALWAYS needs rebuilding — its microphone is
+    // gone. Without this the orb came back showing "listening" over a
+    // dead mic and stayed that way until the app was killed (reported
+    // 2026-09-20, after returning from an image search).
+    final silenced = _silencedForBackground;
+    _silencedForBackground = false;
+    final interrupted = silenced ||
+        (wasExternal && away.inMilliseconds >= 800) ||
         away.inSeconds >= 2;
     if (!interrupted) return;
 
     AppLog.add('live', 'resumed after ${away.inSeconds}s — rebuilding session');
+    // The last thing said belongs to the session that just died. Leaving
+    // it on screen is what made a stuck orb look like it was still
+    // working on "Opening image search for golden duck".
+    _clearCaption();
     if (liveActive) await stopLive();
     micLevel = 0;
     _setPhase(AssistantPhase.idle, silent: true);
