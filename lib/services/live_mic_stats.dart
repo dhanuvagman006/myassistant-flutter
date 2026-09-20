@@ -18,7 +18,6 @@ class LiveMicStats {
   static int frames = 0;
   static int speechFrames = 0;
   static int gatedFrames = 0; // attenuated as noise — high means trouble
-  static int selfInterrupts = 0; // barge-ins fired while she was speaking
 
   static void note({
     required double level,
@@ -42,7 +41,6 @@ class LiveMicStats {
     frames = 0;
     speechFrames = 0;
     gatedFrames = 0;
-    selfInterrupts = 0;
   }
 
   /// Rounded for a log line, empty before the first session so a fresh
@@ -57,7 +55,6 @@ class LiveMicStats {
       'micFrames': frames,
       'micSpeechPct': ((speechFrames / frames) * 100).round(),
       'micGatedPct': ((gatedFrames / frames) * 100).round(),
-      'micSelfInterrupts': selfInterrupts,
     };
   }
 }

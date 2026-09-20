@@ -15,8 +15,9 @@ import 'live_mic_stats.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
-///  /live/ws proxy). No transcription step, no client VAD, native barge-in:
-///  the mic streams PCM up continuously, Hari's VOICE streams back down.
+///  /live/ws proxy). No transcription step, no client VAD, and NO barge-in
+///  since 2026-09-20: the mic streams PCM up continuously EXCEPT while she
+///  is speaking, and Hari's VOICE streams back down.
 ///
 ///  Wire protocol (must match backend src/live/proxy.js):
 ///    up:   binary frame           = PCM16 mono 16 kHz mic chunk
@@ -120,18 +121,16 @@ class LiveService {
   // decay, so one shout does not hold the bar up for the rest of the call.
   double _peakLevel = 0.0;
 
-  /// How long audio must stay above the barge-in floor before any of it
-  /// is sent while the assistant is talking. Guards against her own echo
-  /// residue interrupting her.
-  int _bargeMs = 0;
-  static const _bargeHoldMs = 260;
   bool _speaking = false; // is the user mid-utterance right now?
 
-  /// How much louder than ordinary speech detection a sound must be to
-  /// count as talking OVER her, rather than her own voice leaking back
-  /// through the echo canceller. Tuned conservatively: missing a quiet
-  /// barge-in is recoverable, interrupting herself is not.
-  static const double _bargeInFactor = 2.2;
+  /// How long the microphone stays shut after the playhead ends, so the
+  /// loudspeaker's tail is never sent up as the user starting a new turn.
+  static const Duration _speakerTail = Duration(milliseconds: 250);
+
+  /// Wall-clock moment the microphone may stream again. Only ever pushed
+  /// forward while she is speaking, and never refreshed once she stops —
+  /// so it cannot leave the microphone shut.
+  DateTime _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _aboveMs = 0; // consecutive audio above the speech threshold
   int _belowMs = 0; // consecutive audio below it
   int _utteranceMs = 0; // length of the current utterance
@@ -259,6 +258,7 @@ class LiveService {
     _noiseFloor = 0.01;
     _gateAbort();
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+    _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
 
     // Open the gapless PCM stream player up-front, so the very first reply
     // byte can be fed straight to the speaker.
@@ -356,78 +356,34 @@ class LiveService {
         final l = _levelOf(chunk);
         if (l != null) onMicLevel?.call(l);
         try {
-          // WHILE SHE IS SPEAKING, THE AUDIO STILL GOES UP. That is the
-          // whole of barge-in.
+          // WHILE SHE IS SPEAKING, NOTHING GOES UP. BARGE-IN IS GONE.
           //
-          // This used to `return` without sending, so not one microphone
-          // frame reached Google while she talked. Google's detector is
-          // what decides an interruption happened — it cannot decide that
-          // about audio it never receives — so `interrupted` never fired,
-          // and talking over her did nothing. Every other piece was
-          // already in place: automaticActivityDetection is enabled with
-          // HIGH start sensitivity, the proxy forwards sc.interrupted, and
-          // live_service cuts playback on it. Only the frames were missing.
+          // His call, 2026-09-20: "remove the interruption or barge-in
+          // completely… it fails on a Samsung S24". On that handset the
+          // hardware echo canceller leaves enough of her own voice in the
+          // microphone that Google heard it as the user and cut her off
+          // mid-sentence, over and over ("it itself interrupts a lot").
+          // Every threshold, hold time and adaptive floor tried against it
+          // was a guess about how much of her voice leaks back on one
+          // particular phone, and on that phone every guess was wrong.
           //
-          // Her own voice does not come back up this path: the recorder is
-          // voiceCommunication with echoCancel and noiseSuppress, which is
-          // hardware AEC — the reason that configuration was chosen.
-          //
-          // The local probe is still suppressed. It exists to drive the orb
-          // and the timing logs, and running it against playback would have
-          // it open utterances at the loudspeaker.
+          // Google can only decide an interruption happened about audio it
+          // RECEIVES, so it now receives none while she speaks: she
+          // finishes her sentence, then the microphone is live again.
+          // Talking over her does nothing — the trade he asked for — and
+          // the server is set to NO_INTERRUPTION to match.
           if (playing || remoteSpeaking) {
             if (_speaking) {
               _gateAbort();
               _endUtterance();
             }
-            // LOCAL playback only. In avatar mode the voice comes out of
-            // the loudspeaker through LiveKit, which is NOT what the
-            // recorder's echo canceller is referenced against — streaming
-            // then would feed the avatar's own voice back and she would
-            // interrupt herself. That path keeps the hard mute.
-            //
-            // And even locally, only audio clearly LOUDER than the echo
-            // residue goes up. Hardware AEC removes most of her voice but
-            // not all of it, and a phone at full volume with a weak
-            // canceller would otherwise let her interrupt herself — the
-            // exact failure the old hard mute was guarding against. A real
-            // person talking over her clears this comfortably; what leaks
-            // back through the canceller does not.
-            if (!remoteSpeaking && !_gateActive && l != null) {
-              // BARGE-IN ONLY GOES UP, NEVER DOWN.
-              //
-              // The adaptive threshold above exists to HEAR a quiet
-              // microphone. Applying it here would do the opposite of
-              // what this guard is for: while she is speaking, the thing
-              // most likely to cross a low bar is her own voice leaking
-              // back through the echo canceller — which Gemini then hears
-              // as the user and stops her mid-sentence. Reported
-              // 2026-09-20: "it itself interrupts a lot". So the absolute
-              // floor stays, and the adaptive value may only raise it.
-              final bargeFloor = math.max(
-                math.max(
-                  _noiseFloor * _speechFactor * _bargeInFactor,
-                  _minSpeechLevel * 2.0,
-                ),
-                _speechThreshold * 2.0,
-              );
-              // AND IT MUST PERSIST. A single loud frame is an echo tail,
-              // a door, a cough. A person talking over her stays loud for
-              // longer than this; residue does not.
-              if (l > bargeFloor) {
-                _bargeMs += _msOf(chunk);
-              } else {
-                _bargeMs = 0;
-              }
-              if (_bargeMs >= _bargeHoldMs) {
-                if (_bargeMs - _msOf(chunk) < _bargeHoldMs) {
-                  LiveMicStats.selfInterrupts++; // crossed the bar just now
-                }
-                _ch?.sink.add(Uint8List.fromList(chunk));
-              }
-            }
+            // The loudspeaker keeps sounding for a moment past the
+            // playhead. Sending that tail up would hand Google the end of
+            // her own sentence as if it were the user starting to talk.
+            _micOpenAt = DateTime.now().add(_speakerTail);
             return;
           }
+          if (DateTime.now().isBefore(_micOpenAt)) return;
           if (l == null) return;
 
           if (l > _peakLevel) {
@@ -467,7 +423,6 @@ class LiveService {
             _ch?.sink.add(Uint8List.fromList(_noiseGated(chunk, l)));
           }
 
-          _bargeMs = 0; // not in playback — the hold is irrelevant here
           if (!_speaking) {
             if (!loud) {
               // Learn the room while nobody is talking. Never while they
