@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/log.dart';
@@ -128,13 +130,19 @@ class ShareIntakeService {
         final bytes = await File(path).readAsBytes();
         if (bytes.isEmpty) continue;
         final name = path.split('/').last;
-        await ApiService.uploadDocument(
+        final doc = await ApiService.uploadDocument(
           bytes: bytes,
           filename: name.isEmpty ? 'Shared.jpg' : name,
           mimeType: mime,
           note: 'shared from another app',
         );
         saved++;
+        // THE WHOLE POINT: the user shared it and is done. The server is
+        // now reading it; when it has understood — timetable, invite,
+        // legal paper — we mirror any events into the phone's calendar
+        // and say what happened. Fire-and-forget; failures stay quiet
+        // (the server's own notification still tells the outcome).
+        unawaited(_followUnderstanding(doc.id));
       } catch (e) {
         failed++;
         AppLog.add('share', 'upload failed: $e');
@@ -146,12 +154,66 @@ class ShareIntakeService {
     }
     if (saved > 0) {
       AppFeedback.toast(saved == 1
-          ? "Saved to your documents — tell me who it's for."
-          : "Saved $saved files to your documents — tell me who they're for.");
+          ? 'Got it — reading it now…'
+          : 'Got them — reading $saved files now…');
     } else if (failed > 0) {
       AppFeedback.toast("Couldn't save that — check your connection.");
     } else if (skipped > 0) {
       AppFeedback.toast("Couldn't read that file type — photos and PDFs work.");
     }
+  }
+
+  static const _calendar = MethodChannel('hari/calendar');
+
+  /// Polls the server's understanding of one uploaded document, then acts
+  /// on it: events go into the PHONE'S calendar (10-minute alert each) and
+  /// the user is told the outcome in one line. Analysis takes seconds to
+  /// low tens of seconds; poll gently and give up quietly — the server's
+  /// push notification is the fallback messenger.
+  Future<void> _followUnderstanding(int docId) async {
+    Map<String, dynamic>? u;
+    for (var i = 0; i < 15; i++) {
+      await Future.delayed(Duration(seconds: i < 4 ? 3 : 6));
+      final r = await ApiService.getJson('/docs/$docId/understanding');
+      if (r == null) continue;
+      if (r['ready'] == true) {
+        u = r;
+        break;
+      }
+    }
+    if (u == null) return;
+    final events = ((u['events'] as List?) ?? const [])
+        .whereType<Map>()
+        .toList();
+    final title = (u['title'] ?? 'Document').toString();
+    if (events.isEmpty) {
+      AppFeedback.toast('"$title" understood and remembered — ask me about '
+          'it any time.');
+      return;
+    }
+    // Mirror into the phone's own calendar. Ask for the permission the
+    // first time; declining still leaves the in-app reminders ringing.
+    var onCalendar = 0;
+    try {
+      final perm = await Permission.calendarFullAccess.request();
+      if (perm.isGranted) {
+        for (final e in events) {
+          final ok = await _calendar.invokeMethod<bool>('insertEvent', {
+                'title': (e['title'] ?? '').toString(),
+                'startMs': (e['atMs'] as num?)?.toInt() ?? 0,
+                'durationMin': 60,
+              }) ??
+              false;
+          if (ok) onCalendar++;
+        }
+      }
+    } catch (e) {
+      AppLog.add('share', 'calendar mirror failed: $e');
+    }
+    final n = events.length;
+    AppFeedback.toast(onCalendar > 0
+        ? '$n reminder${n == 1 ? '' : 's'} set from "$title" — '
+            'also on your calendar.'
+        : '$n reminder${n == 1 ? '' : 's'} set from "$title".');
   }
 }

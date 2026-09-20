@@ -108,6 +108,22 @@ class LiveService {
   // the noise floor is measured continuously while nobody is speaking, and
   // speech is "clearly louder than this room currently is".
   double _noiseFloor = 0.01; // running estimate of the room
+  // THE LOUDEST THING THIS MICROPHONE HAS ACTUALLY PRODUCED.
+  //
+  // Every threshold below used to sit on an absolute number, which
+  // assumed every phone hands us speech at roughly the same amplitude.
+  // They do not: Samsung's voiceCommunication path on an S24 Ultra
+  // (reported 2026-09-20 — "the voice is breaking") returns speech well
+  // under 0.08, so nothing was ever accepted as speech AND the gate then
+  // attenuated that same audio by a further 18 dB. Fast attack, very slow
+  // decay, so one shout does not hold the bar up for the rest of the call.
+  double _peakLevel = 0.0;
+
+  /// How long audio must stay above the barge-in floor before any of it
+  /// is sent while the assistant is talking. Guards against her own echo
+  /// residue interrupting her.
+  int _bargeMs = 0;
+  static const _bargeHoldMs = 260;
   bool _speaking = false; // is the user mid-utterance right now?
 
   /// How much louder than ordinary speech detection a sound must be to
@@ -122,6 +138,19 @@ class LiveService {
   /// Speech must be this many times the room's noise floor. Background
   /// sound sits at the floor by definition, so it never clears this bar.
   static const _speechFactor = 3.0;
+
+  /// What counts as speech on THIS phone: the room's noise floor scaled
+  /// up, with the absolute minimum lowered to fit a quiet microphone.
+  /// On a normal handset the peak sits well above _minSpeechLevel and
+  /// this returns exactly what it always did.
+  double get _speechThreshold {
+    final adaptive =
+        _peakLevel > 0.012 ? _peakLevel * 0.30 : _minSpeechLevel;
+    return math.max(
+      _noiseFloor * _speechFactor,
+      math.min(_minSpeechLevel, adaptive),
+    );
+  }
 
   /// An absolute floor too, so a very quiet room's tiny noise estimate
   /// cannot make a fan or a distant voice look like speech. _levelOf maps
@@ -364,18 +393,45 @@ class LiveService {
             // person talking over her clears this comfortably; what leaks
             // back through the canceller does not.
             if (!remoteSpeaking && !_gateActive && l != null) {
+              // BARGE-IN ONLY GOES UP, NEVER DOWN.
+              //
+              // The adaptive threshold above exists to HEAR a quiet
+              // microphone. Applying it here would do the opposite of
+              // what this guard is for: while she is speaking, the thing
+              // most likely to cross a low bar is her own voice leaking
+              // back through the echo canceller — which Gemini then hears
+              // as the user and stops her mid-sentence. Reported
+              // 2026-09-20: "it itself interrupts a lot". So the absolute
+              // floor stays, and the adaptive value may only raise it.
               final bargeFloor = math.max(
-                _noiseFloor * _speechFactor * _bargeInFactor,
-                _minSpeechLevel * 2.0,
+                math.max(
+                  _noiseFloor * _speechFactor * _bargeInFactor,
+                  _minSpeechLevel * 2.0,
+                ),
+                _speechThreshold * 2.0,
               );
-              if (l > bargeFloor) _ch?.sink.add(Uint8List.fromList(chunk));
+              // AND IT MUST PERSIST. A single loud frame is an echo tail,
+              // a door, a cough. A person talking over her stays loud for
+              // longer than this; residue does not.
+              if (l > bargeFloor) {
+                _bargeMs += _msOf(chunk);
+              } else {
+                _bargeMs = 0;
+              }
+              if (_bargeMs >= _bargeHoldMs) {
+                _ch?.sink.add(Uint8List.fromList(chunk));
+              }
             }
             return;
           }
           if (l == null) return;
 
-          final threshold =
-              math.max(_noiseFloor * _speechFactor, _minSpeechLevel);
+          if (l > _peakLevel) {
+            _peakLevel = l; // attack
+          } else {
+            _peakLevel *= 0.9995; // decay, ~a minute of speech to forget
+          }
+          final threshold = _speechThreshold;
           final loud = l > threshold;
 
           final ms = _msOf(chunk);
@@ -394,9 +450,10 @@ class LiveService {
           if (_gateActive) {
             _gateFeed(chunk, loud, ms);
           } else {
-            _ch?.sink.add(Uint8List.fromList(chunk));
+            _ch?.sink.add(Uint8List.fromList(_noiseGated(chunk, l)));
           }
 
+          _bargeMs = 0; // not in playback — the hold is irrelevant here
           if (!_speaking) {
             if (!loud) {
               // Learn the room while nobody is talking. Never while they
@@ -443,6 +500,32 @@ class LiveService {
         onSpeaking?.call(playing);
       }
     });
+  }
+
+  /// SOFT NOISE GATE (downward expander). Google's start-of-speech
+  /// detector must run at HIGH sensitivity on this model (LOW misses real
+  /// speech entirely — measured), which means a TV or street noise can
+  /// open turns. So frames that are clearly NOT the user — nobody
+  /// mid-utterance, level well under the speech threshold — go up
+  /// attenuated to a whisper instead of raw. Google still hears the
+  /// "silence" it needs for end-of-turn detection, the prefix padding
+  /// still carries real audio at real onsets (the gate opens BELOW the
+  /// speech threshold, so rising speech passes before the probe trips),
+  /// and background chatter stops sounding like a person.
+  List<int> _noiseGated(List<int> chunk, double? level) {
+    if (_speaking || level == null) return chunk;
+    final gateFloor = math.max(_noiseFloor * 2.0, _speechThreshold * 0.5);
+    if (level >= gateFloor) return chunk;
+    const scale = 0.12; // -18 dB: present, but no longer speech-like
+    final out = List<int>.from(chunk);
+    for (var i = 0; i + 1 < out.length; i += 2) {
+      var s = (out[i] & 0xff) | (out[i + 1] << 8);
+      if (s > 0x7fff) s -= 0x10000;
+      final v = (s * scale).round();
+      out[i] = v & 0xff;
+      out[i + 1] = (v >> 8) & 0xff;
+    }
+    return out;
   }
 
   /// (Re)arms the PCM stream. Called at session start and after every

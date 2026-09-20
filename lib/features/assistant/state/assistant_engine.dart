@@ -39,6 +39,7 @@ import '../../../services/auth_service.dart';
 import '../../../services/app_update_service.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/call_service.dart';
+import '../../../services/location_service.dart';
 import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
@@ -106,6 +107,21 @@ class AssistantEngine extends ChangeNotifier {
     inlineVoice = true;
     faceMode = false;
     notifyListeners();
+    // INSTANT VOICE. Connecting takes seconds; the hello doesn't have to.
+    // Speak a short greeting NOW from the on-device engine while live
+    // connects underneath — claiming the greeting epoch here makes the
+    // live path skip its own, so nothing is ever said twice. Same
+    // cooldown as always: a session reopened minutes later stays quiet.
+    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
+      _lastGreetedAt = DateTime.now();
+      final who = (name ?? greetingName ?? '').trim().split(RegExp(r'\s+')).first;
+      final h = DateTime.now().hour;
+      final part =
+          h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+      unawaited(_voice
+          .speakInstant(who.isEmpty ? '$part!' : '$part, $who!')
+          .catchError((_) {}));
+    }
     try {
       // HARD CEILING. Any await inside the start path (recorder release, a
       // socket that never answers, a wedged plugin) used to hang the tap
@@ -145,6 +161,10 @@ class AssistantEngine extends ChangeNotifier {
 
   /// True while a start is running, so taps cannot pile up.
   bool _starting = false;
+
+  /// The caption overlay reads this to appear the INSTANT the orb is
+  /// tapped — a connecting orb on a dimmed page beats a frozen screen.
+  bool get starting => _starting;
 
   /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
   /// clearing _conversationOpen makes the in-flight start terminate itself
@@ -251,6 +271,9 @@ class AssistantEngine extends ChangeNotifier {
 
   void _captionFrom(String speaker, String fragment) {
     if (!captionsEnabled && !inlineVoice) return;
+    // Anything being said, by either side, is activity — the idle-stop
+    // clock starts over (a long monologue must never be cut at 30 s).
+    _armIdleStop(phase);
     if (speaker == 'you') {
       if (!_capLastWasUser) {
         _capUser = '';
@@ -987,6 +1010,17 @@ class AssistantEngine extends ChangeNotifier {
   /// the user ever seeing an error).
   Future<bool> _startLive() async {
     AppLog.add('live', 'start: begin');
+    // The session URL carries the coordinates ONCE, at connect — so the
+    // fix must exist BEFORE the URL is built. On a cold start the
+    // background refresh raced this and lost, and the whole session ran
+    // location-blind ("best near me fails"). Bounded wait: a cached fix
+    // returns instantly, a real GPS fix gets ~1.2 s, and past that we
+    // connect anyway rather than add lag.
+    try {
+      await LocationService.instance
+          .refresh()
+          .timeout(const Duration(milliseconds: 1200));
+    } catch (_) {}
     // A previous session may still be tearing down (leaving the face
     // screen fires leaveConversation without awaiting it). Starting the
     // mic while LiveKit/audio release is mid-flight wedges the recorder —
@@ -1335,6 +1369,8 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> leaveConversation() async {
+    _idleStop?.cancel();
+    _idleStop = null;
     _conversationOpen = false;
     inlineVoice = false;
     _conversationEnded = true; // the loop must not resume on its own
@@ -1460,6 +1496,10 @@ class AssistantEngine extends ChangeNotifier {
     if (!greetingEnabled) return;
     if (!_conversationOpen) return;         // silent until the orb opens
     if (!connected) return;                 // never greet while offline
+    // The instant on-device greeting claims the epoch at orb-tap; the
+    // classic path must honour that claim or slow-network sessions are
+    // greeted twice — once instantly, once when the session settles.
+    if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) return;
     final epoch = _sessionEpoch;
     if (_greetedEpoch == epoch) return;     // once per real session
     if (phase.busy || liveActive || _liveStartResult != null) return;
@@ -1474,6 +1514,7 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
 
+    _lastGreetedAt = DateTime.now(); // one clock for every greeting path
     final text = greetingFor(greetingName);
     transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
     _captionFrom('hari', text);
@@ -1918,11 +1959,13 @@ class AssistantEngine extends ChangeNotifier {
           e['name'] as String? ?? '',
           e['message'] as String?,
           agentAvailable: e['agent_available'] == true,
+          via: (e['via'] ?? 'phone').toString(),
         );
         break;
 
       case 'contact_lookup':
         _pendingLookupName = e['name'] as String? ?? '';
+        _localCallVia = (e['via'] ?? 'phone').toString();
         // Contacts live on THIS device — resolve the name here and post
         // the matches back so the backend can continue the flow.
         _resolveContacts(e['name'] as String? ?? '');
@@ -2220,6 +2263,24 @@ class AssistantEngine extends ChangeNotifier {
           _leftForExternalApp = true;
           _openExternalUrl(url);
           _setPhase(AssistantPhase.completed);
+        }
+        break;
+
+      case 'end_conversation':
+        // The user said goodbye. Stop listening NOW (no more frames go
+        // up), give the two-word farewell just enough air to finish, and
+        // take the whole session down — orb, overlay, mic, socket.
+        {
+          AppLog.add('live', 'user ended the conversation by voice');
+          // remoteSpeaking hard-gates the mic uplink — no more frames go
+          // to the model while the farewell plays out.
+          _liveSvc.remoteSpeaking = true;
+          _setPhase(AssistantPhase.completed, silent: true);
+          Timer(const Duration(milliseconds: 1400), () {
+            if (inlineVoice || liveActive || _conversationOpen) {
+              endInlineConversation();
+            }
+          });
         }
         break;
 
@@ -2785,15 +2846,21 @@ class AssistantEngine extends ChangeNotifier {
   String? _localCallTask;
   bool _localCallAgentAvailable = false;
 
+  /// How to place the pending call: 'phone' (normal), 'whatsapp' or
+  /// 'whatsapp_video'. Set ONLY from what the user actually said — the
+  /// two kinds of call are never substituted for each other.
+  String _localCallVia = 'phone';
+
   /// Live-mode "call X [and tell them Y]": resolve the name against the
   /// phone's contacts and act. The spoken yes/no already happened inside
   /// the live conversation (high-risk tools are gated server-side), so a
   /// single match proceeds immediately — no second tap to approve.
   Future<void> _handleResolveAndCall(String name, String? message,
-      {bool agentAvailable = false}) async {
+      {bool agentAvailable = false, String via = 'phone'}) async {
     if (name.trim().isEmpty) return;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
+    _localCallVia = via;
 
     // EMERGENCY ("call an ambulance", "call 112"): skip contacts AND the
     // relay — the handset dials the short code itself, immediately.
@@ -2902,12 +2969,44 @@ class AssistantEngine extends ChangeNotifier {
 
     if (matches.length == 1) {
       await _actOnResolvedCall(matches.first);
+      return;
+    }
+
+    // THE SAME PERSON SAVED THREE TIMES ("Ravi 1", "Ravi 2", "Ravi 3").
+    //
+    // Saying the FULL saved name is an instruction, not a guess: if
+    // exactly one contact carries that name outright, dial it. Only a
+    // bare "call Ravi" — which matches all three equally — is ambiguous.
+    final spoken = CallService.instance.normalizedName(name);
+    final exact = [
+      for (final m in matches)
+        if (CallService.instance.normalizedName(m.name) == spoken) m,
+    ];
+    if (exact.length == 1) {
+      await _actOnResolvedCall(exact.first);
+      return;
+    }
+
+    // Genuinely ambiguous. The agent ASKS — by voice, naming the options
+    // exactly as they are saved so the answer ("Ravi 2") resolves to one
+    // contact on the next turn. The picker still appears for a tap.
+    _localCallFlow = true; // chooseContact routes back here
+    ambiguousContacts = matches.take(6).toList();
+    _pendingLookupName = name;
+    notifyListeners();
+    _offerContactPicker();
+
+    final names = ambiguousContacts.map((c) => c.name).join(', ');
+    if (liveActive) {
+      _liveSvc.sendText(
+          '[SYSTEM] "$name" matches ${ambiguousContacts.length} saved '
+          'contacts: $names. NO call was placed. Ask the user which one '
+          'you should call, in ONE short question that says the names as '
+          'they are saved. When they answer, call place_phone_call again '
+          'with that exact saved name.');
     } else {
-      _localCallFlow = true; // chooseContact routes back here
-      ambiguousContacts = matches.take(6).toList();
-      _pendingLookupName = name;
-      notifyListeners();
-      _offerContactPicker();
+      await _speakReply('You have ${ambiguousContacts.length} contacts for '
+          'that — $names. Which one should I call?');
     }
   }
 
@@ -2919,7 +3018,12 @@ class AssistantEngine extends ChangeNotifier {
     final task = _localCallTask;
     _localCallTask = null;
 
-    if (task != null && task.isNotEmpty && _localCallAgentAvailable) {
+    // A WhatsApp call is placed BY THE PHONE, so the relay service (which
+    // only dials normal numbers) is skipped entirely — _dialAndReport
+    // below routes it to WhatsApp.
+    final whatsapp = _localCallVia.startsWith('whatsapp');
+
+    if (!whatsapp && task != null && task.isNotEmpty && _localCallAgentAvailable) {
       String? id;
       try {
         id = await ApiService.startAgentCall(
@@ -3057,13 +3161,9 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
     final ok = await _startLive();
     if (ok) {
-      // AND GREET AGAIN. This rebuild is what actually runs when the app
-      // comes back from the background with a session still open — the
-      // shell's own reopen path sees liveActive and steps aside. Without
-      // this the orb came back silent, which is precisely "it failed to
-      // greet me when I open the app" for anyone who does not swipe the
-      // app away first.
-      _greetThroughLive();
+      // SILENTLY. The rebuilt session comes back listening, but must not
+      // greet again — the assistant never speaks unprompted on returning
+      // to the app; it talks only when the user does.
       return;
     }
     // Live could not come back (network still settling). Leave the orb
@@ -3083,6 +3183,37 @@ class AssistantEngine extends ChangeNotifier {
   /// so the assistant never claims a call it cannot prove.
   Future<void> _dialAndReport(ContactMatch contact) async {
     final who = contact.name.isEmpty ? 'them' : contact.name;
+
+    // WHATSAPP WAS ASKED FOR BY NAME. It rings differently and costs the
+    // other person data, so a normal call is never a silent substitute:
+    // if WhatsApp can't place it, we say so and offer, never assume.
+    if (_localCallVia.startsWith('whatsapp')) {
+      final video = _localCallVia == 'whatsapp_video';
+      _localCallVia = 'phone';
+      final fail =
+          await CallService.instance.whatsappCall(contact.phone, video: video);
+      if (fail == null) {
+        AppFeedback.toast('WhatsApp ${video ? 'video ' : ''}call to $who…');
+        await _reportCallResult(who, 'connected');
+        if (liveActive) {
+          _liveSvc.sendText('[SYSTEM] WhatsApp is placing the '
+              '${video ? 'video ' : ''}call to $who now.');
+        }
+        return;
+      }
+      final why = CallService.whatsappFailure(fail, who);
+      AppFeedback.toast(why);
+      await _reportCallResult(who, 'failed', reason: fail);
+      if (liveActive) {
+        _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
+            'whether I want a normal phone call instead — do NOT place one '
+            'on your own.');
+      } else {
+        await _speakReply('$why Should I call them normally instead?');
+      }
+      return;
+    }
+
     bool ok = false;
     try {
       ok = await CallService.instance.call(contact.phone);
@@ -3416,8 +3547,33 @@ class AssistantEngine extends ChangeNotifier {
   void _setPhase(AssistantPhase p, {bool silent = false}) {
     phase = p;
     _armWatchdog();
+    _armIdleStop(p);
     notifyListeners();
     if (!silent) _haptic(p);
+  }
+
+  /// A SESSION THAT NOBODY IS TALKING TO ENDS ITSELF. The mic used to
+  /// stay hot indefinitely after the last reply — the user walks away,
+  /// the room keeps making noise, and eventually the detector opens a
+  /// turn on a TV voice and the assistant "randomly speaks". Thirty
+  /// silent seconds after a turn completes, the inline session closes on
+  /// its own; any real activity re-arms the clock.
+  Timer? _idleStop;
+  static const _idleStopAfter = Duration(seconds: 30);
+
+  void _armIdleStop(AssistantPhase p) {
+    _idleStop?.cancel();
+    _idleStop = null;
+    if (!inlineVoice || !liveActive) return;
+    if (p != AssistantPhase.idle && p != AssistantPhase.completed) return;
+    _idleStop = Timer(_idleStopAfter, () {
+      if (!inlineVoice || !liveActive) return;
+      if (phase != AssistantPhase.idle && phase != AssistantPhase.completed) {
+        return;
+      }
+      AppLog.add('live', 'idle ${_idleStopAfter.inSeconds}s — ending session');
+      endInlineConversation();
+    });
   }
 
   void _setLocalError(String message) {

@@ -2,6 +2,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
+import 'design/accent_controller.dart';
 import 'design/theme_controller.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/auth/assistant_setup_screen.dart';
@@ -17,11 +18,15 @@ import 'services/brief_service.dart';
 import 'services/style_prefs.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'services/background_scan.dart';
 import 'services/push_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Background call-recording scans (WorkManager) — cheap registration;
+  // the periodic task itself only exists while AI call analysis is on.
+  await BackgroundScan.init();
   try {
     await Firebase.initializeApp();
     await PushService.instance.init();
@@ -47,6 +52,7 @@ Future<void> main() async {
   // Load the saved theme BEFORE the first frame (also sets the system
   // bars to match — light bars/dark icons or the other way around).
   await ThemeController.load();
+  await AccentController.load();
   // Style + language prefs load in parallel with the first frame; every
   // later read is a plain field access (no disk on hot paths).
   StylePrefs.instance.load();
@@ -86,7 +92,12 @@ class MyAssistantApp extends StatelessWidget {
   Widget build(BuildContext context) {
     // The whole tree re-creates when the theme flips: tokens are resolved
     // in build methods, and the KeyedSubtree defeats const-widget caching.
-    return ValueListenableBuilder<bool>(
+    // Two things repaint the whole app: the light/dark flip and the
+    // user's accent colour. Both resolve inside build methods, so the
+    // tree is rebuilt for either.
+    return ValueListenableBuilder<Color>(
+      valueListenable: AccentController.seed,
+      builder: (_, __, ___) => ValueListenableBuilder<bool>(
       valueListenable: ThemeController.dark,
       builder: (_, dark, __) => MaterialApp(
         title: 'MyAssistant',
@@ -98,7 +109,10 @@ class MyAssistantApp extends StatelessWidget {
         theme: AppTheme.light(),
         darkTheme: AppTheme.light(),
         themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself
-        home: KeyedSubtree(key: ValueKey(dark), child: const AuthGate()),
+        home: KeyedSubtree(
+            key: ValueKey('$dark|${AccentController.seed.value.toARGB32()}'),
+            child: const AuthGate()),
+      ),
       ),
     );
   }
@@ -147,8 +161,17 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     AppLock.instance.addListener(_onAuthChanged);
     AuthService.instance.addListener(_onAuthChanged);
     if (_restoring) {
+      // THE SPLASH MUST BE SEEN. A cached session restores in ~50 ms,
+      // which gave the animated opening exactly one frame — "the splash
+      // screen is not visible". Hold it just long enough for the
+      // entrance to play; a slow restore already takes longer anyway.
+      final shownAt = DateTime.now();
       AuthService.instance.init().whenComplete(() {
-        if (mounted) setState(() => _restoring = false);
+        const minShow = Duration(milliseconds: 1700);
+        final left = minShow - DateTime.now().difference(shownAt);
+        Future.delayed(left.isNegative ? Duration.zero : left, () {
+          if (mounted) setState(() => _restoring = false);
+        });
       });
     }
   }

@@ -156,11 +156,15 @@ class ApiService {
   }
 
   /// Small generic GET helper (used by the live-mode availability probe).
-  static Future<Map<String, dynamic>?> getJson(String path) async {
+  /// [timeout] defaults to the 6s probe budget; endpoints that think
+  /// before answering (mail triage runs a model) must pass their own or
+  /// they fail as "unreachable" while the server is still working.
+  static Future<Map<String, dynamic>?> getJson(String path,
+      {Duration timeout = const Duration(seconds: 6)}) async {
     try {
       final r = await _client
           .get(Uri.parse('$baseUrl$path'), headers: _authHeaders)
-          .timeout(const Duration(seconds: 6));
+          .timeout(timeout);
       if (r.statusCode != 200) {
         _flagAuthFailure(r.statusCode);
         return null;

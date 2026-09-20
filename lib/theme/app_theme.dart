@@ -48,7 +48,7 @@ class AppTheme {
       seedColor: Neon.violet,
       brightness: Neon.isDark ? Brightness.dark : Brightness.light,
       primary: Neon.violet,
-      onPrimary: Colors.white,
+      onPrimary: Neon.onInk,
       secondary: Neon.cyan,
       onSecondary: Colors.white,
       tertiary: Neon.pink,
@@ -64,6 +64,17 @@ class AppTheme {
       textTheme: _text(
           (Neon.isDark ? ThemeData.dark() : ThemeData.light()).textTheme),
       splashFactory: InkSparkle.splashFactory,
+      // FEEDBACK, EVERYWHERE. Every tap in the app answers with a soft
+      // violet wash + the sparkle ripple, every route change glides
+      // instead of jumping, and snackbars float — one theme block, the
+      // whole app responds.
+      splashColor: Neon.violet.withValues(alpha: 0.12),
+      highlightColor: Neon.violet.withValues(alpha: 0.06),
+      hoverColor: Neon.violet.withValues(alpha: 0.04),
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+        TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
+      }),
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -88,7 +99,7 @@ class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: Neon.violet,
-          foregroundColor: Colors.white,
+          foregroundColor: Neon.onInk,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
           textStyle: GoogleFonts.manrope(
               fontWeight: FontWeight.w600, fontSize: 15.5),
@@ -193,8 +204,9 @@ class AppTheme {
         modalBackgroundColor: Neon.surface,
         showDragHandle: true,
         dragHandleColor: Neon.textDim,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
+        shape: const RoundedRectangleBorder(
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
@@ -208,7 +220,7 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((s) =>
-            s.contains(WidgetState.selected) ? Colors.white : Neon.textDim),
+            s.contains(WidgetState.selected) ? Neon.onInk : Neon.textDim),
         trackColor: WidgetStateProperty.resolveWith((s) =>
             s.contains(WidgetState.selected)
                 ? Neon.violet
@@ -223,7 +235,7 @@ class AppTheme {
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: Neon.violet,
-        foregroundColor: Colors.white,
+        foregroundColor: Neon.onInk,
       ),
     );
   }

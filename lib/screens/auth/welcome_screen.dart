@@ -203,7 +203,7 @@ class _Particle {
     Neon.cyan,
     Neon.pink,
     Neon.lime,
-    Color(0xFFF59E0B),
+    const Color(0xFFF59E0B),
   ];
 
   factory _Particle.random(math.Random r) => _Particle(

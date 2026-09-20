@@ -1,3 +1,4 @@
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -51,9 +52,21 @@ class DeviceCapabilities {
       final info = await PackageInfo.fromPlatform();
       build = int.tryParse(info.buildNumber) ?? 0;
     } catch (_) {}
+    // WHICH PHONE THIS IS. Without it, "works on mine, breaks on his" is
+    // guesswork: a mic threshold that suits one handset can be wrong on
+    // another (S24 Ultra, 2026-09-20), and nobody could tell from here.
+    String model = '';
+    String osVersion = '';
+    try {
+      final d = await DeviceInfoPlugin().androidInfo;
+      model = '${d.manufacturer} ${d.model}'.trim();
+      osVersion = 'Android ${d.version.release} (SDK ${d.version.sdkInt})';
+    } catch (_) {}
     return {
       'platform': 'android',
       'build': build,
+      'model': model,
+      'osVersion': osVersion,
       'granted': granted,
       'denied': denied,
     };

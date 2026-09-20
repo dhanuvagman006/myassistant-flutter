@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../design/accent_controller.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
@@ -14,6 +15,8 @@ import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/voice_id_service.dart';
 import 'avatar_face_screen.dart';
+import 'theme_colour_screen.dart';
+import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -97,6 +100,13 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   }
 
   /// Voice saves the moment it's tapped — 'default' clears the override.
+  String _voiceName(String id) {
+    for (final (vid, title, _) in _voices) {
+      if (vid == id) return title;
+    }
+    return 'Default';
+  }
+
   Future<void> _pickVoice(String v) async {
     HapticFeedback.selectionClick();
     final prev = _voice;
@@ -251,7 +261,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     dividerInset: 60,
                     children: [
                       AppleRow(
-                        leading: const IconTile(
+                        leading: IconTile(
                             Icons.auto_awesome_rounded, AppleColors.purple),
                         title: n,
                         subtitle: 'To rename, just say it — "your name is '
@@ -278,15 +288,15 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         onTap: () => ThemeController.setMode(ThemeMode3.adaptive),
                       ),
                       AppleRow(
-                        leading:
-                            IconTile(Icons.wb_sunny_rounded, AppleColors.orange),
+                        leading: IconTile(
+                            Icons.wb_sunny_rounded, AppleColors.orange),
                         title: 'Light',
                         trailing: _themeTick(mode == ThemeMode3.light),
                         onTap: () => ThemeController.setMode(ThemeMode3.light),
                       ),
                       AppleRow(
-                        leading:
-                            IconTile(Icons.nightlight_round, AppleColors.gray),
+                        leading: IconTile(
+                            Icons.nightlight_round, AppleColors.gray),
                         title: 'Dark',
                         trailing: _themeTick(mode == ThemeMode3.dark),
                         onTap: () => ThemeController.setMode(ThemeMode3.dark),
@@ -294,28 +304,81 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading: IconTile(
+                          Icons.palette_rounded, AppleColors.purple),
+                      title: 'Theme colour',
+                      subtitle: 'Paints the orb, the mic and every highlight',
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ValueListenableBuilder<Color>(
+                            valueListenable: AccentController.seed,
+                            builder: (_, seed, __) => Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: Neon.tile(seed),
+                                border: Border.all(color: Neon.line),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(Icons.chevron_right_rounded,
+                              color: Neon.textDim, size: 20),
+                        ],
+                      ),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const ThemeColourScreen()),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 24),
 
                 const GroupLabel('Voice'),
-                Padding(
-                  padding: const EdgeInsets.only(left: 16, bottom: 8),
-                  child: Text(
-                    'Tap a voice — it applies to your next conversation.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
-                  ),
-                ),
                 GroupedCard(
+                  dividerInset: 60,
                   children: [
-                    for (final (id, title, tagline) in _voices)
-                      AppleRow(
-                        title: title,
-                        subtitle: tagline,
-                        trailing: _voice == id
-                            ? const Icon(Icons.check_rounded,
-                                color: AppleColors.blue, size: 20)
-                            : const SizedBox.shrink(),
-                        onTap: () => _pickVoice(id),
+                    AppleRow(
+                      leading: IconTile(
+                          Icons.graphic_eq_rounded, AppleColors.teal),
+                      title: 'Assistant voice',
+                      subtitle: 'Applies to your next conversation',
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _voiceName(_voice),
+                            style: TextStyle(
+                                color: Neon.textLo,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(Icons.chevron_right_rounded,
+                              color: Neon.textDim, size: 20),
+                        ],
                       ),
+                      onTap: () async {
+                        final picked =
+                            await Navigator.of(context).push<String>(
+                          MaterialPageRoute(
+                            builder: (_) => VoicePickerScreen(
+                              voices: _voices,
+                              selectedId: _voice,
+                            ),
+                          ),
+                        );
+                        if (picked != null && mounted) _pickVoice(picked);
+                      },
+                    ),
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -325,7 +388,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   dividerInset: 60,
                   children: [
                     AppleRow(
-                      leading: const IconTile(
+                      leading: IconTile(
                           Icons.closed_caption_rounded, AppleColors.blue),
                       title: 'Live captions',
                       subtitle: 'Read what both of you say at the bottom of '
@@ -350,7 +413,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   dividerInset: 60,
                   children: [
                     AppleRow(
-                      leading: const IconTile(
+                      leading: IconTile(
                           Icons.record_voice_over_rounded, AppleColors.teal),
                       title: 'Voice ID',
                       subtitle: _voiceEnrolled
@@ -404,7 +467,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     dividerInset: 60,
                     children: [
                       AppleRow(
-                        leading: const IconTile(
+                        leading: IconTile(
                             Icons.face_retouching_natural_rounded,
                             AppleColors.orange),
                         title: 'Avatar face',
@@ -448,7 +511,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   dividerInset: 60,
                   children: [
                     AppleRow(
-                      leading: const IconTile(
+                      leading: IconTile(
                           Icons.record_voice_over_rounded, AppleColors.green),
                       title: 'Send messages as you',
                       subtitle: 'Your face and voice on messages you send '
@@ -507,7 +570,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   const SizedBox(width: 8),
                   IconButton(
                       onPressed: _addRule,
-                      icon: const Icon(Icons.add_circle_rounded,
+                      icon: Icon(Icons.add_circle_rounded,
                           color: AppleColors.blue)),
                 ]),
                 const SizedBox(height: 24),

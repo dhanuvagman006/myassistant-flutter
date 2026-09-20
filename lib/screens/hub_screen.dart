@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
-import 'diagnostics_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
+import 'phone/call_notes_screen.dart';
+import 'email_setup_screen.dart';
+import 'features_screen.dart';
 import 'stocks_screen.dart';
 import 'studio/studio_screen.dart';
 
@@ -37,19 +40,35 @@ class HubScreen extends StatelessWidget {
               ),
             ),
           ),
+          _group(context, 'Phone', [
+            _Row(
+              'Call notes',
+              'AI notes, reminders and answers from your recorded calls',
+              Icons.call_rounded,
+              Neon.accentE,
+              (c) => const CallNotesScreen(),
+            ),
+            _Row(
+              'Email',
+              'Link your mailbox — then ask me to read or send mail',
+              Icons.alternate_email_rounded,
+              Neon.accentA,
+              (c) => const EmailSetupScreen(),
+            ),
+          ]),
           _group(context, 'Practice', [
             _Row(
               'Clients & patients',
               'Case files, notes and their documents',
               Icons.folder_shared_rounded,
-              const Color(0xFF007AFF),
+              Neon.accentF,
               (c) => const ClientsScreen(),
             ),
             _Row(
               'My documents',
               'Your own scans, IDs and files',
               Icons.description_rounded,
-              const Color(0xFF34C759),
+              Neon.accentC,
               (c) => const DocumentsScreen(),
             ),
           ]),
@@ -58,7 +77,7 @@ class HubScreen extends StatelessWidget {
               'Style Studio',
               'Try on outfits and hairstyles on your own photo',
               Icons.auto_awesome_rounded,
-              const Color(0xFFAF52DE),
+              Neon.accentB,
               (c) => const StudioScreen(),
             ),
           ]),
@@ -67,24 +86,24 @@ class HubScreen extends StatelessWidget {
               'Finance',
               'EMIs, incomes and payoff plans',
               Icons.account_balance_wallet_rounded,
-              const Color(0xFFAF52DE),
+              Neon.accentB,
               (c) => const FinanceScreen(),
             ),
             _Row(
               'Markets',
               'Live stocks and analysis',
               Icons.trending_up_rounded,
-              const Color(0xFFFF9500),
+              Neon.accentD,
               (c) => const StocksScreen(),
             ),
           ]),
-          _group(context, 'System', [
+          _group(context, 'App', [
             _Row(
-              'Connection',
-              'Server and diagnostics',
-              Icons.settings_ethernet_rounded,
-              const Color(0xFF8E8E93),
-              (c) => const DiagnosticsScreen(),
+              'Features',
+              "What's live, what's being built, what's next",
+              Icons.grid_view_rounded,
+              Neon.accentC,
+              (c) => const FeaturesScreen(),
             ),
           ]),
         ],
@@ -103,10 +122,10 @@ class HubScreen extends StatelessWidget {
             child: Text(
               title.toUpperCase(),
               style: TextStyle(
-                color: Neon.textDim,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.4,
+                color: Neon.violet,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
               ),
             ),
           ),
@@ -134,7 +153,8 @@ class HubScreen extends StatelessWidget {
   }
 
   Widget _rowTile(BuildContext context, _Row r) {
-    return InkWell(
+    return PressScale(
+        child: InkWell(
       onTap: () =>
           Navigator.of(context).push(MaterialPageRoute(builder: r.builder)),
       child: Padding(
@@ -142,13 +162,15 @@ class HubScreen extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 30,
-              height: 30,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
-                color: r.color,
-                borderRadius: BorderRadius.circular(7),
+                // One family, not a bag of app-store colours: every tile
+                // is built from the brand accents by the same rule.
+                gradient: Neon.tile(r.color),
+                borderRadius: BorderRadius.circular(11),
               ),
-              child: Icon(r.icon, color: Colors.white, size: 18),
+              child: Icon(r.icon, color: Colors.white, size: 19),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -167,9 +189,10 @@ class HubScreen extends StatelessWidget {
                   const SizedBox(height: 1),
                   Text(
                     r.subtitle,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: 12.5, height: 1.3),
                   ),
                 ],
               ),
@@ -178,7 +201,7 @@ class HubScreen extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ));
   }
 }
 

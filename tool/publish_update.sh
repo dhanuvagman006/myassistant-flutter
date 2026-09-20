@@ -87,9 +87,17 @@ else
   echo "→ warning: aapt2 not found, could not verify the APK's versionCode" >&2
 fi
 echo "→ uploading $(du -h "$APK" | cut -f1) APK as build $CODE ($NAME)"
+# rsync, not scp: a 135 MB upload over a hotspot uplink takes ~40 min and
+# an interrupted one used to start over from byte zero. --partial --inplace
+# resumes exactly where the last attempt died (2026-09-18: a kill at 78%
+# cost half an hour). Falls back to scp only if rsync is missing.
 SCP_HOST="$VPS"
 case "$VPS" in *:*:*) SCP_HOST="root@[${VPS#root@}]";; esac
-scp -q "$APK" "$SCP_HOST:/tmp/hari-upload.apk"
+if command -v rsync >/dev/null 2>&1; then
+  rsync -e ssh --partial --inplace "$APK" "$SCP_HOST:/tmp/hari-upload.apk"
+else
+  scp -q "$APK" "$SCP_HOST:/tmp/hari-upload.apk"
+fi
 
 ssh "$VPS" "
   set -e

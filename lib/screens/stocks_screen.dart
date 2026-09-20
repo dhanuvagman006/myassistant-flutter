@@ -83,7 +83,7 @@ class _StocksScreenState extends State<StocksScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.insights_rounded,
+                  Icon(Icons.insights_rounded,
                       size: 18, color: AppleColors.blue),
                   const SizedBox(width: 10),
                   Expanded(
@@ -227,7 +227,7 @@ class _StocksScreenState extends State<StocksScreen> {
               children: [
                 Text(
                   e['source'],
-                  style: const TextStyle(color: AppleColors.blue, fontSize: 11),
+                  style: TextStyle(color: AppleColors.blue, fontSize: 11),
                 ),
                 const Spacer(),
                 Text(

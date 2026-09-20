@@ -33,11 +33,20 @@ class LocationService {
           perm == LocationPermission.deniedForever) {
         return;
       }
+      // A last-known fix is only a shortcut when it is RECENT. Taking any
+      // cached position unconditionally meant a fix from yesterday — or
+      // another city — was used forever, which is exactly "best near me
+      // fails": the agent knew a location, just not the user's.
       Position? pos = await Geolocator.getLastKnownPosition();
-      pos ??= await Geolocator.getCurrentPosition(
-        locationSettings:
-            const LocationSettings(accuracy: LocationAccuracy.low),
-      ).timeout(const Duration(seconds: 10));
+      final fixAge = pos == null
+          ? null
+          : DateTime.now().difference(pos.timestamp);
+      if (pos == null || fixAge == null || fixAge.inMinutes > 15) {
+        pos = await Geolocator.getCurrentPosition(
+          locationSettings:
+              const LocationSettings(accuracy: LocationAccuracy.medium),
+        ).timeout(const Duration(seconds: 10));
+      }
       ApiService.geoLat = pos.latitude;
       ApiService.geoLng = pos.longitude;
       _lastFix = DateTime.now();

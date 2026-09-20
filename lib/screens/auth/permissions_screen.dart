@@ -26,7 +26,7 @@ class _PermItem {
   final String why;
 }
 
-const List<_PermItem> _kRequired = [
+final List<_PermItem> _kRequired = [
   _PermItem(Permission.microphone, Icons.mic_rounded, AppleColors.orange,
       'Microphone', 'Talking is how this app works.'),
   _PermItem(Permission.contacts, Icons.contacts_rounded, AppleColors.blue,

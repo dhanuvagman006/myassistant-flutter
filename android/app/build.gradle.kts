@@ -71,6 +71,17 @@ android {
                 signingConfigs.getByName("debug")
         }
     }
+
+    // The abiFilters above are overridden by the Flutter gradle plugin,
+    // so plugin .so files (onnxruntime 25 MB, webrtc 16 MB, sherpa 5 MB)
+    // still shipped for the emulator-only x86_64 ABI. Packaging excludes
+    // are applied last and actually stick.
+    packaging {
+        jniLibs {
+            excludes.add("lib/x86_64/**")
+            excludes.add("lib/x86/**")
+        }
+    }
 }
 
 kotlin {

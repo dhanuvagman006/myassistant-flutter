@@ -847,6 +847,17 @@ class VoiceService {
   }
 
   /// The on-device engine (offline / fallback path).
+  /// INSTANT speech: on-device engine only, no network round-trip. For
+  /// the one place where the first 300 ms matter more than voice quality
+  /// — the greeting the moment the orb is tapped, while the live session
+  /// is still connecting.
+  Future<void> speakInstant(String text) async {
+    if (PhoneStateGuard.instance.inCall) return;
+    final say = sanitizeForSpeech(text);
+    if (say.isEmpty) return;
+    await _speakLocal(say);
+  }
+
   Future<void> _speakLocal(String say) async {
     await _applyLanguageFor(say);
     // Some Android TTS engines drop a new utterance if one is already

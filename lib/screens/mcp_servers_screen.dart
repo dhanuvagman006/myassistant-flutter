@@ -180,7 +180,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(s['lastError'],
-                style: const TextStyle(color: AppleColors.red, fontSize: 12)),
+                style: TextStyle(color: AppleColors.red, fontSize: 12)),
           ],
           if (s['hasSecrets'] == true) ...[
             const SizedBox(height: 8),
@@ -235,7 +235,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                       child: Text(status == 'error' ? 'Retry' : 'Connect')),
                 TextButton(
                     onPressed: () => _confirmDelete(id, s['name'] ?? ''),
-                    child: const Text('Remove',
+                    child: Text('Remove',
                         style: TextStyle(color: AppleColors.red))),
               ],
             ),
@@ -261,7 +261,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: const Text('Remove',
+              child: Text('Remove',
                   style: TextStyle(color: AppleColors.red))),
         ],
       ),

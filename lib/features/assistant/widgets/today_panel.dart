@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../design/motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
 import '../../../widgets/month_calendar.dart';
@@ -160,7 +161,9 @@ class TodayBriefBody extends StatelessWidget {
   const TodayBriefBody({
     super.key,
     this.showHeader = false,
-    this.padding = const EdgeInsets.fromLTRB(20, 10, 20, 28),
+    // 120 at the bottom, not 28: the floating mic and the dock sit OVER
+    // this list, and the last card was being cut in half by them.
+    this.padding = const EdgeInsets.fromLTRB(20, 10, 20, 120),
   });
 
   @override
@@ -176,40 +179,76 @@ class TodayBriefBody extends StatelessWidget {
                 children: [
                   if (showHeader) _header(b),
                   const SizedBox(height: 16),
-                  _quickActions(context),
+                  // Staggered entrance, top to bottom — the page settles
+                  // in once; brief refreshes never replay it (Reveal
+                  // keeps its state across rebuilds).
+                  // The three action tiles are gone (2026-09-19): the
+                  // quote now sits under the date in the header, and the
+                  // suggestions below do the same job without shouting.
+                  // WHAT ELSE IT CAN DO, at the moment it is useful.
+                  // People use the two things they discovered on day one
+                  // unless something shows them the rest; these rotate
+                  // with the clock so the app stays worth opening.
+                  Reveal(delayMs: 40, child: _tryAsking(context)),
                   const SizedBox(height: 20),
                   if (!svc.loaded)
                     Padding(
-                      padding: EdgeInsets.symmetric(vertical: 32),
+                      padding: const EdgeInsets.symmetric(vertical: 32),
                       child: Center(
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Neon.textLo)),
                     )
                   else ...[
-                    if (b.messages.isNotEmpty) ...[
-                      _sectionTitle(Icons.mark_email_unread_rounded,
-                          'Messages for you', Neon.cyan),
-                      ...b.messages.take(4).map(_messageTile),
-                      const SizedBox(height: 18),
-                    ],
-                    _sectionTitle(
-                        Icons.event_note_rounded, 'Today’s agenda', Neon.violet),
-                    if (b.agenda.isEmpty)
-                      _emptyLine('Nothing scheduled — enjoy the calm.')
-                    else
-                      ...b.agenda.take(6).map(_agendaTile),
+                    if (b.messages.isNotEmpty)
+                      Reveal(
+                        delayMs: 60,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _sectionTitle(Icons.mark_email_unread_rounded,
+                                'Messages for you', Neon.cyan),
+                            ...b.messages.take(4).map(_messageTile),
+                            const SizedBox(height: 18),
+                          ],
+                        ),
+                      ),
+                    Reveal(
+                      delayMs: 100,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(Icons.event_note_rounded,
+                              'Today’s agenda', Neon.violet),
+                          if (b.agenda.isEmpty)
+                            _emptyLine('Nothing scheduled — enjoy the calm.',
+                                icon: Icons.wb_sunny_rounded,
+                                tint: Neon.warning)
+                          else
+                            ...b.agenda.take(6).map(_agendaTile),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 18),
-                    _sectionTitle(
-                        Icons.handshake_rounded, 'Promises you made', Neon.pink),
-                    if (b.promises.isEmpty)
-                      _emptyLine('No open promises. Clean slate.')
-                    else
-                      ...b.promises.take(5).map(_promiseTile),
+                    Reveal(
+                      delayMs: 160,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionTitle(Icons.handshake_rounded,
+                              'Promises you made', Neon.pink),
+                          if (b.promises.isEmpty)
+                            _emptyLine('No open promises. Clean slate.')
+                          else
+                            ...b.promises.take(5).map(_promiseTile),
+                        ],
+                      ),
+                    ),
                     // The month at a glance — everything the user has told
                     // their agent about, on the day it happens. News lives
                     // in the Updates tab now; Home is the user's own life.
                     const SizedBox(height: 18),
-                    const MonthCalendar(),
+                    const Reveal(delayMs: 220, child: MonthCalendar()),
+
                   ],
                 ],
               );
@@ -279,101 +318,118 @@ class TodayBriefBody extends StatelessWidget {
   /// The dashboard drives the CONVERSATION — each action hands a request to
   /// whichever session (live or classic) currently owns the audio, so the
   /// buttons and the voice agent are one brain, not two features.
-  Widget _quickActions(BuildContext context) {
-    // Same visual language as onboarding: ink marks on plain tiles.
-    Widget act(IconData icon, String label, Gradient g, VoidCallback onTap) {
-      return Expanded(
-        child: GestureDetector(
-          onTap: () {
-            HapticFeedback.mediumImpact();
-            onTap();
-          },
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              color: Neon.surface,
-              borderRadius: BorderRadius.circular(Neon.rMd),
-              border: Border.all(color: Neon.line),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: Neon.textHi,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  // onInk, not white — on the dark theme this tile is
-                  // chalk, and a white glyph on it was invisible.
-                  child: Icon(icon, size: 17, color: Neon.onInk),
-                ),
-                const SizedBox(height: 6),
-                Text(label,
-                    style: TextStyle(
-                        color: Neon.textLo,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
-              ],
+  /// Three suggestions that fit the hour. Tapping runs the request for
+  /// real — these are shortcuts, not screenshots of features.
+  Widget _tryAsking(BuildContext context) {
+    final h = DateTime.now().hour;
+    final ideas = h < 12
+        ? const [
+            ('Brief me for today', 'Give me my brief for today.'),
+            ('What is on my calendar?', 'What is on my calendar today?'),
+            ('Remind me tonight', 'Remind me tonight at 8 to plan tomorrow.'),
+          ]
+        : h < 17
+            ? const [
+                ('What did I promise?', 'What have I promised anyone recently?'),
+                ('Any mail worth reading?', 'Any important mail I should know about?'),
+                ('Track an expense', 'I spent money today — note it for me.'),
+              ]
+            : const [
+                ('Summarise my day', 'Summarise what happened today for me.'),
+                ('What is tomorrow like?', 'What does my day tomorrow look like?'),
+                ('Write an email', 'I want to send an email — ask me the details.'),
+              ];
+    return SizedBox(
+      height: 34,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: ideas.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) => PressScale(
+          child: GestureDetector(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              final nav = Navigator.of(context);
+              if (nav.canPop()) nav.pop();
+              AssistantEngine.instance.askAssistant(ideas[i].$2);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+              decoration: BoxDecoration(
+                color: Neon.violet.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(Neon.rPill),
+                border:
+                    Border.all(color: Neon.violet.withValues(alpha: 0.28)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.graphic_eq_rounded, size: 13, color: Neon.violet),
+                  const SizedBox(width: 6),
+                  Text(ideas[i].$1,
+                      style: TextStyle(
+                          color: Neon.textHi,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
             ),
           ),
         ),
-      );
-    }
-
-    return Row(
-      children: [
-        // Brief me is the one action that IS a conversation — hand it to
-        // whichever session owns the audio and get out of the way.
-        act(Icons.auto_awesome_rounded, 'Brief me', Neon.gVioletCyan, () {
-          // Close the sheet IF this panel is in one. On the dashboard the
-          // panel is embedded in the ROOT route — popping that left the
-          // navigator empty (blank white screen, back-swipe exits).
-          final nav = Navigator.of(context);
-          if (nav.canPop()) nav.pop();
-          AssistantEngine.instance.askAssistant(
-              'Give me my brief for today — my agenda, my messages and the promises I have open.');
-        }),
-        // Remind me and Scan are DETERMINISTIC: a silent phone, a muted
-        // speaker, a meeting — the buttons must work with zero audio.
-        act(Icons.alarm_add_rounded, 'Remind me', Neon.gPinkViolet, () {
-          showDialog(
-            context: context,
-            builder: (_) => const _ReminderComposer(),
-          );
-        }),
-        act(Icons.document_scanner_rounded, 'Scan', Neon.gCyanLime, () {
-          final nav = Navigator.of(context);
-          if (nav.canPop()) nav.pop();
-          AssistantEngine.instance.startScan();
-        }),
-      ],
+      ),
     );
   }
 
-  // The tint parameter is kept for call-site stability but ignored: the
-  // Daylight-ink pass made every section header monochrome.
   Widget _sectionTitle(IconData icon, String title, Color tint) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(
           children: [
-            Icon(icon, size: 15, color: Neon.textHi),
-            const SizedBox(width: 7),
+            // The tint was passed in and then ignored — every header icon
+            // painted white, which is a good part of why the page read
+            // flat. Small tinted squares, same language as the Hub.
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                gradient: Neon.tile(tint),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(icon, size: 15, color: Colors.white),
+            ),
+            const SizedBox(width: 10),
             Text(title,
                 style: TextStyle(
                     color: Neon.textHi,
-                    fontSize: 13,
+                    fontSize: 14.5,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: 0.2)),
+                    letterSpacing: 0.1)),
           ],
         ),
       );
 
-  Widget _emptyLine(String text) => Padding(
-        padding: const EdgeInsets.only(left: 22, bottom: 4),
-        child: Text(text,
-            style: TextStyle(color: Neon.textDim, fontSize: 13)),
+  /// An empty section still deserves a warm line, not gray silence.
+  Widget _emptyLine(String text,
+          {IconData icon = Icons.check_circle_rounded, Color? tint}) =>
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 4),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Neon.surface,
+            borderRadius: BorderRadius.circular(Neon.rSm),
+            border: Border.all(color: Neon.line),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 16, color: tint ?? Neon.success),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(text,
+                    style: TextStyle(color: Neon.textLo, fontSize: 13)),
+              ),
+            ],
+          ),
+        ),
       );
 
   static String _timeLabel(int? atMs) {
@@ -402,7 +458,7 @@ class TodayBriefBody extends StatelessWidget {
         child: Text(
           _timeLabel(a.atMs),
           style: TextStyle(
-              color: isMeeting ? Neon.cyan : const Color(0xFFB79CFF),
+              color: isMeeting ? Neon.cyan : Neon.violet,
               fontSize: 11.5,
               fontWeight: FontWeight.w700),
         ),
@@ -439,7 +495,7 @@ class TodayBriefBody extends StatelessWidget {
           BriefService.instance.completePromise(p);
         },
         child: Padding(
-          padding: EdgeInsets.all(6),
+          padding: const EdgeInsets.all(6),
           child: Icon(Icons.radio_button_unchecked_rounded,
               size: 18, color: Neon.pink),
         ),
@@ -534,7 +590,8 @@ class TodayBriefBody extends StatelessWidget {
   }
 
   static Widget _glassTile({required Widget leading, required Widget child}) =>
-      Container(
+      PressScale(
+          child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -550,7 +607,7 @@ class TodayBriefBody extends StatelessWidget {
             Expanded(child: child),
           ],
         ),
-      );
+      ));
 }
 
 /// ─────────────────────────────────────────────────────────────────────────

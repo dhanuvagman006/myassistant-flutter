@@ -26,6 +26,18 @@
 <!-- Incoming-call guard: detect ringing/active calls so the assistant
      stops speaking immediately and releases the microphone. -->
 <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+<!-- AI call analysis, system-recorder mode: read the call recordings the
+     phone's OWN dialer saves (Samsung records both sides cleanly; we
+     never can from a normal app). Android 13+ uses READ_MEDIA_AUDIO,
+     older phones the legacy storage permission. -->
+<uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+<!-- Auto-understood documents mirror their events (exam slots, meetings)
+     into the user's own calendar. Read is required by Android to insert
+     with a calendar id; nothing is ever read back beyond that id. -->
+<uses-permission android:name="android.permission.READ_CALENDAR"/>
+<uses-permission android:name="android.permission.WRITE_CALENDAR"/>
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32"/>
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <!-- Sideloaded installs get aggressive OEM battery management (Realme/
      Oppo/Xiaomi especially), which delays or drops FCM and kills the
@@ -67,6 +79,12 @@
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.LAUNCHER"/>
         </intent>
+        <!-- WHATSAPP, BY NAME. Package visibility for a LAUNCHER query
+             covers opening the app, but reading its contact-data rows
+             (the only way to place a WhatsApp call) and targeting the
+             call intent at it both need the package declared outright. -->
+        <package android:name="com.whatsapp"/>
+        <package android:name="com.whatsapp.w4b"/>
         <!-- THE PHONE'S CLOCK. Android 11+ hides activities this app has
              not declared an interest in, and resolveActivity then returns
              null for a clock that is plainly installed — which is why

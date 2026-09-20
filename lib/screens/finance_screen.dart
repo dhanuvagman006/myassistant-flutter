@@ -57,10 +57,10 @@ class _FinanceScreenState extends State<FinanceScreen> {
       appBar: appleAppBar(context, 'Finance', actions: [
         TextButton.icon(
           onPressed: _planWithHari,
-          icon: const Icon(Icons.auto_awesome_rounded,
+          icon: Icon(Icons.auto_awesome_rounded,
               size: 16, color: AppleColors.blue),
           label: Text('Plan with ${AssistantIdentity.name}',
-              style: const TextStyle(
+              style: TextStyle(
                   color: AppleColors.blue,
                   fontSize: 13,
                   fontWeight: FontWeight.w600)),

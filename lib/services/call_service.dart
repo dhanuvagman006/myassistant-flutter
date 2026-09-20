@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -135,6 +136,11 @@ class CallService {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
+  /// The comparable form of a contact name — used by callers that must
+  /// decide whether the user named a contact OUTRIGHT (e.g. "Ravi 2"
+  /// among Ravi 1/2/3) rather than merely close to several.
+  String normalizedName(String s) => _norm(s);
+
   /// Fuzzy score: exact > word-exact > prefix > contains.
   int _score(String contactName, String wanted) {
     final c = _norm(contactName), w = _norm(wanted);
@@ -260,6 +266,45 @@ class CallService {
       return await launchUrl(Uri.parse('tel:$clean'));
     } catch (_) {
       return false;
+    }
+  }
+
+  // ---------------- WHATSAPP CALLING ----------------
+  // Only ever used when the user SAID "WhatsApp" — a WhatsApp call rings
+  // differently and costs the other person data, so it is never a silent
+  // substitute for a normal call (and a normal call is never a silent
+  // substitute for this one).
+
+  static const _intent = MethodChannel('hari/intent');
+
+  /// Places a WhatsApp voice (or video) call to [number].
+  /// Returns `null` on success, else a SHORT reason for the failure:
+  /// 'not_on_whatsapp' | 'whatsapp_missing' | 'no_contacts_permission'.
+  Future<String?> whatsappCall(String number, {bool video = false}) async {
+    final clean = number.replaceAll(RegExp(r'[^\d+]'), '');
+    if (clean.isEmpty) return 'no_number';
+    try {
+      final r = await _intent.invokeMethod<Map<Object?, Object?>>(
+          'whatsappCall', {'number': clean, 'video': video});
+      if (r?['ok'] == true) return null;
+      return (r?['reason'] ?? 'failed').toString();
+    } catch (_) {
+      return 'failed';
+    }
+  }
+
+  /// Human sentence for a whatsappCall failure reason — one place, so the
+  /// spoken line and the toast never drift apart.
+  static String whatsappFailure(String reason, String who) {
+    switch (reason) {
+      case 'not_on_whatsapp':
+        return "$who isn't on WhatsApp with that number, so no call was placed.";
+      case 'whatsapp_missing':
+        return 'WhatsApp is not installed on this phone, so no call was placed.';
+      case 'no_contacts_permission':
+        return 'Contacts permission is off, so the WhatsApp call could not be placed.';
+      default:
+        return "The WhatsApp call to $who could not be placed.";
     }
   }
 }

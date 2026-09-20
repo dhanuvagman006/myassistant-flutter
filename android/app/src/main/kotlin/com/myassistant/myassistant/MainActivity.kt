@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.os.Process
 import android.provider.Settings
+import android.telecom.TelecomManager
 import android.util.Log
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -20,6 +21,86 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // PHONE CALENDAR. Auto-understood documents (a shared timetable,
+        // an invite) mirror their events into the user's real calendar —
+        // the one their home-screen widget shows. Insert-only.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/calendar")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "insertEvent" -> {
+                        try {
+                            val title = call.argument<String>("title") ?: ""
+                            val startMs = call.argument<Number>("startMs")?.toLong() ?: 0L
+                            val durMin = call.argument<Number>("durationMin")?.toLong() ?: 60L
+                            if (title.isEmpty() || startMs <= 0) {
+                                result.success(false); return@setMethodCallHandler
+                            }
+                            val values = android.content.ContentValues().apply {
+                                put(android.provider.CalendarContract.Events.DTSTART, startMs)
+                                put(android.provider.CalendarContract.Events.DTEND,
+                                    startMs + durMin * 60_000)
+                                put(android.provider.CalendarContract.Events.TITLE, title)
+                                put(android.provider.CalendarContract.Events.CALENDAR_ID,
+                                    primaryCalendarId() ?: 1L)
+                                put(android.provider.CalendarContract.Events.EVENT_TIMEZONE,
+                                    java.util.TimeZone.getDefault().id)
+                                put(android.provider.CalendarContract.Events.HAS_ALARM, 1)
+                            }
+                            val uri = contentResolver.insert(
+                                android.provider.CalendarContract.Events.CONTENT_URI, values)
+                            // A 10-minute-before alert, so the calendar
+                            // rings like a calendar should.
+                            uri?.lastPathSegment?.toLongOrNull()?.let { eventId ->
+                                val rem = android.content.ContentValues().apply {
+                                    put(android.provider.CalendarContract.Reminders.EVENT_ID, eventId)
+                                    put(android.provider.CalendarContract.Reminders.MINUTES, 10)
+                                    put(android.provider.CalendarContract.Reminders.METHOD,
+                                        android.provider.CalendarContract.Reminders.METHOD_ALERT)
+                                }
+                                contentResolver.insert(
+                                    android.provider.CalendarContract.Reminders.CONTENT_URI, rem)
+                            }
+                            result.success(uri != null)
+                        } catch (e: Throwable) {
+                            Log.w("hari/calendar", "insert failed: ${e.message}")
+                            result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // AI CALL ANALYSIS uses the PHONE'S OWN call recorder (a system
+        // app records both sides cleanly; nothing we ship can). This
+        // channel's one job: land the user on the call-settings screen
+        // where that recorder is switched on. ACTION_SHOW_CALL_SETTINGS
+        // is the public, vendor-neutral way in; the fallback just opens
+        // the default dialer app.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/callrec")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "openCallSettings" -> {
+                        val opened = try {
+                            startActivity(
+                                Intent("android.telecom.action.SHOW_CALL_SETTINGS")
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            true
+                        } catch (_: Throwable) {
+                            try {
+                                val dialer = getSystemService(TelecomManager::class.java)
+                                    .defaultDialerPackage
+                                startActivity(
+                                    packageManager.getLaunchIntentForPackage(dialer!!)!!
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                true
+                            } catch (_: Throwable) { false }
+                        }
+                        result.success(opened)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         // APP USAGE (screen time). Android gates UsageStatsManager behind a
         // manually granted special permission — no runtime dialog exists, the
@@ -138,6 +219,79 @@ class MainActivity : FlutterFragmentActivity() {
                             }
                             Log.w("hari/clock", "FAILED $action [$kind]: ${e.javaClass.simpleName}: $msg")
                             result.success(mapOf("ok" to false, "reason" to kind, "detail" to msg.take(200)))
+                        }
+                    }
+                    // WHATSAPP CALL — only when the user SAID "WhatsApp".
+                    //
+                    // WhatsApp exposes a call as a CONTACT DATA ROW, not a
+                    // URL: wa.me links only open a chat, and there is no
+                    // public dial intent. So we look up the row whose
+                    // mimetype is WhatsApp's voip/video call for this
+                    // number and ACTION_VIEW it — exactly what tapping the
+                    // WhatsApp call button in Contacts does.
+                    //
+                    // The number must be matched loosely: WhatsApp stores
+                    // it as the user typed it ("+91 63601 39965"), so both
+                    // sides are reduced to their last 10 digits.
+                    "whatsappCall" -> {
+                        val number = call.argument<String>("number") ?: ""
+                        val video = call.argument<Boolean>("video") ?: false
+                        if (number.isEmpty()) {
+                            result.success(mapOf("ok" to false, "reason" to "no_number"))
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val mime = if (video)
+                                "vnd.android.cursor.item/vnd.com.whatsapp.video.call"
+                            else
+                                "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
+                            val want = number.filter { it.isDigit() }.takeLast(10)
+                            var dataId = -1L
+                            contentResolver.query(
+                                android.provider.ContactsContract.Data.CONTENT_URI,
+                                arrayOf(
+                                    android.provider.ContactsContract.Data._ID,
+                                    android.provider.ContactsContract.Data.DATA1
+                                ),
+                                "${android.provider.ContactsContract.Data.MIMETYPE}=?",
+                                arrayOf(mime),
+                                null
+                            )?.use { cur ->
+                                while (cur.moveToNext()) {
+                                    val raw = cur.getString(1) ?: continue
+                                    val got = raw.filter { it.isDigit() }.takeLast(10)
+                                    if (got.isNotEmpty() && got == want) {
+                                        dataId = cur.getLong(0)
+                                        break
+                                    }
+                                }
+                            }
+                            if (dataId < 0) {
+                                // Not a WhatsApp contact (or WhatsApp has not
+                                // synced this number). Say so — never place a
+                                // normal call the user did not ask for.
+                                Log.w("hari/whatsapp", "no whatsapp row for ...$want")
+                                result.success(mapOf("ok" to false, "reason" to "not_on_whatsapp"))
+                                return@setMethodCallHandler
+                            }
+                            val intent = Intent(
+                                Intent.ACTION_VIEW,
+                                android.content.ContentUris.withAppendedId(
+                                    android.provider.ContactsContract.Data.CONTENT_URI, dataId
+                                )
+                            )
+                            intent.setPackage("com.whatsapp")
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            applicationContext.startActivity(intent)
+                            Log.i("hari/whatsapp", "started ${if (video) "video" else "voice"} call row=$dataId")
+                            result.success(mapOf("ok" to true))
+                        } catch (e: android.content.ActivityNotFoundException) {
+                            result.success(mapOf("ok" to false, "reason" to "whatsapp_missing"))
+                        } catch (e: SecurityException) {
+                            result.success(mapOf("ok" to false, "reason" to "no_contacts_permission"))
+                        } catch (e: Throwable) {
+                            Log.w("hari/whatsapp", "failed: ${e.javaClass.simpleName}: ${e.message}")
+                            result.success(mapOf("ok" to false, "reason" to "failed"))
                         }
                     }
                     "launch" -> {
@@ -361,4 +515,23 @@ class MainActivity : FlutterFragmentActivity() {
             emptyList()
         }
     }
+
+    /** The account's primary (or first writable) calendar id. */
+    private fun primaryCalendarId(): Long? = try {
+        contentResolver.query(
+            android.provider.CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(
+                android.provider.CalendarContract.Calendars._ID,
+                android.provider.CalendarContract.Calendars.IS_PRIMARY),
+            null, null, null
+        )?.use { cur ->
+            var first: Long? = null
+            while (cur.moveToNext()) {
+                val id = cur.getLong(0)
+                if (first == null) first = id
+                if (cur.getInt(1) == 1) return@use id
+            }
+            first
+        }
+    } catch (_: Throwable) { null }
 }

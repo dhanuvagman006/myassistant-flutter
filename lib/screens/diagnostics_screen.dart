@@ -154,7 +154,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             dividerInset: 60,
             children: [
               AppleRow(
-                leading: const IconTile(
+                leading: IconTile(
                     Icons.face_retouching_natural, AppleColors.purple),
                 title: 'Assistant',
                 subtitle: 'Name, voice, style, standing rules',
@@ -163,7 +163,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               ),
               AppleRow(
                 leading:
-                    const IconTile(Icons.extension_rounded, AppleColors.teal),
+                    IconTile(Icons.extension_rounded, AppleColors.teal),
                 title: 'MCP servers',
                 subtitle: 'Connect external tools (advanced)',
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(

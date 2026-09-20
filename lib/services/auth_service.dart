@@ -87,9 +87,12 @@ class AuthService extends ChangeNotifier {
     forceCodeForRefreshToken: true,
     scopes: const [
       'https://www.googleapis.com/auth/gmail.readonly',
-      // D2 — reply DRAFTS only (compose never grants sending on our path;
-      // the user reviews and taps Send inside Gmail themselves).
+      // D2 — reply drafts (kept: the draft fallback still uses it).
       'https://www.googleapis.com/auth/gmail.compose',
+      // 2026-09-19 — the assistant now SENDS after a spoken confirmation
+      // (same contract as the app-password path). Existing links without
+      // this scope gracefully fall back to leaving a draft.
+      'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/calendar.readonly',
       // D3 — voice/preview event creation and edits.
       'https://www.googleapis.com/auth/calendar.events',
@@ -188,8 +191,9 @@ class AuthService extends ChangeNotifier {
         PushService.instance.syncToken();
       } else if (r.statusCode == 401) {
         await _clear(); // token expired or account gone
-      } else if (user == null) {
-        user = const AppUser(id: -1, provider: 'cached'); // server hiccup — stay signed in
+      } else {
+        // Server hiccup — stay signed in with the cached identity.
+        user ??= const AppUser(id: -1, provider: 'cached');
       }
     } catch (_) {
       user ??= const AppUser(id: -1, provider: 'cached'); // offline — stay signed in

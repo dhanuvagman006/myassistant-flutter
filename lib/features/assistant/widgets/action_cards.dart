@@ -649,7 +649,7 @@ class ScriptCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   onTap: () => Share.share(content, subject: title),
                   child: Padding(
-                    padding: EdgeInsets.all(4),
+                    padding: const EdgeInsets.all(4),
                     child:
                         Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
                   ),
@@ -660,7 +660,7 @@ class ScriptCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     onTap: onClose,
                     child: Padding(
-                      padding: EdgeInsets.all(4),
+                      padding: const EdgeInsets.all(4),
                       child: Icon(Icons.close_rounded,
                           color: Neon.textLo,
                           size: 19),
@@ -940,7 +940,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       borderRadius: BorderRadius.circular(10),
                       onTap: _share,
                       child: Padding(
-                        padding: EdgeInsets.all(4),
+                        padding: const EdgeInsets.all(4),
                         child: Icon(Icons.share_rounded,
                             color: Neon.cyan, size: 20),
                       ),
@@ -951,7 +951,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                   borderRadius: BorderRadius.circular(10),
                   onTap: widget.onClose,
                   child: Padding(
-                    padding: EdgeInsets.all(4),
+                    padding: const EdgeInsets.all(4),
                     child: Icon(Icons.close_rounded,
                         color: Neon.textLo,
                         size: 20),

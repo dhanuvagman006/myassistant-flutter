@@ -272,21 +272,21 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_camera_rounded, color: AppleColors.blue),
+              leading: Icon(Icons.photo_camera_rounded, color: AppleColors.blue),
               title: Text('Take a photo',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'camera'),
             ),
             ListTile(
               leading:
-                  const Icon(Icons.photo_library_rounded, color: AppleColors.blue),
+                  Icon(Icons.photo_library_rounded, color: AppleColors.blue),
               title: Text('Pick from gallery',
                   style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'gallery'),
             ),
             ListTile(
               leading:
-                  const Icon(Icons.picture_as_pdf_rounded, color: AppleColors.red),
+                  Icon(Icons.picture_as_pdf_rounded, color: AppleColors.red),
               title:
                   Text('Pick a PDF', style: TextStyle(color: Neon.textHi)),
               onTap: () => Navigator.pop(context, 'pdf'),
@@ -434,7 +434,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete',
+              child: Text('Delete',
                   style: TextStyle(color: AppleColors.red))),
         ],
       ),
@@ -636,33 +636,33 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       if (recallLine.isNotEmpty)
         AppleRow(
           leading:
-              const IconTile(Icons.event_repeat_rounded, AppleColors.orange),
+              IconTile(Icons.event_repeat_rounded, AppleColors.orange),
           title: recallLine,
         ),
       if (balanceLine.isNotEmpty)
         AppleRow(
           leading:
-              const IconTile(Icons.currency_rupee_rounded, AppleColors.green),
+              IconTile(Icons.currency_rupee_rounded, AppleColors.green),
           title: balanceLine,
         ),
       if (c.summary.isNotEmpty)
         AppleRow(
-          leading: const IconTile(Icons.info_outline_rounded, AppleColors.gray),
+          leading: IconTile(Icons.info_outline_rounded, AppleColors.gray),
           title: c.summary,
         ),
       if (c.phone.isNotEmpty)
         AppleRow(
-          leading: const IconTile(Icons.call_rounded, AppleColors.gray),
+          leading: IconTile(Icons.call_rounded, AppleColors.gray),
           title: c.phone,
         ),
       if (c.email.isNotEmpty)
         AppleRow(
-          leading: const IconTile(Icons.mail_outline_rounded, AppleColors.gray),
+          leading: IconTile(Icons.mail_outline_rounded, AppleColors.gray),
           title: c.email,
         ),
       if (c.tags.isNotEmpty)
         AppleRow(
-          leading: const IconTile(Icons.sell_outlined, AppleColors.gray),
+          leading: IconTile(Icons.sell_outlined, AppleColors.gray),
           title: c.tags,
         ),
     ];
@@ -891,7 +891,7 @@ class _EditClientSheetState extends State<_EditClientSheet> {
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: const TextStyle(color: AppleColors.red, fontSize: 13)),
+                style: TextStyle(color: AppleColors.red, fontSize: 13)),
           ],
           const SizedBox(height: 16),
           ApplePrimaryButton(

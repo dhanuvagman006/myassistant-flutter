@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
+import '../widgets/ambient_background.dart';
 import '../widgets/inline_voice.dart';
 import '../widgets/activity_pill.dart';
 import '../widgets/news_panel.dart';
@@ -15,6 +16,9 @@ import '../widgets/schedule_panel.dart';
 import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
+import '../services/call_notes_service.dart';
+import '../services/streak_service.dart';
+import '../services/call_recording_watcher.dart';
 import '../core/log.dart';
 import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
@@ -80,13 +84,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // A voice session interrupted by another app is rebuilt here —
       // coming back from Instagram used to leave the orb unable to speak.
       AssistantEngine.instance.onAppResumed();
-      // "OPEN THE APP" MEANS BRINGING IT TO THE FOREGROUND, not starting a
-      // fresh process. _autoOpened is process-level (it has to be — a theme
-      // flip recreates this State), so on its own the orb only ever started
-      // itself on a cold launch. Coming back to an app Android kept in
-      // memory did nothing, which is exactly what "it failed to greet me
-      // when I open the app" looked like.
-      _reopenConversationOnResume();
+      // Coming back from a phone call is exactly when a fresh system
+      // call recording exists — pick it up for analysis now.
+      CallRecordingWatcher.instance.scan();
       Timer(const Duration(seconds: 2), () {
         if (mounted) AppUpdateService.instance.check(context);
       });
@@ -121,7 +121,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting
-    _autoOpenConversation();
+    // AI CALL ANALYSIS over the phone's own recorder: hydrate the consent
+    // toggle so the watcher knows whether to pick up new recordings.
+    CallNotesService.instance.start();
+    // Count today towards the streak before the first frame settles, so
+    // the header shows the right number on this launch, not the next one.
+    StreakService.instance.touch().then((_) {
+      if (mounted) setState(() {});
+    });
+    // ON BY DEFAULT — but only after the user has been TOLD. One sheet,
+    // once per install, shortly after sign-in lands on Home; nothing is
+    // read until they answer (the server holds consentAt at 0 till then).
+    Timer(const Duration(seconds: 3), () {
+      if (mounted) _maybeShowCallNotesIntro();
+    });
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
@@ -245,50 +258,86 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   /// A tapped message notification used to open the conversation screen
   /// so the assistant could speak. The conversation now happens in place,
   /// so it just starts one.
-  /// THE ORB STARTS ITSELF WHEN THE APP OPENS.
   ///
-  /// Exactly the same path as tapping it: the assistant greets, then keeps
-  /// listening until the user taps to stop. The alternative tried first —
-  /// a passive spoken hello with the mic shut — was worse in both
-  /// directions: you heard the greeting twice (once at launch, once on the
-  /// orb) and still had to tap before it would listen.
-  ///
-  /// PROCESS-level, not per-State: a theme flip recreates this State
-  /// (KeyedSubtree in MyAssistantApp), and reopening the microphone every
-  /// time someone switches to dark mode would be its own bug.
-  static bool _autoOpened = false;
-
-  /// Re-open on resume when nothing is running. Throttled so a rapid
-  /// pause/resume (a notification shade, a permission dialog) cannot
-  /// thrash the microphone, and skipped entirely while a session is
-  /// already live — returning from another app must not interrupt a
-  /// conversation that survived the trip.
-  DateTime _lastAutoOpen = DateTime.fromMillisecondsSinceEpoch(0);
-
-  void _reopenConversationOnResume() {
-    final engine = AssistantEngine.instance;
-    if (engine.liveActive || engine.inlineVoice) return;
-    final now = DateTime.now();
-    // Short guard only against pause/resume thrash (a permission dialog, a
-    // notification shade). Whether the assistant SPEAKS on reopening is a
-    // separate decision, made in the engine — the microphone coming back
-    // every time is the point of this path.
-    if (now.difference(_lastAutoOpen) < const Duration(seconds: 5)) return;
-    _lastAutoOpen = now;
-    _startConversation();
-  }
-
-  void _autoOpenConversation() {
-    if (_autoOpened) return;
-    _autoOpened = true;
-    // After the first frame: the shell is mounted and the engine's session
-    // has had a moment to come up. beginInlineConversation carries its own
-    // 20 s ceiling and its own in-call and already-running guards.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  /// The conversation starts ONLY on a user gesture — an orb tap or a
+  /// tapped notification. The app opening or returning to the foreground
+  /// never starts one: the assistant must not speak unprompted.
+  /// The call-notes sign-in notice. Consent by information: the feature
+  /// ships ON, the user is told plainly what it does the first time they
+  /// land on Home, and one tap either keeps it or kills it. Nothing is
+  /// read before they answer.
+  Future<void> _maybeShowCallNotesIntro() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('call_notes_intro_v1') == true) return;
       if (!mounted) return;
-      _lastAutoOpen = DateTime.now();
-      _startConversation();
-    });
+      await showModalBottomSheet<void>(
+        context: context,
+        isDismissible: false,
+        enableDrag: false,
+        backgroundColor: Neon.surface,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (ctx) => Padding(
+          padding: const EdgeInsets.fromLTRB(22, 20, 22, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.graphic_eq_rounded, color: Neon.violet, size: 20),
+                const SizedBox(width: 9),
+                Text('Your calls, understood',
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700)),
+              ]),
+              const SizedBox(height: 10),
+              Text(
+                'Your assistant can read the call recordings your phone\'s '
+                'own dialer saves, and turn them into your agenda — '
+                'meetings, reminders and promises are filed automatically, '
+                'and you can ask what was said on any recorded call.\n\n'
+                '• Only calls recorded from now on are read.\n'
+                '• Audio is deleted right after transcription; only text '
+                'is kept, and your files are never touched.\n'
+                '• You can switch this off any time in Hub → Call notes.\n'
+                '• Where you live may require telling the other person a '
+                'call is recorded — that part is on you.',
+                style:
+                    TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
+              ),
+              const SizedBox(height: 16),
+              Row(children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await CallNotesService.instance.setAnalysis(false);
+                    },
+                    child: const Text('Turn off'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      await CallRecordingWatcher.instance.ensurePermission();
+                      await CallNotesService.instance.setAnalysis(true);
+                      CallRecordingWatcher.instance.scan();
+                    },
+                    child: const Text('Keep it on'),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      );
+      await prefs.setBool('call_notes_intro_v1', true);
+    } catch (_) {}
   }
 
   Future<void> _startConversation() async {
@@ -303,7 +352,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: Neon.bg,
       extendBody: true,
-      body: Stack(
+      // The ambient ground sits behind every tab, so switching tabs does
+      // not switch rooms.
+      body: AmbientBackground(
+        child: Stack(
         children: [
           IndexedStack(
             index: _tab,
@@ -314,8 +366,39 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               AssistantSettingsScreen(),
             ],
           ),
+          // CONTENT MUST NOT END MID-LETTER. Every tab is a scrolling
+          // list under a floating mic and a notched dock, so whatever is
+          // passing behind them showed as ghost text sliced by the orb.
+          // A short fade to the page ground makes the list dissolve into
+          // the dock instead — the standard fix, and the reason lists
+          // also carry bottom padding so the LAST card clears it.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 92,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Neon.bg.withValues(alpha: 0.0),
+                      Neon.bg.withValues(alpha: 0.85),
+                      Neon.bg,
+                    ],
+                    stops: const [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
           // Floating captions for the inline (no-screen) conversation.
           const InlineCaptionOverlay(),
+          // The last spoken answer lingers as a readable card once the
+          // voice stops — spoken words evaporate; this one doesn't.
+          const AnswerAfterglow(),
           // The cards a turn produces — a confirmation to tap, a call in
           // progress, a written piece, search results. These lived only
           // inside the old conversation screen, which is why Home had to
@@ -347,6 +430,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       // TAP: talk right here — the orb wakes in place, captions float above
@@ -424,14 +508,36 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(selected ? active : icon,
-                size: 23, color: selected ? Neon.textHi : Neon.textDim),
+            // Active tab in the primary accent — the standard convention;
+            // white-on-gray needed a second look to find where you were.
+            // The little grow on selection is the only dock motion.
+            AnimatedScale(
+              scale: selected ? 1.12 : 1.0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutBack,
+              // The selected tab sits in its own soft violet pill, so
+              // "where am I" reads at a glance instead of needing a
+              // colour comparison between two small icons.
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Neon.violet.withValues(alpha: 0.16)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(Neon.rPill),
+                ),
+                child: Icon(selected ? active : icon,
+                    size: 22, color: selected ? Neon.violet : Neon.textDim),
+              ),
+            ),
             const SizedBox(height: 3),
             Text(label,
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? Neon.textHi : Neon.textDim,
+                  color: selected ? Neon.violet : Neon.textDim,
                 )),
           ],
         ),

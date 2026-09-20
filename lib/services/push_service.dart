@@ -306,7 +306,7 @@ class PushService {
   void _checkForUpdateNow() {
     Future.delayed(const Duration(seconds: 2), () {
       final ctx = AvatarMessageService.navigatorKey.currentContext;
-      if (ctx != null) {
+      if (ctx != null && ctx.mounted) {
         AppUpdateService.instance.check(ctx, force: true);
       }
     });

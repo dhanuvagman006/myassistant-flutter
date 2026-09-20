@@ -46,9 +46,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // polled the server every 20 s forever, even with the tab never
       // opened and the app in the background. TickerMode is false for
       // offstage IndexedStack children.
-      if (!mounted || !TickerMode.of(context)) return;
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
       if (WidgetsBinding.instance.lifecycleState !=
-          AppLifecycleState.resumed) return;
+          AppLifecycleState.resumed) {
+        return;
+      }
       _load();
     });
   }
@@ -249,7 +251,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     _poll = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted ||
           WidgetsBinding.instance.lifecycleState !=
-              AppLifecycleState.resumed) return;
+              AppLifecycleState.resumed) {
+        return;
+      }
       _load();
     });
   }

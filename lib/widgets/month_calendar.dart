@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
 import '../services/brief_service.dart';
@@ -47,11 +48,16 @@ class _MonthCalendarState extends State<MonthCalendar> {
     'August', 'September', 'October', 'November', 'December'
   ];
 
-  // GitHub's light-mode contribution greens.
-  static const _greens = [
-    Color(0xFF9BE9A8),
-    Color(0xFF40C463),
-    Color(0xFF216E39),
+  // THE BUSY SCALE, IN THE BRAND'S OWN COLOURS.
+  //
+  // These were GitHub's contribution greens, which is why the one busy
+  // day on a violet screen glowed green and read as someone else's
+  // design. Same three-step idea, violet → magenta. The name stays so
+  // every call site below is untouched.
+  static final _greens = [
+    Color.lerp(Neon.violet, Colors.white, 0.35)!,
+    Neon.violet,
+    Neon.pink,
   ];
 
   @override
@@ -222,7 +228,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
               const SizedBox(height: 4),
               if (_loading)
                 Padding(
-                  padding: EdgeInsets.symmetric(vertical: 30),
+                  padding: const EdgeInsets.symmetric(vertical: 30),
                   child: Center(
                       child: SizedBox(
                           width: 18,
@@ -288,7 +294,8 @@ class _MonthCalendarState extends State<MonthCalendar> {
     final filled = count > 0;
 
     return Expanded(
-      child: GestureDetector(
+      child: PressScale(
+          child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           HapticFeedback.selectionClick();
@@ -307,11 +314,13 @@ class _MonthCalendarState extends State<MonthCalendar> {
           decoration: BoxDecoration(
             color: _tileColor(count),
             borderRadius: BorderRadius.circular(8),
+            // Violet, the app's primary accent — a white ring on a grid
+            // of gray tiles never read as "today".
             border: isSelected
-                ? Border.all(color: Neon.textHi, width: 1.6)
+                ? Border.all(color: Neon.violet, width: 1.6)
                 : isToday
                     ? Border.all(
-                        color: Neon.textHi.withValues(alpha: 0.45),
+                        color: Neon.violet.withValues(alpha: 0.55),
                         width: 1.2)
                     : Border.all(color: Neon.line, width: 0.5),
           ),
@@ -325,12 +334,13 @@ class _MonthCalendarState extends State<MonthCalendar> {
                 color: count >= 2
                     ? Colors.white
                     : filled
-                        ? const Color(0xFF14532D)
+                        ? const Color(0xFF2B0B45)
                         : Neon.textLo,
               ),
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -538,7 +548,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                                       if (ok) {
                                         setSheet(() {});
                                       } else {
-                                        ScaffoldMessenger.of(context)
+                                        ScaffoldMessenger.of(ctx)
                                             .showSnackBar(const SnackBar(
                                                 content: Text(
                                                     "Couldn't delete that.")));

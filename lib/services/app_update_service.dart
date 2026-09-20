@@ -369,11 +369,12 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       if (mounted) setState(() => _installing = true);
     } on _UpdateCancelled {
       // The user stopped it. Not an error, and nothing to report.
-      if (mounted)
+      if (mounted) {
         setState(() {
           _progress = null;
           _installing = false;
         });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -388,11 +389,12 @@ class _UpdateSheetState extends State<_UpdateSheet> {
 
   Future<void> _cancel() async {
     await AppUpdateService.instance.cancelDownload();
-    if (mounted)
+    if (mounted) {
       setState(() {
         _progress = null;
         _installing = false;
       });
+    }
   }
 
   static String _size(int bytes) {

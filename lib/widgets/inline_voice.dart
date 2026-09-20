@@ -1,5 +1,6 @@
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -31,10 +32,17 @@ class AssistantOrbButton extends StatefulWidget {
 }
 
 class _AssistantOrbButtonState extends State<AssistantOrbButton>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final engine = AssistantEngine.instance;
   late final AnimationController _halo =
       AnimationController(vsync: this, duration: const Duration(seconds: 2));
+
+  /// Slow breathing on the RESTING orb — the assistant's presence, not a
+  /// decoration. ±2% over 4 s; TickerMode pauses it when offstage.
+  late final AnimationController _breath = AnimationController(
+      vsync: this, duration: const Duration(seconds: 4), lowerBound: 0.98,
+      upperBound: 1.02)
+    ..repeat(reverse: true);
 
   bool get _active =>
       engine.liveActive ||
@@ -62,6 +70,7 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   void dispose() {
     engine.removeListener(_sync);
     _halo.dispose();
+    _breath.dispose();
     super.dispose();
   }
 
@@ -86,33 +95,54 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
               child: active
-                  ? ValueListenableBuilder<double>(
+                  // The big centre orb carries the session now; a second
+                  // waveform down here was redundant noise. During a
+                  // session this button has ONE job and now looks like
+                  // it: stop.
+                  ? Container(
                       key: const ValueKey('live'),
-                      valueListenable: engine.micLevelListenable,
-                      builder: (_, level, __) => SiriOrb(
-                        size: 64,
-                        phase: engine.phase,
-                        level: level,
-                        connected: true,
-                      ),
-                    )
-                  : Container(
-                      key: const ValueKey('idle'),
                       width: 64,
                       height: 64,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Neon.textHi,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Neon.textHi.withValues(alpha: 0.28),
-                            blurRadius: 18,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
+                        color: Neon.surfaceHigh,
+                        border: Border.all(
+                            color: Neon.violet.withValues(alpha: 0.7),
+                            width: 2),
                       ),
-                      child:
-                          Icon(Icons.mic_rounded, color: Neon.onInk, size: 30),
+                      child: Icon(Icons.stop_rounded,
+                          color: Neon.textHi, size: 30),
+                    )
+                  : ScaleTransition(
+                      key: const ValueKey('idle'),
+                      scale: _breath,
+                      child: Container(
+                        width: 64,
+                        height: 64,
+                        // THE MIC IS THE APP. A plain white puck was the
+                        // single biggest piece of "this looks unfinished"
+                        // on every screen — it now wears the brand
+                        // gradient and throws its own light.
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: Neon.gBrand,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Neon.violet.withValues(alpha: 0.55),
+                              blurRadius: 26,
+                              spreadRadius: 1,
+                              offset: const Offset(0, 8),
+                            ),
+                            BoxShadow(
+                              color: Neon.pink.withValues(alpha: 0.30),
+                              blurRadius: 18,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.mic_rounded,
+                            color: Colors.white, size: 30),
+                      ),
                     ),
             ),
           ],
@@ -122,7 +152,9 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   }
 }
 
-/// Two staggered rings breathing outward from the orb.
+/// Two staggered rings breathing outward from the orb. Radii scale with
+/// the painted size, so the same painter serves the 76 px dock orb and
+/// the large centre-screen orb.
 class _HaloPainter extends CustomPainter {
   final double t;
   _HaloPainter(this.t);
@@ -130,9 +162,10 @@ class _HaloPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
+    final s = size.shortestSide / 2;
     for (final phase in const [0.0, 0.5]) {
       final p = (t + phase) % 1.0;
-      final radius = 30 + p * 26;
+      final radius = s * (0.79 + p * 0.68);
       final alpha = (1 - p) * 0.35;
       canvas.drawCircle(
         c,
@@ -160,10 +193,16 @@ class InlineCaptionOverlay extends StatefulWidget {
   State<InlineCaptionOverlay> createState() => _InlineCaptionOverlayState();
 }
 
-class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
+class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
+    with SingleTickerProviderStateMixin {
   final engine = AssistantEngine.instance;
   String _text = '';
   bool _fromUser = false;
+
+  /// Drives the petal bloom around the big centre orb: one long loop,
+  /// bands counter-rotating at different fractions of it.
+  late final AnimationController _rings = AnimationController(
+      vsync: this, duration: const Duration(seconds: 24));
 
   /// SPEECH-PACED REVEAL. The transcript arrives at GENERATION speed —
   /// seconds ahead of the audio — so showing it raw makes the lyrics run
@@ -212,7 +251,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
 
   bool get _active =>
       engine.inlineVoice &&
-      (engine.liveActive ||
+      (engine.starting || // overlay up from the very first frame of a tap
+          engine.liveActive ||
           (engine.phase != AssistantPhase.idle &&
               engine.phase != AssistantPhase.completed));
 
@@ -228,6 +268,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
     _pacer?.cancel();
+    _rings.dispose();
     super.dispose();
   }
 
@@ -261,6 +302,12 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
     if (!mounted) return;
     // Session over → the words leave with it.
     if (!_active && _text.isNotEmpty) _text = '';
+    // The halo rings run only while the overlay is up.
+    if (_active && !_rings.isAnimating) _rings.repeat();
+    if (!_active && _rings.isAnimating) {
+      _rings.stop();
+      _rings.reset();
+    }
     setState(() {});
   }
 
@@ -311,59 +358,356 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay> {
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
         child: Container(
-          // A deep fade — the page behind must never compete with the words.
-          color: Colors.black.withValues(alpha: 0.8),
-          alignment: Alignment.center,
-          padding: const EdgeInsets.fromLTRB(28, 80, 28, 160),
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Earlier lines recede upward, dimmed — context, not focus.
-                // Lines are pre-wrapped to lyric length, so every one
-                // shows WHOLE — clipping history was how real content got
-                // hidden behind an ellipsis.
-                for (final l in previous)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Text(
-                      l,
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.spaceGrotesk(
-                        color: Colors.white.withValues(alpha: 0.38),
-                        fontSize: 19,
-                        height: 1.3,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.3,
+          // A NEAR-SOLID fade. At 0.82 the page ghosted through and its
+          // text collided with the orb and rings — on pure black it read
+          // as broken layering. The session is a place, not a tint.
+          color: Colors.black.withValues(alpha: 0.94),
+          padding: const EdgeInsets.fromLTRB(28, 60, 28, 120),
+          child: Column(
+            children: [
+              const Spacer(flex: 5),
+              // THE PRESENCE — the Siri-style orb, large and centred,
+              // living with the audio: cyan waves while you speak, pink
+              // while it answers, violet shimmer while it thinks. The
+              // rings breathe outward the whole session.
+              SizedBox(
+                width: 330,
+                height: 330,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (show)
+                      AnimatedBuilder(
+                        animation: _rings,
+                        builder: (_, __) => CustomPaint(
+                            size: const Size(330, 330),
+                            painter: _PetalBloomPainter(_rings.value)),
+                      ),
+                    ValueListenableBuilder<double>(
+                      valueListenable: engine.micLevelListenable,
+                      builder: (_, level, __) => SiriOrb(
+                        size: 168,
+                        phase: engine.phase,
+                        level: level,
+                        connected: engine.liveActive ||
+                            engine.phase != AssistantPhase.idle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              // THE WORDS — under the orb, lyrics-style. Before any words
+              // exist, the state itself is the caption: the user must
+              // never stare at an empty black area wondering if it heard.
+              if (lines.isEmpty)
+                Expanded(
+                  flex: 7,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: Text(
+                        switch (engine.phase) {
+                          AssistantPhase.listening => 'Listening…',
+                          AssistantPhase.thinking ||
+                          AssistantPhase.searching =>
+                            'Thinking…',
+                          AssistantPhase.speaking => '',
+                          _ => engine.liveActive
+                              ? 'Listening…'
+                              : 'Connecting…',
+                        },
+                        key: ValueKey('${engine.phase}|${engine.liveActive}'),
+                        style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
                       ),
                     ),
                   ),
-                // The line being spoken RIGHT NOW — the spotlight.
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  switchInCurve: Curves.easeOut,
-                  child: Text(
-                    current,
-                    key: ValueKey('$_fromUser|$current'),
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.spaceGrotesk(
-                      color: _fromUser
-                          ? Colors.white.withValues(alpha: 0.62)
-                          : Colors.white,
-                      fontSize: _fromUser ? 22 : 30,
-                      height: 1.3,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
+                )
+              else
+              Expanded(
+                flex: 7,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final l in previous)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              l,
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.spaceGrotesk(
+                                color: Colors.white.withValues(alpha: 0.38),
+                                fontSize: 15.5,
+                                height: 1.3,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                          ),
+                        // The line being spoken RIGHT NOW — the spotlight.
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          switchInCurve: Curves.easeOut,
+                          child: Text(
+                            current,
+                            key: ValueKey('$_fromUser|$current'),
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.spaceGrotesk(
+                              color: _fromUser
+                                  ? Colors.white.withValues(alpha: 0.62)
+                                  : Colors.white,
+                              fontSize: _fromUser ? 19 : 24,
+                              height: 1.3,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.4,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+/// THE ANSWER OUTLIVES THE VOICE. When an inline session ends, its last
+/// spoken reply lingers as a small card above the dock — spoken words
+/// evaporate, and "what did it just say?" was a real complaint. Dismiss
+/// with the ✕ or let it fade on its own.
+class AnswerAfterglow extends StatefulWidget {
+  const AnswerAfterglow({super.key});
+
+  @override
+  State<AnswerAfterglow> createState() => _AnswerAfterglowState();
+}
+
+class _AnswerAfterglowState extends State<AnswerAfterglow> {
+  final engine = AssistantEngine.instance;
+  bool _wasActive = false;
+  String? _text;
+  Timer? _hide;
+
+  @override
+  void initState() {
+    super.initState();
+    engine.addListener(_sync);
+  }
+
+  @override
+  void dispose() {
+    engine.removeListener(_sync);
+    _hide?.cancel();
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final active = engine.inlineVoice &&
+        (engine.starting ||
+            engine.liveActive ||
+            (engine.phase != AssistantPhase.idle &&
+                engine.phase != AssistantPhase.completed));
+    if (active && _text != null) {
+      // A new session replaces the old afterglow immediately.
+      _hide?.cancel();
+      setState(() => _text = null);
+    }
+    if (_wasActive && !active) {
+      String? last;
+      for (final t in engine.transcript.reversed) {
+        if (t.role == TranscriptRole.assistant && t.text.trim().isNotEmpty) {
+          last = t.text.trim();
+          break;
+        }
+      }
+      // Only a real answer earns an afterglow — never the greeting alone.
+      if (last != null && last.length > 12 && !last.endsWith('?')) {
+        setState(() => _text = last);
+        _hide?.cancel();
+        _hide = Timer(const Duration(seconds: 14), () {
+          if (mounted) setState(() => _text = null);
+        });
+      }
+    }
+    _wasActive = active;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = _text;
+    return IgnorePointer(
+      ignoring: t == null,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 300),
+        opacity: t == null ? 0 : 1,
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: Padding(
+            padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                bottom: 116 + MediaQuery.of(context).viewPadding.bottom),
+            child: t == null
+                ? const SizedBox.shrink()
+                : Container(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+                    decoration: BoxDecoration(
+                      color: Neon.surfaceHigh,
+                      borderRadius: BorderRadius.circular(Neon.rMd),
+                      border: Border.all(color: Neon.line),
+                      boxShadow: Neon.cardShadow,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Icon(Icons.auto_awesome,
+                              size: 15, color: Neon.violet),
+                        ),
+                        const SizedBox(width: 9),
+                        Flexible(
+                          child: Text(
+                            t,
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: Neon.textHi,
+                                fontSize: 13,
+                                height: 1.4),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () => setState(() => _text = null),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(Icons.close_rounded,
+                                size: 16, color: Neon.textDim),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// THE PETAL BLOOM — the reference look: dense violet crescent blades
+/// layered like a shutter around the dark centre, two thin blue-white
+/// rings hugging the orb, everything drifting slowly with a breath.
+///
+/// Three bands of feathered arcs, counter-rotating at different speeds.
+/// Each blade is two strokes — a deep violet body and a lighter lavender
+/// highlight riding its inner edge — which is what gives the feathers
+/// their two-tone, lit-from-inside look without a single blur filter
+/// (blur on forty strokes would melt a mid-range GPU).
+class _PetalBloomPainter extends CustomPainter {
+  final double t;
+  _PetalBloomPainter(this.t);
+
+  static const _bands = [
+    // radius offset from orb edge, blade count, stroke, rotation speed
+    (18.0, 12, 9.0, 0.9),
+    (38.0, 14, 12.0, -0.6),
+    (58.0, 16, 15.0, 0.4),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    const orbR = 84.0; // matches the 168 px SiriOrb
+    final breath = math.sin(t * 2 * math.pi * 6) * 2.0;
+
+    // Soft ambient glow behind everything, so the blades sit in light.
+    canvas.drawCircle(
+      c,
+      orbR + 76,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          const Color(0xFF7C5CE0).withValues(alpha: 0.16),
+          const Color(0xFF7C5CE0).withValues(alpha: 0.0),
+        ]).createShader(Rect.fromCircle(center: c, radius: orbR + 76)),
+    );
+
+    // The feather bands.
+    for (var b = 0; b < _bands.length; b++) {
+      final (off, count, stroke, speed) = _bands[b];
+      final r = orbR + off + breath * (b + 1) * 0.5;
+      final rot = t * 2 * math.pi * speed;
+      final rect = Rect.fromCircle(center: c, radius: r);
+      for (var i = 0; i < count; i++) {
+        final a = rot + 2 * math.pi * i / count;
+        final sweep = 2 * math.pi / count * 0.62;
+        // Deep body.
+        canvas.drawArc(
+          rect,
+          a,
+          sweep,
+          false,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeWidth = stroke
+            ..color = Color.lerp(const Color(0xFF6D4FD8),
+                    const Color(0xFF9B7BF0), (i % 3) / 2)!
+                .withValues(alpha: 0.42 - b * 0.08),
+        );
+        // Lavender highlight on the inner edge.
+        canvas.drawArc(
+          Rect.fromCircle(center: c, radius: r - stroke * 0.28),
+          a + sweep * 0.12,
+          sweep * 0.76,
+          false,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeWidth = stroke * 0.38
+            ..color = const Color(0xFFC9B8FF)
+                .withValues(alpha: 0.40 - b * 0.09),
+        );
+      }
+    }
+
+    // Thin crisp rings hugging the orb — the cool blue-white edge the
+    // reference has between the dark centre and the violet bloom.
+    canvas.drawCircle(
+      c,
+      orbR + 5,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = const Color(0xFFBFD4FF).withValues(alpha: 0.75),
+    );
+    canvas.drawCircle(
+      c,
+      orbR + 10,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..color = const Color(0xFF8B6EF3).withValues(alpha: 0.55),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PetalBloomPainter old) => old.t != t;
 }

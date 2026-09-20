@@ -383,14 +383,15 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 24),
                       Row(
                         children: [
-                          Expanded(child: Divider()),
+                          const Expanded(child: Divider()),
                           Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 12),
                             child: Text('or continue with',
                                 style: TextStyle(
                                     color: Neon.textDim, fontSize: 12.5)),
                           ),
-                          Expanded(child: Divider()),
+                          const Expanded(child: Divider()),
                         ],
                       ),
                       const SizedBox(height: 18),

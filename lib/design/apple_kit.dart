@@ -15,15 +15,23 @@ import 'neon_tokens.dart';
 /// ─────────────────────────────────────────────────────────────────────────
 
 /// Apple system palette (light). Use for icon tiles and semantic accents.
+/// THE ACCENT NAMES, RE-POINTED AT OUR OWN PALETTE (2026-09-19).
+///
+/// These were literal iOS system colours, so a settings screen showed an
+/// Apple blue next to an Apple orange next to a grey — six unrelated
+/// hues with no relationship to the app's violet. The NAMES stay (every
+/// screen already calls them) but each now resolves to a sibling of the
+/// brand, and `gray` is gone in all but name: a grey tile was the exact
+/// thing the owner called out. Theme-aware, like every other token.
 abstract final class AppleColors {
-  static const blue = Color(0xFF007AFF);
-  static const green = Color(0xFF34C759);
-  static const red = Color(0xFFFF3B30);
-  static const orange = Color(0xFFFF9500);
-  static const purple = Color(0xFFAF52DE);
-  static const teal = Color(0xFF30B0C7);
-  static const indigo = Color(0xFF5856D6);
-  static const gray = Color(0xFF8E8E93);
+  static Color get blue => Neon.accentF;
+  static Color get green => Neon.accentE;
+  static Color get red => Neon.error;
+  static Color get orange => Neon.accentD;
+  static Color get purple => Neon.accentA;
+  static Color get teal => Neon.accentC;
+  static Color get indigo => Neon.accentF;
+  static Color get gray => Neon.accentB;
 }
 
 /// Large leading title for a top-level screen ("Hub", "Finance").
@@ -130,18 +138,20 @@ class IconTile extends StatelessWidget {
   final IconData icon;
   final Color color;
   final double size;
-  const IconTile(this.icon, this.color, {super.key, this.size = 30});
+  const IconTile(this.icon, this.color, {super.key, this.size = 34});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: size,
       height: size,
+      // Same rule as every other tile in the app: a gradient built from
+      // the accent, with its own light underneath.
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(size * 0.23),
+        gradient: Neon.tile(color),
+        borderRadius: BorderRadius.circular(size * 0.3),
       ),
-      child: Icon(icon, color: Colors.white, size: size * 0.6),
+      child: Icon(icon, color: Colors.white, size: size * 0.55),
     );
   }
 }
