@@ -817,6 +817,10 @@ class ApiService {
     required String contactName,
     required String task,
     String? lang,
+    // What the USER said should happen if nobody answers. Zero means one
+    // attempt: the assistant never decides to ring someone again.
+    int retryTimes = 0,
+    int retryGapMinutes = 0,
   }) async {
     final r = await _client
         .post(
@@ -826,6 +830,8 @@ class ApiService {
             'toNumber': toNumber,
             'contactName': contactName,
             'task': task,
+            if (retryTimes > 0) 'retryTimes': retryTimes,
+            if (retryGapMinutes > 0) 'retryGapMinutes': retryGapMinutes,
             if (lang != null) 'lang': lang,
           }),
         )

@@ -2027,6 +2027,8 @@ class AssistantEngine extends ChangeNotifier {
           e['message'] as String?,
           agentAvailable: e['agent_available'] == true,
           via: (e['via'] ?? 'phone').toString(),
+          retryTimes: (e['retry_times'] as num?)?.toInt() ?? 0,
+          retryGapMinutes: (e['retry_gap_minutes'] as num?)?.toInt() ?? 0,
         );
         break;
 
@@ -2956,14 +2958,23 @@ class AssistantEngine extends ChangeNotifier {
   /// 'whatsapp_video'. Set ONLY from what the user actually said — the
   /// two kinds of call are never substituted for each other.
   String _localCallVia = 'phone';
+  int _localCallRetryTimes = 0;
+  int _localCallRetryGap = 0;
 
   /// Live-mode "call X [and tell them Y]": resolve the name against the
   /// phone's contacts and act. The spoken yes/no already happened inside
   /// the live conversation (high-risk tools are gated server-side), so a
   /// single match proceeds immediately — no second tap to approve.
   Future<void> _handleResolveAndCall(String name, String? message,
-      {bool agentAvailable = false, String via = 'phone'}) async {
+      {bool agentAvailable = false,
+      String via = 'phone',
+      int retryTimes = 0,
+      int retryGapMinutes = 0}) async {
     if (name.trim().isEmpty) return;
+    // Whatever the user decided about a no-answer. Zero means one
+    // attempt — the assistant never invents a retry.
+    _localCallRetryTimes = retryTimes;
+    _localCallRetryGap = retryGapMinutes;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
     _localCallVia = via;
@@ -3136,6 +3147,8 @@ class AssistantEngine extends ChangeNotifier {
           toNumber: contact.phone,
           contactName: contact.name,
           task: task,
+          retryTimes: _localCallRetryTimes,
+          retryGapMinutes: _localCallRetryGap,
         );
       } catch (_) {
         id = null; // unavailable / quota / network — fall through
