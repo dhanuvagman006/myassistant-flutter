@@ -821,6 +821,9 @@ class ApiService {
     // attempt: the assistant never decides to ring someone again.
     int retryTimes = 0,
     int retryGapMinutes = 0,
+    // How the call should sound, when the user asked for something other
+    // than ordinary courtesy. Null keeps the warm default.
+    String? tone,
   }) async {
     final r = await _client
         .post(
@@ -832,6 +835,7 @@ class ApiService {
             'task': task,
             if (retryTimes > 0) 'retryTimes': retryTimes,
             if (retryGapMinutes > 0) 'retryGapMinutes': retryGapMinutes,
+            if (tone != null && tone.isNotEmpty) 'tone': tone,
             if (lang != null) 'lang': lang,
           }),
         )

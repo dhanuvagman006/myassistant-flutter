@@ -2029,6 +2029,7 @@ class AssistantEngine extends ChangeNotifier {
           via: (e['via'] ?? 'phone').toString(),
           retryTimes: (e['retry_times'] as num?)?.toInt() ?? 0,
           retryGapMinutes: (e['retry_gap_minutes'] as num?)?.toInt() ?? 0,
+          tone: e['tone'] as String?,
         );
         break;
 
@@ -2960,6 +2961,7 @@ class AssistantEngine extends ChangeNotifier {
   String _localCallVia = 'phone';
   int _localCallRetryTimes = 0;
   int _localCallRetryGap = 0;
+  String? _localCallTone;
 
   /// Live-mode "call X [and tell them Y]": resolve the name against the
   /// phone's contacts and act. The spoken yes/no already happened inside
@@ -2969,12 +2971,14 @@ class AssistantEngine extends ChangeNotifier {
       {bool agentAvailable = false,
       String via = 'phone',
       int retryTimes = 0,
-      int retryGapMinutes = 0}) async {
+      int retryGapMinutes = 0,
+      String? tone}) async {
     if (name.trim().isEmpty) return;
     // Whatever the user decided about a no-answer. Zero means one
     // attempt — the assistant never invents a retry.
     _localCallRetryTimes = retryTimes;
     _localCallRetryGap = retryGapMinutes;
+    _localCallTone = tone;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
     _localCallVia = via;
@@ -3149,6 +3153,7 @@ class AssistantEngine extends ChangeNotifier {
           task: task,
           retryTimes: _localCallRetryTimes,
           retryGapMinutes: _localCallRetryGap,
+          tone: _localCallTone,
         );
       } catch (_) {
         id = null; // unavailable / quota / network — fall through
