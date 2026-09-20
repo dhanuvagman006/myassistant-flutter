@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
+import 'calling_agent_screen.dart';
 import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
@@ -42,6 +43,13 @@ class HubScreen extends StatelessWidget {
             ),
           ),
           _group(context, 'Phone', [
+            _Row(
+              'Your calling agent',
+              'How it sounds and behaves when it rings people for you',
+              Icons.support_agent_rounded,
+              Neon.accentB,
+              (c) => const CallingAgentScreen(),
+            ),
             _Row(
               'Calls',
               'Calls I made for you — and what they said back',
