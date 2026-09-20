@@ -1,8 +1,12 @@
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/log.dart';
+import 'live_mic_stats.dart';
 
 /// WHAT THIS PHONE CAN ACTUALLY DO.
 ///
@@ -52,6 +56,21 @@ class DeviceCapabilities {
       final info = await PackageInfo.fromPlatform();
       build = int.tryParse(info.buildNumber) ?? 0;
     } catch (_) {}
+    // WHAT THE MICROPHONE ACTUALLY DELIVERED last session. The S24
+    // Ultra bug was invisible from here precisely because these numbers
+    // never left the handset.
+    final mic = LiveMicStats.snapshot();
+    // Audio hardware, battery policy, memory, ABIs — collected natively
+    // because none of it is reachable from Dart.
+    Map<String, dynamic> diag = {};
+    try {
+      final r = await const MethodChannel('hari/device')
+          .invokeMethod<Map<Object?, Object?>>('diagnostics');
+      if (r != null) {
+        diag = r.map((k, v) => MapEntry(k.toString(), v));
+      }
+    } catch (_) {}
+
     // WHICH PHONE THIS IS. Without it, "works on mine, breaks on his" is
     // guesswork: a mic threshold that suits one handset can be wrong on
     // another (S24 Ultra, 2026-09-20), and nobody could tell from here.
@@ -69,6 +88,12 @@ class DeviceCapabilities {
       'osVersion': osVersion,
       'granted': granted,
       'denied': denied,
+      'diag': {
+        ...diag,
+        if (mic.isNotEmpty) ...mic,
+        'locale': WidgetsBinding.instance.platformDispatcher.locale.toString(),
+        'tzOffsetMin': DateTime.now().timeZoneOffset.inMinutes,
+      },
     };
   }
 

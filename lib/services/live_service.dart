@@ -11,6 +11,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../core/log.dart';
 import 'api_service.dart';
 import 'device_capabilities.dart';
+import 'live_mic_stats.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
@@ -419,6 +420,9 @@ class LiveService {
                 _bargeMs = 0;
               }
               if (_bargeMs >= _bargeHoldMs) {
+                if (_bargeMs - _msOf(chunk) < _bargeHoldMs) {
+                  LiveMicStats.selfInterrupts++; // crossed the bar just now
+                }
                 _ch?.sink.add(Uint8List.fromList(chunk));
               }
             }
@@ -433,6 +437,16 @@ class LiveService {
           }
           final threshold = _speechThreshold;
           final loud = l > threshold;
+          // Recorded so a remote report carries evidence — levels only,
+          // never audio. See LiveMicStats.
+          LiveMicStats.note(
+            level: l,
+            noiseFloor: _noiseFloor,
+            speechThreshold: threshold,
+            loud: loud,
+            gated: !_speaking &&
+                l < math.max(_noiseFloor * 2.0, threshold * 0.5),
+          );
 
           final ms = _msOf(chunk);
 

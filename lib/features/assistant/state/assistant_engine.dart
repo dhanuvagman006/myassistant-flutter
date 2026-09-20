@@ -44,6 +44,7 @@ import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/contacts_sync_service.dart';
+import '../../../services/listening_chime.dart';
 import '../../../services/live_service.dart';
 import '../../../services/voice_id_service.dart';
 import '../../../services/usage_service.dart';
@@ -104,15 +105,16 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
     _starting = true;
+    unawaited(ListeningChime.warm()); // decoded before it is needed
     inlineVoice = true;
     faceMode = false;
     notifyListeners();
-    // INSTANT VOICE. Connecting takes seconds; the hello doesn't have to.
-    // Speak a short greeting NOW from the on-device engine while live
-    // connects underneath — claiming the greeting epoch here makes the
-    // live path skip its own, so nothing is ever said twice. Same
-    // cooldown as always: a session reopened minutes later stays quiet.
-    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
+    // NO SPOKEN GREETING (his call, 2026-09-20: "when I open the app we
+    // don't need any greeting"). The epoch is still claimed so neither
+    // the live nor the classic path fills the silence with one of its
+    // own; the microphone simply opens and listens.
+    if (greetingEnabled &&
+        DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
       _lastGreetedAt = DateTime.now();
       final who = (name ?? greetingName ?? '').trim().split(RegExp(r'\s+')).first;
       final h = DateTime.now().hour;
@@ -1066,6 +1068,10 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.onReady = () {
       _liveStartResult?.complete(true);
       _liveStartResult = null;
+      // THE MOMENT IT IS ACTUALLY LISTENING — not when the orb was
+      // tapped, which is seconds earlier. One chime here is the whole
+      // signal to start talking (his ask, 2026-09-20).
+      unawaited(ListeningChime.play());
       _setPhase(AssistantPhase.listening, silent: true);
       notifyListeners();
     };
@@ -1465,8 +1471,15 @@ class AssistantEngine extends ChangeNotifier {
   /// The user's display name, supplied by the screen once it is known.
   String? greetingName;
 
-  /// Set false to suppress the automatic greeting entirely.
-  bool greetingEnabled = true;
+  /// Suppresses every automatic greeting — the instant on-device one at
+  /// orb-tap, the live session's own, and the classic fallback.
+  ///
+  /// OFF since 2026-09-20 at the owner's request. It was on because he
+  /// had previously asked for the opposite ("everytime i open the app i
+  /// need the greeting"), so this stays a switch rather than deleted
+  /// code: flipping it back is one word, and the three greeting paths it
+  /// guards are still correct.
+  bool greetingEnabled = false;
 
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
@@ -2298,6 +2311,34 @@ class AssistantEngine extends ChangeNotifier {
               .then((opened) {
             if (opened == null || opened.isEmpty) {
               _leftForExternalApp = false;
+              // "DOWNLOAD X" / "GET X" MEANS THE STORE when the phone
+              // doesn't have it. Asking for an app by name and being told
+              // only "you don't have it" is a dead end; the Play Store
+              // page for that name is the answer to the question that was
+              // actually asked. Never done for a plain "open X" — that
+              // would be substituting an app nobody asked for.
+              if (e['store_if_missing'] == true) {
+                const MethodChannel('hari/intent')
+                    .invokeMethod<bool>('openStore', {'query': want})
+                    .then((ok) {
+                  if (ok == true) {
+                    _leftForExternalApp = true;
+                    AppFeedback.toast('Opening the Play Store for $want…');
+                    _tellModel(
+                        '[SYSTEM] "$want" is not installed, so the Play Store '
+                        'search for it is now open. Say in ONE short sentence '
+                        'that they do not have it yet and the Store is open to '
+                        'install it.');
+                  } else {
+                    _reportDeviceFailure('open_named_app',
+                        target: want, reason: 'not installed, no Play Store');
+                    _tellModel(
+                        '[SYSTEM] ERROR: "$want" is NOT installed and the Play '
+                        'Store could not be opened. Say that plainly.');
+                  }
+                }).catchError((_) {});
+                return;
+              }
               AppFeedback.toast('$want isn\'t installed on this phone.');
               _reportDeviceFailure('open_named_app',
                   target: want, reason: 'no app by that name is installed');
@@ -3384,7 +3425,43 @@ class AssistantEngine extends ChangeNotifier {
   /// Now: try the intent as-is, then the https link into the provider's
   /// own app, then the browser — and if ALL of that fails, say so out
   /// loud instead of leaving the user waiting for food that isn't coming.
+  /// A SAVED DOCUMENT IS NEVER A WEB PAGE.
+  ///
+  /// /docs/<id>/file needs the session token, so handing it to a browser
+  /// produces "sign in required" — which is exactly what happened when
+  /// the assistant was asked to open a metro map it had just saved
+  /// (2026-09-20). The model builds that URL itself from context, so the
+  /// guard belongs here, where every path converges, rather than in a
+  /// prompt it might not follow. Returns the id when the URL is one of
+  /// ours, so the caller can open it properly instead.
+  static int? _ourDocumentId(String url) {
+    if (!url.startsWith(ApiService.baseUrl)) return null;
+    final m = RegExp(r'/docs/(\d+)/file').firstMatch(url);
+    return m == null ? null : int.tryParse(m.group(1)!);
+  }
+
+  /// Shows one of our own documents through the SAME presenter the
+  /// gallery and the generated-image card already use — so it opens in
+  /// the app, with the session token attached, instead of in a browser
+  /// that cannot authenticate.
+  Future<void> _openOwnDocument(int id) async {
+    try {
+      final all = await ApiService.fetchDocuments();
+      final doc = all.where((d) => d.id == id).firstOrNull;
+      if (doc != null && (onShowDocuments?.call([doc]) ?? false)) return;
+    } catch (_) {
+      // fall through to the honest message
+    }
+    AppFeedback.toast('It is saved — open it from Hub, My documents.');
+  }
+
   Future<void> _openExternalUrl(String url) async {
+    final docId = _ourDocumentId(url);
+    if (docId != null) {
+      _leftForExternalApp = false; // staying in the app after all
+      await _openOwnDocument(docId);
+      return;
+    }
     // AN INTENT URI IS NOT A WEB ADDRESS.
     //
     // Tools that reach the phone's own apps — the clock for alarms and

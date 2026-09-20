@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.Process
 import android.provider.Settings
 import android.telecom.TelecomManager
@@ -233,6 +234,33 @@ class MainActivity : FlutterFragmentActivity() {
                     // The number must be matched loosely: WhatsApp stores
                     // it as the user typed it ("+91 63601 39965"), so both
                     // sides are reduced to their last 10 digits.
+                    // THE PLAY STORE, for an app the phone does not have.
+                    // "Download Swiggy" is a reasonable thing to say, and
+                    // until now it could only ever be answered with "you
+                    // don't have it". market:// opens the Store app
+                    // itself; the https form is the fallback when no
+                    // Store is installed.
+                    "openStore" -> {
+                        val q = call.argument<String>("query") ?: ""
+                        if (q.isEmpty()) { result.success(false); return@setMethodCallHandler }
+                        val tries = listOf(
+                            "market://search?q=" + Uri.encode(q) + "&c=apps",
+                            "https://play.google.com/store/search?q=" + Uri.encode(q) + "&c=apps"
+                        )
+                        for (u in tries) {
+                            try {
+                                val i = Intent(Intent.ACTION_VIEW, Uri.parse(u))
+                                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                applicationContext.startActivity(i)
+                                Log.i("hari/store", "opened $u")
+                                result.success(true)
+                                return@setMethodCallHandler
+                            } catch (e: Throwable) {
+                                Log.w("hari/store", "failed $u: ${e.javaClass.simpleName}")
+                            }
+                        }
+                        result.success(false)
+                    }
                     "whatsappCall" -> {
                         val number = call.argument<String>("number") ?: ""
                         val video = call.argument<Boolean>("video") ?: false
@@ -411,6 +439,64 @@ class MainActivity : FlutterFragmentActivity() {
                     "media" -> result.success(
                         DeviceControl.media(ctx, call.argument<String>("key") ?: ""))
                     "battery" -> result.success(DeviceControl.battery(ctx))
+                    // EVERYTHING A REMOTE BUG REPORT NEEDS.
+                    //
+                    // "Works on mine, breaks on his" cost a day of
+                    // guessing (2026-09-20, S24 Ultra): the cause was the
+                    // microphone returning quieter samples than ours, and
+                    // nothing in the app could have told us that. These
+                    // are the facts that would have pointed straight at
+                    // it, plus the ones behind every other OEM report:
+                    // whether the OS killed us for battery, what the
+                    // audio hardware actually offers, and how much room
+                    // the device has left.
+                    "diagnostics" -> {
+                        val out = HashMap<String, Any>()
+                        try {
+                            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                            out["audioOutputSampleRate"] =
+                                am.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE) ?: ""
+                            out["audioFramesPerBuffer"] =
+                                am.getProperty(android.media.AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER) ?: ""
+                            out["audioMode"] = am.mode
+                            out["speakerphoneOn"] = am.isSpeakerphoneOn
+                            out["bluetoothScoOn"] = am.isBluetoothScoOn
+                            out["musicActive"] = am.isMusicActive
+                            out["volumeMusic"] = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                            out["volumeMusicMax"] = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                        } catch (e: Throwable) { out["audioError"] = e.javaClass.simpleName }
+                        // The three effects our capture asks for. A phone
+                        // that lacks them handles echo and noise itself,
+                        // in its own way, at its own level.
+                        try {
+                            out["aecAvailable"] = android.media.audiofx.AcousticEchoCanceler.isAvailable()
+                            out["nsAvailable"] = android.media.audiofx.NoiseSuppressor.isAvailable()
+                            out["agcAvailable"] = android.media.audiofx.AutomaticGainControl.isAvailable()
+                        } catch (e: Throwable) { out["audiofxError"] = e.javaClass.simpleName }
+                        // Battery policy — the usual reason background
+                        // work and push die on Samsung/Xiaomi/Oppo.
+                        try {
+                            val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                            out["ignoringBatteryOptimizations"] =
+                                pm.isIgnoringBatteryOptimizations(ctx.packageName)
+                            out["powerSaveMode"] = pm.isPowerSaveMode
+                        } catch (e: Throwable) { out["powerError"] = e.javaClass.simpleName }
+                        try {
+                            val mi = android.app.ActivityManager.MemoryInfo()
+                            (ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
+                                .getMemoryInfo(mi)
+                            out["ramTotalMb"] = mi.totalMem / (1024 * 1024)
+                            out["ramAvailMb"] = mi.availMem / (1024 * 1024)
+                            out["ramLow"] = mi.lowMemory
+                        } catch (e: Throwable) { out["ramError"] = e.javaClass.simpleName }
+                        try {
+                            out["abis"] = android.os.Build.SUPPORTED_ABIS.joinToString(",")
+                            out["securityPatch"] = android.os.Build.VERSION.SECURITY_PATCH ?: ""
+                            out["device"] = android.os.Build.DEVICE ?: ""
+                            out["hardware"] = android.os.Build.HARDWARE ?: ""
+                        } catch (e: Throwable) { out["buildError"] = e.javaClass.simpleName }
+                        result.success(out)
+                    }
                     "openPanel" -> result.success(
                         DeviceControl.openPanel(ctx, call.argument<String>("panel") ?: ""))
                     else -> result.notImplemented()

@@ -1,11 +1,16 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../services/app_feedback.dart';
 
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen, shareDocumentFile;
 import '../models/user_document.dart';
 import '../services/api_service.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 /// Shared document presentation for the two document areas (My documents,
 /// a client's case file). One look, one set of actions — open, share,
@@ -50,8 +55,7 @@ void openDocument(BuildContext context, UserDocument d,
     {List<UserDocument>? within,
     Future<bool> Function(UserDocument)? onDelete}) {
   if (d.isPdf) {
-    launchUrl(Uri.parse(ApiService.documentFileUrl(d.id)),
-        mode: LaunchMode.externalApplication);
+    _openPdf(context, d);
     return;
   }
   final list = within ?? [d];
@@ -63,6 +67,36 @@ void openDocument(BuildContext context, UserDocument d,
       onDelete: onDelete,
     ),
   ));
+}
+
+/// PDFs OPEN THROUGH THE APP, NOT THE BROWSER.
+///
+/// This used to hand /docs/<id>/file straight to an external browser —
+/// but that endpoint needs the session token, which a browser does not
+/// have, so the server answered 404 and every saved PDF looked like it
+/// had vanished ("I saved it to your documents" → "not found", reported
+/// 2026-09-20). Images never hit this because they are fetched in-app
+/// with auth headers. So: fetch the bytes with auth, write them to the
+/// cache, and hand THAT file to whichever viewer the phone has.
+Future<void> _openPdf(BuildContext context, UserDocument d) async {
+  AppFeedback.toast('Opening…');
+  try {
+    final file = await ApiService.downloadDocument(d.id);
+    final dir = await getTemporaryDirectory();
+    final safe = (d.title.isEmpty ? 'document' : d.title)
+        .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
+        .trim();
+    final path =
+        '${dir.path}/${safe.isEmpty ? 'document' : safe}-${d.id}.pdf';
+    await File(path).writeAsBytes(file.bytes, flush: true);
+    final res = await OpenFilex.open(path, type: 'application/pdf');
+    if (res.type != ResultType.done) {
+      AppFeedback.toast(
+          'No app on this phone can open PDFs — install a PDF reader.');
+    }
+  } catch (_) {
+    AppFeedback.toast("Couldn't open that document — try again.");
+  }
 }
 
 /// "Delete this document?" — the only path that removes a document from
