@@ -3317,6 +3317,42 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
 
+    // ANY OTHER APP THEY NAMED — Telegram, Signal, Viber, whatever is on
+    // the phone. Same contract as WhatsApp above: an app was asked for by
+    // name, so a normal call is never a silent substitute. The apps are
+    // DISCOVERED from the contact rather than hardcoded, so this works for
+    // anything installed (his ask, 2026-09-20).
+    if (_localCallVia != 'phone' && _localCallVia.isNotEmpty) {
+      final raw = _localCallVia;
+      _localCallVia = 'phone';
+      final video = raw.endsWith('_video');
+      final app = video ? raw.substring(0, raw.length - 6) : raw;
+      final res = await CallService.instance
+          .callViaApp(contact.phone, app, video: video);
+      if (res.reason == null) {
+        final shown = res.app ?? app;
+        AppFeedback.toast('$shown ${video ? 'video ' : ''}call to $who…');
+        await _reportCallResult(who, 'connected');
+        if (liveActive) {
+          _liveSvc.sendText('[SYSTEM] $shown is placing the '
+              '${video ? 'video ' : ''}call to $who now.');
+        }
+        return;
+      }
+      final why = CallService.appCallFailure(res.reason!, who, app,
+          available: res.available);
+      AppFeedback.toast(why);
+      await _reportCallResult(who, 'failed', reason: res.reason ?? 'failed');
+      if (liveActive) {
+        _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
+            'whether I want a normal phone call instead — do NOT place one '
+            'on your own.');
+      } else {
+        await _speakReply('$why Should I call them normally instead?');
+      }
+      return;
+    }
+
     bool ok = false;
     try {
       ok = await CallService.instance.call(contact.phone);

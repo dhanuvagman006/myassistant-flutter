@@ -322,6 +322,89 @@ class MainActivity : FlutterFragmentActivity() {
                             result.success(mapOf("ok" to false, "reason" to "failed"))
                         }
                     }
+                    // ── CALLING APPS, DISCOVERED NOT HARDCODED ──────────
+                    //
+                    // Every calling app registers its own row on a contact
+                    // ("Voice call" under WhatsApp, Telegram, Signal…) with
+                    // a mimetype that embeds its package. WhatsApp calling
+                    // has always worked by opening that row; the ONLY thing
+                    // that made it WhatsApp-specific was the hardcoded
+                    // mimetype string.
+                    //
+                    // So instead of a list of apps we support, we read what
+                    // is actually on the contact. Anything on the phone that
+                    // registers a call row works, including apps that did
+                    // not exist when this was written (his ask, 2026-09-20:
+                    // "not only WhatsApp or normal call, even Telegram and
+                    // Signal and any other calling app present in the
+                    // user's phone").
+                    "callingApps" -> {
+                        val number = call.argument<String>("number") ?: ""
+                        result.success(mapOf("apps" to callRowsFor(number).map {
+                            mapOf(
+                                "id" to it.pkg,
+                                "label" to it.label,
+                                "kind" to it.kind,
+                                "mime" to it.mime
+                            )
+                        }))
+                    }
+                    "callViaApp" -> {
+                        val number = call.argument<String>("number") ?: ""
+                        val app = (call.argument<String>("app") ?: "").trim()
+                        val video = call.argument<Boolean>("video") ?: false
+                        if (number.isEmpty() || app.isEmpty()) {
+                            result.success(mapOf("ok" to false, "reason" to "no_number"))
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val rows = callRowsFor(number)
+                            if (rows.isEmpty()) {
+                                result.success(mapOf("ok" to false, "reason" to "no_calling_apps"))
+                                return@setMethodCallHandler
+                            }
+                            val want = app.lowercase()
+                            // Spoken name → the app it means. Matched against
+                            // the package and the app's own label, so "signal",
+                            // "Signal Private Messenger" and the package all hit.
+                            val candidates = rows.filter {
+                                it.pkg.lowercase().contains(want) ||
+                                    it.label.lowercase().contains(want) ||
+                                    want.contains(it.label.lowercase())
+                            }
+                            if (candidates.isEmpty()) {
+                                result.success(mapOf(
+                                    "ok" to false,
+                                    "reason" to "app_not_on_contact",
+                                    "available" to rows.map { it.label }.distinct()
+                                ))
+                                return@setMethodCallHandler
+                            }
+                            // Prefer the row that matches voice vs video.
+                            val row = candidates.firstOrNull {
+                                if (video) it.kind == "video" else it.kind != "video"
+                            } ?: candidates.first()
+
+                            val intent = Intent(
+                                Intent.ACTION_VIEW,
+                                android.content.ContentUris.withAppendedId(
+                                    android.provider.ContactsContract.Data.CONTENT_URI, row.id
+                                )
+                            )
+                            if (row.pkg.isNotEmpty()) intent.setPackage(row.pkg)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            applicationContext.startActivity(intent)
+                            Log.i("hari/call", "started ${row.kind} call via ${row.pkg} row=${row.id}")
+                            result.success(mapOf("ok" to true, "app" to row.label, "kind" to row.kind))
+                        } catch (e: android.content.ActivityNotFoundException) {
+                            result.success(mapOf("ok" to false, "reason" to "app_missing"))
+                        } catch (e: SecurityException) {
+                            result.success(mapOf("ok" to false, "reason" to "no_contacts_permission"))
+                        } catch (e: Throwable) {
+                            Log.w("hari/call", "failed: ${e.javaClass.simpleName}: ${e.message}")
+                            result.success(mapOf("ok" to false, "reason" to "failed"))
+                        }
+                    }
                     "launch" -> {
                         val uri = call.argument<String>("uri") ?: ""
                         if (uri.isEmpty()) {
@@ -620,4 +703,111 @@ class MainActivity : FlutterFragmentActivity() {
             first
         }
     } catch (_: Throwable) { null }
+
+    /** One "call this person in app X" row on a contact. */
+    private data class CallRow(
+        val id: Long,
+        val mime: String,
+        val pkg: String,
+        val label: String,
+        val kind: String // "voice" | "video"
+    )
+
+    /**
+     * EVERY WAY THIS NUMBER CAN BE CALLED FROM AN APP ON THIS PHONE.
+     *
+     * Calling apps advertise themselves by writing a row onto the contact
+     * with their own mimetype — "vnd.android.cursor.item/vnd.com.whatsapp
+     * .voip.call", ".../vnd.org.telegram.messenger.android.call", and so
+     * on. The package name is inside the mimetype, so the set of apps we
+     * support is whatever is installed, not whatever was hardcoded.
+     *
+     * The package is recovered by trying progressively longer dotted
+     * prefixes and keeping the longest one that is actually installed —
+     * "com.whatsapp.voip.call" yields com.whatsapp, and an app whose
+     * mimetype does not follow the convention simply gets an empty
+     * package and is launched without one.
+     */
+    private fun callRowsFor(number: String): List<CallRow> {
+        val want = number.filter { it.isDigit() }.takeLast(10)
+        if (want.length < 7) return emptyList()
+        val out = ArrayList<CallRow>()
+        val seen = HashSet<String>()
+        try {
+            // Find the contact first: the call rows hang off the same
+            // raw contact, and their DATA1 is not always the number.
+            val lookup = android.net.Uri.withAppendedPath(
+                android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                android.net.Uri.encode(number)
+            )
+            var contactId = -1L
+            contentResolver.query(
+                lookup,
+                arrayOf(android.provider.ContactsContract.PhoneLookup._ID),
+                null, null, null
+            )?.use { c -> if (c.moveToFirst()) contactId = c.getLong(0) }
+            if (contactId < 0) return emptyList()
+
+            contentResolver.query(
+                android.provider.ContactsContract.Data.CONTENT_URI,
+                arrayOf(
+                    android.provider.ContactsContract.Data._ID,
+                    android.provider.ContactsContract.Data.MIMETYPE,
+                    android.provider.ContactsContract.Data.DATA3
+                ),
+                "${android.provider.ContactsContract.Data.CONTACT_ID}=?",
+                arrayOf(contactId.toString()),
+                null
+            )?.use { cur ->
+                while (cur.moveToNext()) {
+                    val mime = cur.getString(1) ?: continue
+                    // Only rows that are actually a call action.
+                    if (!mime.contains("call", true) && !mime.contains("voip", true)) continue
+                    if (mime.startsWith("vnd.android.cursor.item/phone")) continue // the plain number
+                    val id = cur.getLong(0)
+                    val desc = cur.getString(2) ?: ""
+                    val pkg = packageFromMime(mime)
+                    val label = if (pkg.isNotEmpty()) appLabel(pkg) else mime.substringAfterLast('.')
+                    val kind = if (mime.contains("video", true) || desc.contains("video", true))
+                        "video" else "voice"
+                    val key = "$pkg/$kind"
+                    if (!seen.add(key)) continue
+                    out.add(CallRow(id, mime, pkg, label, kind))
+                }
+            }
+        } catch (e: SecurityException) {
+            Log.w("hari/call", "contacts permission denied while listing call apps")
+        } catch (e: Throwable) {
+            Log.w("hari/call", "listing call apps failed: ${e.javaClass.simpleName}")
+        }
+        return out
+    }
+
+    /** Longest dotted prefix of the mimetype that is an installed package. */
+    private fun packageFromMime(mime: String): String {
+        val tail = mime.substringAfter('/').removePrefix("vnd.")
+        val parts = tail.split('.')
+        var best = ""
+        val sb = StringBuilder()
+        for (p in parts) {
+            if (sb.isNotEmpty()) sb.append('.')
+            sb.append(p)
+            val candidate = sb.toString()
+            if (candidate.count { it == '.' } < 1) continue
+            try {
+                packageManager.getPackageInfo(candidate, 0)
+                best = candidate
+            } catch (_: Throwable) { /* not a package — keep extending */ }
+        }
+        return best
+    }
+
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(
+            packageManager.getApplicationInfo(pkg, 0)
+        ).toString()
+    } catch (_: Throwable) {
+        pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+    }
+
 }

@@ -32,6 +32,8 @@ import '../services/brief_service.dart';
 import '../services/location_service.dart';
 import '../services/share_intake_service.dart';
 import '../services/usage_service.dart';
+import '../services/api_service.dart';
+import '../services/device_control_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  HOME SHELL — the app's new backbone (Daylight redesign, Sept 2026).
@@ -70,6 +72,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshBattery();
     // Returning to the foreground re-checks for a published update (the
     // service throttles to every 30 min) — a phone that keeps the app in
     // memory for days used to miss releases entirely.
@@ -117,6 +120,17 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     setState(() => _tab = want);
   }
 
+  /// Cached on ApiService so neither the header getter nor the socket
+  /// connect has to await a platform channel on the hot path.
+  Future<void> _refreshBattery() async {
+    try {
+      final pct = await DeviceControlService.instance.battery();
+      if (pct != null && pct >= 0 && pct <= 100) ApiService.batteryPct = pct;
+    } catch (_) {
+      /* a phone that will not report its charge simply does not. */
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -128,6 +142,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // AI CALL ANALYSIS over the phone's own recorder: hydrate the consent
     // toggle so the watcher knows whether to pick up new recordings.
     CallNotesService.instance.start();
+    // The charge is read once at launch and on every resume, then carried
+    // on requests and on the live socket — cheap, and it makes "I'm going
+    // out" able to say "charge your phone first" without a round trip.
+    _refreshBattery();
     // Count today towards the streak before the first frame settles, so
     // the header shows the right number on this launch, not the next one.
     StreakService.instance.touch().then((_) {

@@ -206,7 +206,18 @@ class ApiService {
         if (appBuild != null) 'X-App-Build': appBuild.toString(),
         if (geoLat != null) 'X-Geo-Lat': geoLat!.toStringAsFixed(4),
         if (geoLng != null) 'X-Geo-Lng': geoLng!.toStringAsFixed(4),
+        // THE CHARGE, because "I'm going out" is partly a question about
+        // the phone. Read from a cached value, never inside this getter —
+        // it runs on every single request.
+        if (batteryPct != null) 'X-Battery': '$batteryPct',
+        if (batteryPct != null) 'X-Charging': batteryCharging ? '1' : '0',
       };
+
+  /// Last known battery level, refreshed by the app shell. Null until the
+  /// first reading, and a null is simply not sent — the server leaves the
+  /// charge out of its answer rather than guessing at it.
+  static int? batteryPct;
+  static bool batteryCharging = false;
 
   /// Chat calls also carry the user's clock + location so backend tools
   /// (reminder time parsing, weather) work on THEIR wall clock and place.

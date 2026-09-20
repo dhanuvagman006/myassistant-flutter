@@ -293,6 +293,84 @@ class CallService {
     }
   }
 
+  /// EVERY APP ON THIS PHONE THAT CAN CALL THIS NUMBER.
+  ///
+  /// Not a list we maintain: calling apps advertise themselves by writing
+  /// a row onto the contact, so this reports what is actually installed
+  /// and actually linked to that person — Telegram, Signal, Viber, an app
+  /// that did not exist when this was written. Empty means a normal call
+  /// is the only way to reach them.
+  Future<List<({String id, String label, String kind})>> callingApps(
+      String number) async {
+    final clean = number.replaceAll(RegExp(r'[^\d+]'), '');
+    if (clean.isEmpty) return const [];
+    try {
+      final r = await _intent
+          .invokeMethod<Map<Object?, Object?>>('callingApps', {'number': clean});
+      final apps = (r?['apps'] as List?) ?? const [];
+      return [
+        for (final a in apps.whereType<Map>())
+          (
+            id: (a['id'] ?? '').toString(),
+            label: (a['label'] ?? '').toString(),
+            kind: (a['kind'] ?? 'voice').toString(),
+          )
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Calls [number] inside [app] — "telegram", "signal", whatever the user
+  /// said. Returns null on success, else a short reason.
+  /// 'app_not_on_contact' | 'no_calling_apps' | 'app_missing' |
+  /// 'no_contacts_permission'.
+  Future<({String? reason, String? app, List<String> available})> callViaApp(
+      String number, String app,
+      {bool video = false}) async {
+    final clean = number.replaceAll(RegExp(r'[^\d+]'), '');
+    if (clean.isEmpty) return (reason: 'no_number', app: null, available: const <String>[]);
+    try {
+      final r = await _intent.invokeMethod<Map<Object?, Object?>>(
+          'callViaApp', {'number': clean, 'app': app, 'video': video});
+      if (r?['ok'] == true) {
+        return (reason: null, app: (r?['app'] ?? app).toString(), available: const <String>[]);
+      }
+      final avail = ((r?['available'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(growable: false);
+      return (
+        reason: (r?['reason'] ?? 'failed').toString(),
+        app: null,
+        available: avail,
+      );
+    } catch (_) {
+      return (reason: 'failed', app: null, available: const <String>[]);
+    }
+  }
+
+  /// Human sentence for an in-app call failure. [available] is what the
+  /// contact CAN be called on, so the reply offers a real alternative
+  /// instead of a dead end.
+  static String appCallFailure(String reason, String who, String app,
+      {List<String> available = const []}) {
+    final alt = available.isEmpty
+        ? ''
+        : ' They are reachable on ${available.join(', ')}.';
+    switch (reason) {
+      case 'app_not_on_contact':
+        return "$who isn't on $app with that number, so no call was placed.$alt";
+      case 'no_calling_apps':
+        return "$who has no calling apps linked to that number — only a normal call will reach them.";
+      case 'app_missing':
+        return '$app is not installed on this phone, so no call was placed.';
+      case 'no_contacts_permission':
+        return 'Contacts permission is off, so the $app call could not be placed.';
+      default:
+        return 'The $app call to $who could not be placed.$alt';
+    }
+  }
+
   /// Human sentence for a whatsappCall failure reason — one place, so the
   /// spoken line and the toast never drift apart.
   static String whatsappFailure(String reason, String who) {

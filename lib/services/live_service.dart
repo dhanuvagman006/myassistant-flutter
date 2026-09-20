@@ -326,9 +326,15 @@ class LiveService {
       caps = '&granted=${Uri.encodeComponent(granted)}'
           '&denied=${Uri.encodeComponent(denied)}';
     } catch (_) {}
+    // The charge rides along for the same reason the coordinates do:
+    // "am I okay to head out" is partly a question about the phone.
+    final batt = ApiService.batteryPct != null
+        ? '&battery=${ApiService.batteryPct}'
+            '&charging=${ApiService.batteryCharging ? 1 : 0}'
+        : '';
     final uri =
         Uri.parse(
-        '$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo'
+        '$base/live/ws?$qp$room&tz=$tz&platform=$platform$geo$batt'
         '&build=${ApiService.appBuild ?? 0}$caps');
 
     try {
