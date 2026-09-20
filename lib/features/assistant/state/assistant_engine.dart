@@ -1089,7 +1089,11 @@ class AssistantEngine extends ChangeNotifier {
       // THE MOMENT IT IS ACTUALLY LISTENING — not when the orb was
       // tapped, which is seconds earlier. One chime here is the whole
       // signal to start talking (his ask, 2026-09-20).
-      unawaited(ListeningChime.play());
+      //
+      // Belt and braces with the revive guard: a chime is a message to
+      // someone looking at the screen, so it never sounds off-screen even
+      // if some future path opens a session there.
+      if (_foreground) unawaited(ListeningChime.play());
       _setPhase(AssistantPhase.listening, silent: true);
       notifyListeners();
     };
@@ -1353,6 +1357,13 @@ class AssistantEngine extends ChangeNotifier {
   DateTime _lastLiveRevive = DateTime.fromMillisecondsSinceEpoch(0);
   void _maybeReviveLive() {
     if (!_conversationOpen) return;
+    // NOT WHILE THEY ARE SOMEWHERE ELSE. _conversationOpen stays true
+    // across a trip to another app — that is what lets a caller come back
+    // to the conversation still running — so it is NOT evidence that
+    // anyone is looking. Reconnecting here reopened the microphone and
+    // chimed over WhatsApp. onAppResumed rebuilds the session properly
+    // when they actually return.
+    if (!_foreground) return;
     if (PhoneStateGuard.instance.inCall) return;
     final now = DateTime.now();
     if (now.difference(_lastLiveRevive) < const Duration(seconds: 20)) return;
@@ -1393,6 +1404,13 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> leaveConversation() async {
+    // THE CLOSING HALF OF THE PAIR. Only when something was actually
+    // listening — closing a screen that was already silent should be
+    // silent — and never off-screen, for the same reason the opening
+    // chime is not: a sound the user cannot connect to anything they did
+    // is exactly the WhatsApp complaint.
+    final wasListening = liveActive || inlineVoice;
+    if (wasListening && _foreground) unawaited(ListeningChime.playStop());
     _idleStop?.cancel();
     _idleStop = null;
     _conversationOpen = false;
@@ -3204,7 +3222,18 @@ class AssistantEngine extends ChangeNotifier {
 
   /// The app went to the background. Android suspends the microphone and
   /// will quietly drop the live socket, so remember when it happened.
+  /// Is the app actually on the user's screen right now?
+  ///
+  /// NOTHING THAT MAKES A SOUND OR OPENS A MICROPHONE MAY RUN WHEN THIS
+  /// IS FALSE. He heard the listening chime twice while using WhatsApp,
+  /// having never opened the assistant (2026-09-20) — the live session is
+  /// deliberately kept alive across a short trip away, so when it dropped
+  /// in the background the automatic revive reconnected and announced
+  /// itself over whatever he was doing.
+  bool _foreground = true;
+
   void onAppPaused() {
+    _foreground = false;
     _backgroundedAt = DateTime.now();
     // GO QUIET THE INSTANT THE APP LEAVES THE SCREEN.
     //
@@ -3240,6 +3269,10 @@ class AssistantEngine extends ChangeNotifier {
   /// interrupted for more than a moment is now rebuilt from scratch —
   /// two seconds of reconnect beats a conversation that cannot talk.
   Future<void> onAppResumed() async {
+    // FIRST LINE, BEFORE ANY EARLY RETURN. The method gives up below when
+    // no conversation is open, and leaving the flag false there would
+    // silence a legitimate chime for the rest of the app's life.
+    _foreground = true;
     final pausedAt = _backgroundedAt;
     final away = pausedAt == null
         ? Duration.zero

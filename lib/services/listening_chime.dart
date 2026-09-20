@@ -13,11 +13,19 @@ import '../core/log.dart';
 ///
 /// Once per session, only on the transition into listening. Never at the
 /// end of a turn: a sound after every reply would be exhausting.
+///
+/// TWO SOUNDS, ONE PAIR (his ask, 2026-09-20): a rising fifth to open and
+/// the same two notes falling to close, so starting and stopping are told
+/// apart without looking. The closing one is quieter and shorter — an
+/// ending should be felt, not announced.
 class ListeningChime {
   ListeningChime._();
 
   static final AudioPlayer _player = AudioPlayer(playerId: 'listening_chime');
   static bool _warmed = false;
+
+  static const _startSound = 'sounds/listen_start.wav';
+  static const _stopSound = 'sounds/listen_stop.wav';
 
   /// Preload so the first play is not delayed by a disk read — the whole
   /// point is that it lands exactly when listening starts.
@@ -26,7 +34,7 @@ class ListeningChime {
     _warmed = true;
     try {
       await _player.setReleaseMode(ReleaseMode.stop);
-      await _player.setSource(AssetSource('sounds/listening.wav'));
+      await _player.setSource(AssetSource(_startSound));
     } catch (e) {
       AppLog.add('chime', 'warm failed: $e');
     }
@@ -38,7 +46,7 @@ class ListeningChime {
     try {
       await _player.stop();
       await _player.play(
-        AssetSource('sounds/listening.wav'),
+        AssetSource(_startSound),
         volume: 0.55,
         // The chime belongs with the assistant's voice, not the ringer,
         // so it follows media volume and ducks around a call.
@@ -46,6 +54,22 @@ class ListeningChime {
       );
     } catch (e) {
       AppLog.add('chime', 'play failed: $e');
+    }
+  }
+
+  /// The closing half of the pair — played when the conversation ends,
+  /// so the user knows the microphone is shut without looking. Quieter
+  /// than the opening: nobody needs an ending announced.
+  static Future<void> playStop() async {
+    try {
+      await _player.stop();
+      await _player.play(
+        AssetSource(_stopSound),
+        volume: 0.42,
+        mode: PlayerMode.lowLatency,
+      );
+    } catch (e) {
+      AppLog.add('chime', 'stop sound failed: $e');
     }
   }
 }
