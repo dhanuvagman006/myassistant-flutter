@@ -8,6 +8,7 @@ import '../core/daily_quotes.dart';
 import '../services/auth_service.dart';
 import '../services/streak_service.dart';
 import '../services/brief_service.dart';
+import '../widgets/call_led.dart';
 
 /// HOME TAB — the day at a glance, out in the open.
 ///
@@ -40,6 +41,8 @@ class HomeDashboard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Shows only while the assistant is actually on a call.
+          const CallLed(),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
             child: Reveal(

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
+import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'phone/call_notes_screen.dart';
@@ -41,6 +42,13 @@ class HubScreen extends StatelessWidget {
             ),
           ),
           _group(context, 'Phone', [
+            _Row(
+              'Calls',
+              'Calls I made for you — and what they said back',
+              Icons.phone_in_talk_rounded,
+              Neon.accentD,
+              (c) => const CallsScreen(),
+            ),
             _Row(
               'Call notes',
               'AI notes, reminders and answers from your recorded calls',

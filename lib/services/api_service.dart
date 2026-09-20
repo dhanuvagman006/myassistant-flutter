@@ -12,6 +12,7 @@ import '../models/client.dart';
 import '../models/memory_item.dart';
 import '../models/place.dart';
 import '../models/reminder.dart';
+import '../models/call_outcome.dart';
 import '../models/user_document.dart';
 import '../models/vision_result.dart';
 import '../models/remote_config.dart';
@@ -483,6 +484,17 @@ class ApiService {
 
   /// The user's OWN documents only (My documents) — never anything filed
   /// under a client/patient; those are read through [fetchClientProfile].
+  /// Calls the assistant placed for the user, newest first — what the
+  /// Calls screen shows, including what the other person actually said.
+  static Future<List<CallOutcome>> fetchCallOutcomes({int limit = 50}) async {
+    final r = await _client
+        .get(Uri.parse('$baseUrl/outcomes?kind=agent_call&limit=$limit'),
+            headers: _authHeaders)
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) throw Exception('outcomes ${r.statusCode}');
+    return CallOutcome.listFromJson(jsonDecode(r.body)['outcomes']);
+  }
+
   static Future<List<UserDocument>> fetchDocuments() async {
     final r = await _client
         .get(Uri.parse('$baseUrl/docs?scope=personal'), headers: _authHeaders)

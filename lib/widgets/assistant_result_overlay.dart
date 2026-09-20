@@ -84,12 +84,11 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
       );
     }
 
-    if (e.callStatus != null) {
-      return CallStatusCard(
-        key: const ValueKey('callstatus'),
-        status: e.callStatus!,
-      );
-    }
+    // A CALL IN PROGRESS IS NOT A CARD ANY MORE (his call, 2026-09-20:
+    // "don't display that current call on the orb itself"). It covered
+    // whatever screen the user was on for the length of the conversation,
+    // to say something they did not need to watch. CallLed on Home shows
+    // it as a status light instead, and the Calls screen holds the reply.
 
     if (e.presentedText != null) {
       final h = MediaQuery.of(context).size.height;
