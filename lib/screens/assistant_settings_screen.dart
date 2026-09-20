@@ -118,10 +118,15 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     final r = await ApiService.sendJson('/profile/assistant',
         method: 'PUT', body: {'voice': v.isEmpty ? 'default' : v});
     if (!mounted) return;
-    if (r == null) {
+    if (r == null || r['rejected'] == true) {
       setState(() => _voice = prev);
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't save the voice.")));
+      // The server explains a mismatch in a sentence the user can act on
+      // — show THAT, not a generic failure.
+      final why = (r?['message'] ?? "Couldn't save the voice.").toString();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(why),
+        duration: const Duration(seconds: 6),
+      ));
     }
   }
 

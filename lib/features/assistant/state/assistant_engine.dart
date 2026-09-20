@@ -2440,7 +2440,18 @@ class AssistantEngine extends ChangeNotifier {
           if (ctx != null) {
             unawaited(AppUpdateService.instance.check(ctx, force: true));
           } else {
+            // NEVER LET "opening the installer" STAND WHEN NOTHING OPENED.
+            // The tool has already spoken by the time this runs, so the
+            // only honest move left is to correct it out loud.
             AppLog.add('update', 'no context to show the update sheet');
+            AppFeedback.toast('Open the app first, then ask me to update.');
+            if (liveActive) {
+              _liveSvc.sendText(
+                  '[SYSTEM] ERROR: the update screen could NOT be opened on '
+                  'this phone, so nothing is installing. Tell me that '
+                  'plainly and say to open the app and ask again — do not '
+                  'claim the update started.');
+            }
           }
         }
         break;

@@ -70,6 +70,17 @@ class AppUpdateService {
     } catch (_) {}
   }
 
+  /// Forget a snooze — the user asked for this update by name.
+  Future<void> _unsnooze(int versionCode) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      if (p.containsKey('$_snoozePrefix$versionCode')) {
+        await p.remove('$_snoozePrefix$versionCode');
+        AppLog.add('update', 'build $versionCode un-snoozed (asked for)');
+      }
+    } catch (_) {}
+  }
+
   Future<bool> _snoozed(int versionCode) async {
     try {
       final p = await SharedPreferences.getInstance();
@@ -165,8 +176,20 @@ class AppUpdateService {
       // was abandoned, goes now — before another ~200 MB lands next to it.
       unawaited(_sweepOldApks(keepVersionCode: cfg.latestVersionCode));
 
+      // A SNOOZE MUST NEVER OUTLAST AN EXPLICIT REQUEST.
+      //
+      // `force` used to bypass only the two-minute throttle, so dismissing
+      // the sheet once left the user permanently unable to update: every
+      // later "update the app" returned silently here while the assistant
+      // said "the new version is ready — opening the installer". Found on
+      // a real phone (2026-09-20) stuck four builds behind, having asked
+      // five times in a row.
+      //
+      // Snoozing means "stop nagging me", not "never let me ask again".
       final forced = cfg.forceUpdateBelow > current;
-      if (!forced && await _snoozed(cfg.latestVersionCode)) {
+      if (force) {
+        await _unsnooze(cfg.latestVersionCode);
+      } else if (!forced && await _snoozed(cfg.latestVersionCode)) {
         AppLog.add('update', 'build ${cfg.latestVersionCode} is snoozed');
         return;
       }
@@ -201,7 +224,9 @@ class AppUpdateService {
       // running. Whatever closed it, the download stops here.
       if (!_installStarted) {
         await cancelDownload();
-        if (!forced) await snooze(cfg.latestVersionCode);
+        // Only an UNASKED-FOR sheet earns a snooze. Re-snoozing one the
+        // user opened themselves is what created the trap above.
+        if (!forced && !force) await snooze(cfg.latestVersionCode);
       }
       _sheetShowing = false;
     } catch (e) {

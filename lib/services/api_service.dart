@@ -132,6 +132,16 @@ class ApiService {
       }
       if (r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);
+        // A REFUSAL THE USER CAN ACT ON IS NOT A NULL. 409 carries the
+        // server's own explanation ("that is a female name and a male
+        // voice…"); swallowing it left the app saying "couldn't save",
+        // which tells the user nothing about what to change.
+        if (r.statusCode == 409 && r.body.isNotEmpty) {
+          try {
+            final d = jsonDecode(r.body);
+            if (d is Map<String, dynamic>) return {...d, 'rejected': true};
+          } catch (_) {/* fall through to null */}
+        }
         return null;
       }
       final decoded = r.body.isEmpty ? {} : jsonDecode(r.body);

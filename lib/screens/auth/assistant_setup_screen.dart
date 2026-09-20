@@ -181,11 +181,15 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
     });
     final r = await ApiService.sendJson('/profile/assistant',
         method: 'PUT', body: {'name': n});
-    if (r == null) {
+    if (r == null || r['rejected'] == true) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = "Couldn't save the name. Check your connection and try again.";
+          // A name refused because it does not match the voice comes with
+          // its own sentence saying what to change; only a real network
+          // failure gets the generic line.
+          _error = (r?['message'] as String?) ??
+              "Couldn't save the name. Check your connection and try again.";
         });
       }
       return;
