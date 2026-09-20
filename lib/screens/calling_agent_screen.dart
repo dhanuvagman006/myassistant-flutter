@@ -29,6 +29,7 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
   bool _saving = false;
 
   late String _character, _voice, _brain, _language;
+  String _voiceFilter = 'all';
   final _persona = TextEditingController();
 
   @override
@@ -154,22 +155,36 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
             onTap: () => setState(() => _character = c['id'].toString()),
           ),
         _section('Voice', 'How it sounds'),
+        // MALE / FEMALE / ALL, because with seventeen voices a flat wrap
+        // is a wall — and picking the gender is the first thing anyone
+        // does (his ask, 2026-09-20).
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final g in const ['all', 'male', 'female'])
+              _filterChip(
+                selected: _voiceFilter == g,
+                label: g == 'all' ? 'All' : (g == 'male' ? 'Male' : 'Female'),
+                onTap: () => setState(() => _voiceFilter = g),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final v in (d['voices'] as List).whereType<Map>())
+            for (final v in (d['voices'] as List).whereType<Map>().where((v) =>
+                _voiceFilter == 'all' || v['gender'] == _voiceFilter))
               _chip(
                 selected: _voice == v['id'],
                 label: (v['label'] ?? '').toString(),
-                sub: [v['gender'], v['accent']]
-                    .where((x) => (x ?? '').toString().isNotEmpty)
-                    .join(' · '),
+                sub: (v['style'] ?? '').toString(),
                 onTap: () => setState(() => _voice = v['id'].toString()),
               ),
           ],
         ),
-        _section('Language', 'What it should understand on the call'),
+        _section('Language', 'What it should speak and understand on the call'),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -304,6 +319,32 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
                 ],
               ),
             ),
+          ),
+        ),
+      );
+
+  Widget _filterChip({
+    required bool selected,
+    required String label,
+    required VoidCallback onTap,
+  }) =>
+      Material(
+        color: selected ? Neon.violet : Neon.surface,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 7),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: selected ? Neon.violet : Neon.line),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    color: selected ? Colors.white : Neon.textLo,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600)),
           ),
         ),
       );
