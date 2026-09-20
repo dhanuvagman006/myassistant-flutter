@@ -109,20 +109,29 @@ class AssistantEngine extends ChangeNotifier {
     inlineVoice = true;
     faceMode = false;
     notifyListeners();
-    // NO SPOKEN GREETING (his call, 2026-09-20: "when I open the app we
-    // don't need any greeting"). The epoch is still claimed so neither
-    // the live nor the classic path fills the silence with one of its
-    // own; the microphone simply opens and listens.
-    if (greetingEnabled &&
-        DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
+    // GREET ON THE TAP, NEVER ON APP OPEN.
+    //
+    // Two of his calls, and they are not in conflict: "when I open the app
+    // we don't need any greeting" (2026-09-20 morning) and, later the same
+    // day, "I open the app and I click on that mic orb, it should greet".
+    // The orb tap IS the gesture — opening the app still says nothing, and
+    // greetingEnabled stays off so the live and classic connect paths add
+    // no second greeting of their own.
+    //
+    // Spoken on the DEVICE, not through the model: it lands instantly
+    // instead of after a round-trip, which is the whole point of greeting
+    // at the tap.
+    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
       _lastGreetedAt = DateTime.now();
-      final who = (name ?? greetingName ?? '').trim().split(RegExp(r'\s+')).first;
-      final h = DateTime.now().hour;
-      final part =
-          h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
-      unawaited(_voice
-          .speakInstant(who.isEmpty ? '$part!' : '$part, $who!')
-          .catchError((_) {}));
+      final hello = orbGreeting(
+        name: name ?? greetingName ?? AuthService.instance.user?.name,
+        gender: AuthService.instance.user?.gender,
+      );
+      // That audio leaves the same loudspeaker the microphone is about to
+      // open on. Without this hold Google hears "Hi sir" as the user's
+      // first words and answers its own greeting.
+      _liveSvc.holdMic(const Duration(milliseconds: 2200));
+      unawaited(_voice.speakInstant(hello).catchError((_) {}));
     }
     try {
       // HARD CEILING. Any await inside the start path (recorder release, a
@@ -1482,6 +1491,24 @@ class AssistantEngine extends ChangeNotifier {
   bool greetingEnabled = false;
 
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
+
+  /// "Hi sir" / "Hi ma'am" — what he asked the orb tap to say
+  /// (2026-09-20). Gender comes from the signed-in profile.
+  ///
+  /// AN HONORIFIC IS ONLY USED WHEN IT IS KNOWN. "other" and an unset
+  /// gender fall back to the person's first name, and an account with no
+  /// name to a plain hello: guessing sir or ma'am wrong is worse than
+  /// using neither, and this is the first thing the user hears every time.
+  static String orbGreeting({String? name, String? gender}) {
+    switch ((gender ?? '').trim().toLowerCase()) {
+      case 'male':
+        return 'Hi sir!';
+      case 'female':
+        return "Hi ma'am!";
+    }
+    final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
+    return first.isEmpty ? 'Hi!' : 'Hi $first!';
+  }
 
   /// Time-appropriate greeting text starting with Hello.
   static String greetingFor(String? name, {DateTime? now}) {

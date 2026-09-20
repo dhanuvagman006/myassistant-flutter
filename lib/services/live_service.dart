@@ -131,6 +131,21 @@ class LiveService {
   /// forward while she is speaking, and never refreshed once she stops —
   /// so it cannot leave the microphone shut.
   DateTime _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// A hold asked for BEFORE the session exists — the orb-tap greeting is
+  /// spoken on the device while the socket is still connecting, so the
+  /// request arrives before start() runs and would otherwise be wiped by
+  /// its reset below.
+  DateTime _micHoldFloor = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Keep the microphone shut for [d]. Used while the APP speaks locally
+  /// (the instant greeting): that audio comes out of the same loudspeaker,
+  /// and handing it to Google would have her answer her own hello.
+  void holdMic(Duration d) {
+    final until = DateTime.now().add(d);
+    if (until.isAfter(_micOpenAt)) _micOpenAt = until;
+    if (until.isAfter(_micHoldFloor)) _micHoldFloor = until;
+  }
   int _aboveMs = 0; // consecutive audio above the speech threshold
   int _belowMs = 0; // consecutive audio below it
   int _utteranceMs = 0; // length of the current utterance
@@ -258,7 +273,10 @@ class LiveService {
     _noiseFloor = 0.01;
     _gateAbort();
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
-    _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
+    // A hold requested before this session opened still applies.
+    _micOpenAt = _micHoldFloor.isAfter(DateTime.now())
+        ? _micHoldFloor
+        : DateTime.fromMillisecondsSinceEpoch(0);
 
     // Open the gapless PCM stream player up-front, so the very first reply
     // byte can be fed straight to the speaker.
