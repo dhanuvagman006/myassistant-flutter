@@ -50,6 +50,7 @@ import '../../../services/voice_id_service.dart';
 import '../../../services/usage_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
+import '../../../services/greeting_voice.dart';
 
 /// The assistant experience's single source of truth (ChangeNotifier — the
 /// state-management style used across this codebase; the UI observes it
@@ -127,11 +128,19 @@ class AssistantEngine extends ChangeNotifier {
         name: name ?? greetingName ?? AuthService.instance.user?.name,
         gender: AuthService.instance.user?.gender,
       );
-      // That audio leaves the same loudspeaker the microphone is about to
-      // open on. Without this hold Google hears "Hi sir" as the user's
-      // first words and answers its own greeting.
-      _liveSvc.holdMic(const Duration(milliseconds: 2200));
-      unawaited(_voice.speakInstant(hello).catchError((_) {}));
+      // THE ASSISTANT'S OWN VOICE, NOT THE PHONE'S. Synthesised once by
+      // the same endpoint the assistant speaks through and cached, so it
+      // is both instant and identical to the voice that answers a moment
+      // later. An uncached greeting is SILENT rather than spoken in the
+      // device voice — sounding wrong is the thing he asked to remove.
+      //
+      // The hold is applied only when something will actually play: that
+      // audio leaves the same loudspeaker the microphone is about to open
+      // on, and without it Google hears "Hi sir" as the user's first
+      // words and answers the app's own greeting.
+      unawaited(GreetingVoice.instance.play(hello).then((played) {
+        if (played) _liveSvc.holdMic(const Duration(milliseconds: 2200));
+      }).catchError((_) {/* a greeting that fails is simply silent */}));
     }
     try {
       // HARD CEILING. Any await inside the start path (recorder release, a

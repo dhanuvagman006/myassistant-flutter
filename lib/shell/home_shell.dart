@@ -34,6 +34,7 @@ import '../services/share_intake_service.dart';
 import '../services/usage_service.dart';
 import '../services/api_service.dart';
 import '../services/device_control_service.dart';
+import '../services/greeting_voice.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  HOME SHELL — the app's new backbone (Daylight redesign, Sept 2026).
@@ -120,6 +121,16 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     setState(() => _tab = want);
   }
 
+  /// The greeting the orb will speak, cached in the assistant's voice.
+  Future<void> _warmGreeting() async {
+    try {
+      final u = AuthService.instance.user;
+      await GreetingVoice.instance.prewarm(
+        AssistantEngine.orbGreeting(name: u?.name, gender: u?.gender),
+      );
+    } catch (_) {/* a greeting that cannot be fetched simply stays quiet */}
+  }
+
   /// Cached on ApiService so neither the header getter nor the socket
   /// connect has to await a platform channel on the hot path.
   Future<void> _refreshBattery() async {
@@ -146,6 +157,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // on requests and on the live socket — cheap, and it makes "I'm going
     // out" able to say "charge your phone first" without a round trip.
     _refreshBattery();
+    // One /tts call in the app's lifetime; every later tap plays from
+    // disk. Deliberately after the first frame — it must never delay
+    // launch.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _warmGreeting());
     // Count today towards the streak before the first frame settles, so
     // the header shows the right number on this launch, not the next one.
     StreakService.instance.touch().then((_) {

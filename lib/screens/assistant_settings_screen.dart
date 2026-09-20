@@ -18,6 +18,7 @@ import 'avatar_face_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
+import '../services/greeting_voice.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
@@ -111,6 +112,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     HapticFeedback.selectionClick();
     final prev = _voice;
     setState(() => _voice = v);
+    // The cached orb greeting is in the OLD voice — drop it so the next
+    // tap is greeted in the one they just picked.
+    unawaited(GreetingVoice.instance.clear());
     final r = await ApiService.sendJson('/profile/assistant',
         method: 'PUT', body: {'voice': v.isEmpty ? 'default' : v});
     if (!mounted) return;
