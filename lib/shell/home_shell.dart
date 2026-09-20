@@ -112,11 +112,29 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   int _tab = HomeShell.lastTab;
 
+
+  /// LEAVING THE TAB ENDS THE CONVERSATION.
+  ///
+  /// The live session used to outlive navigation entirely — it was only
+  /// ever ended by tapping the orb a second time. So walking from a
+  /// conversation to Hub and back left the microphone hot behind the
+  /// dashboard and the orb stuck on its stop icon, which is what he saw
+  /// on Home (2026-09-20, screenshot). Nothing may keep listening once
+  /// the user has moved on; the orb goes back to the mic, and a tap
+  /// starts a fresh session.
+  void _endConversationOnNavigate() {
+    final e = AssistantEngine.instance;
+    if (e.liveActive || e.inlineVoice) {
+      unawaited(e.endInlineConversation());
+    }
+  }
+
   void _onTabRequested() {
     final want = HomeShell.requestedTab.value;
     if (want == null || !mounted) return;
     HomeShell.requestedTab.value = null; // consume, so it fires once
     if (want < 0 || want > 3 || want == _tab) return;
+    _endConversationOnNavigate();
     HomeShell.lastTab = want;
     setState(() => _tab = want);
   }
@@ -539,6 +557,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       child: InkWell(
         onTap: () {
           HapticFeedback.selectionClick();
+          if (i != _tab) _endConversationOnNavigate();
           HomeShell.lastTab = i;
           setState(() => _tab = i);
         },

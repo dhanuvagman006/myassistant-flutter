@@ -27,6 +27,7 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
   Map<String, dynamic>? _data;
   String? _error;
   bool _saving = false;
+  bool _previewing = false;
 
   late String _character, _voice, _brain, _language;
   String _voiceFilter = 'all';
@@ -142,98 +143,175 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
 
   Widget _form() {
     final d = _data!;
+    final voices = (d['voices'] as List).whereType<Map>().toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
         _intro(),
-        _section('Character', 'How it behaves on the call'),
-        for (final c in (d['characters'] as List).whereType<Map>())
-          _choice(
-            selected: _character == c['id'],
-            title: (c['label'] ?? '').toString(),
-            subtitle: (c['hint'] ?? '').toString(),
-            onTap: () => setState(() => _character = c['id'].toString()),
-          ),
-        _section('Voice', 'How it sounds'),
-        // MALE / FEMALE / ALL, because with seventeen voices a flat wrap
-        // is a wall — and picking the gender is the first thing anyone
-        // does (his ask, 2026-09-20).
-        Wrap(
-          spacing: 8,
+        const SizedBox(height: 14),
+
+        _group(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Voice',
+          sub: 'How it sounds. Tap Hear it and I will ring you in this voice.',
           children: [
-            for (final g in const ['all', 'male', 'female'])
-              _filterChip(
-                selected: _voiceFilter == g,
-                label: g == 'all' ? 'All' : (g == 'male' ? 'Male' : 'Female'),
-                onTap: () => setState(() => _voiceFilter = g),
-              ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final v in (d['voices'] as List).whereType<Map>().where((v) =>
-                _voiceFilter == 'all' || v['gender'] == _voiceFilter))
-              _chip(
-                selected: _voice == v['id'],
-                label: (v['label'] ?? '').toString(),
-                sub: (v['style'] ?? '').toString(),
-                onTap: () => setState(() => _voice = v['id'].toString()),
-              ),
-          ],
-        ),
-        _section('Language', 'What it should speak and understand on the call'),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final l in (d['languages'] as List).whereType<Map>())
-              _chip(
-                selected: _language == l['id'],
-                label: (l['label'] ?? '').toString(),
-                sub: (l['hint'] ?? '').toString(),
-                onTap: () => setState(() => _language = l['id'].toString()),
-              ),
-          ],
-        ),
-        _section('How sharp', 'Slower thinking handles awkward calls better'),
-        for (final b in (d['brains'] as List).whereType<Map>())
-          _choice(
-            selected: _brain == b['id'],
-            title: (b['label'] ?? '').toString(),
-            subtitle: (b['hint'] ?? '').toString(),
-            trailing:
-                '\$${((b['costPerMin'] as num?)?.toDouble() ?? 0).toStringAsFixed(3)}/min',
-            onTap: () => setState(() => _brain = b['id'].toString()),
-          ),
-        _section('Anything else it should know',
-            'Optional — spoken in every call it makes for you'),
-        Container(
-          decoration: BoxDecoration(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Neon.line),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: TextField(
-            controller: _persona,
-            maxLines: 4,
-            maxLength: 600,
-            style: TextStyle(color: Neon.textHi, fontSize: 14, height: 1.4),
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              counterStyle: TextStyle(color: Neon.textDim, fontSize: 11),
-              hintText:
-                  'e.g. "Always mention I am calling from Shetty Clinic" or '
-                  '"Never discuss money on the phone"',
-              hintStyle: TextStyle(color: Neon.textDim, fontSize: 13.5, height: 1.4),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final g in const ['all', 'male', 'female'])
+                  _filterChip(
+                    selected: _voiceFilter == g,
+                    label: g == 'all'
+                        ? 'All'
+                        : (g == 'male' ? 'Male' : 'Female'),
+                    onTap: () => setState(() => _voiceFilter = g),
+                  ),
+              ],
             ),
-          ),
+            const SizedBox(height: 11),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final v in voices.where((v) =>
+                    _voiceFilter == 'all' || v['gender'] == _voiceFilter))
+                  _chip(
+                    selected: _voice == v['id'],
+                    label: (v['label'] ?? '').toString(),
+                    sub: (v['style'] ?? '').toString(),
+                    onTap: () => setState(() => _voice = v['id'].toString()),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 13),
+            // NOT A CLIP — the provider has no sample endpoint, so this
+            // rings the user and speaks in exactly the voice, language and
+            // character they have chosen. What they hear is the real call.
+            OutlinedButton.icon(
+              onPressed: _previewing ? null : _hearIt,
+              icon: _previewing
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.phone_in_talk_rounded, size: 17),
+              label: Text(_previewing ? 'Ringing you…' : 'Hear it — ring me'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Neon.violet,
+                side: BorderSide(color: Neon.violet.withValues(alpha: 0.55)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999)),
+              ),
+            ),
+          ],
+        ),
+
+        _group(
+          icon: Icons.translate_rounded,
+          title: 'Language',
+          sub: 'What it speaks and understands on the call.',
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final l in (d['languages'] as List).whereType<Map>())
+                  _chip(
+                    selected: _language == l['id'],
+                    label: (l['label'] ?? '').toString(),
+                    sub: (l['hint'] ?? '').toString(),
+                    onTap: () => setState(() => _language = l['id'].toString()),
+                  ),
+              ],
+            ),
+          ],
+        ),
+
+        _group(
+          icon: Icons.psychology_alt_rounded,
+          title: 'Character',
+          sub: 'How it behaves with the person who answers.',
+          children: [
+            for (final c in (d['characters'] as List).whereType<Map>())
+              _choice(
+                selected: _character == c['id'],
+                title: (c['label'] ?? '').toString(),
+                subtitle: (c['hint'] ?? '').toString(),
+                onTap: () => setState(() => _character = c['id'].toString()),
+              ),
+          ],
+        ),
+
+        _group(
+          icon: Icons.bolt_rounded,
+          title: 'How sharp',
+          sub: 'Slower thinking handles awkward conversations better.',
+          children: [
+            for (final b in (d['brains'] as List).whereType<Map>())
+              _choice(
+                selected: _brain == b['id'],
+                title: (b['label'] ?? '').toString(),
+                subtitle: (b['hint'] ?? '').toString(),
+                trailing:
+                    '\$${((b['costPerMin'] as num?)?.toDouble() ?? 0).toStringAsFixed(3)}/min',
+                onTap: () => setState(() => _brain = b['id'].toString()),
+              ),
+          ],
+        ),
+
+        _group(
+          icon: Icons.sticky_note_2_rounded,
+          title: 'Standing instruction',
+          sub: 'Optional — it carries this into every call it makes for you.',
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Neon.surfaceHigh,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Neon.line),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: TextField(
+                controller: _persona,
+                maxLines: 4,
+                maxLength: 600,
+                style: TextStyle(color: Neon.textHi, fontSize: 14, height: 1.4),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  counterStyle: TextStyle(color: Neon.textDim, fontSize: 11),
+                  hintText:
+                      'e.g. "Always say I am calling from Shetty Clinic" or '
+                      '"Never discuss money on the phone"',
+                  hintStyle: TextStyle(
+                      color: Neon.textDim, fontSize: 13.5, height: 1.4),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
+  }
+
+  /// Rings the user in the configuration currently on screen. Saves
+  /// first — otherwise they would hear the voice they had BEFORE the one
+  /// they are asking about, which is worse than no preview at all.
+  Future<void> _hearIt() async {
+    setState(() => _previewing = true);
+    HapticFeedback.selectionClick();
+    try {
+      await _save();
+      final r = await ApiService.sendJson('/calling-agent/preview',
+          method: 'POST', body: const {});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r == null
+            ? "Couldn't place the sample call — check your number in Profile."
+            : 'Ringing you now — answer to hear this voice.'),
+      ));
+    } finally {
+      if (mounted) setState(() => _previewing = false);
+    }
   }
 
   Widget _intro() => Padding(
@@ -246,19 +324,47 @@ class _CallingAgentScreenState extends State<CallingAgentScreen> {
         ),
       );
 
-  Widget _section(String title, String sub) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 22, 4, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 2),
-            Text(sub, style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
-          ],
+  /// A titled group. Each area of the screen is one card, so Voice,
+  /// Language and Character read as separate decisions instead of one
+  /// long scroll of controls (his ask, 2026-09-20: "organise it
+  /// properly").
+  Widget _group({
+    required IconData icon,
+    required String title,
+    required String sub,
+    required List<Widget> children,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+          decoration: BoxDecoration(
+            color: Neon.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Neon.line),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 17, color: Neon.violet),
+                  const SizedBox(width: 8),
+                  Text(title,
+                      style: TextStyle(
+                          color: Neon.textHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(sub,
+                  style: TextStyle(
+                      color: Neon.textDim, fontSize: 12.5, height: 1.35)),
+              const SizedBox(height: 13),
+              ...children,
+            ],
+          ),
         ),
       );
 
