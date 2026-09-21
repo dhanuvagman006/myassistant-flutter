@@ -1,6 +1,5 @@
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,7 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
-import '../features/assistant/widgets/siri_orb.dart';
+import 'voice_orb.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  INLINE VOICE — talk to the assistant from Home, no second screen.
@@ -199,11 +198,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   String _text = '';
   bool _fromUser = false;
 
-  /// Drives the petal bloom around the big centre orb: one long loop,
-  /// bands counter-rotating at different fractions of it.
-  late final AnimationController _rings = AnimationController(
-      vsync: this, duration: const Duration(seconds: 24));
-
   /// SPEECH-PACED REVEAL. The transcript arrives at GENERATION speed —
   /// seconds ahead of the audio — so showing it raw makes the lyrics run
   /// ahead of the voice. Instead the assistant's text is released at
@@ -268,7 +262,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
     _pacer?.cancel();
-    _rings.dispose();
     super.dispose();
   }
 
@@ -302,12 +295,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     if (!mounted) return;
     // Session over → the words leave with it.
     if (!_active && _text.isNotEmpty) _text = '';
-    // The halo rings run only while the overlay is up.
-    if (_active && !_rings.isAnimating) _rings.repeat();
-    if (!_active && _rings.isAnimating) {
-      _rings.stop();
-      _rings.reset();
-    }
     setState(() {});
   }
 
@@ -366,34 +353,49 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           child: Column(
             children: [
               const Spacer(flex: 5),
-              // THE PRESENCE — the Siri-style orb, large and centred,
-              // living with the audio: cyan waves while you speak, pink
-              // while it answers, violet shimmer while it thinks. The
-              // rings breathe outward the whole session.
+              // THE PRESENCE — the orb from the reference design: a
+              // glossy mint sphere in a tunnel of rings that runs off
+              // both edges of the screen, teal on the left and magenta
+              // on the right. See widgets/voice_orb.dart.
+              //
+              // FULL WIDTH ON PURPOSE. The rings reach both edges in the
+              // reference; boxing them into the old 330 px square is what
+              // would make this read as a small copy of it. The padding
+              // the overlay puts on its text does not apply here, so the
+              // backdrop is pulled out to the screen edges.
               SizedBox(
-                width: 330,
                 height: 330,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (show)
-                      AnimatedBuilder(
-                        animation: _rings,
-                        builder: (_, __) => CustomPaint(
-                            size: const Size(330, 330),
-                            painter: _PetalBloomPainter(_rings.value)),
-                      ),
-                    ValueListenableBuilder<double>(
-                      valueListenable: engine.micLevelListenable,
-                      builder: (_, level, __) => SiriOrb(
-                        size: 168,
-                        phase: engine.phase,
-                        level: level,
-                        connected: engine.liveActive ||
-                            engine.phase != AssistantPhase.idle,
-                      ),
-                    ),
-                  ],
+                child: ValueListenableBuilder<double>(
+                  valueListenable: engine.micLevelListenable,
+                  builder: (_, level, __) {
+                    final mood = switch (engine.phase) {
+                      AssistantPhase.listening => OrbMood.listening,
+                      AssistantPhase.thinking ||
+                      AssistantPhase.searching =>
+                        OrbMood.thinking,
+                      AssistantPhase.speaking => OrbMood.speaking,
+                      _ => engine.liveActive ? OrbMood.listening : OrbMood.idle,
+                    };
+                    return Stack(
+                      alignment: Alignment.center,
+                      clipBehavior: Clip.none,
+                      children: [
+                        if (show)
+                          Positioned(
+                            left: -28,
+                            right: -28,
+                            top: 0,
+                            bottom: 0,
+                            child: VoiceOrbBackdrop(
+                              orbSize: 168,
+                              mood: mood,
+                              level: level,
+                            ),
+                          ),
+                        VoiceOrb(size: 168, mood: mood, level: level),
+                      ],
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 24),
@@ -612,102 +614,3 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
   }
 }
 
-/// THE PETAL BLOOM — the reference look: dense violet crescent blades
-/// layered like a shutter around the dark centre, two thin blue-white
-/// rings hugging the orb, everything drifting slowly with a breath.
-///
-/// Three bands of feathered arcs, counter-rotating at different speeds.
-/// Each blade is two strokes — a deep violet body and a lighter lavender
-/// highlight riding its inner edge — which is what gives the feathers
-/// their two-tone, lit-from-inside look without a single blur filter
-/// (blur on forty strokes would melt a mid-range GPU).
-class _PetalBloomPainter extends CustomPainter {
-  final double t;
-  _PetalBloomPainter(this.t);
-
-  static const _bands = [
-    // radius offset from orb edge, blade count, stroke, rotation speed
-    (18.0, 12, 9.0, 0.9),
-    (38.0, 14, 12.0, -0.6),
-    (58.0, 16, 15.0, 0.4),
-  ];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    const orbR = 84.0; // matches the 168 px SiriOrb
-    final breath = math.sin(t * 2 * math.pi * 6) * 2.0;
-
-    // Soft ambient glow behind everything, so the blades sit in light.
-    canvas.drawCircle(
-      c,
-      orbR + 76,
-      Paint()
-        ..shader = RadialGradient(colors: [
-          const Color(0xFF7C5CE0).withValues(alpha: 0.16),
-          const Color(0xFF7C5CE0).withValues(alpha: 0.0),
-        ]).createShader(Rect.fromCircle(center: c, radius: orbR + 76)),
-    );
-
-    // The feather bands.
-    for (var b = 0; b < _bands.length; b++) {
-      final (off, count, stroke, speed) = _bands[b];
-      final r = orbR + off + breath * (b + 1) * 0.5;
-      final rot = t * 2 * math.pi * speed;
-      final rect = Rect.fromCircle(center: c, radius: r);
-      for (var i = 0; i < count; i++) {
-        final a = rot + 2 * math.pi * i / count;
-        final sweep = 2 * math.pi / count * 0.62;
-        // Deep body.
-        canvas.drawArc(
-          rect,
-          a,
-          sweep,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeCap = StrokeCap.round
-            ..strokeWidth = stroke
-            ..color = Color.lerp(const Color(0xFF6D4FD8),
-                    const Color(0xFF9B7BF0), (i % 3) / 2)!
-                .withValues(alpha: 0.42 - b * 0.08),
-        );
-        // Lavender highlight on the inner edge.
-        canvas.drawArc(
-          Rect.fromCircle(center: c, radius: r - stroke * 0.28),
-          a + sweep * 0.12,
-          sweep * 0.76,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeCap = StrokeCap.round
-            ..strokeWidth = stroke * 0.38
-            ..color = const Color(0xFFC9B8FF)
-                .withValues(alpha: 0.40 - b * 0.09),
-        );
-      }
-    }
-
-    // Thin crisp rings hugging the orb — the cool blue-white edge the
-    // reference has between the dark centre and the violet bloom.
-    canvas.drawCircle(
-      c,
-      orbR + 5,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..color = const Color(0xFFBFD4FF).withValues(alpha: 0.75),
-    );
-    canvas.drawCircle(
-      c,
-      orbR + 10,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.1
-        ..color = const Color(0xFF8B6EF3).withValues(alpha: 0.55),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_PetalBloomPainter old) => old.t != t;
-}
