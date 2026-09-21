@@ -1,0 +1,309 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+import '../design/neon_tokens.dart';
+import '../services/api_service.dart';
+
+/// ─────────────────────────────────────────────────────────────────────
+///  A GROUP, WITH THE ASSISTANT IN IT.
+///
+///  Text only for now, at his instruction. What makes this different
+///  from any other group chat is the switch at the top: when it is on,
+///  and a message arrives that you have not read for a few minutes, your
+///  assistant may answer it for you — from your real schedule and the
+///  things you have asked it to remember, never from a guess.
+///
+///  THE ONE LINE UNDER THE TITLE IS LOAD-BEARING. He asked that replies
+///  not be labelled message by message and read as the person's own, and
+///  they are not. What makes that fair rather than a trick is that every
+///  member is told, plainly and in the room itself, that this is how the
+///  room works. Nobody here is under an illusion; they simply are not
+///  reminded on every line.
+/// ─────────────────────────────────────────────────────────────────────
+class ChatGroupScreen extends StatefulWidget {
+  const ChatGroupScreen({super.key, required this.groupId, required this.title});
+
+  final int groupId;
+  final String title;
+
+  @override
+  State<ChatGroupScreen> createState() => _ChatGroupScreenState();
+}
+
+class _Msg {
+  final int id;
+  final String name, text;
+  final bool mine;
+  final int at;
+  const _Msg(this.id, this.name, this.text, this.mine, this.at);
+}
+
+class _ChatGroupScreenState extends State<ChatGroupScreen> {
+  final _c = TextEditingController();
+  final _scroll = ScrollController();
+  List<_Msg> _messages = const [];
+  bool _loading = true;
+  bool _agentReplies = false;
+  int _members = 0;
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // The push nudge is the real-time signal; this keeps an open screen
+    // honest without a socket.
+    _poll = Timer.periodic(const Duration(seconds: 12), (_) {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) _load(quiet: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _c.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({bool quiet = false}) async {
+    try {
+      final r = await ApiService.getJson('/chat/groups/${widget.groupId}');
+      if (!mounted || r == null) return;
+      final list = ((r['messages'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((m) => _Msg(
+                (m['id'] as num?)?.toInt() ?? 0,
+                (m['name'] ?? '').toString(),
+                (m['text'] ?? '').toString(),
+                m['mine'] == true,
+                (m['at'] as num?)?.toInt() ?? 0,
+              ))
+          .toList();
+      final grew = list.length != _messages.length;
+      setState(() {
+        _messages = list;
+        _loading = false;
+        _agentReplies = ((r['group'] as Map?)?['agentReplies'] == true);
+        _members = ((r['members'] as List?) ?? const []).length;
+      });
+      if (grew) _toBottom();
+    } catch (_) {
+      if (mounted && !quiet) setState(() => _loading = false);
+    }
+  }
+
+  void _toBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 240), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  Future<void> _send() async {
+    final t = _c.text.trim();
+    if (t.isEmpty) return;
+    _c.clear();
+    HapticFeedback.lightImpact();
+    // Show it immediately; the reload reconciles with the server's id.
+    setState(() {
+      _messages = [
+        ..._messages,
+        _Msg(0, 'You', t, true, DateTime.now().millisecondsSinceEpoch),
+      ];
+    });
+    _toBottom();
+    await ApiService.postJson('/chat/groups/${widget.groupId}/send', {'text': t});
+    await _load(quiet: true);
+  }
+
+  Future<void> _toggleAgent(bool v) async {
+    setState(() => _agentReplies = v);
+    HapticFeedback.selectionClick();
+    final r = await ApiService.postJson(
+        '/chat/groups/${widget.groupId}/agent', {'enabled': v});
+    if (!mounted) return;
+    // The server's answer wins — never leave a switch showing something
+    // that did not take.
+    setState(() => _agentReplies = r?['enabled'] == true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Neon.bg,
+      appBar: AppBar(
+        backgroundColor: Neon.bg,
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.title,
+                style: GoogleFonts.spaceGrotesk(
+                    fontWeight: FontWeight.w700, fontSize: 17)),
+            Text(
+              _members > 0 ? '$_members members' : 'Group',
+              style: TextStyle(color: Neon.textLo, fontSize: 11.5),
+            ),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          _agentBar(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _messages.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Text(
+                            'No messages yet. Say hello.',
+                            style: TextStyle(color: Neon.textLo),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                        itemCount: _messages.length,
+                        itemBuilder: (_, i) => _bubble(_messages[i]),
+                      ),
+          ),
+          _composer(),
+        ],
+      ),
+    );
+  }
+
+  /// The switch, and the sentence that makes the whole design honest.
+  Widget _agentBar() => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: Neon.surface,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.support_agent_rounded,
+                size: 19, color: _agentReplies ? Neon.violet : Neon.textLo),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Let my assistant reply here',
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'In this group, members’ assistants may answer for '
+                    'them while they are away.',
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: 11.5, height: 1.35),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: _agentReplies,
+              activeThumbColor: Colors.white,
+              activeTrackColor: Neon.violet,
+              onChanged: _toggleAgent,
+            ),
+          ],
+        ),
+      );
+
+  Widget _bubble(_Msg m) {
+    final mine = m.mine;
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.74),
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.fromLTRB(13, 9, 13, 9),
+        decoration: BoxDecoration(
+          color: mine ? Neon.violet.withValues(alpha: 0.22) : Neon.surface,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(mine ? 16 : 5),
+            bottomRight: Radius.circular(mine ? 5 : 16),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!mine && m.name.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text(
+                  m.name.split(' ').first,
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Neon.violet,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            Text(m.text,
+                style: TextStyle(
+                    color: Neon.textHi, fontSize: 15, height: 1.32)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _composer() => Padding(
+        padding: EdgeInsets.fromLTRB(
+            12, 4, 12, 10 + MediaQuery.of(context).viewInsets.bottom),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _c,
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _send(),
+                style: TextStyle(color: Neon.textHi),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Message',
+                  hintStyle: TextStyle(color: Neon.textLo),
+                  filled: true,
+                  fillColor: Neon.surface,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(24),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: _send,
+              style: IconButton.styleFrom(backgroundColor: Neon.violet),
+              icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white),
+            ),
+          ],
+        ),
+      );
+}

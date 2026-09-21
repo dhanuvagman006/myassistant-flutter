@@ -215,6 +215,27 @@
             android:value="hari_default" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <!-- HOME-SCREEN WIDGET: one orb, one tap, one task handed over.
+             No service, no periodic update — see TaskWidgetProvider.
+
+             EXPORTED, deliberately. The widget broadcast comes from the
+             system, and whether a non-exported receiver reliably gets it
+             varies by launcher and OS version — a question only a device
+             can answer, and a widget that never appears is the whole
+             feature failing silently. The cost of exporting is nil here:
+             the receiver handles APPWIDGET_UPDATE and nothing else, so
+             the worst another app can do is ask it to redraw itself. -->
+        <receiver
+            android:name=".TaskWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_task_info" />
+        </receiver>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

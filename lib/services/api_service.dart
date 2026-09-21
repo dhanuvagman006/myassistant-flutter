@@ -187,6 +187,28 @@ class ApiService {
     }
   }
 
+  /// POST a JSON body and read a JSON answer. The twin of [getJson] —
+  /// same auth headers, same "null rather than throw" contract, so a
+  /// screen can treat a dead network and a refusal the same way.
+  static Future<Map<String, dynamic>?> postJson(String path, Object body,
+      {Duration timeout = const Duration(seconds: 12)}) async {
+    try {
+      final r = await _client
+          .post(Uri.parse('$baseUrl$path'),
+              headers: _authHeaders, body: jsonEncode(body))
+          .timeout(timeout);
+      if (r.statusCode < 200 || r.statusCode >= 300) {
+        _flagAuthFailure(r.statusCode);
+        return null;
+      }
+      if (r.body.isEmpty) return const {};
+      final decoded = jsonDecode(r.body);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Session JWT issued by the backend after any sign-in (email/Google/Apple).
   /// Managed by AuthService — set on sign-in, cleared on sign-out.
   static String? sessionToken;
@@ -237,6 +259,25 @@ class ApiService {
         if (geoLat != null) 'X-Geo-Lat': geoLat!.toStringAsFixed(4),
         if (geoLng != null) 'X-Geo-Lng': geoLng!.toStringAsFixed(4),
       };
+
+  /// HAND A TASK OVER AND WALK AWAY — the home-screen widget's one call.
+  ///
+  /// Not a conversation: the server queues it, answers immediately, works
+  /// on it with the phone in a pocket and pushes the outcome. Returns
+  /// true when the server took it.
+  static Future<bool> queueQuickTask(String task) async {
+    final t = task.trim();
+    if (t.isEmpty) return false;
+    try {
+      final r = await _client
+          .post(Uri.parse('$baseUrl/tasks/quick'),
+              headers: _authHeaders, body: jsonEncode({'task': t}))
+          .timeout(const Duration(seconds: 20));
+      return r.statusCode == 202;
+    } catch (_) {
+      return false;
+    }
+  }
 
   static RemoteConfig config = const RemoteConfig();
 

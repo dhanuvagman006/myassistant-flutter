@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_task_label">Assign a task</string>
+    <string name="widget_task_description">Tap the orb, give the assistant a job, and get on with your day — it works on it in the background and tells you when it is done.</string>
+</resources>

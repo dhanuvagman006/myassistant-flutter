@@ -8,6 +8,8 @@ import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../models/user_document.dart';
 import '../services/api_service.dart';
+import 'chat_group_screen.dart';
+import 'chat_new_screen.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  CHAT — the WhatsApp-style face of the agent-message rail.
@@ -30,7 +32,18 @@ class _ChatThread {
   _ChatThread(this.phone, this.name, this.last, this.lastAt, this.unread);
 }
 
+/// A group row. Kept as its own type rather than a flag on _ChatThread
+/// because the two are addressed differently — a direct thread by phone,
+/// a group by id — and one nullable field standing for "which kind" is
+/// how the wrong screen gets opened.
+class _ChatGroup {
+  final int id, lastAt, unread, members;
+  final String title, last;
+  _ChatGroup(this.id, this.title, this.last, this.lastAt, this.unread, this.members);
+}
+
 class _ChatScreenState extends State<ChatScreen> {
+  List<_ChatGroup> _groups = const [];
   List<_ChatThread>? _threads;
   String? _error;
   Timer? _poll;
@@ -63,8 +76,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _load() async {
     try {
-      final r = await ApiService.getJson('/chat/threads');
+      // Both lists in parallel: a slow one must not hold up the other,
+      // and a failed one must not blank the screen.
+      final results = await Future.wait([
+        ApiService.getJson('/chat/threads'),
+        ApiService.getJson('/chat/groups'),
+      ]);
+      final r = results[0];
+      final g = results[1];
       if (!mounted) return;
+      _groups = ((g?['groups'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((x) => _ChatGroup(
+                (x['id'] as num?)?.toInt() ?? 0,
+                (x['title'] ?? '').toString(),
+                (x['last'] ?? '').toString(),
+                (x['lastAt'] as num?)?.toInt() ?? 0,
+                (x['unread'] as num?)?.toInt() ?? 0,
+                (x['members'] as num?)?.toInt() ?? 0,
+              ))
+          .toList();
       setState(() {
         _threads = ((r?['threads'] as List?) ?? const [])
             .whereType<Map>()
@@ -105,13 +136,38 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-            child: Text('Chat',
-                style: GoogleFonts.spaceGrotesk(
-                    fontSize: 27,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
-                    color: Neon.textHi)),
+            padding: const EdgeInsets.fromLTRB(20, 14, 10, 8),
+            child: Row(
+              children: [
+                Text('Chat',
+                    style: GoogleFonts.spaceGrotesk(
+                        fontSize: 27,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.5,
+                        color: Neon.textHi)),
+                const Spacer(),
+                // NEW GROUP, then NEW CHAT — the order they are reached
+                // in: you make a group rarely and message somebody often,
+                // so the common one sits nearest the thumb.
+                IconButton(
+                  tooltip: 'New group',
+                  onPressed: () => Navigator.of(context)
+                      .push(MaterialPageRoute(
+                          builder: (_) =>
+                              const ChatNewScreen(pickForGroup: true)))
+                      .then((_) => _load()),
+                  icon: Icon(Icons.group_add_rounded, color: Neon.textHi),
+                ),
+                IconButton(
+                  tooltip: 'New chat',
+                  onPressed: () => Navigator.of(context)
+                      .push(MaterialPageRoute(
+                          builder: (_) => const ChatNewScreen()))
+                      .then((_) => _load()),
+                  icon: Icon(Icons.edit_square, color: Neon.textHi),
+                ),
+              ],
+            ),
           ),
           Expanded(
             child: RefreshIndicator(
@@ -129,7 +185,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   : threads == null
                       ? const Center(
                           child: CircularProgressIndicator(strokeWidth: 2))
-                      : threads.isEmpty
+                      : (threads.isEmpty && _groups.isEmpty)
                           ? ListView(children: [
                               Padding(
                                 padding: const EdgeInsets.all(32),
@@ -148,8 +204,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           : ListView.builder(
                               padding:
                                   const EdgeInsets.fromLTRB(12, 0, 12, 120),
-                              itemCount: threads.length,
-                              itemBuilder: (_, i) => _tile(threads[i]),
+                              itemCount: _groups.length + threads.length,
+                              itemBuilder: (_, i) => i < _groups.length
+                                  ? _groupTile(_groups[i])
+                                  : _tile(threads[i - _groups.length]),
                             ),
             ),
           ),
@@ -157,6 +215,48 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  Widget _groupTile(_ChatGroup g) => ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        onTap: () => Navigator.of(context)
+            .push(MaterialPageRoute(
+              builder: (_) =>
+                  ChatGroupScreen(groupId: g.id, title: g.title),
+            ))
+            .then((_) => _load()),
+        leading: CircleAvatar(
+          radius: 23,
+          backgroundColor: Neon.violet.withValues(alpha: 0.18),
+          child: Icon(Icons.groups_rounded, color: Neon.violet, size: 24),
+        ),
+        title: Text(g.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: Neon.textHi, fontWeight: FontWeight.w700, fontSize: 15)),
+        subtitle: Text(
+          g.last.isEmpty ? '${g.members} members' : g.last,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: Neon.textLo, fontSize: 13),
+        ),
+        trailing: g.unread > 0
+            ? Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Neon.violet,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Text('${g.unread}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700)),
+              )
+            : null,
+      );
 
   Widget _tile(_ChatThread t) {
     final initial =

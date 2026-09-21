@@ -558,8 +558,18 @@ class LiveService {
     return out;
   }
 
+  /// True while the user has muted the assistant's voice. The session
+  /// runs on untouched — transcripts, tools and the microphone all keep
+  /// working — the reply audio is simply dropped instead of played, so
+  /// the captions become the whole answer.
+  bool speakerMuted = false;
+
   /// Feeds one reply chunk to the speaker and advances the playhead clock.
   void _feed(Uint8List rawChunk) {
+    // DROPPED BEFORE THE PLAYHEAD MOVES. Advancing the clock for audio
+    // nobody hears would hold the microphone gate shut for the length of
+    // a reply that is not playing — the user would be muted too.
+    if (speakerMuted) return;
     final chunk = _boost(rawChunk);
     if (!_fsStreaming || chunk.isEmpty) return;
     try {

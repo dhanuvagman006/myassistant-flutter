@@ -314,6 +314,67 @@ class AssistantEngine extends ChangeNotifier {
     caption.value = CaptionLine(speaker, t);
   }
 
+  /// SPEAKER MUTED — the assistant keeps working, it just stops talking.
+  ///
+  /// His ask, 2026-09-21: "in the top add a btn to mute and unmute when
+  /// agent speaks, bcs some will just read the caption". This is NOT
+  /// ending the session and NOT muting the microphone: the conversation
+  /// continues, the captions keep arriving, the answer is simply read
+  /// rather than heard — which is what you want in a meeting, on a bus,
+  /// or next to someone sleeping.
+  bool speakerMuted = false;
+
+  void setSpeakerMuted(bool v) {
+    if (speakerMuted == v) return;
+    speakerMuted = v;
+    // Live replies are PCM chunks fed to a stream player; dropping them
+    // at the player is the only place that catches BOTH paths without
+    // touching the session.
+    _liveSvc.speakerMuted = v;
+    if (v) {
+      // Whatever is mid-sentence right now stops mid-sentence. Waiting
+      // for it to finish is the opposite of what the button is for.
+      _speakQueue.clear();
+      unawaited(_voice.stopSpeaking().catchError((_) {}));
+      _ttsActive = false;
+      // The mic gate is held closed while she is audible; with nothing
+      // audible it must not stay shut or the user cannot interrupt.
+      _liveSvc.remoteSpeaking = false;
+      if (phase == AssistantPhase.speaking) {
+        _setPhase(AssistantPhase.listening, silent: true);
+      }
+    }
+    AppLog.add('voice', v ? 'speaker muted' : 'speaker unmuted');
+    notifyListeners();
+  }
+
+  /// SOMETHING TYPED INSTEAD OF SPOKEN, mid-session.
+  ///
+  /// "add a beautiful text bar where user can type and send instead of
+  /// speaking into the app" — for a name the mic keeps mishearing, a
+  /// long number, or a room where you cannot talk.
+  ///
+  /// A live session already accepts text (the proxy turns it into a user
+  /// turn), so this goes down the SAME socket rather than starting a
+  /// second, classic conversation beside it — two engines answering one
+  /// question is how you get two answers.
+  Future<void> sendTypedMessage(String text) async {
+    final t = text.trim();
+    if (t.isEmpty) return;
+    if (liveActive) {
+      // Their own words belong on screen: the server transcribes SPEECH,
+      // so nothing else would ever show what they typed.
+      _captionFrom('you', t);
+      _liveSvc.sendText(t);
+      _conversationEnded = isFarewell(t);
+      _armIdleStop(phase);
+      _setPhase(AssistantPhase.thinking, silent: true);
+      notifyListeners();
+      return;
+    }
+    await sendText(t);
+  }
+
   void _clearCaption() {
     _capUser = '';
     _capHari = '';
@@ -525,6 +586,11 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> _drainSpeech() async {
+    // Muted means muted, whatever queued up before the button was hit.
+    if (speakerMuted) {
+      _speakQueue.clear();
+      return;
+    }
     if (_draining) return;
     _draining = true;
     _ttsActive = true;

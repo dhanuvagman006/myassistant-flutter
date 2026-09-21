@@ -20,8 +20,32 @@ import java.util.Calendar
 // otherwise the biometric prompt throws no_fragment_activity and never shows.
 class MainActivity : FlutterFragmentActivity() {
 
+    /**
+     * Set when the home-screen widget launched us, cleared the moment
+     * Flutter collects it.
+     *
+     * A FLAG RATHER THAN AN EVENT, because the two can arrive in either
+     * order: on a cold start the intent exists long before Dart is
+     * listening, and on a warm start onNewIntent fires while Dart is
+     * already up. A flag Flutter asks for is correct in both cases; a
+     * channel message pushed at launch is lost in the first.
+     */
+    private var pendingQuickTask = false
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(TaskWidgetProvider.EXTRA_QUICK_TASK, false)) {
+            pendingQuickTask = true
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        if (intent?.getBooleanExtra(TaskWidgetProvider.EXTRA_QUICK_TASK, false) == true) {
+            pendingQuickTask = true
+        }
 
         // PHONE CALENDAR. Auto-understood documents (a shared timetable,
         // an invite) mirror their events into the user's real calendar —
@@ -168,6 +192,14 @@ class MainActivity : FlutterFragmentActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/intent")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    // Did the home-screen widget start us? Answered once
+                    // and then forgotten, so returning to the app later
+                    // does not reopen the capture.
+                    "takeQuickTask" -> {
+                        val had = pendingQuickTask
+                        pendingQuickTask = false
+                        result.success(had)
+                    }
                     // THE CLOCK, WITHOUT A URI IN SIGHT.
                     //
                     // Four releases were lost to Intent.parseUri: the "//"

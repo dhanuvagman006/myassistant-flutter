@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/neon_tokens.dart';
@@ -339,7 +340,15 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     final previous = lines.length > 1
         ? lines.sublist(start, lines.length - 1)
         : const <String>[];
+    // AN INVISIBLE OVERLAY MUST NEVER EAT A TAP.
+    //
+    // This was IgnorePointer(always) because nothing in it was
+    // touchable. It now carries a mute button and a text field, so it
+    // has to accept taps — and an AnimatedOpacity at 0 still hit-tests,
+    // which would have made every card on Home unclickable the moment a
+    // session ended. It ignores pointers exactly while it is invisible.
     return IgnorePointer(
+      ignoring: !show,
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeOut,
@@ -349,9 +358,21 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           // text collided with the orb and rings — on pure black it read
           // as broken layering. The session is a place, not a tint.
           color: Colors.black.withValues(alpha: 0.94),
-          padding: const EdgeInsets.fromLTRB(28, 60, 28, 120),
+          // The bottom padding clears the dock; the keyboard adds its own
+          // height on top so the text bar rides above it.
+          padding: EdgeInsets.fromLTRB(
+              28, 14, 28, 120 + MediaQuery.of(context).viewInsets.bottom),
           child: Column(
             children: [
+              // MUTE — read the answer instead of hearing it.
+              Padding(
+                padding: EdgeInsets.only(
+                    top: MediaQuery.of(context).viewPadding.top, bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [_MuteButton(engine: engine)],
+                ),
+              ),
               const Spacer(flex: 5),
               // THE PRESENCE — the orb from the reference design: a
               // glossy mint sphere in a tunnel of rings that runs off
@@ -481,8 +502,188 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                   ),
                 ),
               ),
+              // TYPE INSTEAD OF TALKING.
+              _TypeBar(engine: engine),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Mute the assistant's voice without ending the conversation — for the
+/// people who would rather read the captions (his words, 2026-09-21:
+/// "some will just read the caption"). It is deliberately NOT a
+/// microphone mute: the session keeps listening, it just stops talking
+/// back out loud.
+class _MuteButton extends StatelessWidget {
+  const _MuteButton({required this.engine});
+  final AssistantEngine engine;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = engine.speakerMuted;
+    return Semantics(
+      button: true,
+      label: muted ? 'Unmute the assistant' : 'Mute the assistant',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          engine.setSpeakerMuted(!muted);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: muted
+                ? Neon.violet.withValues(alpha: 0.20)
+                : Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: muted
+                  ? Neon.violet.withValues(alpha: 0.65)
+                  : Colors.white.withValues(alpha: 0.14),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                size: 18,
+                color: muted ? Neon.violet : Colors.white.withValues(alpha: 0.75),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                muted ? 'Muted' : 'Sound',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.1,
+                  color: muted ? Neon.violet : Colors.white.withValues(alpha: 0.75),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Type a message into a live conversation.
+///
+/// His ask, 2026-09-21: "add a beautiful text bar where user can type and
+/// send instead of speaking into the app". For a name the mic keeps
+/// mishearing, a long number, or a room where you cannot speak.
+///
+/// It goes down the SAME live socket the voice uses, not a second
+/// conversation beside it — see AssistantEngine.sendTypedMessage.
+class _TypeBar extends StatefulWidget {
+  const _TypeBar({required this.engine});
+  final AssistantEngine engine;
+
+  @override
+  State<_TypeBar> createState() => _TypeBarState();
+}
+
+class _TypeBarState extends State<_TypeBar> {
+  final _c = TextEditingController();
+  final _focus = FocusNode();
+  bool _has = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _c.addListener(() {
+      final has = _c.text.trim().isNotEmpty;
+      if (has != _has) setState(() => _has = has);
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final t = _c.text.trim();
+    if (t.isEmpty) return;
+    HapticFeedback.lightImpact();
+    _c.clear();
+    // The keyboard stays up: people type two things in a row far more
+    // often than they type one and walk away.
+    widget.engine.sendTypedMessage(t);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 2, 6, 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _c,
+                focusNode: _focus,
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _send(),
+                keyboardAppearance: Brightness.dark,
+                cursorColor: Neon.violet,
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Type instead…',
+                  hintStyle: GoogleFonts.spaceGrotesk(
+                    color: Colors.white.withValues(alpha: 0.32),
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+              ),
+            ),
+            AnimatedScale(
+              duration: const Duration(milliseconds: 160),
+              scale: _has ? 1 : 0.86,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 160),
+                opacity: _has ? 1 : 0.35,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _has ? _send : null,
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: Neon.gBrand,
+                    ),
+                    child: const Icon(Icons.arrow_upward_rounded,
+                        color: Colors.white, size: 21),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

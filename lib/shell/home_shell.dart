@@ -26,6 +26,7 @@ import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
+import '../screens/quick_task_screen.dart';
 import '../services/app_update_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
@@ -92,6 +93,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // A voice session interrupted by another app is rebuilt here —
       // coming back from Instagram used to leave the orb unable to speak.
       AssistantEngine.instance.onAppResumed();
+      // A widget tap while the app was already running arrives here.
+      _checkQuickTaskLaunch();
       // Coming back from a phone call is exactly when a fresh system
       // call recording exists — pick it up for analysis now.
       CallRecordingWatcher.instance.scan();
@@ -160,11 +163,41 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     }
   }
 
+  /// DID THE HOME-SCREEN WIDGET OPEN US?
+  ///
+  /// Asked rather than pushed, and asked in BOTH places, because the
+  /// intent and the Dart side race: on a cold start the intent exists
+  /// long before this widget is listening, and on a warm start the tap
+  /// arrives while the app is already up. The native side keeps a flag
+  /// and hands it over exactly once (MainActivity.takeQuickTask), so
+  /// neither path can miss it and returning to the app later cannot
+  /// reopen the capture.
+  Future<void> _checkQuickTaskLaunch() async {
+    try {
+      final wanted = await const MethodChannel('hari/intent')
+          .invokeMethod<bool>('takeQuickTask');
+      if (wanted != true || !mounted) return;
+      // Never on top of a live conversation — the widget is for handing
+      // work over, and the session already has the microphone.
+      final engine = AssistantEngine.instance;
+      if (engine.liveActive || engine.inlineVoice) {
+        await engine.endInlineConversation();
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const QuickTaskScreen()),
+      );
+    } catch (e) {
+      AppLog.add('quicktask', 'launch check failed: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     HomeShell.requestedTab.addListener(_onTabRequested);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuickTaskLaunch());
     final engine = AssistantEngine.instance;
     engine.start();
     engine.ensureFreshSession(); // account switch → new session, new greeting

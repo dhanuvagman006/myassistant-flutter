@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  THE ORB, AS A HOME-SCREEN BUTTON.
+
+  The same violet sphere the app's own listening orb uses, drawn as a
+  static shape: a widget's RemoteViews cannot run a CustomPainter, and a
+  bitmap would need six densities to stay sharp. A gradient-filled oval
+  with a lighter top-left is the honest way to say "the same thing" here.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="60%p"
+                android:centerX="0.34"
+                android:centerY="0.30"
+                android:startColor="#E3B7FF"
+                android:centerColor="#C77DFF"
+                android:endColor="#7C3FAF" />
+        </shape>
+    </item>
+</layer-list>
