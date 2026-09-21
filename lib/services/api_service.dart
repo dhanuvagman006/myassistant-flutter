@@ -209,6 +209,28 @@ class ApiService {
     }
   }
 
+  /// DELETE, for the places a resource is removed rather than changed.
+  /// Same contract as [getJson] and [postJson]: null on anything that is
+  /// not a success, so a caller never has to tell a refusal from a dead
+  /// network.
+  static Future<Map<String, dynamic>?> deleteJson(String path,
+      {Duration timeout = const Duration(seconds: 12)}) async {
+    try {
+      final r = await _client
+          .delete(Uri.parse('$baseUrl$path'), headers: _authHeaders)
+          .timeout(timeout);
+      if (r.statusCode < 200 || r.statusCode >= 300) {
+        _flagAuthFailure(r.statusCode);
+        return null;
+      }
+      if (r.body.isEmpty) return const {};
+      final decoded = jsonDecode(r.body);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Session JWT issued by the backend after any sign-in (email/Google/Apple).
   /// Managed by AuthService — set on sign-in, cleared on sign-out.
   static String? sessionToken;

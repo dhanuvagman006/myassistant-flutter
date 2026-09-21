@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/neon_tokens.dart';
@@ -321,11 +322,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _ChatItem {
   final int id;
-  final bool mine, auto;
+  final bool mine, auto, deleted;
   final String text;
   final int at;
   final int? documentId;
-  _ChatItem(this.id, this.mine, this.text, this.at, this.auto, this.documentId);
+  _ChatItem(this.id, this.mine, this.text, this.at, this.auto, this.documentId,
+      {this.deleted = false});
 }
 
 class ChatThreadScreen extends StatefulWidget {
@@ -339,6 +341,7 @@ class ChatThreadScreen extends StatefulWidget {
 class _ChatThreadScreenState extends State<ChatThreadScreen> {
   List<_ChatItem> _items = const [];
   bool _loading = true;
+  bool _muted = false;
   bool _sending = false;
   final _input = TextEditingController();
   final _scroll = ScrollController();
@@ -380,6 +383,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 (m['at'] as num?)?.toInt() ?? 0,
                 m['auto'] == true,
                 (m['documentId'] as num?)?.toInt(),
+                deleted: m['deleted'] == true,
               ))
           .toList();
       final grew = items.length != _items.length;
@@ -458,6 +462,24 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         backgroundColor: Colors.transparent,
         title: Text(widget.name,
             style: const TextStyle(fontSize: 17), maxLines: 1),
+        actions: [
+          PopupMenuButton<String>(
+            color: Neon.surface,
+            onSelected: _onMenu,
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'mute',
+                child: Text(_muted ? 'Unmute' : 'Mute notifications',
+                    style: TextStyle(color: Neon.textHi)),
+              ),
+              PopupMenuItem(
+                value: 'clear',
+                child:
+                    Text('Clear chat', style: TextStyle(color: Neon.error)),
+              ),
+            ],
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -526,6 +548,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     final bg = m.mine ? Neon.violet : Neon.surface;
     return Align(
       alignment: align,
+      child: GestureDetector(
+      onLongPress: () => _messageMenu(m),
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
@@ -580,14 +604,128 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                   ),
                 ),
               ),
-            Text(m.text,
-                style: TextStyle(
-                    color: m.mine ? Colors.white : Neon.textHi,
-                    fontSize: 14,
-                    height: 1.35)),
+            m.deleted
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.block_rounded,
+                          size: 13,
+                          color: m.mine
+                              ? Colors.white.withValues(alpha: 0.75)
+                              : Neon.textLo),
+                      const SizedBox(width: 5),
+                      Text('This message was deleted',
+                          style: TextStyle(
+                              color: m.mine
+                                  ? Colors.white.withValues(alpha: 0.75)
+                                  : Neon.textLo,
+                              fontSize: 13.5,
+                              fontStyle: FontStyle.italic)),
+                    ],
+                  )
+                : Text(m.text,
+                    style: TextStyle(
+                        color: m.mine ? Colors.white : Neon.textHi,
+                        fontSize: 14,
+                        height: 1.35)),
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+
+  /// Mute is reversible so it just happens; clearing is not, so it asks.
+  Future<void> _onMenu(String v) async {
+    if (v == 'mute') {
+      final next = !_muted;
+      setState(() => _muted = next);
+      final r = await ApiService.postJson(
+          '/chat/thread/${widget.phone}/mute', {'muted': next});
+      if (mounted) setState(() => _muted = r?['muted'] == true);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: Neon.surface,
+        title: Text('Clear this chat?',
+            style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w700)),
+        content: Text(
+          'This removes the messages from your copy only. '
+          '${widget.name} keeps theirs.',
+          style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 13.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: Text('Cancel', style: TextStyle(color: Neon.textLo)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Neon.error),
+            child: const Text('Clear',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await ApiService.postJson('/chat/thread/${widget.phone}/clear', const {});
+    if (mounted) {
+      setState(() => _items = []);
+      _load();
+    }
+  }
+
+  /// Long-press a message: copy it, or take it back. Same shape as the
+  /// group screen's — one gesture, one sheet, no hidden swipe.
+  Future<void> _messageMenu(_ChatItem m) async {
+    if (m.deleted || m.id == 0) return;
+    HapticFeedback.selectionClick();
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Neon.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.copy_rounded, color: Neon.textHi),
+              title: Text('Copy', style: TextStyle(color: Neon.textHi)),
+              onTap: () => Navigator.of(c).pop('copy'),
+            ),
+            if (m.mine)
+              ListTile(
+                leading: Icon(Icons.undo_rounded, color: Neon.error),
+                title: Text('Delete for everyone',
+                    style: TextStyle(color: Neon.error)),
+                onTap: () => Navigator.of(c).pop('everyone'),
+              ),
+            ListTile(
+              leading: Icon(Icons.visibility_off_rounded, color: Neon.textHi),
+              title:
+                  Text('Delete for me', style: TextStyle(color: Neon.textHi)),
+              onTap: () => Navigator.of(c).pop('me'),
+            ),
           ],
         ),
       ),
     );
+    if (choice == null || !mounted) return;
+    if (choice == 'copy') {
+      await Clipboard.setData(ClipboardData(text: m.text));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Copied')));
+      }
+      return;
+    }
+    await ApiService.deleteJson(
+        '/chat/message/${m.id}${choice == 'everyone' ? '?everyone=1' : ''}');
+    if (mounted) _load();
   }
 }

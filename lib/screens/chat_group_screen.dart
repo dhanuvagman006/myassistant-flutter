@@ -36,9 +36,9 @@ class ChatGroupScreen extends StatefulWidget {
 class _Msg {
   final int id;
   final String name, text;
-  final bool mine;
+  final bool mine, deleted;
   final int at;
-  const _Msg(this.id, this.name, this.text, this.mine, this.at);
+  const _Msg(this.id, this.name, this.text, this.mine, this.at, this.deleted);
 }
 
 class _ChatGroupScreenState extends State<ChatGroupScreen> {
@@ -47,6 +47,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   List<_Msg> _messages = const [];
   bool _loading = true;
   bool _agentReplies = false;
+  bool _muted = false;
   int _members = 0;
   Timer? _poll;
 
@@ -81,6 +82,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                 (m['text'] ?? '').toString(),
                 m['mine'] == true,
                 (m['at'] as num?)?.toInt() ?? 0,
+                m['deleted'] == true,
               ))
           .toList();
       final grew = list.length != _messages.length;
@@ -88,6 +90,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
         _messages = list;
         _loading = false;
         _agentReplies = ((r['group'] as Map?)?['agentReplies'] == true);
+        _muted = ((r['group'] as Map?)?['muted'] == true);
         _members = ((r['members'] as List?) ?? const []).length;
       });
       if (grew) _toBottom();
@@ -114,12 +117,122 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     setState(() {
       _messages = [
         ..._messages,
-        _Msg(0, 'You', t, true, DateTime.now().millisecondsSinceEpoch),
+        _Msg(0, 'You', t, true, DateTime.now().millisecondsSinceEpoch, false),
       ];
     });
     _toBottom();
     await ApiService.postJson('/chat/groups/${widget.groupId}/send', {'text': t});
     await _load(quiet: true);
+  }
+
+  /// CLEARING AND LEAVING ARE NOT UNDOABLE, SO THEY ASK FIRST. Muting is,
+  /// so it does not.
+  Future<void> _onMenu(String v) async {
+    if (v == 'mute') {
+      final next = !_muted;
+      setState(() => _muted = next);
+      final r = await ApiService.postJson(
+          '/chat/groups/${widget.groupId}/mute', {'muted': next});
+      if (mounted) setState(() => _muted = r?['muted'] == true);
+      return;
+    }
+    final leaving = v == 'leave';
+    final ok = await _confirm(
+      leaving ? 'Leave this group?' : 'Clear this chat?',
+      leaving
+          ? 'You will stop receiving messages here. What you have already '
+              'sent stays for everyone else.'
+          : 'This removes the messages from your copy only. Everyone else '
+              'keeps theirs.',
+      leaving ? 'Leave' : 'Clear',
+    );
+    if (!ok || !mounted) return;
+    await ApiService.postJson(
+        '/chat/groups/${widget.groupId}/${leaving ? 'leave' : 'clear'}', const {});
+    if (!mounted) return;
+    if (leaving) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _messages = const []);
+      _load(quiet: true);
+    }
+  }
+
+  Future<bool> _confirm(String title, String body, String action) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        backgroundColor: Neon.surface,
+        title: Text(title,
+            style: GoogleFonts.spaceGrotesk(
+                color: Neon.textHi, fontWeight: FontWeight.w700, fontSize: 17)),
+        content: Text(body,
+            style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 13.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: Text('Cancel', style: TextStyle(color: Neon.textLo)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Neon.error),
+            child: Text(action,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  /// Long-press a message: copy it, or take it back.
+  Future<void> _messageMenu(_Msg m) async {
+    if (m.deleted || m.id == 0) return;
+    HapticFeedback.selectionClick();
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Neon.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.copy_rounded, color: Neon.textHi),
+              title: Text('Copy', style: TextStyle(color: Neon.textHi)),
+              onTap: () => Navigator.of(c).pop('copy'),
+            ),
+            if (m.mine)
+              ListTile(
+                leading: Icon(Icons.undo_rounded, color: Neon.error),
+                title: Text('Delete for everyone',
+                    style: TextStyle(color: Neon.error)),
+                onTap: () => Navigator.of(c).pop('everyone'),
+              ),
+            ListTile(
+              leading: Icon(Icons.visibility_off_rounded, color: Neon.textHi),
+              title: Text('Delete for me', style: TextStyle(color: Neon.textHi)),
+              onTap: () => Navigator.of(c).pop('me'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice == 'copy') {
+      await Clipboard.setData(ClipboardData(text: m.text));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Copied')));
+      }
+      return;
+    }
+    await ApiService.deleteJson(
+        '/chat/groups/${widget.groupId}/messages/${m.id}'
+        '${choice == 'everyone' ? '?everyone=1' : ''}');
+    if (mounted) _load(quiet: true);
   }
 
   Future<void> _toggleAgent(bool v) async {
@@ -140,6 +253,27 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
       appBar: AppBar(
         backgroundColor: Neon.bg,
         titleSpacing: 0,
+        actions: [
+          PopupMenuButton<String>(
+            color: Neon.surface,
+            onSelected: _onMenu,
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'mute',
+                child: Text(_muted ? 'Unmute' : 'Mute notifications',
+                    style: TextStyle(color: Neon.textHi)),
+              ),
+              PopupMenuItem(
+                value: 'clear',
+                child: Text('Clear chat', style: TextStyle(color: Neon.textHi)),
+              ),
+              PopupMenuItem(
+                value: 'leave',
+                child: Text('Leave group', style: TextStyle(color: Neon.error)),
+              ),
+            ],
+          ),
+        ],
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -231,7 +365,9 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     final mine = m.mine;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onLongPress: () => _messageMenu(m),
+        child: Container(
         constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.74),
         margin: const EdgeInsets.symmetric(vertical: 3),
@@ -260,11 +396,26 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                   ),
                 ),
               ),
-            Text(m.text,
-                style: TextStyle(
-                    color: Neon.textHi, fontSize: 15, height: 1.32)),
+            m.deleted
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.block_rounded,
+                          size: 14, color: Neon.textLo),
+                      const SizedBox(width: 6),
+                      Text('This message was deleted',
+                          style: TextStyle(
+                              color: Neon.textLo,
+                              fontSize: 14,
+                              fontStyle: FontStyle.italic)),
+                    ],
+                  )
+                : Text(m.text,
+                    style: TextStyle(
+                        color: Neon.textHi, fontSize: 15, height: 1.32)),
           ],
         ),
+      ),
       ),
     );
   }
