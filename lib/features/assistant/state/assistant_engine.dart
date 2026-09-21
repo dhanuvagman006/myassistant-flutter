@@ -1403,14 +1403,14 @@ class AssistantEngine extends ChangeNotifier {
     unawaited(_connect()); // fresh session under the new account
   }
 
-  Future<void> leaveConversation() async {
+  Future<void> leaveConversation({bool chime = true}) async {
     // THE CLOSING HALF OF THE PAIR. Only when something was actually
     // listening — closing a screen that was already silent should be
     // silent — and never off-screen, for the same reason the opening
     // chime is not: a sound the user cannot connect to anything they did
     // is exactly the WhatsApp complaint.
     final wasListening = liveActive || inlineVoice;
-    if (wasListening && _foreground) unawaited(ListeningChime.playStop());
+    if (chime && wasListening && _foreground) unawaited(ListeningChime.playStop());
     _idleStop?.cancel();
     _idleStop = null;
     _conversationOpen = false;
@@ -3323,6 +3323,27 @@ class AssistantEngine extends ChangeNotifier {
         (wasExternal && away.inMilliseconds >= 800) ||
         away.inSeconds >= 2;
     if (!interrupted) return;
+
+    // WE SENT THEM SOMEWHERE ELSE, SO THE CONVERSATION IS OVER.
+    //
+    // His report, 2026-09-21: asked to download Swiggy, sent to a page,
+    // came back — "the mic orb should be visible… but it's showing that
+    // it's speaking something". It was: the resume path below rebuilds
+    // the session and comes back LISTENING, so the orb showed an active
+    // conversation over a screen the user had just returned to with
+    // nothing to say.
+    //
+    // Leaving the tab already ends the conversation (build 88). Leaving
+    // for another app is the same act — they went to do something else —
+    // so it ends the same way, and the orb is a mic again. No chime:
+    // returning to the app is not a gesture, and a sound they cannot
+    // connect to anything they did is the WhatsApp complaint again.
+    if (wasExternal && away.inMilliseconds >= 800) {
+      AppLog.add('live', 'returned from another app — conversation ended');
+      await leaveConversation(chime: false);
+      notifyListeners();
+      return;
+    }
 
     AppLog.add('live', 'resumed after ${away.inSeconds}s — rebuilding session');
     // The last thing said belongs to the session that just died. Leaving
