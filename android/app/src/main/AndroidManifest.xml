@@ -115,6 +115,19 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
         </intent>
+        <!-- MAPS. "geo:" shows a place, "google.navigation:" starts
+             turn-by-turn. Neither was declared, so on Android 11+ the
+             launcher could not SEE Google Maps for either scheme and
+             reported that nothing on this phone could open it — while
+             Maps sat on the home screen. Declared, not assumed. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="geo"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="google.navigation"/>
+        </intent>
     </queries>
 
     <application android:usesCleartextTraffic="true"
