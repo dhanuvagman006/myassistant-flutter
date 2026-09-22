@@ -58,7 +58,20 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     // The push nudge is the real-time signal; this keeps an open screen
     // honest without a socket.
     _poll = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (mounted && ModalRoute.of(context)?.isCurrent == true) _load(quiet: true);
+      // LOADING THIS SCREEN MARKS THE GROUP READ, so polling it while
+      // nobody is looking is not a harmless refresh. A phone in a pocket
+      // with this screen still open marked every arriving message read
+      // within 12 seconds, and the assistant then declined to answer on
+      // the member's behalf — silently, in precisely the "they are away"
+      // case the feature exists for. Both sibling pollers in
+      // chat_screen.dart already gate on the app being on screen.
+      if (!mounted ||
+          ModalRoute.of(context)?.isCurrent != true ||
+          WidgetsBinding.instance.lifecycleState !=
+              AppLifecycleState.resumed) {
+        return;
+      }
+      _load(quiet: true);
     });
   }
 

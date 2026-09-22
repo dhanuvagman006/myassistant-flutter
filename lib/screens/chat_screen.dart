@@ -389,6 +389,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       final grew = items.length != _items.length;
       setState(() {
         _items = items;
+        // The server owns this; without reading it back the menu label
+        // reset to "Mute notifications" on every reopen.
+        _muted = r?['muted'] == true;
         _loading = false;
       });
       if (grew) _jumpToEnd();

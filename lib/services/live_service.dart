@@ -566,16 +566,25 @@ class LiveService {
 
   /// Feeds one reply chunk to the speaker and advances the playhead clock.
   void _feed(Uint8List rawChunk) {
-    // DROPPED BEFORE THE PLAYHEAD MOVES. Advancing the clock for audio
-    // nobody hears would hold the microphone gate shut for the length of
-    // a reply that is not playing — the user would be muted too.
-    if (speakerMuted) return;
     final chunk = _boost(rawChunk);
     if (!_fsStreaming || chunk.isEmpty) return;
-    try {
-      _fs.uint8ListSink?.add(chunk);
-    } catch (_) {
-      return;
+    // MUTED DROPS THE SOUND, NOT THE TURN.
+    //
+    // This check used to sit at the top and return before the playhead
+    // moved — and so before `onSpeaking`, which in audio-only live mode
+    // is the ONLY thing that takes the engine back out of "thinking".
+    // A muted reply therefore left the orb on Thinking… for good and
+    // tripped the 35-second watchdog on a turn that had actually
+    // succeeded, in exactly the mode the mute button exists for.
+    //
+    // The clock runs either way, so the turn opens and closes the same
+    // as it does unmuted; only the write to the speaker is skipped.
+    if (!speakerMuted) {
+      try {
+        _fs.uint8ListSink?.add(chunk);
+      } catch (_) {
+        return;
+      }
     }
     final ms = chunk.length * 1000 ~/ (_outRate * 2);
     final now = DateTime.now();

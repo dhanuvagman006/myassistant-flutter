@@ -1482,6 +1482,13 @@ class AssistantEngine extends ChangeNotifier {
     _conversationOpen = false;
     inlineVoice = false;
     _conversationEnded = true; // the loop must not resume on its own
+    // MUTE BELONGS TO THE CONVERSATION THAT SET IT. Nothing cleared it,
+    // and the only unmute control lives in the inline overlay — so a
+    // session muted to read captions left every later Home-panel reply
+    // (news, schedule, today, finance, a shared document) silently
+    // dropped at _drainSpeech, with no control anywhere on screen to
+    // undo it, until the app was killed.
+    if (speakerMuted) setSpeakerMuted(false);
     translatorActive = false; // interpreter never outlives the screen
     _clearCaption();
     activityLabel.value = null;
@@ -3761,6 +3768,12 @@ class AssistantEngine extends ChangeNotifier {
       final action =
           RegExp(r'action=([^;]+);').firstMatch(url)?.group(1) ?? 'that';
       AppFeedback.toast("This phone has no app that can do that.");
+      // NOTHING OPENED, SO NOBODY LEFT. The flag is set optimistically
+      // before the launch is attempted; left true on a dead end it made
+      // the NEXT ordinary interruption — a notification, a permission
+      // sheet, a one-second screen lock — end the conversation instead
+      // of resuming it. open_any_app already clears it on failure.
+      _leftForExternalApp = false;
       _reportDeviceFailure('open_url',
           target: action, reason: 'no app on the phone can handle it');
       await _tellModel(
@@ -3787,6 +3800,7 @@ class AssistantEngine extends ChangeNotifier {
     if (!ok) {
       AppFeedback.toast(
           'Could not open the app for that — nothing was ordered or booked.');
+      _leftForExternalApp = false; // the app never went anywhere
       // The server recorded this as done the moment it dispatched it. Tell
       // it the truth so the log stops claiming a success, and so the next
       // turn cannot say it opened.
