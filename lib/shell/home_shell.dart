@@ -99,7 +99,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // call recording exists — pick it up for analysis now.
       CallRecordingWatcher.instance.scan();
       Timer(const Duration(seconds: 2), () {
-        if (mounted) AppUpdateService.instance.check(context);
+        // Never over a conversation: the sheet used to open on top of one.
+        if (mounted && !_conversationRunning) {
+          AppUpdateService.instance.check(context);
+        }
       });
     }
   }
@@ -217,12 +220,6 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     StreakService.instance.touch().then((_) {
       if (mounted) setState(() {});
     });
-    // ON BY DEFAULT — but only after the user has been TOLD. One sheet,
-    // once per install, shortly after sign-in lands on Home; nothing is
-    // read until they answer (the server holds consentAt at 0 till then).
-    Timer(const Duration(seconds: 3), () {
-      if (mounted) _maybeShowCallNotesIntro();
-    });
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
@@ -303,15 +300,37 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     LocationService.instance.refresh();
     // Photos/PDFs shared from other apps land in the document pipeline.
     ShareIntakeService.instance.start();
-    // OEM battery managers throttle sideloaded apps into silence (pushes
-    // delayed, background killed) — ask ONCE for the exemption, a few
-    // seconds in so it never fights the launch.
-    Timer(const Duration(seconds: 4), _requestBatteryExemptionOnce);
-    // Self-update: offer a newer published build once per launch, after
-    // the permission prompts have had their moment.
-    Timer(const Duration(seconds: 9), () {
-      if (mounted) AppUpdateService.instance.check(context);
-    });
+    unawaited(_launchPrompts());
+  }
+
+  bool get _conversationRunning {
+    final e = AssistantEngine.instance;
+    return e.liveActive || e.inlineVoice;
+  }
+
+  /// ONE PROMPT PER LAUNCH, NEVER OVER A CONVERSATION.
+  ///
+  /// Launch used to stack them on timers: the call-notes sheet at 3 s, the
+  /// battery-exemption dialog at 4 s, the update sheet at 9 s — three
+  /// interruptions in the first ten seconds, the last one liable to land
+  /// on top of a conversation the user had just started. Now, in order of
+  /// importance, the first one that is due is shown and the rest wait for
+  /// a later launch:
+  ///   1. the call-notes notice (once per install; consent needs it)
+  ///   2. a newer build (the update sheet)
+  ///   3. the battery exemption (weekly until granted)
+  Future<void> _launchPrompts() async {
+    await Future<void>.delayed(const Duration(seconds: 4));
+    // Let a conversation the user started finish first (up to a minute).
+    for (var i = 0; i < 30 && mounted && _conversationRunning; i++) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+    if (!mounted || _conversationRunning) return;
+    if (await _maybeShowCallNotesIntro()) return;
+    if (!mounted || _conversationRunning) return;
+    if (await AppUpdateService.instance.check(context)) return;
+    if (!mounted || _conversationRunning) return;
+    await _requestBatteryExemptionOnce();
   }
 
   /// Battery-optimization exemption — the difference between pushes that
@@ -354,11 +373,27 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   /// ships ON, the user is told plainly what it does the first time they
   /// land on Home, and one tap either keeps it or kills it. Nothing is
   /// read before they answer.
-  Future<void> _maybeShowCallNotesIntro() async {
+  /// Returns true when the sheet was shown.
+  Future<bool> _maybeShowCallNotesIntro() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('call_notes_intro_v1') == true) return;
-      if (!mounted) return;
+      if (prefs.getBool('call_notes_intro_v1') == true) return false;
+      if (!mounted) return false;
+      // Marked only when a button is pressed. The system Back button used
+      // to close this sheet and still mark it answered, so the user was
+      // never asked and the feature ran on a choice they never made.
+      Future<void> answer(BuildContext ctx, bool keep) async {
+        Navigator.pop(ctx);
+        await prefs.setBool('call_notes_intro_v1', true);
+        if (keep) {
+          await CallRecordingWatcher.instance.ensurePermission();
+          await CallNotesService.instance.setAnalysis(true);
+          CallRecordingWatcher.instance.scan();
+        } else {
+          await CallNotesService.instance.setAnalysis(false);
+        }
+      }
+
       await showModalBottomSheet<void>(
         context: context,
         isDismissible: false,
@@ -366,66 +401,63 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         backgroundColor: Neon.surface,
         shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (ctx) => Padding(
-          padding: const EdgeInsets.fromLTRB(22, 20, 22, 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Icon(Icons.graphic_eq_rounded, color: Neon.violet, size: 20),
-                const SizedBox(width: 9),
-                Text('Your calls, understood',
-                    style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700)),
-              ]),
-              const SizedBox(height: 10),
-              Text(
-                'Your assistant can read the call recordings your phone\'s '
-                'own dialer saves, and turn them into your agenda — '
-                'meetings, reminders and promises are filed automatically, '
-                'and you can ask what was said on any recorded call.\n\n'
-                '• Only calls recorded from now on are read.\n'
-                '• Audio is deleted right after transcription; only text '
-                'is kept, and your files are never touched.\n'
-                '• You can switch this off any time in Hub → Call notes.\n'
-                '• Where you live may require telling the other person a '
-                'call is recorded — that part is on you.',
-                style:
-                    TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
-              ),
-              const SizedBox(height: 16),
-              Row(children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await CallNotesService.instance.setAnalysis(false);
-                    },
-                    child: const Text('Turn off'),
-                  ),
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(22, 20, 22, 26),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.graphic_eq_rounded, color: Neon.violet, size: 20),
+                  const SizedBox(width: 9),
+                  Text('Your calls, understood',
+                      style: TextStyle(
+                          color: Neon.textHi,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700)),
+                ]),
+                const SizedBox(height: 10),
+                Text(
+                  'Your assistant can read the call recordings your phone\'s '
+                  'own dialer saves, and turn them into your agenda — '
+                  'meetings, reminders and promises are filed automatically, '
+                  'and you can ask what was said on any recorded call.\n\n'
+                  '• Only calls recorded from now on are read.\n'
+                  '• Audio is deleted right after transcription; only text '
+                  'is kept, and your files are never touched.\n'
+                  '• You can switch this off any time in Hub → Call notes.\n'
+                  '• Where you live may require telling the other person a '
+                  'call is recorded — that part is on you.',
+                  style:
+                      TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await CallRecordingWatcher.instance.ensurePermission();
-                      await CallNotesService.instance.setAnalysis(true);
-                      CallRecordingWatcher.instance.scan();
-                    },
-                    child: const Text('Keep it on'),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => answer(ctx, false),
+                      child: const Text('Turn off'),
+                    ),
                   ),
-                ),
-              ]),
-            ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => answer(ctx, true),
+                      child: const Text('Keep it on'),
+                    ),
+                  ),
+                ]),
+              ],
+            ),
           ),
         ),
       );
-      await prefs.setBool('call_notes_intro_v1', true);
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _startConversation() async {

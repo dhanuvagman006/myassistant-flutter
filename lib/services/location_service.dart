@@ -25,10 +25,10 @@ class LocationService {
       return;
     }
     try {
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
+      // Check, never ask: this runs on every launch and resume, and asking
+      // here re-prompted anyone who had declined. The Permissions screen
+      // asks; without it, "near me" just has no location.
+      final perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied ||
           perm == LocationPermission.deniedForever) {
         return;

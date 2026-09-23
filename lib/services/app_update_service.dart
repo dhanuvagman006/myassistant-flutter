@@ -143,21 +143,21 @@ class AppUpdateService {
   /// the foreground — a phone that keeps the app in memory for days used
   /// to never see new releases. Throttled to once per 30 minutes; silent
   /// on any failure — a check must never get in the way of using the app.
-  Future<void> check(BuildContext context, {bool force = false}) async {
+  Future<bool> check(BuildContext context, {bool force = false}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (_sheetShowing) return;
+    if (_sheetShowing) return false;
     // Short throttle: back-to-back releases used to hide behind a 30-min
     // window, so a resumed app missed the newer one until a full restart.
-    if (!force && now - _lastCheckMs < 2 * 60 * 1000) return;
+    if (!force && now - _lastCheckMs < 2 * 60 * 1000) return false;
     _lastCheckMs = now;
     try {
       final r = await http
           .get(Uri.parse('${ApiService.baseUrl}/config'))
           .timeout(const Duration(seconds: 10));
-      if (r.statusCode != 200) return;
+      if (r.statusCode != 200) return false;
       final cfg =
           RemoteConfig.fromJson(jsonDecode(r.body) as Map<String, dynamic>);
-      if (cfg.apkUrl == null || cfg.apkUrl!.isEmpty) return;
+      if (cfg.apkUrl == null || cfg.apkUrl!.isEmpty) return false;
 
       final info = await PackageInfo.fromPlatform();
       final current = int.tryParse(info.buildNumber) ?? 0;
@@ -169,7 +169,7 @@ class AppUpdateService {
         // process, so nothing ever ran after it to clean up, and a tester
         // who took ten builds was carrying ten ~200 MB files.
         unawaited(_sweepOldApks());
-        return;
+        return false;
       }
 
       // Anything left over from a build that already installed, or that
@@ -191,7 +191,7 @@ class AppUpdateService {
         await _unsnooze(cfg.latestVersionCode);
       } else if (!forced && await _snoozed(cfg.latestVersionCode)) {
         AppLog.add('update', 'build ${cfg.latestVersionCode} is snoozed');
-        return;
+        return false;
       }
       // HANDS-FREE, BUT NOT ON SOMEONE'S DATA PLAN. On Wi-Fi the sheet
       // still starts on its own — that is the zero-effort path. On mobile
@@ -199,7 +199,7 @@ class AppUpdateService {
       // Asked BEFORE the last mounted check so the sheet is never built
       // against a context that went away while we were asking.
       final unmetered = !await _metered();
-      if (!context.mounted) return;
+      if (!context.mounted) return false;
 
       _sheetShowing = true;
       _cancelled = false;
@@ -229,8 +229,10 @@ class AppUpdateService {
         if (!forced && !force) await snooze(cfg.latestVersionCode);
       }
       _sheetShowing = false;
+      return true;
     } catch (e) {
       AppLog.add('update', 'check failed: $e');
+      return false;
     }
   }
 

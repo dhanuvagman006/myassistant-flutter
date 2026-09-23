@@ -41,14 +41,13 @@ class PhoneStateGuard {
     _onCallEnded = onCallEnded;
     if (_sub != null) return; // already watching
 
-    // Ask once; denial is fine (guard just stays inactive on Android).
+    // CHECK, never ask. This runs on every launch, and it used to request
+    // the permission each time — a prompt on every cold start for anyone
+    // who had declined it. The Permissions screen is where it is asked;
+    // without it the guard simply stays inactive.
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
-        final status = await Permission.phone.status;
-        if (!status.isGranted) {
-          final r = await Permission.phone.request();
-          if (!r.isGranted) return;
-        }
+        if (!(await Permission.phone.status).isGranted) return;
       }
     } catch (_) {
       return;
