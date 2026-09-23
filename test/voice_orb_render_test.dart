@@ -50,10 +50,17 @@ void main() {
 
     final boundary = tester.renderObject<RenderRepaintBoundary>(
         find.byKey(const ValueKey('orb')));
-    final image = await boundary.toImage(pixelRatio: 2.625);
-    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    // toImage/toByteData complete on the real engine, which the fake test
+    // clock never advances — awaited directly they hang until the 10-minute
+    // timeout. runAsync lets them finish.
+    final bytes = await tester.runAsync(() async {
+      final image = await boundary.toImage(pixelRatio: 2.625);
+      return image.toByteData(format: ui.ImageByteFormat.png);
+    });
+    expect(bytes, isNotNull);
+    expect(bytes!.lengthInBytes, greaterThan(0));
     Directory('build').createSync(recursive: true);
     File('build/voice_orb_preview.png')
-        .writeAsBytesSync(bytes!.buffer.asUint8List());
+        .writeAsBytesSync(bytes.buffer.asUint8List());
   });
 }
