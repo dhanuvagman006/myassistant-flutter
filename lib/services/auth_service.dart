@@ -324,11 +324,34 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Run on every way out — sign-out, a rejected session, a deleted account.
+  /// Services holding the previous user's data register here: the home
+  /// brief (agenda, promises, messages) survived sign-out and was shown to
+  /// the next account, and the assistant's live session kept streaming.
+  /// A hook list rather than direct calls, so this file needs no imports
+  /// of the services that depend on it.
+  final List<Future<void> Function()> _signOutHooks = [];
+  void onSignOut(Future<void> Function() hook) => _signOutHooks.add(hook);
+
   Future<void> _clear() async {
     user = null;
     ApiService.sessionToken = null;
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _userCacheKey);
+    for (final hook in _signOutHooks) {
+      try {
+        await hook();
+      } catch (_) {
+        // One service failing to clean up must not keep the user signed in.
+      }
+    }
+  }
+
+  /// Permanently deletes the account on the server, then signs out here.
+  /// Throws (and stays signed in) if the server refused.
+  Future<void> deleteAccount() async {
+    await ApiService.deleteMyAccount();
+    await signOut();
   }
 
   /// Shared tail of every flow: call the backend, store token, set user.

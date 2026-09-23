@@ -191,7 +191,32 @@ class TodayBriefBody extends StatelessWidget {
                   // with the clock so the app stays worth opening.
                   Reveal(delayMs: 40, child: _tryAsking(context)),
                   const SizedBox(height: 20),
-                  if (!svc.loaded)
+                  if (!svc.loaded && svc.failed)
+                    // Offline with nothing saved yet: say so, and offer the
+                    // retry — a spinner here used to turn forever.
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.cloud_off_rounded,
+                                color: Neon.textLo, size: 28),
+                            const SizedBox(height: 10),
+                            Text("Couldn't load your day — check your connection.",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Neon.textLo, fontSize: 14)),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: () => svc.refresh(force: true),
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('Try again'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else if (!svc.loaded)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 32),
                       child: Center(

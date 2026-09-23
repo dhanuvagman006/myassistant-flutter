@@ -60,7 +60,9 @@ import '../../../services/greeting_voice.dart';
 /// state machine, transcript, tool/search/contact/call cards, confirmation
 /// flow, cancellation, and speaking replies out loud.
 class AssistantEngine extends ChangeNotifier {
-  AssistantEngine._();
+  AssistantEngine._() {
+    AuthService.instance.onSignOut(_onSignedOut);
+  }
   static final AssistantEngine instance = AssistantEngine._();
 
   final _api = AssistantApi.instance;
@@ -1454,11 +1456,32 @@ class AssistantEngine extends ChangeNotifier {
   /// never fired again.
   String? _sessionUid;
 
+  /// Set when sign-out closed the session: the next sign-in — even as the
+  /// same person — must open a new one, since nothing else would.
+  bool _reconnectOnSignIn = false;
+
+  /// Nobody is signed in any more: stop listening and drop the session, so
+  /// the previous account's stream does not keep running behind the login
+  /// screen.
+  Future<void> _onSignedOut() async {
+    try {
+      await leaveConversation(chime: false);
+    } catch (_) {}
+    _api.close();
+    resetGreeting();
+    _sessionUid = null;
+    _reconnectOnSignIn = true;
+  }
+
   Future<void> ensureFreshSession() async {
     final uid = AuthService.instance.user?.id.toString();
     if (uid == null) return;
     if (_sessionUid == null || _sessionUid == uid) {
       _sessionUid = uid;
+      if (_reconnectOnSignIn) {
+        _reconnectOnSignIn = false;
+        unawaited(_connect());
+      }
       return;
     }
     AppLog.add('engine', 'account changed — rebuilding assistant session');

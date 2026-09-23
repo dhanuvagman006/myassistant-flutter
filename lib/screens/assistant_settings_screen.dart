@@ -14,6 +14,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/voice_id_service.dart';
+import 'account_section.dart';
 import 'avatar_face_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
@@ -582,6 +583,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       icon: Icon(Icons.add_circle_rounded,
                           color: AppleColors.blue)),
                 ]),
+                const SizedBox(height: 24),
+
+                const AccountSection(),
                 const SizedBox(height: 24),
 
                 const GroupLabel('About & legal'),

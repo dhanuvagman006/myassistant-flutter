@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/brief.dart';
 import 'notification_service.dart';
 import 'api_service.dart';
+import 'auth_service.dart';
 
 /// Fetches and caches the home screen's "Today" brief (GET /brief).
 ///
@@ -14,11 +15,18 @@ import 'api_service.dart';
 /// the last good fetch returned, refreshes quietly in the background, and
 /// NEVER blocks or breaks the live conversation (errors keep the old data).
 class BriefService extends ChangeNotifier {
-  BriefService._();
+  BriefService._() {
+    AuthService.instance.onSignOut(reset);
+  }
   static final BriefService instance = BriefService._();
 
   TodayBrief brief = const TodayBrief();
   bool loaded = false;
+
+  /// True when there is nothing to show AND the last fetch failed — the
+  /// first launch with no network. Without it Home spun forever: a failed
+  /// fetch never set [loaded], and nothing offered to try again.
+  bool failed = false;
   DateTime? _fetchedAt;
   Timer? _auto;
   bool _fetching = false;
@@ -53,11 +61,20 @@ class BriefService extends ChangeNotifier {
         DateTime.now().difference(_fetchedAt!) < const Duration(minutes: 2);
     if (fresh && !force) return;
     _fetching = true;
+    if (failed) {
+      failed = false; // show the spinner while this attempt runs
+      notifyListeners();
+    }
     try {
       final j = await ApiService.getJson('/brief');
+      if (j == null && !loaded) {
+        failed = true;
+        notifyListeners();
+      }
       if (j != null) {
         brief = TodayBrief.fromJson(j);
         loaded = true;
+        failed = false;
         _fetchedAt = DateTime.now();
         notifyListeners();
         // Re-arm the LOCAL alarms for every open reminder. This service
@@ -73,9 +90,31 @@ class BriefService extends ChangeNotifier {
       }
     } catch (_) {
       // Keep showing the previous brief — a blip must not blank the home.
+      if (!loaded) {
+        failed = true;
+        notifyListeners();
+      }
     } finally {
       _fetching = false;
     }
+  }
+
+  /// Forgets everything about the signed-out account: the in-memory brief,
+  /// the saved copy that repaints Home on the next launch, and the refresh
+  /// timer (which kept polling /brief with no one signed in). The next
+  /// sign-in's HomeShell calls [start] again.
+  Future<void> reset() async {
+    _auto?.cancel();
+    _auto = null;
+    brief = const TodayBrief();
+    loaded = false;
+    failed = false;
+    _fetchedAt = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_cacheKey);
+    } catch (_) {}
+    notifyListeners();
   }
 
   /// Promise actions are OPTIMISTIC: the card leaves the screen the moment
