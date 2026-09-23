@@ -9,6 +9,7 @@ import '../services/auth_service.dart';
 import '../services/streak_service.dart';
 import '../services/brief_service.dart';
 import '../widgets/call_led.dart';
+import 'search_screen.dart';
 
 /// HOME TAB — the day at a glance, out in the open.
 ///
@@ -58,25 +59,39 @@ class HomeDashboard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Personal, with the name carrying the accent — one
-                    // warm spot of color instead of a wall of gray.
-                    RichText(
-                      text: TextSpan(
-                        style: GoogleFonts.spaceGrotesk(
-                          fontSize: 27,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
-                          color: Neon.textHi,
+                    // warm spot of color instead of a wall of gray. Search
+                    // sits beside it: find anything, from the first screen.
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: RichText(
+                            text: TextSpan(
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 27,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.5,
+                                color: Neon.textHi,
+                              ),
+                              children: [
+                                TextSpan(text: _greeting),
+                                if (first.isNotEmpty) ...[
+                                  const TextSpan(text: ', '),
+                                  TextSpan(
+                                      text: first,
+                                      style: TextStyle(color: Neon.violet)),
+                                ],
+                              ],
+                            ),
+                          ),
                         ),
-                        children: [
-                          TextSpan(text: _greeting),
-                          if (first.isNotEmpty) ...[
-                            const TextSpan(text: ', '),
-                            TextSpan(
-                                text: first,
-                                style: TextStyle(color: Neon.violet)),
-                          ],
-                        ],
-                      ),
+                        IconButton(
+                          tooltip: 'Search',
+                          onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => const SearchScreen())),
+                          icon: Icon(Icons.search_rounded, color: Neon.textHi, size: 26),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     // A Wrap, not a Row: with a larger system font (common

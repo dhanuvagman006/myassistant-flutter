@@ -594,9 +594,10 @@ class ApiService {
     return CallOutcome.listFromJson(jsonDecode(r.body)['outcomes']);
   }
 
-  static Future<List<UserDocument>> fetchDocuments() async {
+  /// [scope] personal (My Documents), clients (filed in case files) or all.
+  static Future<List<UserDocument>> fetchDocuments({String scope = 'personal'}) async {
     final r = await _client
-        .get(Uri.parse('$baseUrl/docs?scope=personal'), headers: _authHeaders)
+        .get(Uri.parse('$baseUrl/docs?scope=$scope'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) throw Exception('docs ${r.statusCode}');
     return UserDocument.listFromJson(jsonDecode(r.body)['documents']);
