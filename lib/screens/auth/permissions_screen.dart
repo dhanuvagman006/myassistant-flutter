@@ -7,14 +7,19 @@ import '../../design/neon_tokens.dart';
 import '../../services/contacts_sync_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-///  PERMISSIONS GATE — a hard stop in onboarding.
+///  PERMISSIONS — asked for up front, required only where the app cannot
+///  work without it.
 ///
-///  The assistant is useless without its senses: no mic means no voice, no
-///  contacts means "call Alan" dials nobody while the AI thinks it worked.
-///  Rather than let each feature fail quietly the first time it's used,
-///  every permission is collected up front and the app does not continue
-///  until all of them are granted. The gate also re-appears on any later
-///  launch where a permission has been revoked.
+///  The assistant is useless without a microphone, so that one is a hard
+///  stop, here and on any later launch where it has been revoked.
+///
+///  Everything else is RECOMMENDED. This screen used to refuse to continue
+///  until all six were granted and re-appeared whenever any was revoked —
+///  so turning the camera off in Settings locked a user out of an app they
+///  talk to, which Android's guidelines (and Play review) reject. Denied
+///  permissions no longer fail quietly either: the app reports what is
+///  granted (POST /assistant/:sid/capabilities), so the assistant explains
+///  a blocked feature instead of promising it.
 /// ─────────────────────────────────────────────────────────────────────────
 
 class _PermItem {
@@ -29,6 +34,9 @@ class _PermItem {
 final List<_PermItem> _kRequired = [
   _PermItem(Permission.microphone, Icons.mic_rounded, AppleColors.orange,
       'Microphone', 'Talking is how this app works.'),
+];
+
+final List<_PermItem> _kRecommended = [
   _PermItem(Permission.contacts, Icons.contacts_rounded, AppleColors.blue,
       'Contacts', 'So "call Alan" reaches the right Alan.'),
   _PermItem(Permission.phone, Icons.call_rounded, AppleColors.green, 'Phone',
@@ -42,8 +50,10 @@ final List<_PermItem> _kRequired = [
       AppleColors.teal, 'Location', 'Weather and places near you.'),
 ];
 
-/// Launch-time check used by the setup gate: true only when every required
-/// permission is already granted. Never prompts.
+List<_PermItem> get _kAll => [..._kRequired, ..._kRecommended];
+
+/// Launch-time check used by the setup gate: true when every REQUIRED
+/// permission (the microphone) is granted. Never prompts.
 Future<bool> allRequiredPermissionsGranted() async {
   try {
     for (final item in _kRequired) {
@@ -93,18 +103,21 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     if (state == AppLifecycleState.resumed) _refresh();
   }
 
-  bool get _allGranted =>
-      _kRequired.isNotEmpty &&
+  bool get _requiredGranted =>
       _kRequired.every((i) => _status[i.p]?.isGranted == true);
 
+  bool get _allGranted =>
+      _kAll.every((i) => _status[i.p]?.isGranted == true);
+
   Future<void> _refresh() async {
-    for (final item in _kRequired) {
+    for (final item in _kAll) {
       try {
         _status[item.p] = await item.p.status;
       } catch (_) {}
     }
     if (!mounted) return;
     setState(() {});
+    // Everything already allowed (or allowed in Settings just now): go on.
     if (_allGranted) _finish();
   }
 
@@ -124,28 +137,28 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       _error = null;
       _blocked = false;
     });
-    var anyPermanent = false;
-    for (final item in _kRequired) {
+    for (final item in _kAll) {
       if (_status[item.p]?.isGranted == true) continue;
       try {
-        final s = await item.p.request();
-        _status[item.p] = s;
-        if (s.isPermanentlyDenied) anyPermanent = true;
+        _status[item.p] = await item.p.request();
       } catch (_) {}
     }
     if (!mounted) return;
+    final micBlocked = _kRequired.any((i) => _status[i.p]?.isPermanentlyDenied == true);
     setState(() {
       _busy = false;
-      if (!_allGranted) {
-        _blocked = anyPermanent;
-        _error = anyPermanent
-            ? 'Some permissions are blocked by Android. Open Settings, '
-                'allow everything under Permissions, then come back.'
-            : 'All permissions are required to continue. Please allow '
-                'each one.';
+      if (!_requiredGranted) {
+        _blocked = micBlocked;
+        _error = micBlocked
+            ? 'The microphone is blocked by Android. Open Settings, allow '
+                'Microphone under Permissions, then come back.'
+            : 'The microphone is needed — talking is how the assistant works.';
       }
     });
-    if (_allGranted) _finish();
+    // Only the microphone is required: whatever else was declined, the
+    // app works, and the assistant will say when something needs a
+    // permission.
+    if (_requiredGranted) _finish();
   }
 
   @override
@@ -186,18 +199,27 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Your assistant listens, calls, and scans for you. It '
-                    'needs all of these to work — without them, features '
-                    'would silently fail.',
+                    'Your assistant listens, calls, and scans for you. The '
+                    'microphone is essential; the rest unlock what it can do '
+                    'for you, and you can change any of them later in '
+                    'Settings.',
                     style: TextStyle(
                         color: Neon.textLo, fontSize: 14.5, height: 1.45),
                   ),
                   const SizedBox(height: 22),
-                  const GroupLabel('Required permissions'),
+                  const GroupLabel('Needed'),
                   GroupedCard(
                     dividerInset: 60,
                     children: [
                       for (final item in _kRequired) _row(item),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const GroupLabel('Recommended'),
+                  GroupedCard(
+                    dividerInset: 60,
+                    children: [
+                      for (final item in _kRecommended) _row(item),
                     ],
                   ),
                   if (_error != null) ...[
@@ -238,6 +260,17 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                           onPressed:
                               _blocked ? openAppSettings : _requestAll,
                         ),
+                  // With the microphone allowed, the rest are a choice.
+                  if (_requiredGranted && !_allGranted && !_busy) ...[
+                    const SizedBox(height: 6),
+                    TextButton(
+                      onPressed: _finish,
+                      style: TextButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48)),
+                      child: Text('Continue without the rest',
+                          style: TextStyle(color: Neon.textLo, fontSize: 14)),
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Text(
                     'Contacts stay on your phone — only names and numbers '
@@ -275,7 +308,9 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                 _status[item.p] = s;
                 if (s.isPermanentlyDenied && mounted) {
                   setState(() {
-                    _blocked = true;
+                    // Only a blocked MICROPHONE turns the main button into
+                    // "Open Settings"; anything else is optional.
+                    _blocked = _kRequired.contains(item);
                     _error =
                         '${item.title} is blocked by Android. Open Settings '
                         'and allow it there.';

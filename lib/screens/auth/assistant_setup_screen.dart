@@ -38,9 +38,10 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
   static const _welcomeKey = 'welcomed_v1';
   bool? _needed;
 
-  /// HARD permission gate: false until every required permission is
-  /// granted. Checked on every launch, so a permission revoked later
-  /// brings the gate back instead of letting features silently fail.
+  /// Permission gate: false until the MICROPHONE is granted — the one the
+  /// app cannot work without (see permissions_screen.dart). Checked on
+  /// every launch, so revoking it brings the gate back; the recommended
+  /// ones never lock the user out.
   bool _permsOk = false;
 
   /// One welcome moment per INSTALL: brand-new accounts get it after the
