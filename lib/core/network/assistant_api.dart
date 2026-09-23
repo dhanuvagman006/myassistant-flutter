@@ -24,6 +24,19 @@ class AssistantApi {
   int _lastEventId = 0;
   bool _closed = false;
 
+  /// Bumped by every connect() and close(). A reconnect scheduled before
+  /// either one belongs to a connection that no longer exists: without this
+  /// check, close() then connect() let the OLD delayed retry fire into the
+  /// new session and open a second, competing stream.
+  int _gen = 0;
+
+  /// The server writes ": hb" every 20 s. A stream silent for longer than
+  /// this is dead even if the socket never said so — a Wi-Fi → mobile
+  /// handover leaves exactly that: "connected", and every turn then dying
+  /// at the 35 s watchdog.
+  static const _idleLimit = Duration(seconds: 50);
+  Timer? _idle;
+
   String? get sessionId => _sessionId;
 
   // The classic path used to send auth alone — no timezone (every user
@@ -48,6 +61,7 @@ class AssistantApi {
   }) async {
     _onConnected = onConnected;
     _closed = false;
+    _gen++;
     AppLog.add('sse', 'POST ${ApiService.baseUrl}/assistant/session');
     final http.Response r;
     try {
@@ -62,6 +76,10 @@ class AssistantApi {
     if (r.statusCode != 200) {
       AppLog.add('sse', 'session HTTP ${r.statusCode}: '
           '${r.body.length > 120 ? r.body.substring(0, 120) : r.body}');
+      // A rejected sign-in is not a network blip: without this the loop
+      // retried a revoked token every minute, forever, behind a "Connecting"
+      // screen. AuthService re-verifies and signs out, which closes us.
+      ApiService.noteAuthStatus(r.statusCode);
       throw Exception('assistant session failed (${r.statusCode})');
     }
     AppLog.add('sse', 'session ok');
@@ -82,6 +100,8 @@ class AssistantApi {
     void Function()? onDisconnect,
   ) async {
     if (_closed || _sessionId == null) return;
+    final gen = _gen;
+    _idle?.cancel();
     _sseClient?.close();
     final client = http.Client();
     _sseClient = client;
@@ -94,7 +114,12 @@ class AssistantApi {
       );
       req.headers['Accept'] = 'text/event-stream';
       if (_lastEventId > 0) req.headers['Last-Event-ID'] = '$_lastEventId';
-      final res = await client.send(req);
+      // Bounded: on a half-open connection send() never returns at all.
+      final res = await client.send(req).timeout(const Duration(seconds: 15));
+      if (gen != _gen) {
+        client.close(); // closed or replaced while we waited
+        return;
+      }
       if (res.statusCode != 200) {
         AppLog.add('sse', 'stream HTTP ${res.statusCode}');
         // A restarted/redeployed server no longer knows this session — the
@@ -112,31 +137,40 @@ class AssistantApi {
       _failStreak = 0; // healthy again — next drop starts the backoff over
       _onConnected?.call();
 
-      String? pendingData;
+      void armIdle() {
+        _idle?.cancel();
+        _idle = Timer(_idleLimit, () {
+          if (gen != _gen || _closed) return;
+          AppLog.add('sse', 'stream silent ${_idleLimit.inSeconds}s — reconnecting');
+          _sseSub?.cancel();
+          client.close();
+          _reconnect(onEvent, onDisconnect);
+        });
+      }
+
+      armIdle();
+      final parser = SseParser(onEvent);
       _sseSub = res.stream
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
         (line) {
-          if (line.startsWith('id:')) {
-            _lastEventId =
-                int.tryParse(line.substring(3).trim()) ?? _lastEventId;
-          } else if (line.startsWith('data:')) {
-            pendingData = line.substring(5).trim();
-          } else if (line.isEmpty && pendingData != null) {
-            try {
-              final e = jsonDecode(pendingData!) as Map<String, dynamic>;
-              onEvent(e);
-            } catch (_) {}
-            pendingData = null;
-          }
+          armIdle(); // any line — an event or the ": hb" — proves it lives
+          final id = parser.line(line);
+          if (id != null) _lastEventId = id;
         },
-        onDone: () => _reconnect(onEvent, onDisconnect),
-        onError: (_) => _reconnect(onEvent, onDisconnect),
+        onDone: () {
+          _idle?.cancel();
+          if (gen == _gen) _reconnect(onEvent, onDisconnect);
+        },
+        onError: (_) {
+          _idle?.cancel();
+          if (gen == _gen) _reconnect(onEvent, onDisconnect);
+        },
         cancelOnError: true,
       );
     } catch (_) {
-      _reconnect(onEvent, onDisconnect);
+      if (gen == _gen) _reconnect(onEvent, onDisconnect);
     }
   }
 
@@ -165,8 +199,9 @@ class AssistantApi {
     AppLog.add('sse',
         'stream dropped — retry $_failStreak in ${delay.inSeconds}s');
     onDisconnect?.call();
+    final gen = _gen;
     Future.delayed(delay, () {
-      if (_closed) return;
+      if (_closed || gen != _gen) return;
       if (_sessionId == null) {
         connect(
           onEvent: onEvent,
@@ -191,6 +226,7 @@ class AssistantApi {
         .timeout(const Duration(seconds: 12));
     if (r.statusCode >= 300) {
       AppLog.add('sse', 'POST /assistant/$path HTTP ${r.statusCode}');
+      ApiService.noteAuthStatus(r.statusCode);
       throw Exception('assistant/$path failed (${r.statusCode})');
     }
   }
@@ -281,8 +317,46 @@ class AssistantApi {
     _lastEventId = 0;
     _failStreak = 0;
     _closed = true;
+    _gen++;
+    _idle?.cancel();
     _sseSub?.cancel();
     _sseClient?.close();
     _sessionId = null;
+  }
+}
+
+/// Server-Sent Events, one line at a time (WHATWG rules, the subset the
+/// server uses). Kept apart from the socket so it can be tested.
+///
+/// A multi-line `data:` field is joined with newlines — the old parser kept
+/// only the LAST line, so any event whose JSON contained a raw newline was
+/// dropped as undecodable. One optional space after the colon is part of
+/// the syntax, not the value; comment lines (": hb") are ignored.
+class SseParser {
+  SseParser(this.onEvent);
+  final void Function(Map<String, dynamic> event) onEvent;
+  final List<String> _data = [];
+
+  /// Feeds one line. Returns the event id when the line carried one.
+  int? line(String line) {
+    if (line.isEmpty) {
+      if (_data.isNotEmpty) {
+        final payload = _data.join('\n');
+        _data.clear();
+        try {
+          final e = jsonDecode(payload);
+          if (e is Map<String, dynamic>) onEvent(e);
+        } catch (_) {}
+      }
+      return null;
+    }
+    if (line.startsWith(':')) return null;
+    final colon = line.indexOf(':');
+    final field = colon < 0 ? line : line.substring(0, colon);
+    var value = colon < 0 ? '' : line.substring(colon + 1);
+    if (value.startsWith(' ')) value = value.substring(1);
+    if (field == 'data') _data.add(value);
+    if (field == 'id') return int.tryParse(value.trim());
+    return null;
   }
 }

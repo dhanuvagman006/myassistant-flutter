@@ -158,6 +158,10 @@ class ApiService {
   /// next cold start. Throttled: one burst of failing calls is one signal.
   static void Function()? onSessionRejected;
   static DateTime _lastAuthReject = DateTime.fromMillisecondsSinceEpoch(0);
+  /// For clients outside this file (the voice loop's session and posts):
+  /// a 401 there means the same thing as a 401 here.
+  static void noteAuthStatus(int status) => _flagAuthFailure(status);
+
   static void _flagAuthFailure(int status) {
     if (status != 401 || sessionToken == null) return;
     final now = DateTime.now();
