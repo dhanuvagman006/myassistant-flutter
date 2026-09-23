@@ -7,6 +7,7 @@ import '../../../design/motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
 import '../../../widgets/month_calendar.dart';
+import '../../../widgets/whats_new_card.dart';
 import '../../../services/api_service.dart';
 import '../../../services/assistant_identity.dart';
 import '../../../services/brief_service.dart';
@@ -189,6 +190,8 @@ class TodayBriefBody extends StatelessWidget {
                   // People use the two things they discovered on day one
                   // unless something shows them the rest; these rotate
                   // with the clock so the app stays worth opening.
+                  // Once per release, on Home only: what just got better.
+                  if (!showHeader) const WhatsNewCard(),
                   Reveal(delayMs: 40, child: _tryAsking(context)),
                   const SizedBox(height: 20),
                   if (!svc.loaded && svc.failed)
