@@ -79,9 +79,17 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   @override
   Widget build(BuildContext context) {
     final active = _active;
-    return GestureDetector(
+    // The app's main control had no label for screen readers.
+    return Semantics(
+      button: true,
+      label: active ? 'Stop talking to the assistant' : 'Talk to the assistant',
+      child: GestureDetector(
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
+      // Its own layer: the resting orb breathes forever, and without a
+      // boundary every frame of that repainted the dock and the Home
+      // screen behind it — on a screen otherwise sitting idle.
+      child: RepaintBoundary(
       child: SizedBox(
         width: 76,
         height: 76,
@@ -150,6 +158,8 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
           ],
         ),
       ),
+      ),
+    ),
     );
   }
 }

@@ -79,7 +79,13 @@ class HomeDashboard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Row(
+                    // A Wrap, not a Row: with a larger system font (common
+                    // on the phones this app is for) date + streak +
+                    // weather did not fit one line and overflowed.
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           '${wk[now.weekday - 1]}, ${now.day} ${mo[now.month - 1]}',
@@ -90,7 +96,6 @@ class HomeDashboard extends StatelessWidget {
                         // beside the date — visible enough to notice, far
                         // from a game badge.
                         if (StreakService.instance.count > 1) ...[
-                          const SizedBox(width: 10),
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 3),
@@ -116,7 +121,6 @@ class HomeDashboard extends StatelessWidget {
                           ),
                         ],
                         if (b.weatherLine != null) ...[
-                          const SizedBox(width: 10),
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 3),
