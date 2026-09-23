@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:path_provider/path_provider.dart';
@@ -69,12 +69,20 @@ class ApiService {
 
   static const String _serverPrefKey = 'server_url_override';
 
+  /// Which server URLs may replace the default. The override exists so a
+  /// moved server needs no rebuild — but every request carries the session
+  /// token to it, and Diagnostics (reachable by voice) could point release
+  /// builds at a plain-http host. Release builds accept https only; debug
+  /// builds may use a local http server.
+  static bool overrideAllowed(String url, {bool release = kReleaseMode}) =>
+      release ? url.startsWith('https://') : url.startsWith('http');
+
   /// Load a saved runtime override (called once at app start).
   static Future<void> loadServerOverride() async {
     try {
       final p = await SharedPreferences.getInstance();
       final v = p.getString(_serverPrefKey);
-      if (v != null && v.startsWith('http')) _runtimeBaseUrl = v;
+      if (v != null && overrideAllowed(v)) _runtimeBaseUrl = v;
       AppLog.add('api', 'server = $baseUrl'
           '${_runtimeBaseUrl != null ? ' (runtime override)' : ''}');
     } catch (_) {}
@@ -87,6 +95,9 @@ class ApiService {
     if (clean == null || clean.isEmpty) {
       _runtimeBaseUrl = null;
       await p.remove(_serverPrefKey);
+    } else if (!overrideAllowed(clean)) {
+      AppLog.add('api', 'server override refused (release builds need https): $clean');
+      return;
     } else {
       _runtimeBaseUrl = clean.replaceAll(RegExp(r'/+$'), '');
       await p.setString(_serverPrefKey, _runtimeBaseUrl!);

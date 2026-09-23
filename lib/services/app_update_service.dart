@@ -270,11 +270,16 @@ class AppUpdateService {
       await sink.close();
       hasher.close();
       final hash = digest.events.single.toString();
-      if (cfg.apkSha256 != null &&
-          cfg.apkSha256!.isNotEmpty &&
-          hash.toLowerCase() != cfg.apkSha256!.toLowerCase()) {
+      // REQUIRED, not optional. An update is an APK the user is about to
+      // install; with no published checksum the file was installed
+      // unverified. The server computes apkSha256 on every publish
+      // (routes/appUpdate.js), so its absence means something is wrong.
+      final want = cfg.apkSha256?.trim().toLowerCase() ?? '';
+      if (want.isEmpty || hash.toLowerCase() != want) {
         await _safeDelete(file);
-        throw Exception('checksum mismatch — download corrupted');
+        throw Exception(want.isEmpty
+            ? 'no checksum published for this update — not installing it'
+            : 'checksum mismatch — download corrupted');
       }
       if (_cancelled) {
         await _safeDelete(file);

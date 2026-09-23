@@ -130,7 +130,10 @@
         </intent>
     </queries>
 
-    <application android:usesCleartextTraffic="true"
+    <!-- No cleartext in release: the session token travels on every
+         request, and the production API is HTTPS. Debug builds allow it
+         (src/debug/AndroidManifest.xml) for a local dev server. -->
+    <application
         android:label="myassistant"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
