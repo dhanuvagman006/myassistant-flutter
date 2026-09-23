@@ -58,15 +58,18 @@ class CallRecordingWatcher {
   }
 
   Future<void> scan() async {
+    // Claimed BEFORE the first await. Claiming after it let app-open and
+    // resume both get past the check, and every recording went up twice —
+    // two paid analyses of the same call.
     if (_scanning) return;
-    final prefs = await SharedPreferences.getInstance();
-    // The prefs flag, not the service singleton: a WorkManager isolate has
-    // no hydrated CallNotesService, but the toggle is always mirrored here.
-    final enabled = prefs.getBool('call_analysis_enabled_v1') ??
-        CallNotesService.instance.analysisEnabled;
-    if (!enabled) return;
     _scanning = true;
     try {
+      final prefs = await SharedPreferences.getInstance();
+      // The prefs flag, not the service singleton: a WorkManager isolate has
+      // no hydrated CallNotesService, but the toggle is always mirrored here.
+      final enabled = prefs.getBool('call_analysis_enabled_v1') ??
+          CallNotesService.instance.analysisEnabled;
+      if (!enabled) return;
       if (!await Permission.audio.isGranted &&
           !await Permission.storage.isGranted) {
         AppLog.add('callrec', 'scan skipped — audio permission not granted');
@@ -80,6 +83,7 @@ class CallRecordingWatcher {
         return;
       }
       final done = (prefs.getStringList(_doneKey) ?? const []).toSet();
+      final cutoff = await recordingCutoff(prefs, consentAt, DateTime.now());
       var seen = 0, sent = 0;
 
       for (final dir in _dirs) {
@@ -95,9 +99,10 @@ class CallRecordingWatcher {
           if (done.contains(name)) continue;
           seen++;
           final stat = await ent.stat();
-          // Only calls made AFTER analysis was turned on get analysed —
-          // the archive from before consent is not ours to read.
-          if (stat.modified.millisecondsSinceEpoch < consentAt) {
+          // Only NEW calls get analysed: never the archive from before
+          // consent, never what an earlier install already sent, never
+          // anything over a day old.
+          if (stat.modified.millisecondsSinceEpoch < cutoff) {
             done.add(name); // old file: mark seen, never touch
             continue;
           }
@@ -121,6 +126,27 @@ class CallRecordingWatcher {
     } finally {
       _scanning = false;
     }
+  }
+
+  static const _sinceKey = 'call_recordings_since_v1';
+
+  /// The oldest recording (by file time, ms) this install may upload.
+  ///
+  /// The ledger of sent files lives in this install's prefs, so a
+  /// reinstall starts it empty — and the 0.2.94 re-key reinstall re-sent
+  /// every recording since consent, each one a paid analysis all over
+  /// again. So an install remembers when it first scanned and never
+  /// reaches back past it, nor past a day (the server's own limit).
+  static Future<int> recordingCutoff(
+      SharedPreferences prefs, int consentAt, DateTime now) async {
+    var since = prefs.getInt(_sinceKey);
+    if (since == null) {
+      since = now.millisecondsSinceEpoch;
+      await prefs.setInt(_sinceKey, since);
+    }
+    final dayAgo =
+        now.subtract(const Duration(hours: 24)).millisecondsSinceEpoch;
+    return [consentAt, since, dayAgo].reduce((a, b) => a > b ? a : b);
   }
 
   int _consentAtCache = 0;

@@ -23,10 +23,9 @@ import '../design/neon_tokens.dart';
 ///  colour — cyan listening, violet thinking, pink speaking — and that
 ///  was worth keeping when the picture itself is now one fixed mint. So
 ///  the SPHERE is the design and never changes, and the state lives in
-///  the movement around it: the rings drift outward steadily while it
-///  listens, tighten and shimmer while it thinks, and swell with the
-///  voice while it speaks. The caption under the orb still says the
-///  word.
+///  the movement around it: a liquid ring ripples with the voice and
+///  pulses roll outward while it listens or speaks, and comets circle it
+///  while it thinks. The caption under the orb still says the word.
 /// ─────────────────────────────────────────────────────────────────────
 
 /// How the orb is behaving, in the only terms the painting cares about.
@@ -189,6 +188,25 @@ class _SpherePainter extends CustomPainter {
         ).createShader(Rect.fromCircle(center: c, radius: r)),
     );
 
+    // LIGHT INSIDE IT — a soft glow drifting round within the ball, a
+    // touch brighter with the voice, so the sphere itself looks alive.
+    final orbit = t * 2 * math.pi;
+    final inner = c +
+        Offset(math.cos(orbit) * r * 0.38, math.sin(orbit) * r * 0.30 + r * 0.18);
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: c, radius: r)));
+    canvas.drawCircle(
+      inner,
+      r * 0.75,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          Color.lerp(Neon.pink, Colors.white, 0.25)!
+              .withValues(alpha: 0.28 + glow * 0.30),
+          Neon.pink.withValues(alpha: 0),
+        ]).createShader(Rect.fromCircle(center: inner, radius: r * 0.75)),
+    );
+    canvas.restore();
+
     // THE HIGHLIGHT — a soft oval where the light lands, not a hard dot.
     final hl = Rect.fromCenter(
       center: c + Offset(-r * 0.32, -r * 0.46),
@@ -237,10 +255,19 @@ class _SpherePainter extends CustomPainter {
   bool shouldRepaint(_SpherePainter old) => old.t != t || old.glow != glow;
 }
 
-/// The tunnel behind the orb: concentric rings running off both edges,
-/// teal on the left and magenta on the right, with waveform lines
-/// through the middle. Paint it full-width — in the reference it reaches
-/// both screen edges, and boxing it in is what makes a copy look small.
+/// The space behind the orb. Same two brand hues as before, rebuilt to
+/// feel alive rather than busy:
+///
+///  * an AURORA — two soft clouds of the accent (left) and its partner
+///    (right) drifting slowly, brightening with the voice;
+///  * DUST — faint motes floating outward from the orb, the way sound
+///    carries;
+///  * the reference's ring TUNNEL, kept for depth but pulled right back;
+///  * and the part that says "I hear you": a LIQUID RING hugging the orb
+///    that ripples with the voice, and pulses that roll outward faster the
+///    louder it gets. Thinking swaps both for comets circling the orb.
+///
+/// Paint it full-width — it reaches both screen edges.
 class VoiceOrbBackdrop extends StatefulWidget {
   const VoiceOrbBackdrop({
     super.key,
@@ -259,10 +286,20 @@ class VoiceOrbBackdrop extends StatefulWidget {
 
 class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     with SingleTickerProviderStateMixin {
+  /// Drives the repaints. Time is the ticker's total elapsed time, not the
+  /// controller's 0..1 value, so nothing jumps when the value wraps.
   late final AnimationController _t = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 9),
+    duration: const Duration(seconds: 1),
   )..repeat();
+  double _last = 0;
+
+  /// Integrated, not derived from the clock: the pulses speed up with the
+  /// voice, and a speed change must never make them jump backwards.
+  double _pulse = 0;
+
+  // Everything the mood changes is eased in and out, never switched.
+  double _level = 0, _pulseAmt = 0, _think = 0;
 
   @override
   void dispose() {
@@ -273,102 +310,257 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: _t,
-        builder: (_, __) => CustomPaint(
-          painter: _TunnelPainter(
-            t: _t.value,
-            orbRadius: widget.orbSize / 2,
-            mood: widget.mood,
-            level: widget.level.clamp(0.0, 1.0),
-          ),
-          child: const SizedBox.expand(),
-        ),
+        builder: (_, __) {
+          final now = (_t.lastElapsedDuration?.inMicroseconds ?? 0) / 1e6;
+          final dt = (now - _last).clamp(0.0, 0.1);
+          _last = now;
+          double ease(double v, double to, double rate) =>
+              v + (to - v) * (1 - math.exp(-dt * rate));
+
+          final target = widget.level.clamp(0.0, 1.0);
+          _level = ease(_level, target, target > _level ? 18 : 4);
+          final mood = widget.mood;
+          _pulseAmt = ease(
+              _pulseAmt,
+              switch (mood) {
+                OrbMood.idle => 0.35,
+                OrbMood.thinking => 0.0,
+                _ => 1.0,
+              },
+              3);
+          _think = ease(_think, mood == OrbMood.thinking ? 1 : 0, 4);
+          // Pulses per second: a slow heartbeat at rest, quicker as the
+          // voice gets louder.
+          _pulse += dt * (0.30 + _level * 0.55);
+
+          return CustomPaint(
+            painter: _BackdropPainter(
+              sec: now,
+              pulse: _pulse,
+              orbRadius: widget.orbSize / 2,
+              level: _level,
+              pulseAmt: _pulseAmt,
+              think: _think,
+            ),
+            child: const SizedBox.expand(),
+          );
+        },
       );
 }
 
-class _TunnelPainter extends CustomPainter {
-  _TunnelPainter({
-    required this.t,
+/// One mote of dust: where it starts, how fast it drifts, how it twinkles.
+class _Mote {
+  const _Mote(this.angle, this.offset, this.speed, this.size, this.twinkle);
+  final double angle, offset, speed, size, twinkle;
+}
+
+final List<_Mote> _motes = () {
+  final rnd = math.Random(7); // fixed: the same sky every time
+  return List.generate(
+      42,
+      (_) => _Mote(
+            rnd.nextDouble() * 2 * math.pi,
+            rnd.nextDouble(),
+            0.035 + rnd.nextDouble() * 0.05,
+            0.7 + rnd.nextDouble() * 1.3,
+            1.5 + rnd.nextDouble() * 2.5,
+          ));
+}();
+
+class _BackdropPainter extends CustomPainter {
+  _BackdropPainter({
+    required this.sec,
+    required this.pulse,
     required this.orbRadius,
-    required this.mood,
     required this.level,
+    required this.pulseAmt,
+    required this.think,
   });
 
-  final double t;
-  final double orbRadius;
-  final OrbMood mood;
-  final double level;
+  final double sec, pulse, orbRadius, level, pulseAmt, think;
 
-  /// Where the reference's rings sit, as multiples of the sphere's radius.
-  static const _rings = [1.02, 1.39, 1.56, 1.91, 2.12, 2.42, 2.78, 3.2];
+  /// Where the reference's rings sit, as multiples of the sphere's radius
+  /// — fewer than before; they are depth now, not the subject.
+  static const _rings = [1.39, 1.91, 2.42, 2.9, 3.4];
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
     final r = orbRadius;
+    final violet = Neon.violet;
+    final pink = Neon.pink;
+    final bounds = Offset.zero & size;
 
-    // Teal on the left, ink through the middle, magenta on the right —
-    // one shader across the whole canvas, so every ring picks up the
-    // colour of the side it is on exactly as the reference does.
-    // The reference runs teal on the left through ink in the middle to
-    // magenta on the right. Same structure, the app's two brand hues:
-    // the accent on the left, its gradient partner on the right, the
-    // page's own ground between them.
-    final left = HSLColor.fromColor(Neon.violet);
-    final right = HSLColor.fromColor(Neon.pink);
+    // Left-to-right sweep for the tunnel: accent, ink, partner.
     final sweep = LinearGradient(
-      begin: Alignment.centerLeft,
-      end: Alignment.centerRight,
       colors: [
-        left.withLightness(0.34).toColor(),
-        left.withLightness(0.46).toColor(),
-        HSLColor.fromColor(Neon.violet)
+        HSLColor.fromColor(violet).withLightness(0.46).toColor(),
+        HSLColor.fromColor(violet)
             .withSaturation(0.35)
-            .withLightness(0.16)
+            .withLightness(0.18)
             .toColor(),
-        right.withLightness(0.42).toColor(),
-        right.withLightness(0.32).toColor(),
+        HSLColor.fromColor(pink).withLightness(0.44).toColor(),
       ],
-      stops: const [0.0, 0.22, 0.5, 0.78, 1.0],
-    ).createShader(Offset.zero & size);
+    ).createShader(bounds);
+    // Round-the-orb sweep for the rings that hug it, turning slowly.
+    final around = SweepGradient(
+      colors: [violet, pink, Color.lerp(violet, pink, 0.4)!, violet],
+      stops: const [0.0, 0.4, 0.75, 1.0],
+      transform: GradientRotation(sec * 0.35),
+    ).createShader(Rect.fromCircle(center: c, radius: r * 3));
 
-    // A slow outward drift; while it listens the whole tunnel breathes a
-    // little wider with the voice.
-    final drift = mood == OrbMood.thinking
-        ? 0.03 * math.sin(t * 2 * math.pi * 3) // tight shimmer
-        : 0.06 * math.sin(t * 2 * math.pi);
-    final swell = mood == OrbMood.idle ? 0.0 : level * 0.10;
+    // Everything but the vignette fades out toward the top and bottom, so
+    // it melts into the overlay instead of ending at the box's edge. ONE
+    // offscreen layer per frame — per-element layers are how a pretty orb
+    // becomes a stuttering one on a mid-range phone.
+    canvas.saveLayer(bounds, Paint());
 
-    canvas.saveLayer(Offset.zero & size, Paint());
+    // 1. AURORA — squashed into ovals so it stays inside the box.
+    void cloud(Offset at, double radius, Color col, double a) {
+      canvas.save();
+      canvas.translate(at.dx, at.dy);
+      canvas.scale(1, 0.62);
+      canvas.drawCircle(
+        Offset.zero,
+        radius,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              col.withValues(alpha: a),
+              col.withValues(alpha: a * 0.35),
+              col.withValues(alpha: 0),
+            ],
+            stops: const [0.0, 0.45, 1.0],
+          ).createShader(Rect.fromCircle(center: Offset.zero, radius: radius)),
+      );
+      canvas.restore();
+    }
+
+    cloud(
+        c +
+            Offset(-r * 0.95 + math.cos(sec * 0.21) * r * 0.3,
+                math.sin(sec * 0.17) * r * 0.18),
+        r * 2.7,
+        violet,
+        0.34 + level * 0.16);
+    cloud(
+        c +
+            Offset(r * 0.95 + math.cos(sec * 0.19 + 2.1) * r * 0.3,
+                math.sin(sec * 0.23 + 1.3) * r * 0.18),
+        r * 2.5,
+        pink,
+        0.27 + level * 0.14);
+    cloud(c, r * 1.8, Color.lerp(violet, pink, 0.45)!, 0.16 + level * 0.20);
+
+    // 2. DUST drifting outward.
+    final maxD = size.width * 0.56;
+    for (final m in _motes) {
+      final life = (m.offset + sec * m.speed) % 1.0;
+      final dist = r * 1.3 + life * (maxD - r * 1.3);
+      final a = m.angle + sec * 0.025;
+      final pos = c + Offset(math.cos(a) * dist, math.sin(a) * dist * 0.7);
+      final fade = math.sin(life * math.pi);
+      final tw = 0.55 + 0.45 * math.sin(sec * m.twinkle + m.offset * 6.3);
+      final hue =
+          Color.lerp(violet, pink, (pos.dx / size.width).clamp(0.0, 1.0))!;
+      canvas.drawCircle(
+        pos,
+        m.size,
+        Paint()
+          ..color = Color.lerp(hue, Colors.white, 0.55)!
+              .withValues(alpha: 0.5 * fade * tw),
+      );
+    }
+
+    // 3. The TUNNEL, breathing very slightly.
+    final breathe = 1 + 0.025 * math.sin(sec * 0.7) + level * 0.04;
     for (var i = 0; i < _rings.length; i++) {
-      final k = _rings[i] * (1 + drift + swell);
-      final rx = r * k;
-      // A tunnel, not a pond. Measured off the reference: its outermost
-      // visible ring is about 2.55 times the sphere's radius across and
-      // 1.25 times that tall — the vertical radius has to grow with the
-      // horizontal one or the rings flatten into ripples.
-      final ry = r * (1.24 + i * 0.125);
-      if (rx > size.width) continue;
-      final fade = (1 - i / _rings.length);
+      final rx = r * _rings[i] * breathe;
+      final ry = r * (1.3 + i * 0.16) * breathe;
       canvas.drawOval(
         Rect.fromCenter(center: c, width: rx * 2, height: ry * 2),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0 - i * 0.16
+          ..strokeWidth = 1.2
           ..shader = sweep
-          ..color = Colors.white.withValues(alpha: 0.95 * fade),
+          ..color = Colors.white.withValues(alpha: 0.30 * (1 - i / 5)),
       );
     }
 
-    // Fade the arcs out towards the top and bottom of the canvas, so the
-    // rings read as a tunnel seen edge-on rather than as flat concentric
-    // ovals.
-    //
-    // ONE saveLayer FOR ALL OF THEM. Doing this per ring cost eight
-    // full-canvas offscreen buffers every frame for the whole session —
-    // on the mid-range phones this app is for, that is how a beautiful
-    // orb becomes a stuttering one.
+    // 4. PULSES rolling out from the orb.
+    if (pulseAmt > 0.01) {
+      for (var i = 0; i < 3; i++) {
+        final ph = (pulse + i / 3) % 1.0;
+        final fade = (1 - ph) * (1 - ph);
+        canvas.drawCircle(
+          c,
+          r * (1.08 + ph * 0.95),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.6 + 2.2 * (1 - ph)
+            ..shader = around
+            ..color = Colors.white
+                .withValues(alpha: fade * pulseAmt * (0.35 + level * 0.55)),
+        );
+      }
+    }
+
+    // 5. The LIQUID RING — hugs the orb and ripples with the voice. Two
+    // strands out of step read as liquid; one reads as a wobbly circle.
+    final calm = 1 - think * 0.7;
+    final amp = r * (0.018 + level * 0.12) * calm;
+    for (var j = 0; j < 2; j++) {
+      final path = _liquid(
+          c, r * (1.12 + j * 0.035), amp * (1 - j * 0.4), sec * 2.1 + j * 1.9);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 8
+          ..shader = around
+          ..color = Colors.white.withValues(alpha: 0.10 + level * 0.10),
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = j == 0 ? 2.0 : 1.2
+          ..shader = around
+          ..color = Colors.white.withValues(alpha: j == 0 ? 0.9 : 0.5),
+      );
+    }
+
+    // 6. THINKING — two comets chasing round the orb.
+    if (think > 0.01) {
+      final rect = Rect.fromCircle(center: c, radius: r * 1.26);
+      for (var k = 0; k < 2; k++) {
+        final start = sec * 2 * math.pi * 0.55 + k * math.pi;
+        final shader = SweepGradient(
+          colors: [
+            violet.withValues(alpha: 0),
+            violet,
+            Color.lerp(pink, Colors.white, 0.3)!,
+          ],
+          stops: const [0.0, 0.3, 0.42],
+          transform: GradientRotation(start),
+        ).createShader(rect);
+        canvas.drawArc(
+          rect,
+          start,
+          math.pi * 0.84,
+          false,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.6
+            ..strokeCap = StrokeCap.round
+            ..shader = shader
+            ..color = Colors.white.withValues(alpha: think * (1 - k * 0.45)),
+        );
+      }
+    }
+
     canvas.drawRect(
-      Offset.zero & size,
+      bounds,
       Paint()
         ..blendMode = BlendMode.dstIn
         ..shader = const LinearGradient(
@@ -380,64 +572,53 @@ class _TunnelPainter extends CustomPainter {
             Colors.white,
             Colors.transparent,
           ],
-          stops: [0.0, 0.30, 0.70, 1.0],
-        ).createShader(Offset.zero & size),
+          stops: [0.0, 0.22, 0.78, 1.0],
+        ).createShader(bounds),
     );
     canvas.restore();
 
-    // THE WAVEFORM LINES crossing behind it — three long, very low
-    // sine paths, drifting at different speeds so they never look like
-    // one repeating pattern.
-    for (var line = 0; line < 3; line++) {
-      final amp = r * (0.10 + line * 0.05) * (1 + level * 0.8);
-      final phase = t * 2 * math.pi * (0.6 + line * 0.25) + line * 1.7;
-      final yBase = c.dy + (line - 1) * r * 0.22;
-      final path = Path();
-      for (double x = 0; x <= size.width; x += 6) {
-        final k = x / size.width;
-        // Damped at the edges so the lines fade out instead of stopping.
-        final damp = math.sin(k * math.pi);
-        final y = yBase +
-            math.sin(k * math.pi * 3.2 + phase) * amp * damp;
-        if (x == 0) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
-        }
-      }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..shader = sweep
-          ..color = Colors.white.withValues(alpha: 0.30 - line * 0.07),
-      );
-    }
-
-    // A vignette so the tunnel falls into the dark at the edges rather
-    // than being cut off by them.
+    // A vignette so the edges fall into the dark rather than being cut
+    // off. BLACK, not Neon.bg: the overlay under it is a 94% black scrim
+    // in BOTH themes, so a vignette that followed the page ground would
+    // paint white corners over it in the light theme.
     canvas.drawRect(
-      Offset.zero & size,
+      bounds,
       Paint()
         ..shader = RadialGradient(
-          center: Alignment.center,
-          radius: 0.72,
+          radius: 0.8,
           colors: [
-            // BLACK, not Neon.bg. The overlay this sits on is a 94%
-            // black scrim in BOTH themes, so a vignette that follows the
-            // page ground would paint white corners over it the moment
-            // somebody switched to the light theme.
             Colors.transparent,
-            Colors.black.withValues(alpha: 0.35),
-            Colors.black.withValues(alpha: 0.80),
+            Colors.black.withValues(alpha: 0.3),
+            Colors.black.withValues(alpha: 0.75),
           ],
-          stops: const [0.5, 0.84, 1.0],
-        ).createShader(Offset.zero & size),
+          stops: const [0.55, 0.86, 1.0],
+        ).createShader(bounds),
     );
   }
 
+  /// A closed ring whose radius wanders with three harmonics moving at
+  /// different speeds, so the ripple never visibly repeats.
+  Path _liquid(Offset c, double base, double amp, double phase) {
+    final p = Path();
+    const n = 120;
+    for (var k = 0; k <= n; k++) {
+      final th = k / n * 2 * math.pi;
+      final d = base +
+          amp *
+              (0.55 * math.sin(3 * th + phase * 1.3) +
+                  0.30 * math.sin(5 * th - phase * 1.7) +
+                  0.15 * math.sin(8 * th + phase * 2.3));
+      final pt = c + Offset(math.cos(th) * d, math.sin(th) * d);
+      if (k == 0) {
+        p.moveTo(pt.dx, pt.dy);
+      } else {
+        p.lineTo(pt.dx, pt.dy);
+      }
+    }
+    return p..close();
+  }
+
   @override
-  bool shouldRepaint(_TunnelPainter old) =>
-      old.t != t || old.level != level || old.mood != mood;
+  bool shouldRepaint(_BackdropPainter old) => true; // it is an animation
 }
+

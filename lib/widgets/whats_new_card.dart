@@ -13,14 +13,15 @@ class WhatsNewCard extends StatefulWidget {
   const WhatsNewCard({super.key});
 
   /// Bump with every release that has something worth telling.
-  static const release = '0.2.94';
+  static const release = '0.2.95';
   static const items = <(IconData, String)>[
+    (Icons.graphic_eq_rounded, 'A new listening orb that ripples with your voice, so you can see it hearing you.'),
+    (Icons.phone_in_talk_rounded, 'Call notes, clearer: calls grouped by day, a summary for each, and an honest status when one is still being analysed.'),
     (Icons.search_rounded, 'Search everything — documents, clients, reminders and chats — from the button on Home.'),
     (Icons.notifications_active_rounded, 'All your reminders in one place: Hub → Reminders. Add, tick off, or see which ones will call you.'),
     (Icons.undo_rounded, 'Swiped something by mistake? Every swipe and tick can now be undone.'),
     (Icons.manage_accounts_rounded, 'Sign out, export or delete your account from the You tab.'),
     (Icons.wifi_off_rounded, 'Clear messages when you are offline or something goes wrong — with a way to try again.'),
-    (Icons.do_not_disturb_on_rounded, 'Fewer pop-ups when you open the app, and never during a conversation.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';
