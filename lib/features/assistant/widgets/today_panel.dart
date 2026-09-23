@@ -249,7 +249,7 @@ class TodayBriefBody extends StatelessWidget {
                                 icon: Icons.wb_sunny_rounded,
                                 tint: Neon.warning)
                           else
-                            ...b.agenda.take(6).map(_agendaTile),
+                            ...b.agenda.take(6).map((a) => _agendaTile(context, a)),
                         ],
                       ),
                     ),
@@ -264,7 +264,7 @@ class TodayBriefBody extends StatelessWidget {
                           if (b.promises.isEmpty)
                             _emptyLine('No open promises. Clean slate.')
                           else
-                            ...b.promises.take(5).map(_promiseTile),
+                            ...b.promises.take(5).map((p) => _promiseTile(context, p)),
                         ],
                       ),
                     ),
@@ -471,7 +471,35 @@ class TodayBriefBody extends StatelessWidget {
     return '${wk[t.weekday - 1]} $hh:$mm $ap';
   }
 
-  Widget _agendaTile(AgendaItem a) {
+  /// Offers Undo for a moment; [commit] runs only if it was not taken.
+  static void _withUndo(BuildContext context, String message,
+      {required VoidCallback undo, required Future<void> Function() commit}) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) {
+      commit(); // nowhere to show Undo — behave as before
+      return;
+    }
+    messenger.hideCurrentSnackBar();
+    messenger
+        .showSnackBar(SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              undo();
+            },
+          ),
+        ))
+        .closed
+        .then((reason) {
+      if (reason != SnackBarClosedReason.action) commit();
+    });
+  }
+
+  Widget _agendaTile(BuildContext context, AgendaItem a) {
     final isMeeting = a.kind == 'meeting';
     final tile = _glassTile(
       leading: Container(
@@ -503,7 +531,11 @@ class TodayBriefBody extends StatelessWidget {
       secondaryBackground: _swipeBackdrop(right: true),
       onDismissed: (_) {
         HapticFeedback.mediumImpact();
-        BriefService.instance.deleteReminder(a);
+        final svc = BriefService.instance;
+        final at = svc.hideReminder(a);
+        _withUndo(context, 'Reminder removed',
+            undo: () => svc.restoreReminder(a, at),
+            commit: () => svc.commitReminderDelete(a));
       },
       child: tile,
     );
@@ -511,16 +543,25 @@ class TodayBriefBody extends StatelessWidget {
 
   /// Promise cards: tap the circle = "I kept it" (marks done), swipe either
   /// direction = "never mind" (cancels it). Both are instant and silent.
-  Widget _promiseTile(PromiseItem p) {
+  Widget _promiseTile(BuildContext context, PromiseItem p) {
+    void finish({required bool done}) {
+      final svc = BriefService.instance;
+      final at = svc.hidePromise(p);
+      _withUndo(context, done ? 'Marked as kept' : 'Promise dismissed',
+          undo: () => svc.restorePromise(p, at),
+          commit: () => svc.commitPromise(p, done: done));
+    }
+
     final tile = _glassTile(
       leading: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
           HapticFeedback.mediumImpact();
-          BriefService.instance.completePromise(p);
+          finish(done: true);
         },
         child: Padding(
-          padding: const EdgeInsets.all(6),
+          // 12 on each side of an 18 px icon: a 42 px target, not a 30 px one.
+          padding: const EdgeInsets.all(12),
           child: Icon(Icons.radio_button_unchecked_rounded,
               size: 18, color: Neon.pink),
         ),
@@ -552,7 +593,7 @@ class TodayBriefBody extends StatelessWidget {
       secondaryBackground: _swipeBackdrop(right: true),
       onDismissed: (_) {
         HapticFeedback.mediumImpact();
-        BriefService.instance.dismissPromise(p);
+        finish(done: false);
       },
       child: tile,
     );

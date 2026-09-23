@@ -150,4 +150,57 @@ class BriefService extends ChangeNotifier {
       await ApiService.deleteReminder(a.id!);
     } catch (_) {}
   }
+
+  // ---------------- UNDOABLE versions (Home's swipe + Undo) ----------------
+  //
+  // A swipe used to delete for good the instant it finished — one stray
+  // thumb on the agenda and a reminder was gone. These split the gesture:
+  // the card leaves the screen at once, the server is only told when the
+  // Undo window closes, and Undo puts the card back where it was.
+
+  /// Takes the reminder off the screen; returns where it was, for [restoreReminder].
+  int hideReminder(AgendaItem a) {
+    final i = brief.agenda.indexOf(a);
+    brief.agenda.remove(a);
+    notifyListeners();
+    return i;
+  }
+
+  void restoreReminder(AgendaItem a, int index) {
+    if (brief.agenda.contains(a)) return;
+    brief.agenda.insert(index.clamp(0, brief.agenda.length), a);
+    notifyListeners();
+  }
+
+  Future<void> commitReminderDelete(AgendaItem a) async {
+    if (a.id == null) return;
+    try {
+      await ApiService.deleteReminder(a.id!);
+    } catch (_) {}
+  }
+
+  int hidePromise(PromiseItem p) {
+    final i = brief.promises.indexOf(p);
+    brief.promises.remove(p);
+    notifyListeners();
+    return i;
+  }
+
+  void restorePromise(PromiseItem p, int index) {
+    if (brief.promises.contains(p)) return;
+    brief.promises.insert(index.clamp(0, brief.promises.length), p);
+    notifyListeners();
+  }
+
+  /// [done] true = "I kept it", false = "never mind".
+  Future<void> commitPromise(PromiseItem p, {required bool done}) async {
+    if (p.id == null) return;
+    try {
+      if (done) {
+        await ApiService.sendJson('/commitments/${p.id}/done');
+      } else {
+        await ApiService.sendJson('/commitments/${p.id}', method: 'DELETE');
+      }
+    } catch (_) {}
+  }
 }
