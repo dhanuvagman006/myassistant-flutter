@@ -217,12 +217,9 @@ class TodayBriefBody extends StatelessWidget {
                       ),
                     )
                   else if (!svc.loaded)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 32),
-                      child: Center(
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Neon.textLo)),
-                    )
+                    // The shape of what is coming, not a spinner: the
+                    // first load reads as the page arriving, not waiting.
+                    const _SkeletonTiles()
                   else ...[
                     if (b.messages.isNotEmpty)
                       Reveal(
@@ -1062,6 +1059,81 @@ class _ReminderComposerState extends State<_ReminderComposer> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Placeholder cards in the shape of the agenda, breathing gently while
+/// the first brief loads.
+class _SkeletonTiles extends StatefulWidget {
+  const _SkeletonTiles();
+
+  @override
+  State<_SkeletonTiles> createState() => _SkeletonTilesState();
+}
+
+class _SkeletonTilesState extends State<_SkeletonTiles>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900))
+    ..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(double widthFactor, double height) => FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: widthFactor,
+        child: Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: Neon.textDim.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Loading your day',
+      child: RepaintBoundary(
+        child: FadeTransition(
+          opacity: Tween(begin: 0.45, end: 1.0).animate(_pulse),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _bar(0.35, 14),
+              const SizedBox(height: 12),
+              for (final w in const [0.8, 0.6, 0.7, 0.5])
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: Neon.surfaceHigh,
+                    borderRadius: BorderRadius.circular(Neon.rMd),
+                    border: Border.all(color: Neon.line),
+                  ),
+                  child: Row(children: [
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: Neon.textDim.withValues(alpha: 0.35),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: _bar(w, 12)),
+                  ]),
+                ),
+            ],
+          ),
         ),
       ),
     );
