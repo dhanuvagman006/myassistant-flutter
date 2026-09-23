@@ -4,10 +4,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
+import '../services/auth_service.dart';
 import 'voice_orb.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -420,10 +422,23 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                 ),
               ),
               const SizedBox(height: 24),
+              // AN ERROR SAYS WHAT WENT WRONG. The caption below maps every
+              // phase it does not name to "Connecting…" — including error —
+              // so a denied microphone, a failed upload and a timeout all
+              // looked like a connection that never finished, and a tap on
+              // the orb (which reads error as "running") just stopped it.
+              if (engine.phase == AssistantPhase.error)
+                Expanded(
+                  flex: 7,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: _ErrorCaption(engine: engine),
+                  ),
+                )
               // THE WORDS — under the orb, lyrics-style. Before any words
               // exist, the state itself is the caption: the user must
               // never stare at an empty black area wondering if it heard.
-              if (lines.isEmpty)
+              else if (lines.isEmpty)
                 Expanded(
                   flex: 7,
                   child: Align(
@@ -517,6 +532,126 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
 /// "some will just read the caption"). It is deliberately NOT a
 /// microphone mute: the session keeps listening, it just stops talking
 /// back out loud.
+/// What went wrong, and the one thing that fixes it. A permission problem
+/// is fixed in Settings; anything else by starting over.
+class _ErrorCaption extends StatelessWidget {
+  const _ErrorCaption({required this.engine});
+  final AssistantEngine engine;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = (engine.errorMessage ?? '').trim().isEmpty
+        ? 'Something went wrong.'
+        : engine.errorMessage!.trim();
+    final needsSettings = message.toLowerCase().contains('permission');
+    // Scrolls rather than overflows: under the 330 px orb, a small phone or
+    // large system text leaves little height for a message and two buttons.
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            needsSettings ? Icons.mic_off_rounded : Icons.error_outline_rounded,
+            color: Neon.error,
+            size: 26,
+            semanticLabel: 'Problem',
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white.withValues(alpha: 0.88),
+              fontSize: 16,
+              height: 1.3,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (needsSettings)
+                _PillButton(
+                  label: 'Open settings',
+                  primary: true,
+                  onTap: () => openAppSettings(),
+                )
+              else
+                _PillButton(
+                  label: 'Try again',
+                  primary: true,
+                  onTap: () async {
+                    await engine.endInlineConversation();
+                    engine.dismissError();
+                    await engine.beginInlineConversation(
+                        name: AuthService.instance.user?.name);
+                  },
+                ),
+              _PillButton(
+                label: 'Close',
+                onTap: () async {
+                  await engine.endInlineConversation();
+                  engine.dismissError();
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PillButton extends StatelessWidget {
+  const _PillButton({required this.label, required this.onTap, this.primary = false});
+  final String label;
+  final VoidCallback onTap;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: Container(
+          // 48 dp tall: a comfortable target, as every tap target should be.
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 96),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: primary
+                ? Neon.violet.withValues(alpha: 0.22)
+                : Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: primary
+                  ? Neon.violet.withValues(alpha: 0.7)
+                  : Colors.white.withValues(alpha: 0.16),
+            ),
+          ),
+          child: Text(
+            label,
+            style: GoogleFonts.spaceGrotesk(
+              color: primary ? Colors.white : Colors.white.withValues(alpha: 0.8),
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MuteButton extends StatelessWidget {
   const _MuteButton({required this.engine});
   final AssistantEngine engine;
