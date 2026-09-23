@@ -211,9 +211,12 @@ class AssistantApi {
       'POST',
       Uri.parse('${ApiService.baseUrl}/assistant/$sid/audio'),
     );
-    if (ApiService.sessionToken != null) {
-      req.headers['Authorization'] = 'Bearer ${ApiService.sessionToken}';
-    }
+    // The same context every JSON post carries (auth, timezone, place,
+    // build, battery). This upload is the main voice path and it sent the
+    // bearer token alone, so the server could not tell the time or place
+    // of a spoken turn. Content-Type is dropped: multipart sets its own.
+    req.headers.addAll(
+        Map.of(ApiService.authHeaders)..remove('Content-Type'));
     if (auto) req.fields['auto'] = 'true';
     req.files.add(http.MultipartFile.fromBytes('audio', bytes,
         filename: filename));
