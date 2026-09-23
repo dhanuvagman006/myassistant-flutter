@@ -11,7 +11,7 @@ void main() {
     const b = AgendaItem(kind: 'reminder', id: 2, title: 'Pay rent');
     const c = AgendaItem(kind: 'reminder', id: 3, title: 'Gym');
     final svc = BriefService.instance
-      ..brief = TodayBrief(agenda: [a, b, c]);
+      ..brief = TodayBrief(agenda: List.of([a, b, c])); // growable, as fromJson builds it
     final at = svc.hideReminder(b);
     expect(svc.brief.agenda, [a, c]);
     svc.restoreReminder(b, at);
@@ -24,7 +24,7 @@ void main() {
     const p = PromiseItem(id: 7, text: 'Send Ravi the proposal');
     const q = PromiseItem(id: 8, text: 'Review the lease');
     final svc = BriefService.instance
-      ..brief = TodayBrief(promises: [p, q]);
+      ..brief = TodayBrief(promises: List.of([p, q]));
     final at = svc.hidePromise(p);
     expect(svc.brief.promises, [q]);
     svc.restorePromise(p, at);

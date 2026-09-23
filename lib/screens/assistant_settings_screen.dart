@@ -15,7 +15,6 @@ import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/voice_id_service.dart';
 import 'account_section.dart';
-import 'avatar_face_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
@@ -40,8 +39,6 @@ class AssistantSettingsScreen extends StatefulWidget {
 
 class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   String _voice = '';
-  String _avatarId = ''; // '' = deployment default face
-  List<Map<String, dynamic>> _faces = const [];
   List<dynamic> _rules = [];
   final _newRule = TextEditingController();
   bool _loading = true;
@@ -51,13 +48,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   bool _voiceGateOn = false;
   bool _enrolling = false;
 
-  // Live captions toggle — mirrors AssistantEngine.captionsEnabled.
-  bool _captionsOn = false;
-
   /// Voices the TTS + live stack actually supports, with what they sound
   /// like — a picker the user can read, not a bare dropdown.
   static const _voices = [
-    ('', 'Default', 'Matches the chosen face'),
+    ('', 'Default', "The assistant's own voice"),
     ('Kore', 'Kore', 'Warm · Female'),
     ('Aoede', 'Aoede', 'Bright · Female'),
     ('Puck', 'Puck', 'Upbeat · Male'),
@@ -79,12 +73,15 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
 
   Future<void> _load() async {
     final vid = VoiceIdService.instance;
-    await vid.load();
-    await AssistantEngine.loadCaptionPref();
-    _captionsOn = AssistantEngine.captionsEnabled;
-    final p = await ApiService.getJson('/profile/full');
-    final r = await ApiService.getJson('/profile/instructions');
-    final f = await ApiService.getJson('/live/avatar/faces');
+    // Side by side, not one after another: the tab opened on three
+    // sequential round-trips.
+    final results = await Future.wait([
+      vid.load().then((_) => null),
+      ApiService.getJson('/profile/full'),
+      ApiService.getJson('/profile/instructions'),
+    ]);
+    final p = results[1];
+    final r = results[2];
     if (!mounted) return;
     _voiceEnrolled = vid.enrolled;
     _voiceGateOn = vid.gateEnabled;
@@ -92,12 +89,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       _loading = false;
       final a = (p?['assistant'] as Map?) ?? {};
       _voice = (a['voice'] as String?) ?? '';
-      _avatarId = (a['avatar_id'] as String?) ?? '';
       _rules = (r?['instructions'] as List?) ?? [];
-      _faces = ((f?['faces'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((m) => m.cast<String, dynamic>())
-          .toList();
     });
   }
 
@@ -393,31 +385,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                const GroupLabel('Conversation'),
-                GroupedCard(
-                  dividerInset: 60,
-                  children: [
-                    AppleRow(
-                      leading: IconTile(
-                          Icons.closed_caption_rounded, AppleColors.blue),
-                      title: 'Live captions',
-                      subtitle: 'Read what both of you say at the bottom of '
-                          'the conversation screen.',
-                      trailing: Switch(
-                        value: _captionsOn,
-                        activeThumbColor: Colors.white,
-                        activeTrackColor: AppleColors.green,
-                        onChanged: (v) {
-                          HapticFeedback.selectionClick();
-                          setState(() => _captionsOn = v);
-                          AssistantEngine.setCaptionsEnabled(v);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
+                // "Live captions" was here: a switch nothing read (captions
+                // always show in the voice overlay), describing a
+                // conversation screen that no longer exists.
                 const GroupLabel('My voice'),
                 GroupedCard(
                   dividerInset: 60,
@@ -471,51 +441,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   ),
                 const SizedBox(height: 24),
 
-                if (_faces.isNotEmpty) ...[
-                  const GroupLabel('Video avatar'),
-                  GroupedCard(
-                    dividerInset: 60,
-                    children: [
-                      AppleRow(
-                        leading: IconTile(
-                            Icons.face_retouching_natural_rounded,
-                            AppleColors.orange),
-                        title: 'Avatar face',
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _faceName(_avatarId),
-                              style: TextStyle(
-                                  color: Neon.textLo,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(width: 6),
-                            Icon(Icons.chevron_right_rounded,
-                                color: Neon.textDim, size: 20),
-                          ],
-                        ),
-                        onTap: () async {
-                          final picked =
-                              await Navigator.of(context).push<String>(
-                            MaterialPageRoute(
-                              builder: (_) => AvatarFaceScreen(
-                                faces: _faces,
-                                selectedId: _avatarId,
-                              ),
-                            ),
-                          );
-                          if (picked != null && mounted) {
-                            setState(() => _avatarId = picked);
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                ],
-
+                // "Video avatar → Avatar face" was here. It appeared whenever
+                // the server listed faces, but the app has no video renderer
+                // (face mode is off), so a pick changed nothing visible.
                 const GroupLabel('Your avatar identity'),
                 GroupedCard(
                   dividerInset: 60,
@@ -598,12 +526,6 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
               ],
             ),
     );
-  }
-
-  String _faceName(String id) {
-    if (id.isEmpty) return 'Default';
-    final f = _faces.firstWhere((m) => m['id'] == id, orElse: () => const {});
-    return (f['name'] as String?) ?? 'Custom';
   }
 
   Widget _legalRow(String label, String path) => AppleRow(
