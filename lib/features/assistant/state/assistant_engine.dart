@@ -794,7 +794,8 @@ class AssistantEngine extends ChangeNotifier {
     // fallback cannot add a second greeting later in the same session.
     if (PhoneStateGuard.instance.inCall) return;
     _greetedEpoch = _sessionEpoch;
-    final text = greetingFor(greetingName);
+    final text = greetingFor(greetingName,
+        gender: AuthService.instance.user?.gender);
     _liveSvc.sendText(
         'Say this greeting to me now, in my language: "$text" — and if you '
         'were given any messages from other people to deliver, deliver them '
@@ -1615,28 +1616,33 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
-  /// "Hi sir" / "Hi ma'am" — what he asked the orb tap to say
-  /// (2026-09-20). Gender comes from the signed-in profile.
-  ///
-  /// AN HONORIFIC IS ONLY USED WHEN IT IS KNOWN. "other" and an unset
-  /// gender fall back to the person's first name, and an account with no
-  /// name to a plain hello: guessing sir or ma'am wrong is worse than
-  /// using neither, and this is the first thing the user hears every time.
-  static String orbGreeting({String? name, String? gender}) {
+  /// How the owner is addressed — the Indian way (owner, 2026-09-23:
+  /// "should say hello Sir, and give more respect"). Sir / Ma'am from the
+  /// signed-in profile; "<first name> ji" when the gender is not known —
+  /// respectful in every Indian language, and guessing sir or ma'am wrong
+  /// is worse than either. The server tells the model the same thing
+  /// (agents/owner.js), so the voice and this greeting never disagree.
+  static String honorific({String? name, String? gender}) {
     switch ((gender ?? '').trim().toLowerCase()) {
       case 'male':
-        return 'Hi sir!';
+        return 'Sir';
       case 'female':
-        return "Hi ma'am!";
+        return "Ma'am";
     }
     final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
-    return first.isEmpty ? 'Hi!' : 'Hi $first!';
+    return first.isEmpty ? '' : '$first ji';
   }
 
-  /// Time-appropriate greeting text starting with Hello.
-  static String greetingFor(String? name, {DateTime? now}) {
-    final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
-    final who = first.isEmpty ? 'there' : first;
+  /// What the orb tap says, instantly, in the assistant's own voice.
+  static String orbGreeting({String? name, String? gender}) {
+    final who = honorific(name: name, gender: gender);
+    return who.isEmpty ? 'Hello!' : 'Hello $who!';
+  }
+
+  /// Time-appropriate greeting text.
+  static String greetingFor(String? name, {String? gender, DateTime? now}) {
+    final h0 = honorific(name: name, gender: gender);
+    final who = h0.isEmpty ? 'there' : h0;
     // Short and professional — the greeting is also the app's first
     // latency impression, so one crisp sentence beats a flourish.
     final h = (now ?? DateTime.now()).hour;
@@ -1678,7 +1684,8 @@ class AssistantEngine extends ChangeNotifier {
     }
 
     _lastGreetedAt = DateTime.now(); // one clock for every greeting path
-    final text = greetingFor(greetingName);
+    final text = greetingFor(greetingName,
+        gender: AuthService.instance.user?.gender);
     transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
     _captionFrom('hari', text);
     _setPhase(AssistantPhase.speaking, silent: true);
