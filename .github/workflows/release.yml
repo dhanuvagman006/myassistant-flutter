@@ -1,5 +1,19 @@
 name: Flutter Release
 
+# Tag vX.Y.Z to build a signed release.
+#
+# REFUSES TO PUBLISH WITHOUT THE RELEASE KEYSTORE. build.gradle.kts falls
+# back to DEBUG signing when android/key.properties is absent (so
+# `flutter run --release` works on any machine) — and this workflow used to
+# publish exactly that: a debug-signed APK that no installed copy of the
+# app can update to. Signing now comes from repo secrets, or the job fails.
+#
+# Secrets:
+#   RELEASE_KEYSTORE_BASE64  base64 of hari-release.jks
+#   RELEASE_KEY_PROPERTIES   the contents of android/key.properties, with
+#                            storeFile=hari-release.jks
+#   GOOGLE_SERVICES_JSON     android/app/google-services.json
+
 on:
   push:
     tags:
@@ -25,18 +39,33 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.0"
+          flutter-version: "3.47.5" # same as ci.yml
           channel: stable
           cache: true
 
-      - name: Flutter Version
-        run: flutter --version
+      - name: Release signing and Firebase config
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEY_PROPERTIES: ${{ secrets.RELEASE_KEY_PROPERTIES }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEY_PROPERTIES" ]; then
+            echo "::error::Release keystore secrets are missing — refusing to publish a debug-signed build."
+            exit 1
+          fi
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON secret is missing."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/hari-release.jks
+          printf '%s\n' "$KEY_PROPERTIES" > android/key.properties
+          echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
 
       - name: Install Dependencies
         run: flutter pub get
 
       - name: Analyze Project
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Run Tests
         run: flutter test
@@ -46,6 +75,15 @@ jobs:
 
       - name: Build AppBundle
         run: flutter build appbundle --release
+
+      - name: The APK must carry the release signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-release.apk | tee certs.txt
+          if grep -qi "CN=Android Debug" certs.txt; then
+            echo "::error::The APK is debug-signed."
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

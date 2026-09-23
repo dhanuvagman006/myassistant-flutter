@@ -3,8 +3,7 @@ name: Flutter CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: ["**"]
 
 jobs:
   check:
@@ -20,7 +19,9 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.44.6"
+          # The version the tree is verified against (analyze + test clean).
+          # Keep release.yml on the same one.
+          flutter-version: "3.47.5"
           channel: stable
           cache: true
 
@@ -37,6 +38,6 @@ jobs:
       # Style infos (prefer_const etc.) are advisory, not build-breakers.
       - run: flutter analyze --no-fatal-infos
 
-      # No test suite exists yet; add `flutter test` back when it does.
+      - run: flutter test
 
       - run: flutter build apk --debug

@@ -4,7 +4,7 @@
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock
+# pubspec.lock IS committed: for an app it pins what every build resolves.
 .metadata
 .dart-plugins/
 .pub-cache/
