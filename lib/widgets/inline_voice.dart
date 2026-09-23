@@ -366,10 +366,12 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
         child: Container(
-          // A NEAR-SOLID fade. At 0.82 the page ghosted through and its
-          // text collided with the orb and rings — on pure black it read
-          // as broken layering. The session is a place, not a tint.
-          color: Colors.black.withValues(alpha: 0.94),
+          // FULLY OPAQUE. At 0.82, and still at 0.94, the page ghosted
+          // through: Home's headings and calendar sat faintly behind the
+          // orb and read as broken layering. The session is a place, not
+          // a tint — a deep night in the accent's own hue, darkest at the
+          // middle where the orb glows.
+          decoration: BoxDecoration(gradient: _sessionGround()),
           // The bottom padding clears the dock; the keyboard adds its own
           // height on top so the text bar rides above it.
           padding: EdgeInsets.fromLTRB(
@@ -396,7 +398,10 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // would make this read as a small copy of it. The padding
               // the overlay puts on its text does not apply here, so the
               // backdrop is pulled out to the screen edges.
+              // double.infinity, or the Stack shrinks to the orb and the
+              // backdrop's edges showed as a box around it.
               SizedBox(
+                width: double.infinity,
                 height: 330,
                 child: ValueListenableBuilder<double>(
                   valueListenable: engine.micLevelListenable,
@@ -535,6 +540,21 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       ),
     );
   }
+}
+
+/// The session's ground: opaque, deep, tinted by the user's accent so it
+/// belongs to their theme. Always dark — the orb and captions are drawn
+/// for night, in both app themes.
+LinearGradient _sessionGround() {
+  final h = HSLColor.fromColor(Neon.violet);
+  Color ink(double l, double s) =>
+      h.withLightness(l).withSaturation(s).toColor();
+  return LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [ink(0.09, 0.45), ink(0.035, 0.40), ink(0.06, 0.40)],
+    stops: const [0.0, 0.5, 1.0],
+  );
 }
 
 /// Mute the assistant's voice without ending the conversation — for the
@@ -746,6 +766,9 @@ class _TypeBarState extends State<_TypeBar> {
       final has = _c.text.trim().isNotEmpty;
       if (has != _has) setState(() => _has = has);
     });
+    _focus.addListener(() {
+      if (mounted) setState(() {}); // the pill lights up while typing
+    });
   }
 
   @override
@@ -767,17 +790,34 @@ class _TypeBarState extends State<_TypeBar> {
 
   @override
   Widget build(BuildContext context) {
+    // ONE PILL. The field used to draw a second box inside this one: the
+    // app theme gives every TextField a fill and an outline, and
+    // `border: none` alone does not switch off the enabled/focused ones.
+    final focused = _focus.hasFocus;
     return Padding(
       padding: const EdgeInsets.only(top: 14),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        constraints: const BoxConstraints(minHeight: 54),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(26),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          color: Colors.white.withValues(alpha: focused ? 0.10 : 0.07),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: focused
+                ? Neon.violet.withValues(alpha: 0.55)
+                : Colors.white.withValues(alpha: 0.10),
+          ),
         ),
-        padding: const EdgeInsets.fromLTRB(18, 2, 6, 2),
+        padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 11),
+              child: Icon(Icons.keyboard_alt_outlined,
+                  size: 20, color: Colors.white.withValues(alpha: 0.40)),
+            ),
+            const SizedBox(width: 10),
             Expanded(
               child: TextField(
                 controller: _c,
@@ -785,46 +825,51 @@ class _TypeBarState extends State<_TypeBar> {
                 minLines: 1,
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
+                textCapitalization: TextCapitalization.sentences,
                 onSubmitted: (_) => _send(),
                 keyboardAppearance: Brightness.dark,
                 cursorColor: Neon.violet,
                 style: GoogleFonts.spaceGrotesk(
                   color: Colors.white,
                   fontSize: 15.5,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w500,
                 ),
                 decoration: InputDecoration(
                   isDense: true,
+                  filled: false,
                   border: InputBorder.none,
-                  hintText: 'Type instead…',
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  hintText: 'Type a message…',
                   hintStyle: GoogleFonts.spaceGrotesk(
-                    color: Colors.white.withValues(alpha: 0.32),
+                    color: Colors.white.withValues(alpha: 0.38),
                     fontSize: 15.5,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                   ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 11),
                 ),
               ),
             ),
+            const SizedBox(width: 8),
             AnimatedScale(
               duration: const Duration(milliseconds: 160),
-              scale: _has ? 1 : 0.86,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 160),
-                opacity: _has ? 1 : 0.35,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _has ? _send : null,
-                  child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: Neon.gBrand,
-                    ),
-                    child: const Icon(Icons.arrow_upward_rounded,
-                        color: Colors.white, size: 21),
+              scale: _has ? 1 : 0.9,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _has ? _send : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: _has ? Neon.gBrand : null,
+                    color: _has ? null : Colors.white.withValues(alpha: 0.08),
                   ),
+                  child: Icon(Icons.arrow_upward_rounded,
+                      color: Colors.white.withValues(alpha: _has ? 1 : 0.35),
+                      size: 21),
                 ),
               ),
             ),

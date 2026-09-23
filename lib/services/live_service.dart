@@ -12,6 +12,7 @@ import '../core/log.dart';
 import 'api_service.dart';
 import 'device_capabilities.dart';
 import 'live_mic_stats.dart';
+import 'mic_preroll.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
@@ -122,6 +123,9 @@ class LiveService {
   double _peakLevel = 0.0;
 
   bool _speaking = false; // is the user mid-utterance right now?
+
+  /// Real audio of the last moment before speech is confirmed.
+  final MicPreRoll _preRoll = MicPreRoll();
 
   /// How long the microphone stays shut after the playhead ends, so the
   /// loudspeaker's tail is never sent up as the user starting a new turn.
@@ -271,6 +275,7 @@ class LiveService {
     _belowMs = 0;
     _utteranceMs = 0;
     _noiseFloor = 0.01;
+    _preRoll.clear();
     _gateAbort();
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
     // A hold requested before this session opened still applies.
@@ -401,6 +406,7 @@ class LiveService {
               _gateAbort();
               _endUtterance();
             }
+            _preRoll.clear(); // her voice is never replayed as the user's
             // The loudspeaker keeps sounding for a moment past the
             // playhead. Sending that tail up would hand Google the end of
             // her own sentence as if it were the user starting to talk.
@@ -424,8 +430,7 @@ class LiveService {
             noiseFloor: _noiseFloor,
             speechThreshold: threshold,
             loud: loud,
-            gated: !_speaking &&
-                l < math.max(_noiseFloor * 2.0, threshold * 0.5),
+            gated: !_speaking, // went up as a whisper
           );
 
           final ms = _msOf(chunk);
@@ -436,15 +441,23 @@ class LiveService {
           // HEARING the pause. Withholding quiet audio — which an earlier
           // version did, and which manual activity markers also effectively
           // did — means the pause never arrives and the turn hangs open.
-          // So the audio path is unconditional; the detection below is only
-          // a probe for timing logs and for driving the orb.
+          // So a frame always goes up. What changes is its VOLUME: until
+          // the probe below confirms the user is speaking, it goes up as a
+          // whisper, so background talk can't open a turn — the lead-in is
+          // replayed at full volume once speech is confirmed.
           //
-          // EXCEPT with the speaker gate on: speech is held until the
-          // voiceprint accepts it (silence still streams live).
+          // With the speaker gate on: speech is held until the voiceprint
+          // accepts it (silence still streams live).
           if (_gateActive) {
             _gateFeed(chunk, loud, ms);
+          } else if (_speaking) {
+            _ch?.sink.add(Uint8List.fromList(chunk));
           } else {
-            _ch?.sink.add(Uint8List.fromList(_noiseGated(chunk, l)));
+            // Not the user yet, as far as anyone knows: Google hears a
+            // whisper, and the real audio waits a moment in case this is
+            // the start of a sentence. See MicPreRoll.
+            _preRoll.add(chunk, ms);
+            _ch?.sink.add(MicPreRoll.whisper(chunk));
           }
 
           if (!_speaking) {
@@ -463,7 +476,14 @@ class LiveService {
             _utteranceMs = 0;
             // Gated: the marker is sent only when the speaker is accepted,
             // together with the buffered audio.
-            if (!_gateActive) _send({'type': 'activity_start'});
+            if (!_gateActive) {
+              // It IS speech: replay the lead-in at full volume, so the
+              // first syllable reaches Google whole.
+              for (final c in _preRoll.drain()) {
+                _ch?.sink.add(Uint8List.fromList(c));
+              }
+              _send({'type': 'activity_start'});
+            }
             return;
           }
 
@@ -493,32 +513,6 @@ class LiveService {
         onSpeaking?.call(playing);
       }
     });
-  }
-
-  /// SOFT NOISE GATE (downward expander). Google's start-of-speech
-  /// detector must run at HIGH sensitivity on this model (LOW misses real
-  /// speech entirely — measured), which means a TV or street noise can
-  /// open turns. So frames that are clearly NOT the user — nobody
-  /// mid-utterance, level well under the speech threshold — go up
-  /// attenuated to a whisper instead of raw. Google still hears the
-  /// "silence" it needs for end-of-turn detection, the prefix padding
-  /// still carries real audio at real onsets (the gate opens BELOW the
-  /// speech threshold, so rising speech passes before the probe trips),
-  /// and background chatter stops sounding like a person.
-  List<int> _noiseGated(List<int> chunk, double? level) {
-    if (_speaking || level == null) return chunk;
-    final gateFloor = math.max(_noiseFloor * 2.0, _speechThreshold * 0.5);
-    if (level >= gateFloor) return chunk;
-    const scale = 0.12; // -18 dB: present, but no longer speech-like
-    final out = List<int>.from(chunk);
-    for (var i = 0; i + 1 < out.length; i += 2) {
-      var s = (out[i] & 0xff) | (out[i + 1] << 8);
-      if (s > 0x7fff) s -= 0x10000;
-      final v = (s * scale).round();
-      out[i] = v & 0xff;
-      out[i + 1] = (v >> 8) & 0xff;
-    }
-    return out;
   }
 
   /// (Re)arms the PCM stream. Called at session start and after every

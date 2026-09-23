@@ -15,7 +15,7 @@ class WhatsNewCard extends StatefulWidget {
   /// Bump with every release that has something worth telling.
   static const release = '0.2.95';
   static const items = <(IconData, String)>[
-    (Icons.graphic_eq_rounded, 'A new listening orb that ripples with your voice, so you can see it hearing you.'),
+    (Icons.graphic_eq_rounded, 'A new listening screen: the orb ripples with your voice, and background noise is far less likely to set it off.'),
     (Icons.phone_in_talk_rounded, 'Call notes, clearer: calls grouped by day, a summary for each, and an honest status when one is still being analysed.'),
     (Icons.search_rounded, 'Search everything — documents, clients, reminders and chats — from the button on Home.'),
     (Icons.notifications_active_rounded, 'All your reminders in one place: Hub → Reminders. Add, tick off, or see which ones will call you.'),

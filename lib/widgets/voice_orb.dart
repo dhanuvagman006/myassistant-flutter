@@ -575,25 +575,10 @@ class _BackdropPainter extends CustomPainter {
           stops: [0.0, 0.22, 0.78, 1.0],
         ).createShader(bounds),
     );
+    // No vignette. It was a black rectangle's worth of shading, and over
+    // the session's tinted ground its edges drew a box round the orb; the
+    // fade above already lets everything melt away top and bottom.
     canvas.restore();
-
-    // A vignette so the edges fall into the dark rather than being cut
-    // off. BLACK, not Neon.bg: the overlay under it is a 94% black scrim
-    // in BOTH themes, so a vignette that followed the page ground would
-    // paint white corners over it in the light theme.
-    canvas.drawRect(
-      bounds,
-      Paint()
-        ..shader = RadialGradient(
-          radius: 0.8,
-          colors: [
-            Colors.transparent,
-            Colors.black.withValues(alpha: 0.3),
-            Colors.black.withValues(alpha: 0.75),
-          ],
-          stops: const [0.55, 0.86, 1.0],
-        ).createShader(bounds),
-    );
   }
 
   /// A closed ring whose radius wanders with three harmonics moving at
