@@ -40,6 +40,16 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Back here after installing the app they asked to open: open it.
+        InstallWatch.takeReady(this)?.let {
+            try { startActivity(it) } catch (e: Throwable) {
+                Log.w("hari/install", "open after install failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -274,11 +284,19 @@ class MainActivity : FlutterFragmentActivity() {
                     // Store is installed.
                     "openStore" -> {
                         val q = call.argument<String>("query") ?: ""
-                        if (q.isEmpty()) { result.success(false); return@setMethodCallHandler }
-                        val tries = listOf(
+                        val pkg = call.argument<String>("pkg") ?: ""
+                        if (q.isEmpty() && pkg.isEmpty()) { result.success(false); return@setMethodCallHandler }
+                        // The app's own page when we know it — one tap on
+                        // Install — rather than a search to pick from.
+                        val tries = if (pkg.isNotEmpty()) listOf(
+                            "market://details?id=" + Uri.encode(pkg),
+                            "https://play.google.com/store/apps/details?id=" + Uri.encode(pkg)
+                        ) else listOf(
                             "market://search?q=" + Uri.encode(q) + "&c=apps",
                             "https://play.google.com/store/search?q=" + Uri.encode(q) + "&c=apps"
                         )
+                        // …and open it for them once it is installed.
+                        InstallWatch.arm(applicationContext, pkg, q)
                         for (u in tries) {
                             try {
                                 val i = Intent(Intent.ACTION_VIEW, Uri.parse(u))
@@ -493,11 +511,26 @@ class MainActivity : FlutterFragmentActivity() {
                     "launchApp" -> {
                         val want = (call.argument<String>("name") ?: "")
                             .lowercase().replace(Regex("[^a-z0-9]"), "")
+                        val wantPkg = call.argument<String>("pkg") ?: ""
+                        val pm = packageManager
+                        // A KNOWN PACKAGE IS EXACT. "Swiggy" by label can
+                        // lose to a lookalike; in.swiggy.android cannot.
+                        if (wantPkg.isNotEmpty()) {
+                            val direct = pm.getLaunchIntentForPackage(wantPkg)
+                            if (direct != null) {
+                                direct.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                applicationContext.startActivity(direct)
+                                val label = try {
+                                    pm.getApplicationLabel(pm.getApplicationInfo(wantPkg, 0)).toString()
+                                } catch (_: Throwable) { wantPkg }
+                                result.success(label)
+                                return@setMethodCallHandler
+                            }
+                        }
                         if (want.isEmpty()) {
                             result.success(null)
                             return@setMethodCallHandler
                         }
-                        val pm = packageManager
                         val main = Intent(Intent.ACTION_MAIN)
                             .addCategory(Intent.CATEGORY_LAUNCHER)
                         val apps = pm.queryIntentActivities(main, 0)

@@ -21,7 +21,7 @@ class WhatsNewCard extends StatefulWidget {
     (Icons.notifications_active_rounded, 'All your reminders in one place: Hub → Reminders. Add, tick off, or see which ones will call you.'),
     (Icons.undo_rounded, 'Swiped something by mistake? Every swipe and tick can now be undone.'),
     (Icons.manage_accounts_rounded, 'Sign out, export or delete your account from the You tab.'),
-    (Icons.wifi_off_rounded, 'Clear messages when you are offline or something goes wrong — with a way to try again.'),
+    (Icons.apps_rounded, 'Say "open Swiggy" (or any app): it opens the app — or its Play Store page if it is missing, then opens it once installed.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';

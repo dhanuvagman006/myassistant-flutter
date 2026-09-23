@@ -2458,30 +2458,30 @@ class AssistantEngine extends ChangeNotifier {
         // claiming an app opened.
         {
           final want = (e['name'] as String? ?? '').trim();
+          final pkg = (e['pkg'] as String? ?? '').trim();
           _leftForExternalApp = true;
           const MethodChannel('hari/intent')
-              .invokeMethod<String>('launchApp', {'name': want})
+              .invokeMethod<String>('launchApp', {'name': want, 'pkg': pkg})
               .then((opened) {
             if (opened == null || opened.isEmpty) {
               _leftForExternalApp = false;
-              // "DOWNLOAD X" / "GET X" MEANS THE STORE when the phone
-              // doesn't have it. Asking for an app by name and being told
-              // only "you don't have it" is a dead end; the Play Store
-              // page for that name is the answer to the question that was
-              // actually asked. Never done for a plain "open X" — that
-              // would be substituting an app nobody asked for.
+              // NOT INSTALLED MEANS THE STORE. Owner, 2026-09-23: "open
+              // swiggy" must never end at the website or at "you don't
+              // have it" — the Play Store page (the exact listing when the
+              // package is known), and the phone opens the app once it is
+              // installed (InstallWatch). Only the user can press Install.
               if (e['store_if_missing'] == true) {
                 const MethodChannel('hari/intent')
-                    .invokeMethod<bool>('openStore', {'query': want})
+                    .invokeMethod<bool>('openStore', {'query': want, 'pkg': pkg})
                     .then((ok) {
                   if (ok == true) {
                     _leftForExternalApp = true;
-                    AppFeedback.toast('Opening the Play Store for $want…');
+                    AppFeedback.toast("$want isn't installed — tap Install");
                     _tellModel(
-                        '[SYSTEM] "$want" is not installed, so the Play Store '
-                        'search for it is now open. Say in ONE short sentence '
-                        'that they do not have it yet and the Store is open to '
-                        'install it.');
+                        '[SYSTEM] "$want" is not installed, so its Play Store '
+                        'page is now open. Say in ONE short sentence that they '
+                        'just need to tap Install, and you will open $want for '
+                        'them as soon as it is installed.');
                   } else {
                     _reportDeviceFailure('open_named_app',
                         target: want, reason: 'not installed, no Play Store');
