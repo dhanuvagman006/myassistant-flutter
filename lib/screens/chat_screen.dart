@@ -60,7 +60,14 @@ class _ChatScreenState extends State<ChatScreen> {
       // polled the server every 20 s forever, even with the tab never
       // opened and the app in the background. TickerMode is false for
       // offstage IndexedStack children.
-      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      // TickerMode alone was not enough: IndexedStack marks an offstage
+      // child through its visibility scope, not TickerMode, so the gate
+      // never closed and Chat polled from launch. Visibility.of reads it.
+      if (!mounted ||
+          !TickerMode.valuesOf(context).enabled ||
+          !Visibility.of(context)) {
+        return;
+      }
       if (WidgetsBinding.instance.lifecycleState !=
           AppLifecycleState.resumed) {
         return;
@@ -85,6 +92,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ]);
       final r = results[0];
       final g = results[1];
+      // getJson answers a failure with null rather than throwing, so being
+      // offline read as "no chats yet" — an empty inbox, and the error
+      // state below could never appear. Both failing is a failure.
+      if (r == null && g == null) throw Exception('chats unreachable');
       if (!mounted) return;
       _groups = ((g?['groups'] as List?) ?? const [])
           .whereType<Map>()
@@ -177,10 +188,24 @@ class _ChatScreenState extends State<ChatScreen> {
               child: _error != null
                   ? ListView(children: [
                       Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Text(_error!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Neon.textLo)),
+                        padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
+                        child: Column(children: [
+                          Icon(Icons.cloud_off_rounded,
+                              size: 34, color: Neon.textLo),
+                          const SizedBox(height: 12),
+                          Text("$_error Check your connection.",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Neon.textLo, height: 1.45)),
+                          const SizedBox(height: 10),
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() => _error = null);
+                              _load();
+                            },
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('Try again'),
+                          ),
+                        ]),
                       ),
                     ])
                   : threads == null
@@ -189,17 +214,22 @@ class _ChatScreenState extends State<ChatScreen> {
                       : (threads.isEmpty && _groups.isEmpty)
                           ? ListView(children: [
                               Padding(
-                                padding: const EdgeInsets.all(32),
-                                child: Text(
-                                  'No chats yet.\n\nSay "send a message to '
-                                  '<name>" or "send my <document> to <name>" '
-                                  '— everything lands here.',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                      color: Neon.textLo,
-                                      height: 1.5,
-                                      fontSize: 14),
-                                ),
+                                padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
+                                child: Column(children: [
+                                  Icon(Icons.forum_outlined,
+                                      size: 38, color: Neon.violet),
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    'No chats yet.\n\nSay "send a message to '
+                                    '<name>" or "send my <document> to <name>" '
+                                    '— everything lands here.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        color: Neon.textLo,
+                                        height: 1.5,
+                                        fontSize: 14),
+                                  ),
+                                ]),
                               ),
                             ])
                           : ListView.builder(
