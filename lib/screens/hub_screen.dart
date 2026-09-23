@@ -8,6 +8,7 @@ import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'phone/call_notes_screen.dart';
+import 'reminders_screen.dart';
 import 'email_setup_screen.dart';
 import 'features_screen.dart';
 import 'stocks_screen.dart';
@@ -41,6 +42,15 @@ class HubScreen extends StatelessWidget {
               ),
             ),
           ),
+          _group(context, 'Your day', [
+            _Row(
+              'Reminders',
+              'Everything you asked me to remember — add, tick off, remove',
+              Icons.notifications_active_rounded,
+              Neon.accentA,
+              (c) => const RemindersScreen(),
+            ),
+          ]),
           _group(context, 'Phone', [
             _Row(
               'Calls',
