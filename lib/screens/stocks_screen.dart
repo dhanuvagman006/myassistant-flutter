@@ -6,7 +6,10 @@ import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 
 class StocksScreen extends StatefulWidget {
-  const StocksScreen({super.key});
+  const StocksScreen({super.key, this.loader = ApiService.fetchStocks});
+
+  /// Where the data comes from — the server, or a test's own map.
+  final Future<Map<String, dynamic>> Function() loader;
 
   @override
   State<StocksScreen> createState() => _StocksScreenState();
@@ -24,7 +27,7 @@ class _StocksScreenState extends State<StocksScreen> {
 
   Future<void> _load() async {
     try {
-      final res = await ApiService.fetchStocks();
+      final res = await widget.loader();
       if (mounted) setState(() => _data = res);
     } catch (_) {
       if (mounted) setState(() => _error = "Couldn't load market data.");
@@ -55,22 +58,50 @@ class _StocksScreenState extends State<StocksScreen> {
     }
     if (_data == null) return const Center(child: NeonLoader());
 
-    final invest = _data!['invest'] as List;
-    final sell = _data!['sell'] as List;
-    final news = _data!['news'] as List;
-    final summary = _data!['summary'] as String?;
-    final indices = (_data!['indices'] as List?) ?? const [];
+    // Tolerant reads: a field the server leaves out means an empty section,
+    // not a red crash screen (these were hard `as List` / `as String` casts).
+    List<Map> maps(String key) =>
+        ((_data![key] as List?) ?? const []).whereType<Map>().toList();
+    final invest = maps('invest');
+    final sell = maps('sell');
+    final news = maps('news');
+    final summary = _data!['summary']?.toString();
+    final indices = maps('indices');
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
       children: [
+        // NOT ADVICE. This screen used to head its lists "Top Picks to
+        // Invest (Buy)" and "Stocks to Sell" with no qualification — a
+        // recommendation, to Indian retail users, from something that is
+        // not a SEBI-registered adviser.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _card(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline_rounded, size: 18, color: Neon.warning),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'For information only — not investment advice. Hari is not a '
+                    'SEBI-registered adviser, and prices may be delayed. Do your own '
+                    'research or consult a registered adviser before you invest.',
+                    style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.45),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         if (indices.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Row(
               children: [
                 for (final i in indices.take(2)) ...[
-                  Expanded(child: _indexChip(i as Map)),
+                  Expanded(child: _indexChip(i)),
                   const SizedBox(width: 10),
                 ],
               ]..removeLast(),
@@ -97,11 +128,16 @@ class _StocksScreenState extends State<StocksScreen> {
               ),
             ),
           ),
-        const GroupLabel('Top Picks to Invest (Buy)'),
-        ...invest.map((e) => _stockCard(e, true)),
-        const SizedBox(height: 24),
-        const GroupLabel('Stocks to Sell or Avoid'),
-        ...sell.map((e) => _stockCard(e, false)),
+        if (invest.isNotEmpty) ...[
+          const GroupLabel('Gaining momentum'),
+          ...invest.map((e) => _stockCard(e, true)),
+          const SizedBox(height: 24),
+        ],
+        if (sell.isNotEmpty) ...[
+          const GroupLabel('Losing momentum'),
+          ...sell.map((e) => _stockCard(e, false)),
+          const SizedBox(height: 24),
+        ],
         const SizedBox(height: 24),
         const GroupLabel('Important Market News'),
         ...news.map((e) => _newsCard(e)),
@@ -130,7 +166,7 @@ class _StocksScreenState extends State<StocksScreen> {
             Row(
               children: [
                 Text(
-                  e['symbol'],
+                  _s(e, 'symbol'),
                   style: TextStyle(
                       color: Neon.textHi, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
@@ -142,7 +178,7 @@ class _StocksScreenState extends State<StocksScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    e['change'],
+                    _s(e, 'change'),
                     style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -151,8 +187,8 @@ class _StocksScreenState extends State<StocksScreen> {
             const SizedBox(height: 4),
             Text(
               e['price'] != null
-                  ? "${e['name']} · ₹${e['price']}"
-                  : e['name'],
+                  ? "${_s(e, 'name')} · ₹${e['price']}"
+                  : _s(e, 'name'),
               style: TextStyle(color: Neon.textLo, fontSize: 13),
             ),
             const SizedBox(height: 12),
@@ -163,7 +199,7 @@ class _StocksScreenState extends State<StocksScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    e['reason'],
+                    _s(e, 'reason'),
                     style: TextStyle(color: Neon.textHi, fontSize: 13),
                   ),
                 ),
@@ -175,15 +211,18 @@ class _StocksScreenState extends State<StocksScreen> {
     );
   }
 
+  /// A field as text, whatever the server sent (or didn't).
+  static String _s(Map e, String key) => (e[key] ?? '').toString();
+
   Widget _indexChip(Map i) {
-    final change = (i['change'] ?? '') as String;
+    final change = _s(i, 'change');
     final up = !change.startsWith('-');
     final color = up ? AppleColors.green : AppleColors.red;
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(i['name'] ?? '',
+          Text(_s(i, 'name'),
               style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
           const SizedBox(height: 4),
           Row(
@@ -219,19 +258,19 @@ class _StocksScreenState extends State<StocksScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              e['headline'],
+              _s(e, 'headline'),
               style: TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Row(
               children: [
                 Text(
-                  e['source'],
+                  _s(e, 'source'),
                   style: TextStyle(color: AppleColors.blue, fontSize: 11),
                 ),
                 const Spacer(),
                 Text(
-                  e['time'],
+                  _s(e, 'time'),
                   style: TextStyle(color: Neon.textDim, fontSize: 11),
                 ),
               ],
