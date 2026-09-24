@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/log.dart';
+import 'call_history.dart';
 import 'live_mic_stats.dart';
 
 /// WHAT THIS PHONE CAN ACTUALLY DO.
@@ -41,8 +42,19 @@ class DeviceCapabilities {
   static Future<Map<String, dynamic>> collect() async {
     final granted = <String>[];
     final denied = <String>[];
+    // "phone" means placing calls: READ_PHONE_STATE and CALL_PHONE, asked
+    // one by one. permission_handler's phone group now also contains call
+    // history (2026-09-24) and reports the strictest of the three, which
+    // would tell the server "phone denied" — and take calling away — for
+    // everyone who has not shared their call log.
+    final exact = await CallHistory.permissions();
     for (final entry in _checks.entries) {
       try {
+        if (entry.key == 'phone' && exact != null) {
+          final ok = exact['phoneState'] == true && exact['callPhone'] == true;
+          (ok ? granted : denied).add(entry.key);
+          continue;
+        }
         final status = await entry.value.status;
         (status.isGranted ? granted : denied).add(entry.key);
       } catch (_) {

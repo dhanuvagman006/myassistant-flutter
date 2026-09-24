@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../services/call_history.dart';
 import '../../services/contacts_sync_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -23,12 +25,56 @@ import '../../services/contacts_sync_service.dart';
 /// ─────────────────────────────────────────────────────────────────────────
 
 class _PermItem {
-  const _PermItem(this.p, this.icon, this.color, this.title, this.why);
+  const _PermItem(this.p, this.icon, this.color, this.title, this.why,
+      {this.check, this.ask});
   final Permission p;
   final IconData icon;
   final Color color;
   final String title;
   final String why;
+
+  /// Replace permission_handler for this row (see [_phoneStatus]).
+  final Future<PermissionStatus> Function()? check;
+  final Future<PermissionStatus> Function()? ask;
+
+  Future<PermissionStatus> status() => check != null ? check!() : p.status;
+  Future<PermissionStatus> request() => ask != null ? ask!() : p.request();
+}
+
+// THE "PHONE" ROW IS THE PHONE, NOT CALL HISTORY.
+//
+// READ_CALL_LOG joined the manifest on 2026-09-24 ("any missed calls?"),
+// and permission_handler folds it into Permission.phone: requesting that
+// group here showed the call-history dialog to every new owner at
+// onboarding, and its status reads "denied" until call history is shared
+// too. Call history is asked only the first time the owner asks about his
+// calls (with its own one-line explainer), so this row asks for the phone
+// permissions alone, natively (CallLogBridge "requestPhone"), and reads
+// them one by one. Off Android (no native side) it is the plain group.
+
+Future<PermissionStatus> _phoneStatus() async {
+  final exact = await CallHistory.permissions();
+  if (exact == null) return Permission.phone.status;
+  return exact['phoneState'] == true && exact['callPhone'] == true
+      ? PermissionStatus.granted
+      : PermissionStatus.denied;
+}
+
+Future<PermissionStatus> _phoneRequest() async {
+  switch (await CallHistory.requestPhone()) {
+    case 'granted':
+      return PermissionStatus.granted;
+    case 'blocked':
+      return PermissionStatus.permanentlyDenied;
+    case 'unavailable':
+      // Never the group on Android: that is the call-history dialog.
+      if (defaultTargetPlatform != TargetPlatform.android) {
+        return Permission.phone.request();
+      }
+      return _phoneStatus();
+    default:
+      return _phoneStatus();
+  }
 }
 
 final List<_PermItem> _kRequired = [
@@ -40,7 +86,8 @@ final List<_PermItem> _kRecommended = [
   _PermItem(Permission.contacts, Icons.contacts_rounded, AppleColors.blue,
       'Contacts', 'So "call Alan" reaches the right Alan.'),
   _PermItem(Permission.phone, Icons.call_rounded, AppleColors.green, 'Phone',
-      'To place the calls you ask for.'),
+      'To place the calls you ask for.',
+      check: _phoneStatus, ask: _phoneRequest),
   _PermItem(Permission.notification, Icons.notifications_rounded,
       AppleColors.red, 'Notifications',
       'Reminders and messages arrive on time.'),
@@ -112,7 +159,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   Future<void> _refresh() async {
     for (final item in _kAll) {
       try {
-        _status[item.p] = await item.p.status;
+        _status[item.p] = await item.status();
       } catch (_) {}
     }
     if (!mounted) return;
@@ -140,7 +187,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
     for (final item in _kAll) {
       if (_status[item.p]?.isGranted == true) continue;
       try {
-        _status[item.p] = await item.p.request();
+        _status[item.p] = await item.request();
       } catch (_) {}
     }
     if (!mounted) return;
@@ -304,7 +351,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
           ? null
           : () async {
               try {
-                final s = await item.p.request();
+                final s = await item.request();
                 _status[item.p] = s;
                 if (s.isPermanentlyDenied && mounted) {
                   setState(() {
