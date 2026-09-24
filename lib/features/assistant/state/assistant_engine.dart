@@ -24,6 +24,8 @@ import '../../../screens/documents_screen.dart';
 import '../../../screens/phone/call_notes_screen.dart';
 import '../../../screens/reminders_screen.dart';
 import '../../../screens/business_card_flow.dart';
+import '../../../screens/automation_setup_screen.dart';
+import '../../../services/automation_runner.dart';
 import '../../../screens/meetings/meeting_recorder_screen.dart';
 import '../../../screens/meetings/meetings_screen.dart';
 import '../../../screens/clients_screen.dart';
@@ -2342,6 +2344,13 @@ class AssistantEngine extends ChangeNotifier {
         unawaited(_scanBusinessCard());
         break;
 
+      case 'automate':
+        // "Do it for me" inside another app — the phone's hands, one
+        // checked step at a time (AutomationRunner). Stops at payment.
+        unawaited(_runAutomation(e));
+        _setPhase(AssistantPhase.completed);
+        break;
+
       case 'open_app_screen':
         // A screen inside THIS app, opened by voice. The four main tabs go
         // through the shell; everything else is a pushed route.
@@ -3880,6 +3889,97 @@ class AssistantEngine extends ChangeNotifier {
   /// "Scan this visiting card" — the camera, the server's reading, and the
   /// result sheet (add to contacts / say hello / call). The voice loop is
   /// held shut meanwhile, as for any camera flow.
+  // ---------------- DO IT FOR ME (automation) ----------------
+
+  /// A task inside another app. Without the one-time permission the setup
+  /// screen opens and the task carries on by itself once it is switched
+  /// on — the owner never has to ask twice.
+  Future<void> _runAutomation(Map<String, dynamic> e) async {
+    final d = AutomationDirective.fromEvent(e);
+    if (d == null) return;
+    final st = await AutomationRunner.instance.device.status();
+    if (!st.connected) {
+      _openAutomationSetup(d);
+      return;
+    }
+    await _runAutomationNow(d);
+  }
+
+  void _openAutomationSetup(AutomationDirective d) {
+    final nav = AvatarMessageService.navigatorKey.currentState;
+    if (nav == null) {
+      _reportDeviceFailure('do_task_in_app',
+          target: d.goal, reason: 'the one-time permission is not on');
+      return;
+    }
+    _tellModel('[SYSTEM] Before doing this the user must allow "use other '
+        'apps" once — the setup screen is now open. Say in ONE short '
+        'sentence that it continues by itself as soon as they switch it on.');
+    nav.push(MaterialPageRoute(
+        builder: (_) => AutomationSetupScreen(
+              pendingGoal: d.goal,
+              onEnabled: () => unawaited(_runAutomationNow(d)),
+            )));
+  }
+
+  Future<void> _runAutomationNow(AutomationDirective d) async {
+    // "On it, doing this in Swiggy…" is still being spoken, and leaving
+    // the screen silences the assistant (onAppPaused). Let it finish.
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    final until = DateTime.now().add(const Duration(seconds: 4));
+    while (DateTime.now().isBefore(until) &&
+        (_ttsActive || _speakQueue.isNotEmpty || phase == AssistantPhase.speaking)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    _leftForExternalApp = true;
+    final out = await AutomationRunner.instance.run(d);
+    AppLog.add('auto', 'run ${d.runId} -> ${out.status}');
+    await _onAutomationOutcome(d, out);
+  }
+
+  Future<void> _onAutomationOutcome(
+      AutomationDirective d, AutomationOutcome o) async {
+    switch (o.status) {
+      case 'no_permission':
+        _openAutomationSetup(d);
+        return;
+      case 'busy':
+        _tellModel('[SYSTEM] Another task is still running on the phone. Say '
+            'you will do this one as soon as that finishes.');
+        return;
+      case 'waiting':
+        // Only the owner can answer: come back to them, then ask.
+        await AutomationRunner.instance.device.bringBack();
+        for (var i = 0; i < 25 && !_foreground; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        _tellModel('[SYSTEM] The task "${d.goal}" (run_id ${d.runId}) needs '
+            'one answer from the user: "${o.question}". Ask exactly that, '
+            'briefly. When they answer, call do_task_in_app with run_id '
+            '${d.runId} and their answer.');
+        return;
+    }
+    // Done, handed over, stopped or failed: the report goes where the
+    // owner is. Out in the other app that is a notification and the bar —
+    // never a voice over someone else's screen.
+    final report = o.report.isNotEmpty ? o.report : 'I stopped there.';
+    transcript.add(TranscriptEntry(TranscriptRole.assistant, report));
+    notifyListeners();
+    if (_foreground) {
+      unawaited(_speakReply(report));
+    } else {
+      const titles = {
+        'done': 'Done',
+        'handoff': 'Your turn',
+        'stopped': 'Stopped',
+        'failed': "Couldn't finish",
+      };
+      unawaited(ReminderNotifications.instance
+          .showNow(titles[o.status] ?? 'Task update', report));
+    }
+  }
+
   Future<void> _scanBusinessCard() async {
     _deviceFlowActive = true;
     final liveGated = liveActive;

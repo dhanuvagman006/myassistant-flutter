@@ -709,6 +709,10 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // "Do it for me" inside other apps: the task loop's line to the
+        // accessibility service (AutomationBridge, HariAccessibilityService).
+        AutomationBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
     /** True automatic SMS — SmsManager sends without opening any app.

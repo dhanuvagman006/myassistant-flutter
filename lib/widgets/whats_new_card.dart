@@ -13,15 +13,13 @@ class WhatsNewCard extends StatefulWidget {
   const WhatsNewCard({super.key});
 
   /// Bump with every release that has something worth telling.
-  static const release = '0.2.97';
+  static const release = '0.2.98';
   static const items = <(IconData, String)>[
+    (Icons.touch_app_rounded, 'Do it for me: say "order veg biryani from a 4-star place" — I open Swiggy, pick the restaurant and fill your cart, then hand you the payment. One-time switch: You → Do it for me.'),
+    (Icons.edit_note_rounded, 'Forms too: "fill this form with my details" — your name, phone, email and address go in and it is submitted.'),
+    (Icons.shield_rounded, 'I never pay, move money, type passwords or OTPs, or send messages for you — I stop and tell you what is left. A bar with Stop shows while I work.'),
     (Icons.groups_rounded, 'Record a meeting (Hub → Meetings, or say "record this meeting"): get minutes, decisions and action items — share them as a PDF.'),
     (Icons.contact_mail_rounded, 'Scan a visiting card: the person is saved, one tap adds them to your contacts, another says hello on WhatsApp.'),
-    (Icons.payments_rounded, 'Pay by voice: "pay Ravi 500" opens GPay or PhonePe ready to go — you approve with your UPI PIN.'),
-    (Icons.event_available_rounded, 'Scan an insurance policy, licence or passport — renewal reminders 30 days and 7 days before it expires.'),
-    (Icons.send_rounded, 'After a call: one tap sends a follow-up confirming what you agreed, by WhatsApp or SMS.'),
-    (Icons.reply_rounded, 'Say "reply to Ramesh\'s last email — Friday works" and it replies in the same thread.'),
-    (Icons.fingerprint_rounded, 'Lock the app with your fingerprint: You → Privacy & security.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';

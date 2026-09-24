@@ -2,4 +2,6 @@
 <resources>
     <string name="widget_task_label">Assign a task</string>
     <string name="widget_task_description">Tap the orb, give the assistant a job, and get on with your day — it works on it in the background and tells you when it is done.</string>
+    <string name="automation_service_label">MyAssistant — do it for me</string>
+    <string name="automation_service_description">Lets your assistant open an app, read what is on the screen and tap or type for you — only while it is doing a task you asked for, like putting biryani in your Swiggy cart or filling a form with your details. A small bar with a Stop button shows whenever it is working. It never pays, moves money, types passwords, PINs or OTPs, or sends messages: at those steps it stops and hands the phone back to you. When no task is running it reads nothing.</string>
 </resources>

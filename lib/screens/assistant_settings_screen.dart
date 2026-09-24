@@ -16,6 +16,7 @@ import '../services/assistant_identity.dart';
 import '../services/voice_id_service.dart';
 import 'account_section.dart';
 import 'app_lock_section.dart';
+import 'automation_setup_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
@@ -512,6 +513,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       icon: Icon(Icons.add_circle_rounded,
                           color: AppleColors.blue)),
                 ]),
+                const SizedBox(height: 24),
+
+                const AutomationSection(),
                 const SizedBox(height: 24),
 
                 const AppLockSection(),

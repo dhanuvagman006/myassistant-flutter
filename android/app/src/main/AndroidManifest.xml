@@ -259,6 +259,23 @@
                 android:resource="@xml/widget_task_info" />
         </receiver>
 
+        <!-- "DO IT FOR ME": the assistant's hands in other apps. Off until
+             the owner switches it on in Accessibility settings (the app
+             shows a plain-words disclosure first). Only the system can
+             bind it (BIND_ACCESSIBILITY_SERVICE). -->
+        <service
+            android:name=".HariAccessibilityService"
+            android:label="@string/automation_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/hari_automation" />
+        </service>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
