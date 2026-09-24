@@ -10,6 +10,7 @@ import '../services/auth_service.dart';
 import '../services/streak_service.dart';
 import '../services/brief_service.dart';
 import '../widgets/call_led.dart';
+import '../widgets/missed_calls_card.dart';
 import 'search_screen.dart';
 
 /// HOME TAB — the day at a glance, out in the open.
@@ -201,6 +202,9 @@ class HomeDashboard extends StatelessWidget {
         children: [
           // Shows only while the assistant is actually on a call.
           const CallLed(),
+          // Calls missed since the owner last looked, with Call back
+          // (owner, 2026-09-24). Nothing at all when there are none.
+          const MissedCallsCard(),
           Expanded(
             child: TodayBriefBody(
               leading: header,

@@ -26,6 +26,12 @@
 <!-- Incoming-call guard: detect ringing/active calls so the assistant
      stops speaking immediately and releases the microphone. -->
 <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+<!-- "Any missed calls?" and the Missed calls card on Home: the phone's own
+     call history, read on the phone (CallLogBridge). Asked the first time
+     the owner asks about calls, never at launch. NOTE: declaring it puts it
+     in permission_handler's Permission.phone group (strictest status wins),
+     so phone checks use CallLogBridge's exact per-permission answer. -->
+<uses-permission android:name="android.permission.READ_CALL_LOG"/>
 <!-- AI call analysis, system-recorder mode: read the call recordings the
      phone's OWN dialer saves (Samsung records both sides cleanly; we
      never can from a normal app). Android 13+ uses READ_MEDIA_AUDIO,

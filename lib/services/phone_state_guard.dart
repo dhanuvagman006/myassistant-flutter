@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:phone_state/phone_state.dart';
 
+import 'call_history.dart';
+
 /// INCOMING-CALL GUARD — the moment the phone rings (or a call connects),
 /// Hari must go silent INSTANTLY: no talking over the ringtone, no mic
 /// capture stealing audio focus from the call.
@@ -47,7 +49,17 @@ class PhoneStateGuard {
     // without it the guard simply stays inactive.
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
-        if (!(await Permission.phone.status).isGranted) return;
+        // THE EXACT PERMISSION, not permission_handler's "phone" group.
+        // Since call history joined the manifest (2026-09-24) that group
+        // is only "granted" when call history is too — so an owner who
+        // allowed the phone but not his call log lost this guard, and
+        // the assistant talked over his calls. Falls back to the group
+        // only when the native answer is unavailable.
+        final exact = await CallHistory.permissions();
+        final ok = exact != null
+            ? exact['phoneState'] == true
+            : (await Permission.phone.status).isGranted;
+        if (!ok) return;
       }
     } catch (_) {
       return;

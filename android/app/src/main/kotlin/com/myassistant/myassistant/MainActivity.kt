@@ -47,6 +47,17 @@ class MainActivity : FlutterFragmentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    // The call-history dialog is asked natively (CallLogBridge); plugins
+    // still get every result first and ignore codes they did not send.
+    @Deprecated("Activity results for the call-history permission")
+    @Suppress("DEPRECATION")
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        CallLogBridge.onPermissionResult(this, requestCode, grantResults)
+    }
+
     override fun onResume() {
         super.onResume()
         // Back here after installing the app they asked to open: open it.
@@ -720,6 +731,10 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // The phone's own call history ("any missed calls?", the Missed
+        // calls card), read here and summarised in Dart (CallLogBridge).
+        CallLogBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
 
         // "Do it for me" inside other apps: the task loop's line to the
         // accessibility service (AutomationBridge, HariAccessibilityService).

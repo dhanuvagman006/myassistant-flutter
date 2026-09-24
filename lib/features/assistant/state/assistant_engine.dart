@@ -45,8 +45,10 @@ import '../../../services/app_feedback.dart';
 import '../../../services/auth_service.dart';
 import '../../../services/app_update_service.dart';
 import '../../../services/assistant_identity.dart';
+import '../../../services/call_history.dart';
 import '../../../services/call_service.dart';
 import '../../../services/location_service.dart';
+import '../../../services/missed_calls_service.dart';
 import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
@@ -131,7 +133,15 @@ class AssistantEngine extends ChangeNotifier {
     // Spoken on the DEVICE, not through the model: it lands instantly
     // instead of after a round-trip, which is the whole point of greeting
     // at the tap.
-    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
+    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown &&
+        MissedCallsService.instance.hasUnmentioned) {
+      // CALLS WERE MISSED: the greeting is the one that mentions them
+      // ("Hello Sir! You missed 2 calls — Ravi at 3:10 pm."), spoken by
+      // the session once it is up. Playing the cached hello here as well
+      // would say hello twice.
+      _lastGreetedAt = DateTime.now();
+      _helloInMention = true;
+    } else if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
       _lastGreetedAt = DateTime.now();
       final hello = orbGreeting(
         name: name ?? greetingName ?? AuthService.instance.user?.name,
@@ -391,6 +401,7 @@ class AssistantEngine extends ChangeNotifier {
       // "uninstall instagramyes do it".
       _capLastWasUser = false;
       _captionFrom('you', t);
+      _maybeAskLocationFor(t);
       _liveSvc.sendText(t);
       _conversationEnded = isFarewell(t);
       _armIdleStop(phase);
@@ -739,6 +750,9 @@ class AssistantEngine extends ChangeNotifier {
   void cancelReconnect() {
     _reconnect?.cancel();
     _reconnect = null;
+    // The 5-minute location tick is the engine's other standing timer.
+    _locationTicker?.cancel();
+    _locationTicker = null;
   }
 
   Future<void> start() async {
@@ -761,6 +775,10 @@ class AssistantEngine extends ChangeNotifier {
     // the server-side tool mid-turn. Not awaited: it must never delay the
     // assistant coming up, and it silently does nothing without permission.
     ContactsSyncService.instance.maybeSync();
+    // Where the owner is, kept current while the app is on screen, and
+    // calls missed while it was closed (the Home card; never a dialog).
+    _startLocationTicker();
+    unawaited(MissedCallsService.instance.check());
     // Deliberately NO live mode and NO greeting here. Boot must be silent:
     // the mic goes hot only when the user opens the conversation screen
     // (beginConversation), never just because the app launched — a hot mic
@@ -774,6 +792,9 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> beginConversation({String? name}) async {
     if (name != null && name.isNotEmpty) greetingName = name;
     _conversationOpen = true;
+    // Calls missed since the last look, read while the session connects
+    // so the greeting can mention them.
+    final missedCheck = MissedCallsService.instance.check(force: true);
     await start();
     // LIVE FIRST. The old order sat through the whole spoken greeting —
     // settle delay, TTS synthesis, playback — and only then began the
@@ -787,6 +808,7 @@ class AssistantEngine extends ChangeNotifier {
         // Pending agent messages ride the live session's own prompt (the
         // proxy loads unread rows at setup), delivered after the greeting.
         _greetThroughLive();
+        unawaited(_mentionMissedCalls(missedCheck));
         return;
       }
     }
@@ -794,6 +816,55 @@ class AssistantEngine extends ChangeNotifier {
     // pending messages itself, since only the live path gets them in-prompt.
     await _maybeGreetOnReady();
     unawaited(announceIncomingMessages());
+    unawaited(_mentionMissedCalls(missedCheck));
+  }
+
+  /// Set when the orb tap left its hello to the missed-calls mention.
+  bool _helloInMention = false;
+
+  /// THE GREETING MENTIONS MISSED CALLS, ONCE.
+  ///
+  /// Owner, 2026-09-24: "it should report when we have any missed calls".
+  /// Said by the session itself, so the calls are in the conversation —
+  /// "call him back" then just works — and never repeated for calls
+  /// already mentioned (MissedCallsService.takeMention).
+  Future<void> _mentionMissedCalls(Future<void> check) async {
+    try {
+      await check.timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    final hello = _helloInMention;
+    _helloInMention = false;
+    if (!_conversationOpen || PhoneStateGuard.instance.inCall) return;
+    final svc = MissedCallsService.instance;
+    final calls = svc.unmentioned;
+    final line = svc.takeMention(
+      honorific: honorific(gender: AuthService.instance.user?.gender),
+      hello: hello,
+    );
+    // Nothing new after all (called back meanwhile): the session simply
+    // opens listening, as it always does.
+    if (line == null) return;
+    AppLog.add('calls', 'greeting mentions ${calls.length} missed call(s)');
+    final back = [
+      for (final g in CallHistory.group(calls).take(CallHistory.maxEntries))
+        if (g.latest.dialable.isNotEmpty)
+          '${g.latest.label} (${g.latest.dialable})',
+    ];
+    await _tellModel('[SYSTEM] Say exactly this to me now, nothing before or '
+        'after it: "$line" If I have already asked for something, answer '
+        'that first and then say it. Then wait for me.'
+        '${back.isEmpty ? '' : ' If I ask to call someone back, use '
+            'place_phone_call with the name or number: ${back.join('; ')}.'}');
+  }
+
+  /// The Missed calls card's Call back: the owner's tap is the go-ahead,
+  /// so it dials straight away and says what really happened.
+  Future<void> callBackMissed(CallEntry c) async {
+    final phone = c.dialable;
+    if (phone.isEmpty) return;
+    MissedCallsService.instance.remove(c);
+    _localCallVia = 'phone';
+    await _dialAndReport(ContactMatch(id: '', name: c.label, phone: phone));
   }
 
   /// Speaks the opening greeting through the live session's own voice.
@@ -1151,11 +1222,13 @@ class AssistantEngine extends ChangeNotifier {
     // location-blind ("best near me fails"). Bounded wait: a cached fix
     // returns instantly, a real GPS fix gets ~1.2 s, and past that we
     // connect anyway rather than add lag.
+    final fix = LocationService.instance.refresh();
     try {
-      await LocationService.instance
-          .refresh()
-          .timeout(const Duration(milliseconds: 1200));
-    } catch (_) {}
+      await fix.timeout(const Duration(milliseconds: 1200));
+    } catch (_) {
+      // Too slow for the URL: the session hears it the moment it lands.
+      unawaited(fix.then((_) => _pushLiveLocation()).catchError((_) {}));
+    }
     // A previous session may still be tearing down (leaving the face
     // screen fires leaveConversation without awaiting it). Starting the
     // mic while LiveKit/audio release is mid-flight wedges the recorder —
@@ -1215,6 +1288,7 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.onMicLevel = (l) {
       if (!_liveSvc.playing) micLevel = l;
     };
+    _liveSvc.onQuietTimeout = _onQuietMinute;
     _liveSvc.onSpeaking = (speaking) {
       _setPhase(
         speaking ? AssistantPhase.speaking : AssistantPhase.listening,
@@ -1228,6 +1302,7 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.onUserText = (t) {
       AppLog.add('live', 'you: $t');
       _captionFrom('you', t);
+      _maybeAskLocationFor(_capUser.isNotEmpty ? _capUser : t);
       // Gemini streams the user's transcript WHILE they are still talking,
       // so treating its arrival as "thinking" puts the orb in a busy state
       // during the user's own sentence. In avatar mode the turn boundaries
@@ -1959,6 +2034,7 @@ class AssistantEngine extends ChangeNotifier {
     // Typing is an explicit "I'm here" — revive the loop, but respect a
     // typed goodbye the same way a spoken one is respected.
     _conversationEnded = isFarewell(t);
+    _maybeAskLocationFor(t);
     _silentTurns = 0;
     _resetTurn();
     _setPhase(AssistantPhase.thinking);
@@ -2089,6 +2165,7 @@ class AssistantEngine extends ChangeNotifier {
         final said = e['text'] as String? ?? '';
         transcript.add(TranscriptEntry(TranscriptRole.user, said));
         _captionFrom('you', said);
+        _maybeAskLocationFor(said);
         // A goodbye closes the continuous loop: Hari still answers this
         // turn (so she can say goodbye back), but won't reopen the mic.
         if (isFarewell(said)) _conversationEnded = true;
@@ -2118,6 +2195,9 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'tool_started':
         final startedTool = e['tool'] as String? ?? '';
+        if (LocationService.locationTools.contains(startedTool)) {
+          unawaited(_maybeAskLocation());
+        }
         activities.add(ToolActivity(
           tool: startedTool,
           label: e['label'] as String? ?? 'Working…',
@@ -2380,6 +2460,12 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'scan_business_card':
         unawaited(_scanBusinessCard());
+        break;
+
+      case 'call_log':
+        // "Any missed calls?", "did Ravi call?" — read on this phone and
+        // answered with ONE [SYSTEM] line (phone_calls tool, build 106).
+        unawaited(_answerCallLog(e));
         break;
 
       case 'automate':
@@ -3529,6 +3615,9 @@ class AssistantEngine extends ChangeNotifier {
   void onAppPaused() {
     _foreground = false;
     _backgroundedAt = DateTime.now();
+    // Location is only kept current while the app is on screen.
+    _locationTicker?.cancel();
+    _locationTicker = null;
     // GO QUIET THE INSTANT THE APP LEAVES THE SCREEN.
     //
     // This only recorded the time, so she kept talking into a phone call,
@@ -3567,6 +3656,11 @@ class AssistantEngine extends ChangeNotifier {
     // no conversation is open, and leaving the flag false there would
     // silence a legitimate chime for the rest of the app's life.
     _foreground = true;
+    // Back on screen: where the owner is now (and every 5 minutes from
+    // here), and any calls missed while they were away — for the card.
+    _startLocationTicker();
+    unawaited(_refreshLocation());
+    unawaited(MissedCallsService.instance.check());
     final pausedAt = _backgroundedAt;
     final away = pausedAt == null
         ? Duration.zero
@@ -4276,7 +4370,10 @@ class AssistantEngine extends ChangeNotifier {
   /// silent seconds after a turn completes, the inline session closes on
   /// its own; any real activity re-arms the clock.
   Timer? _idleStop;
-  static const _idleStopAfter = Duration(seconds: 30);
+  // A MINUTE, like the quiet clock in LiveService (owner, 2026-09-24:
+  // "when user don't respond for 1 min (silence) auto close it") — at 30
+  // seconds this one closed sessions sooner than he asked for.
+  static const _idleStopAfter = Duration(seconds: 60);
 
   void _armIdleStop(AssistantPhase p) {
     _idleStop?.cancel();
@@ -4289,8 +4386,173 @@ class AssistantEngine extends ChangeNotifier {
         return;
       }
       AppLog.add('live', 'idle ${_idleStopAfter.inSeconds}s — ending session');
-      endInlineConversation();
+      unawaited(_closeAfterQuiet());
     });
+  }
+
+  /// LiveService heard a minute with nobody talking and nothing from the
+  /// assistant. A session waiting on the owner's TAP (a confirmation, a
+  /// contact pick, the camera) or on a phone call is not quiet — the
+  /// minute starts over instead.
+  void _onQuietMinute() {
+    if (!liveActive) return;
+    if (pendingConfirmation != null ||
+        ambiguousContacts.isNotEmpty ||
+        _deviceFlowActive ||
+        PhoneStateGuard.instance.inCall) {
+      _liveSvc.noteActivity();
+      return;
+    }
+    AppLog.add('live', 'a minute of quiet — closing the session');
+    unawaited(_closeAfterQuiet());
+  }
+
+  /// Closes cleanly with a short caption and no spoken goodbye.
+  Future<void> _closeAfterQuiet() async {
+    await endInlineConversation();
+    if (_foreground) AppFeedback.toast('Closed after a minute of quiet.');
+  }
+
+  // ---------------- WHERE THE OWNER IS ----------------
+
+  Timer? _locationTicker;
+
+  /// Every 5 minutes while the app is on screen (owner, 2026-09-24: "my
+  /// assistant should be aware of user location when he makes any
+  /// requests").
+  void _startLocationTicker() {
+    _locationTicker?.cancel();
+    _locationTicker = Timer.periodic(
+        const Duration(minutes: 5), (_) => unawaited(_refreshLocation()));
+  }
+
+  Future<void> _refreshLocation() async {
+    try {
+      await LocationService.instance.refresh();
+    } catch (_) {}
+    _pushLiveLocation();
+  }
+
+  /// The live session hears a move of more than 300 m (or the 5-minute
+  /// repeat) — LiveService decides which.
+  void _pushLiveLocation() {
+    if (!liveActive) return;
+    final lat = ApiService.geoLat;
+    final lng = ApiService.geoLng;
+    if (lat == null || lng == null) return;
+    _liveSvc.maybeSendLocation(lat, lng, LocationService.instance.accuracy);
+  }
+
+  /// A request that needs the owner's position, with location unknown.
+  void _maybeAskLocationFor(String text) {
+    if (ApiService.geoLat != null) return;
+    if (!LocationService.needsHere(text)) return;
+    unawaited(_maybeAskLocation());
+  }
+
+  bool _askingLocation = false;
+
+  /// ASKED ONCE, EVER: a one-line explainer and Android's dialog, the
+  /// first time a request needs the owner's location and cannot have it.
+  /// LocationService remembers that it asked.
+  Future<void> _maybeAskLocation() async {
+    if (_askingLocation || ApiService.geoLat != null) return;
+    _askingLocation = true;
+    try {
+      final wasOn = await LocationService.instance.granted();
+      if (wasOn) return; // allowed, just no fix yet — nothing to ask
+      final ok = await LocationService.instance
+          .askOnce(explain: (line) => AppFeedback.toast(line));
+      if (ok) {
+        _pushLiveLocation();
+        AppFeedback.toast('Location is on — ask me again.');
+      }
+    } catch (_) {
+    } finally {
+      _askingLocation = false;
+    }
+  }
+
+  // ---------------- CALL HISTORY ----------------
+
+  static const _kCallLogExplained = 'call_log_explained';
+
+  /// The `call_log` device action: read the phone's call history and hand
+  /// the assistant ONE line — counts, names, local times, at most five
+  /// people. Call history is asked for here, the first time it is needed,
+  /// with a one-line explainer; a refusal is told to the model plainly so
+  /// it never guesses.
+  Future<void> _answerCallLog(Map<String, dynamic> e) async {
+    const filters = {'missed', 'all', 'incoming', 'outgoing'};
+    final f = (e['filter'] ?? '').toString().toLowerCase().trim();
+    final filter = filters.contains(f) ? f : 'all';
+    final person = (e['person'] ?? '').toString().trim();
+    final hours = ((e['since_hours'] as num?)?.round() ?? 24).clamp(1, 720);
+    // How many the owner asked for ("my last 3 calls"); never more than
+    // five people in the line.
+    final limit = ((e['limit'] as num?)?.round() ?? 10).clamp(1, 50);
+    if (!Platform.isAndroid) {
+      await _tellModel('[SYSTEM] ERROR: this phone does not let apps read '
+          'its call history, so NO calls were read. Say that plainly in one '
+          'sentence — do not guess any calls.');
+      return;
+    }
+    if (!await CallHistory.canRead()) {
+      var explained = false;
+      try {
+        final p = await SharedPreferences.getInstance();
+        explained = p.getBool(_kCallLogExplained) ?? false;
+        if (!explained) await p.setBool(_kCallLogExplained, true);
+      } catch (_) {}
+      if (!explained) {
+        AppFeedback.toast('To tell you who called, allow call history.');
+      }
+      final r = await CallHistory.requestCallLog();
+      AppLog.add('calls', 'call history permission: $r');
+      if (r != 'granted') {
+        _reportDeviceFailure('phone_calls',
+            target: filter, reason: 'call history permission is off');
+        final where = r == 'blocked'
+            ? ' in the phone settings (App info, then Permissions)'
+            : '';
+        await _tellModel('[SYSTEM] ERROR: call history permission is off on '
+            'this phone, so I could NOT read any calls. Tell me plainly in '
+            'one sentence that I need to allow Call logs for the '
+            'assistant$where. Do NOT guess or invent any calls.');
+        return;
+      }
+      // Just allowed: the Missed calls card can fill in too.
+      unawaited(MissedCallsService.instance.check(force: true));
+    }
+    final now = DateTime.now();
+    List<CallEntry> calls;
+    try {
+      calls = await CallHistory.recent(
+        filter: filter,
+        person: person,
+        since: now.subtract(Duration(hours: hours)),
+        limit: 200,
+      );
+    } catch (err) {
+      AppLog.add('calls', 'call history read failed: $err');
+      _reportDeviceFailure('phone_calls',
+          target: filter, reason: 'the call history could not be read');
+      await _tellModel('[SYSTEM] ERROR: the call history could not be read '
+          'just now, so NO calls were read. Say that plainly — do not guess '
+          'any calls.');
+      return;
+    }
+    // Missed calls the owner has now heard about are not greeted again.
+    MissedCallsService.instance
+        .markMentioned(calls.where((c) => c.type == 'missed'));
+    await _tellModel(CallHistory.summaryLine(
+      calls: calls,
+      filter: filter,
+      person: person,
+      sinceHours: hours,
+      now: now,
+      maxPeople: limit,
+    ));
   }
 
   void _setLocalError(String message) {

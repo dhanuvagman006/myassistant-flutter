@@ -39,8 +39,10 @@ final List<_PermItem> _kRequired = [
 final List<_PermItem> _kRecommended = [
   _PermItem(Permission.contacts, Icons.contacts_rounded, AppleColors.blue,
       'Contacts', 'So "call Alan" reaches the right Alan.'),
+  // The phone group now includes call history (Android asks for it as a
+  // second dialog), so the one line explains both (2026-09-24).
   _PermItem(Permission.phone, Icons.call_rounded, AppleColors.green, 'Phone',
-      'To place the calls you ask for.'),
+      'To place the calls you ask for, and tell you who called.'),
   _PermItem(Permission.notification, Icons.notifications_rounded,
       AppleColors.red, 'Notifications',
       'Reminders and messages arrive on time.'),

@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -12,17 +13,25 @@ import '../core/log.dart';
 import 'api_service.dart';
 import 'device_capabilities.dart';
 import 'live_mic_stats.dart';
+import 'location_service.dart';
 import 'mic_preroll.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
 ///  /live/ws proxy). No transcription step, no client VAD, and NO barge-in
-///  since 2026-09-20: the mic streams PCM up continuously EXCEPT while she
-///  is speaking, and Hari's VOICE streams back down.
+///  since 2026-09-20: the mic streams PCM up EXCEPT while she is speaking
+///  and — since 2026-09-24 — while nobody is talking (a short tail after
+///  each utterance, then an audio_pause until speech resumes it), and
+///  Hari's VOICE streams back down. A minute with nobody talking ends the
+///  session ([onQuietTimeout]).
 ///
 ///  Wire protocol (must match backend src/live/proxy.js):
 ///    up:   binary frame           = PCM16 mono 16 kHz mic chunk
 ///    up:   {"type":"end"}         = close the session
+///    up:   {"type":"audio_pause"} = the mic stopped sending (nobody is
+///                                   talking); the next binary frame resumes
+///    up:   {"type":"location","lat":…,"lng":…,"acc":…} = the phone moved
+///                                   >300 m, or 5 minutes went by
 ///    down: binary frame           = PCM16 mono 24 kHz audio to play
 ///    down: {"type":"ready"} | {"type":"interrupted"} |
 ///          {"type":"turn_complete"} |
@@ -242,6 +251,66 @@ class LiveService {
   /// silently scale every timeout on a different device.
   static int _msOf(List<int> chunk) => chunk.length ~/ 32;
 
+  // ---- SILENCE IS TRIMMED, AND A QUIET MINUTE ENDS THE SESSION ----------
+  //
+  // Owner, 2026-09-24: "when user don't respond for 1 min (silence) auto
+  // close it; don't send silent packets to my agent, trim it."
+  //
+  // Every mic frame used to go up, silence included (as a whisper),
+  // because Google's detector ends a turn by HEARING the pause. It still
+  // hears it: after an utterance the quiet keeps streaming for [tailMs] —
+  // more than twice the server's 500 ms end-of-speech silence — and only
+  // then does the uplink stop, with one {"type":"audio_pause"} so the
+  // server can tell Google the stream ended. Speech onset (the probe
+  // below) resumes it with the pre-roll replayed at full volume, exactly
+  // as before. It never pauses during the model's turn (her reply, a tool
+  // running, the moments before she answers), during the speaker-gate
+  // hold, or in translator mode.
+
+  /// Quiet streamed after an utterance before the uplink stops.
+  static const tailMs = 1200;
+
+  /// No speech from the owner and nothing from the assistant for this
+  /// long: the session is over ([onQuietTimeout]).
+  static const quietClose = Duration(seconds: 60);
+
+  /// After the owner stops talking (or types), how long the model has to
+  /// show signs of an answer before the room counts as quiet again.
+  static const _replyGrace = Duration(seconds: 6);
+
+  /// A tool that never reports back must not hold the session open.
+  static const _toolCap = Duration(seconds: 90);
+
+  bool _uplinkPaused = false;
+  int _quietSentMs = 0; // quiet streamed since the last speech
+  DateTime _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  int _toolsInFlight = 0;
+  DateTime _toolStartedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastLifeAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _quietFired = false;
+
+  /// Times the uplink paused this session (counts only, for the log).
+  int uplinkPauses = 0;
+
+  /// True while nothing is being sent because nobody is talking.
+  bool get uplinkPaused => _uplinkPaused;
+
+  /// Fires once when [quietClose] passes with no speech from the owner and
+  /// no speech or tool work from the assistant. The engine closes the
+  /// session (or calls [noteActivity] when something else is waiting).
+  void Function()? onQuietTimeout;
+
+  /// Something happened that is not silence — the minute starts over.
+  void noteActivity() {
+    _lastLifeAt = _now();
+    _quietFired = false;
+  }
+
+  DateTime Function() _now = DateTime.now;
+
+  /// Tests read what would have gone up the socket here.
+  void Function(Object frame)? _testSink;
+
   /// Availability probe — GET /live on the backend.
   static Future<bool> available() async {
     try {
@@ -273,16 +342,7 @@ class LiveService {
       return;
     }
     if (era != _era) return; // stopped while we awaited the permission
-    playing = false;
-    remoteSpeaking = false;
-    _speaking = false;
-    _aboveMs = 0;
-    _belowMs = 0;
-    _utteranceMs = 0;
-    _noiseFloor = 0.01;
-    _preRoll.clear();
-    _gateAbort();
-    _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+    _resetSession();
     // A hold requested before this session opened still applies.
     _micOpenAt = _micHoldFloor.isAfter(DateTime.now())
         ? _micHoldFloor
@@ -325,6 +385,11 @@ class LiveService {
         ? '&lat=${ApiService.geoLat!.toStringAsFixed(4)}'
             '&lng=${ApiService.geoLng!.toStringAsFixed(4)}'
         : '';
+    // What the URL carries counts as sent: the {"type":"location"}
+    // messages only follow a real move, or the 5-minute repeat.
+    _sentLat = ApiService.geoLat;
+    _sentLng = ApiService.geoLng;
+    _sentLocAt = _sentLat == null ? null : _now();
     // WHAT THIS PHONE CAN DO rides on the URL, because a socket has no
     // request body to post it in. Without it live mode offers tools whose
     // permission the user denied, then apologises after trying.
@@ -385,124 +450,7 @@ class LiveService {
           ),
         ),
       );
-      _micSub = mic.listen((chunk) {
-        if (!_active) return;
-        final l = _levelOf(chunk);
-        if (l != null) onMicLevel?.call(l);
-        try {
-          // WHILE SHE IS SPEAKING, NOTHING GOES UP. BARGE-IN IS GONE.
-          //
-          // His call, 2026-09-20: "remove the interruption or barge-in
-          // completely… it fails on a Samsung S24". On that handset the
-          // hardware echo canceller leaves enough of her own voice in the
-          // microphone that Google heard it as the user and cut her off
-          // mid-sentence, over and over ("it itself interrupts a lot").
-          // Every threshold, hold time and adaptive floor tried against it
-          // was a guess about how much of her voice leaks back on one
-          // particular phone, and on that phone every guess was wrong.
-          //
-          // Google can only decide an interruption happened about audio it
-          // RECEIVES, so it now receives none while she speaks: she
-          // finishes her sentence, then the microphone is live again.
-          // Talking over her does nothing — the trade he asked for — and
-          // the server is set to NO_INTERRUPTION to match.
-          if (playing || remoteSpeaking || typingMute) {
-            if (_speaking) {
-              _gateAbort();
-              _endUtterance();
-            }
-            _preRoll.clear(); // her voice is never replayed as the user's
-            // The loudspeaker keeps sounding for a moment past the
-            // playhead. Sending that tail up would hand Google the end of
-            // her own sentence as if it were the user starting to talk.
-            _micOpenAt = DateTime.now().add(_speakerTail);
-            return;
-          }
-          if (DateTime.now().isBefore(_micOpenAt)) return;
-          if (l == null) return;
-
-          if (l > _peakLevel) {
-            _peakLevel = l; // attack
-          } else {
-            _peakLevel *= 0.9995; // decay, ~a minute of speech to forget
-          }
-          final threshold = _speechThreshold;
-          final loud = l > threshold;
-          // Recorded so a remote report carries evidence — levels only,
-          // never audio. See LiveMicStats.
-          LiveMicStats.note(
-            level: l,
-            noiseFloor: _noiseFloor,
-            speechThreshold: threshold,
-            loud: loud,
-            gated: !_speaking, // went up as a whisper
-          );
-
-          final ms = _msOf(chunk);
-
-          // STREAM EVERY FRAME, INCLUDING THE SILENCE.
-          //
-          // Google's detector decides when the turn ends, and it decides by
-          // HEARING the pause. Withholding quiet audio — which an earlier
-          // version did, and which manual activity markers also effectively
-          // did — means the pause never arrives and the turn hangs open.
-          // So a frame always goes up. What changes is its VOLUME: until
-          // the probe below confirms the user is speaking, it goes up as a
-          // whisper, so background talk can't open a turn — the lead-in is
-          // replayed at full volume once speech is confirmed.
-          //
-          // With the speaker gate on: speech is held until the voiceprint
-          // accepts it (silence still streams live).
-          if (_gateActive) {
-            _gateFeed(chunk, loud, ms);
-          } else if (_speaking) {
-            _ch?.sink.add(Uint8List.fromList(chunk));
-          } else {
-            // Not the user yet, as far as anyone knows: Google hears a
-            // whisper, and the real audio waits a moment in case this is
-            // the start of a sentence. See MicPreRoll.
-            _preRoll.add(chunk, ms);
-            _ch?.sink.add(MicPreRoll.whisper(chunk));
-          }
-
-          if (!_speaking) {
-            if (!loud) {
-              // Learn the room while nobody is talking. Never while they
-              // are, or the user's own voice drags the floor up until they
-              // are inaudible to the probe.
-              _noiseFloor = _noiseFloor * 0.95 + l * 0.05;
-              _aboveMs = 0;
-              return;
-            }
-            _aboveMs += ms;
-            if (_aboveMs < _onsetMs) return;
-            _speaking = true;
-            _belowMs = 0;
-            _utteranceMs = 0;
-            // Gated: the marker is sent only when the speaker is accepted,
-            // together with the buffered audio.
-            if (!_gateActive) {
-              // It IS speech: replay the lead-in at full volume, so the
-              // first syllable reaches Google whole.
-              for (final c in _preRoll.drain()) {
-                _ch?.sink.add(Uint8List.fromList(c));
-              }
-              _send({'type': 'activity_start'});
-            }
-            return;
-          }
-
-          _utteranceMs += ms;
-          if (loud) {
-            _belowMs = 0;
-          } else {
-            _belowMs += ms;
-          }
-          if (_belowMs >= _hangoverMs || _utteranceMs >= _maxUtteranceMs) {
-            _endUtterance();
-          }
-        } catch (_) {}
-      });
+      _micSub = mic.listen(_onMicChunk);
     } catch (e) {
       onError?.call('Could not open the microphone for live mode.');
       await stop();
@@ -517,7 +465,369 @@ class LiveService {
         playing = isPlaying;
         onSpeaking?.call(playing);
       }
+      // Where the owner is, kept current for the server's tools: checked
+      // twice a minute, sent only on a >300 m move or every 5 minutes.
+      final now = _now();
+      if (now.difference(_locCheckedAt) >= const Duration(seconds: 30)) {
+        _locCheckedAt = now;
+        final lat = ApiService.geoLat;
+        final lng = ApiService.geoLng;
+        if (lat != null && lng != null) {
+          maybeSendLocation(lat, lng, LocationService.instance.accuracy);
+        }
+      }
     });
+  }
+
+  /// Everything one session starts from. Shared by [start] and the tests.
+  void _resetSession() {
+    playing = false;
+    remoteSpeaking = false;
+    _speaking = false;
+    _aboveMs = 0;
+    _belowMs = 0;
+    _utteranceMs = 0;
+    _noiseFloor = 0.01;
+    _preRoll.clear();
+    _gateAbort();
+    _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+    _uplinkPaused = false;
+    _quietSentMs = 0;
+    _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    _toolsInFlight = 0;
+    _lastLifeAt = _now();
+    _quietFired = false;
+    uplinkPauses = 0;
+    // The socket URL carries the coordinates known at connect, so they
+    // count as already sent.
+    _sentLat = ApiService.geoLat;
+    _sentLng = ApiService.geoLng;
+    _sentLocAt = _sentLat == null ? null : _now();
+    _locCheckedAt = _now();
+  }
+
+  /// One microphone frame (~128 ms of PCM16 @16 kHz).
+  void _onMicChunk(List<int> chunk) {
+    if (!_active) return;
+    final l = _levelOf(chunk);
+    if (l != null) onMicLevel?.call(l);
+    try {
+      final now = _now();
+      // WHILE SHE IS SPEAKING, NOTHING GOES UP. BARGE-IN IS GONE.
+      //
+      // His call, 2026-09-20: "remove the interruption or barge-in
+      // completely… it fails on a Samsung S24". On that handset the
+      // hardware echo canceller leaves enough of her own voice in the
+      // microphone that Google heard it as the user and cut her off
+      // mid-sentence, over and over ("it itself interrupts a lot").
+      // Every threshold, hold time and adaptive floor tried against it
+      // was a guess about how much of her voice leaks back on one
+      // particular phone, and on that phone every guess was wrong.
+      //
+      // Google can only decide an interruption happened about audio it
+      // RECEIVES, so it now receives none while she speaks: she
+      // finishes her sentence, then the microphone is live again.
+      // Talking over her does nothing — the trade he asked for — and
+      // the server is set to NO_INTERRUPTION to match.
+      if (playing || remoteSpeaking || typingMute) {
+        // Her turn, or the owner typing: a busy session, not a quiet one.
+        _lastLifeAt = now;
+        if (_speaking) {
+          _gateAbort();
+          _endUtterance();
+        }
+        _preRoll.clear(); // her voice is never replayed as the user's
+        // The loudspeaker keeps sounding for a moment past the
+        // playhead. Sending that tail up would hand Google the end of
+        // her own sentence as if it were the user starting to talk.
+        _micOpenAt = now.add(_speakerTail);
+        return;
+      }
+      // A tool at work is the assistant busy, not the room quiet.
+      if (_toolRunning(now)) _lastLifeAt = now;
+      _checkQuiet(now);
+      if (!_active) return;
+      if (now.isBefore(_micOpenAt)) return;
+      if (l == null) return;
+
+      if (l > _peakLevel) {
+        _peakLevel = l; // attack
+      } else {
+        _peakLevel *= 0.9995; // decay, ~a minute of speech to forget
+      }
+      final threshold = _speechThreshold;
+      final loud = l > threshold;
+      // Recorded so a remote report carries evidence — levels only,
+      // never audio. See LiveMicStats.
+      LiveMicStats.note(
+        level: l,
+        noiseFloor: _noiseFloor,
+        speechThreshold: threshold,
+        loud: loud,
+        gated: !_speaking, // went up as a whisper
+      );
+
+      final ms = _msOf(chunk);
+
+      // THE PAUSE IS HEARD, THEN THE SILENCE IS TRIMMED.
+      //
+      // Google's detector decides when the turn ends, and it decides by
+      // HEARING the pause. Withholding quiet audio — which an earlier
+      // version did, and which manual activity markers also effectively
+      // did — means the pause never arrives and the turn hangs open. So
+      // after speech the quiet still goes up, for [tailMs]; only then does
+      // the uplink stop until the next onset (see [_quietFrame]). Until
+      // the probe below confirms the user is speaking, a frame goes up as
+      // a whisper, so background talk can't open a turn — the lead-in is
+      // replayed at full volume once speech is confirmed.
+      //
+      // With the speaker gate on: speech is held until the voiceprint
+      // accepts it (quiet between utterances streams live, then pauses).
+      if (_gateActive) {
+        _gateFeed(chunk, loud, ms, now);
+      } else if (_speaking) {
+        _lastLifeAt = now;
+        _quietSentMs = 0;
+        _upAudio(Uint8List.fromList(chunk));
+      } else {
+        // Not the user yet, as far as anyone knows: Google hears a
+        // whisper, and the real audio waits a moment in case this is
+        // the start of a sentence. See MicPreRoll.
+        _preRoll.add(chunk, ms);
+        _quietFrame(MicPreRoll.whisper(chunk), ms, loud, now);
+      }
+
+      if (!_speaking) {
+        if (!loud) {
+          // Learn the room while nobody is talking. Never while they
+          // are, or the user's own voice drags the floor up until they
+          // are inaudible to the probe.
+          _noiseFloor = _noiseFloor * 0.95 + l * 0.05;
+          _aboveMs = 0;
+          return;
+        }
+        _aboveMs += ms;
+        if (_aboveMs < _onsetMs) return;
+        _speaking = true;
+        _belowMs = 0;
+        _utteranceMs = 0;
+        // Gated: the marker is sent only when the speaker is accepted,
+        // together with the buffered audio.
+        if (!_gateActive) {
+          // It IS speech: replay the lead-in at full volume, so the
+          // first syllable reaches Google whole — this is also what
+          // resumes a paused uplink.
+          _lastLifeAt = now;
+          _quietSentMs = 0;
+          for (final c in _preRoll.drain()) {
+            _upAudio(Uint8List.fromList(c));
+          }
+          _send({'type': 'activity_start'});
+        }
+        return;
+      }
+
+      _utteranceMs += ms;
+      if (loud) {
+        _belowMs = 0;
+      } else {
+        _belowMs += ms;
+      }
+      if (_belowMs >= _hangoverMs || _utteranceMs >= _maxUtteranceMs) {
+        _endUtterance();
+      }
+    } catch (_) {}
+  }
+
+  /// A frame from a room nobody is (known to be) talking in: it streams
+  /// until the tail after the last speech is long enough and the model's
+  /// turn is over, then the uplink pauses — once, with one marker — and
+  /// stays paused until speech resumes it.
+  void _quietFrame(Uint8List frame, int ms, bool loud, DateTime now) {
+    if (_uplinkPaused) {
+      // Translator mode never pauses: the room itself is the input.
+      if (!translatorBypass) return;
+    } else if (!loud && _mayPause(now)) {
+      _uplinkPaused = true;
+      uplinkPauses++;
+      _send({'type': 'audio_pause'});
+      return;
+    }
+    _upAudio(frame);
+    _quietSentMs += ms;
+  }
+
+  bool _mayPause(DateTime now) =>
+      !translatorBypass &&
+      !_speaking &&
+      _quietSentMs >= tailMs &&
+      !_modelTurn(now) &&
+      (!_gateActive || _gateState == _GateState.idle);
+
+  /// The model's turn: her reply playing, a tool running, or the moments
+  /// after the owner stopped (or typed) before any answer shows up.
+  bool _modelTurn(DateTime now) =>
+      playing ||
+      remoteSpeaking ||
+      _toolRunning(now) ||
+      now.isBefore(_replyUntil);
+
+  bool _toolRunning(DateTime now) =>
+      _toolsInFlight > 0 && now.difference(_toolStartedAt) < _toolCap;
+
+  /// Audio for the model. Any audio resumes a paused uplink (the server
+  /// needs nothing else to pick the stream back up).
+  void _upAudio(Uint8List bytes) {
+    if (_uplinkPaused) {
+      _uplinkPaused = false;
+      _quietSentMs = 0;
+    }
+    _up(bytes);
+  }
+
+  void _up(Object frame) {
+    final t = _testSink;
+    if (t != null) {
+      t(frame);
+      return;
+    }
+    try {
+      _ch?.sink.add(frame);
+    } catch (_) {}
+  }
+
+  /// The minute of quiet. Someone mid-utterance (or the speaker gate
+  /// listening to one) is not quiet.
+  void _checkQuiet(DateTime now) {
+    if (_quietFired || onQuietTimeout == null) return;
+    final talking = _gateActive
+        ? (_gateState == _GateState.holding ||
+            _gateState == _GateState.accepted)
+        : _speaking;
+    if (talking) {
+      _lastLifeAt = now;
+      return;
+    }
+    if (now.difference(_lastLifeAt) < quietClose) return;
+    _quietFired = true;
+    AppLog.add('live', 'no speech for ${quietClose.inSeconds}s');
+    onQuietTimeout?.call();
+  }
+
+  /// The model has something coming: keep the uplink up a little longer.
+  void _expectReply() {
+    final until = _now().add(_replyGrace);
+    if (until.isAfter(_replyUntil)) _replyUntil = until;
+  }
+
+  // ---------------- where the owner is ----------------
+
+  double? _sentLat;
+  double? _sentLng;
+  DateTime? _sentLocAt;
+  DateTime _locCheckedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// A move this far is worth telling the server about at once.
+  static const locationMoveMeters = 300.0;
+
+  /// Otherwise the position is repeated this often.
+  static const locationEvery = Duration(minutes: 5);
+
+  /// Owner, 2026-09-24: "my assistant should be aware of user location
+  /// when he makes any requests". The socket URL carries the position at
+  /// connect; this keeps it current for the rest of the session. Returns
+  /// true when a {"type":"location"} message went up.
+  bool maybeSendLocation(double lat, double lng, double? acc) {
+    if (!_active) return false;
+    final now = _now();
+    if (!shouldSendLocation(
+      lastLat: _sentLat,
+      lastLng: _sentLng,
+      lastAt: _sentLocAt,
+      lat: lat,
+      lng: lng,
+      now: now,
+    )) {
+      return false;
+    }
+    _sentLat = lat;
+    _sentLng = lng;
+    _sentLocAt = now;
+    // Four decimals (~11 m), as on the socket URL — plenty for "near me".
+    double r4(double v) => (v * 10000).roundToDouble() / 10000;
+    _send({
+      'type': 'location',
+      'lat': r4(lat),
+      'lng': r4(lng),
+      if (acc != null && acc.isFinite) 'acc': acc.round(),
+    });
+    return true;
+  }
+
+  /// First fix, a move of more than [locationMoveMeters], or
+  /// [locationEvery] since the last one sent.
+  static bool shouldSendLocation({
+    required double? lastLat,
+    required double? lastLng,
+    required DateTime? lastAt,
+    required double lat,
+    required double lng,
+    required DateTime now,
+  }) {
+    if (lastLat == null || lastLng == null || lastAt == null) return true;
+    if (now.difference(lastAt) >= locationEvery) return true;
+    return distanceMeters(lastLat, lastLng, lat, lng) > locationMoveMeters;
+  }
+
+  /// Great-circle distance in metres (haversine).
+  static double distanceMeters(
+      double lat1, double lng1, double lat2, double lng2) {
+    const r = 6371000.0;
+    double rad(double d) => d * math.pi / 180;
+    final dLat = rad(lat2 - lat1);
+    final dLng = rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(rad(lat1)) *
+            math.cos(rad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  // ---------------- test seams ----------------
+
+  /// Opens a session with no socket, recorder or player: every frame that
+  /// would go up is handed to [sink]. [clock] replaces the wall clock.
+  @visibleForTesting
+  void debugBeginSession({
+    required void Function(Object frame) sink,
+    DateTime Function()? clock,
+  }) {
+    _testSink = sink;
+    _now = clock ?? DateTime.now;
+    _peakLevel = 0;
+    _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _active = true;
+    _resetSession();
+  }
+
+  @visibleForTesting
+  void debugMicChunk(List<int> chunk) => _onMicChunk(chunk);
+
+  @visibleForTesting
+  void debugServerFrame(Object frame) => _onFrame(frame);
+
+  @visibleForTesting
+  void debugEndSession() {
+    _active = false;
+    _resetSession();
+    _testSink = null;
+    _now = DateTime.now;
+    onQuietTimeout = null;
+    translatorBypass = false;
+    typingMute = false;
+    speakerGateEnabled = false;
+    speakerScorer = null;
   }
 
   /// (Re)arms the PCM stream. Called at session start and after every
@@ -607,6 +917,10 @@ class LiveService {
     _aboveMs = 0;
     _belowMs = 0;
     _utteranceMs = 0;
+    // The tail starts here, and the model's turn with it: the uplink stays
+    // up until the pause has been heard AND an answer had its chance.
+    _quietSentMs = 0;
+    _expectReply();
     if (!_gateActive) {
       _send({'type': 'activity_end'});
       return;
@@ -639,11 +953,13 @@ class LiveService {
   /// Routes one mic frame while the gate is on. Quiet frames between
   /// utterances stream live; the moment loudness appears everything is
   /// buffered until the voiceprint decides.
-  void _gateFeed(List<int> chunk, bool loud, int ms) {
+  void _gateFeed(List<int> chunk, bool loud, int ms, DateTime now) {
     switch (_gateState) {
       case _GateState.idle:
         if (!loud) {
-          _ch?.sink.add(Uint8List.fromList(chunk));
+          // Live, at full volume — until the tail is long enough, then
+          // paused like any other quiet (see _quietFrame).
+          _quietFrame(Uint8List.fromList(chunk), ms, false, now);
           return;
         }
         _gateState = _GateState.holding;
@@ -683,7 +999,9 @@ class LiveService {
         break;
 
       case _GateState.accepted:
-        _ch?.sink.add(Uint8List.fromList(chunk));
+        _lastLifeAt = now;
+        _quietSentMs = 0;
+        _upAudio(Uint8List.fromList(chunk));
         break;
 
       case _GateState.rejected:
@@ -718,13 +1036,16 @@ class LiveService {
           '${score?.toStringAsFixed(2) ?? '—'} → ${accept ? 'accept' : 'reject'}');
       final over = _gateEndedWhileDeciding || !_speaking;
       if (accept) {
+        // The owner's own voice: the session is alive, and a paused
+        // uplink resumes with the whole held utterance.
+        noteActivity();
+        _quietSentMs = 0;
         _send({'type': 'activity_start'});
         final full = _gateBuf?.toBytes() ?? snapshot;
-        try {
-          _ch?.sink.add(full);
-        } catch (_) {}
+        _upAudio(full);
         if (over) {
           _send({'type': 'activity_end'});
+          _expectReply(); // the answer to the audio just flushed
           _gateReset();
         } else {
           _gateState = _GateState.accepted;
@@ -761,11 +1082,7 @@ class LiveService {
     _gateEndedWhileDeciding = false;
   }
 
-  void _send(Map<String, dynamic> m) {
-    try {
-      _ch?.sink.add(jsonEncode(m));
-    } catch (_) {}
-  }
+  void _send(Map<String, dynamic> m) => _up(jsonEncode(m));
 
   /// Ends the session and releases the mic/speaker.
   /// STOP MAKING NOISE, KEEP THE SESSION.
@@ -795,6 +1112,10 @@ class LiveService {
     if (!_active && _ch == null) return;
     _active = false;
     _gateAbort();
+    // Counts only, never audio: how much silence this session trimmed.
+    if (uplinkPauses > 0) {
+      AppLog.add('live', 'uplink paused $uplinkPauses times this session');
+    }
     // Translator mode must never outlive the session it was asked in —
     // the next conversation starts owner-only again.
     translatorBypass = false;
@@ -820,16 +1141,24 @@ class LiveService {
 
   /// Sends a text message directly through the live WebSocket.
   void sendText(String text) {
-    if (_active && _ch != null) {
-      _ch?.sink.add(jsonEncode({'type': 'text', 'text': text}));
+    if (_active && (_ch != null || _testSink != null)) {
+      _up(jsonEncode({'type': 'text', 'text': text}));
+      // Typed words (or the app's own note) start a turn of the model's:
+      // not a quiet session, and no pause before the answer.
+      noteActivity();
+      _expectReply();
     }
   }
 
   // ---------------- incoming frames ----------------
 
   void _onFrame(dynamic frame) {
+    // Anything from the server — her voice, a transcript, a tool — is the
+    // session alive, never a quiet minute.
+    noteActivity();
     if (frame is List<int>) {
       // Reply audio: PCM16 @24 kHz — straight to the stream player.
+      _expectReply();
       final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame);
       _feed(chunk);
       onAudioChunk?.call(chunk);
@@ -860,17 +1189,23 @@ class LiveService {
           // must cut PLAYBACK immediately or she keeps talking from the
           // buffer.
           _stopPlayback(clear: true);
+          _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
           onInterrupted?.call();
           break;
         case 'turn_complete':
-          // Nothing to flush — every byte was fed on arrival.
+          // Nothing to flush — every byte was fed on arrival. Her turn is
+          // over once the audio already fed has played ([playing]).
+          _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
+          _toolsInFlight = 0;
           onTurnComplete?.call();
           break;
         case 'input_transcript':
+          _expectReply(); // Google heard words: an answer is coming
           final t = m['text'] as String? ?? '';
           if (t.isNotEmpty) onUserText?.call(t);
           break;
         case 'output_transcript':
+          _expectReply();
           final t = m['text'] as String? ?? '';
           if (t.isNotEmpty) onHariText?.call(t);
           break;
@@ -886,6 +1221,15 @@ class LiveService {
         // camera" and then nothing happened.
         default:
           final t = m['type'];
+          // Tool work is the model's turn: the uplink stays up and the
+          // quiet minute does not run while one is out.
+          if (t == 'tool_started') {
+            _toolsInFlight++;
+            _toolStartedAt = _now();
+          } else if (t == 'tool_completed') {
+            if (_toolsInFlight > 0) _toolsInFlight--;
+            _expectReply();
+          }
           if (t is String && t.isNotEmpty) {
             onDeviceAction?.call(Map<String, dynamic>.from(m));
           }
