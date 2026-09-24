@@ -191,6 +191,10 @@ class AppFeedback {
     _present(c.msg, force: true);
   }
 
+  /// Is the toast on screen one with an Undo? A session opening closes
+  /// those at once; the others move once the session is in (HomeShell).
+  static bool get showingUndo => _current?.msg.onUndo != null;
+
   /// Test hook: forget everything between tests.
   @visibleForTesting
   static void resetForTest() {

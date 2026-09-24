@@ -78,17 +78,27 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
       (engine.phase != AssistantPhase.idle &&
           engine.phase != AssistantPhase.completed);
 
+  /// "Remove animations" is on: the halo is a still ring, not a loop.
+  bool _still = false;
+
   @override
   void initState() {
     super.initState();
     engine.addListener(_sync);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = Motion.reduced(context);
     _sync();
   }
 
   void _sync() {
     if (!mounted) return;
-    if (_active && !_halo.isAnimating) _halo.repeat();
-    if (!_active && _halo.isAnimating) {
+    final loop = _active && !_still;
+    if (loop && !_halo.isAnimating) _halo.repeat();
+    if (!loop && _halo.isAnimating) {
       _halo.stop();
       _halo.reset();
     }
@@ -116,6 +126,13 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
       // a boundary every frame of that repainted the dock and the screen
       // behind it.
       child: RepaintBoundary(
+      // BACK INTO ITS NOTCH QUIETLY (2026-09-24). The mic leaves while the
+      // keyboard is up; it used to come back through the Scaffold's stock
+      // entrance, spinning 45° as it grew. It now fades in as it grows
+      // from 85%, once, when it returns (and at launch).
+      child: EnterOnce(
+        duration: Motion.short,
+        scaleFrom: 0.85,
       // The press is the acknowledgement: it dips under the finger (a
       // Listener, so the tap and the hold above still get the gesture).
       child: PressScale(
@@ -128,11 +145,35 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
             if (active)
               AnimatedBuilder(
                 animation: _halo,
-                builder: (_, __) =>
-                    CustomPaint(size: const Size(76, 76), painter: _HaloPainter(_halo.value)),
+                // The rings fade in over their first 250 ms instead of
+                // popping in at full strength (the loop is one long run,
+                // so its elapsed time is the time since the session began).
+                builder: (_, __) => CustomPaint(
+                    size: const Size(76, 76),
+                    painter: _HaloPainter(
+                      _still ? 0.25 : _halo.value,
+                      _still
+                          ? 1.0
+                          : ((_halo.lastElapsedDuration?.inMilliseconds ?? 0) /
+                                  250)
+                              .clamp(0.0, 1.0),
+                    )),
               ),
+            // MIC TO STOP: one grows out as the other fades (2026-09-24).
+            // It was a linear 250 ms cross-fade between a gradient disc
+            // and a grey one, which looked muddy half-way.
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
+              duration: Motion.short,
+              switchInCurve: Motion.easeEnter,
+              switchOutCurve: Motion.easeFadeOut,
+              transitionBuilder: (child, a) => FadeTransition(
+                opacity: a,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.85, end: 1.0).animate(a),
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
+              ),
               child: active
                   // The big centre orb carries the session now; a second
                   // waveform down here was redundant noise. During a
@@ -186,6 +227,7 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
       ),
       ),
       ),
+      ),
     ),
     );
   }
@@ -196,7 +238,10 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
 /// the large centre-screen orb.
 class _HaloPainter extends CustomPainter {
   final double t;
-  _HaloPainter(this.t);
+
+  /// 0..1: how far the rings have faded in.
+  final double strength;
+  _HaloPainter(this.t, [this.strength = 1.0]);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -205,7 +250,7 @@ class _HaloPainter extends CustomPainter {
     for (final phase in const [0.0, 0.5]) {
       final p = (t + phase) % 1.0;
       final radius = s * (0.79 + p * 0.68);
-      final alpha = (1 - p) * 0.35;
+      final alpha = (1 - p) * 0.35 * strength;
       canvas.drawCircle(
         c,
         radius,
@@ -218,7 +263,8 @@ class _HaloPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_HaloPainter old) => old.t != t;
+  bool shouldRepaint(_HaloPainter old) =>
+      old.t != t || old.strength != strength;
 }
 
 /// Center-screen live captions, lyrics-style: while the inline
@@ -257,6 +303,15 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   final engine = AssistantEngine.instance;
   String _text = '';
   bool _fromUser = false;
+
+  /// Counts turns (bumped where the paced release restarts), so the line
+  /// being spoken can be told apart from the same line of the last turn.
+  int _turn = 0;
+
+  /// The spotlight line of the last build ('turn|index'): the line that
+  /// was being spoken, which shrinks into the older lines when the next
+  /// one starts.
+  String? _lastSpot;
 
   /// SPEECH-PACED REVEAL. The transcript arrives at GENERATION speed —
   /// seconds ahead of the audio — so showing it raw makes the lyrics run
@@ -356,6 +411,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       if (fromUser != _fromUser || !t.startsWith(_visibleAnchor())) {
         _budget = 0;
         _lastTick = DateTime.now();
+        _turn++;
       }
       _text = t;
       _fromUser = fromUser;
@@ -452,6 +508,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     final previous = lines.length > 1
         ? lines.sublist(start, lines.length - 1)
         : const <String>[];
+    // Which line was in the spotlight last time: if it is now among the
+    // older lines, it shrinks into them instead of snapping.
+    final wasSpot = _lastSpot;
+    _lastSpot = '$_turn|${lines.length - 1}';
+    // Which line is in the spotlight: speaker, turn and line number — not
+    // its words (see the spotlight below).
+    final spotKey = '$_fromUser|$_turn|${lines.length}';
     // AN INVISIBLE OVERLAY MUST NEVER EAT A TAP.
     //
     // This was IgnorePointer(always) because nothing in it was
@@ -469,7 +532,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       child: AnimatedOpacity(
         // In step with the app's page transitions (200–250 ms).
         duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOut,
+        // In fast; out easing off and then going (2026-09-24: closing used
+        // the opening curve backwards, so it started abruptly).
+        curve: show ? Curves.easeOut : Motion.easeExit,
         opacity: show ? 1 : 0,
         onEnd: _onFadeEnd,
         // ROOM FOR THE KEYBOARD. Above an open keyboard a phone has ~300
@@ -497,14 +562,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           final avail = lifted || !typing ? box.maxHeight : box.maxHeight - kb;
           // The orb's slot: smaller while typing, so everything fits above
           // the keyboard; on a short phone it gives up height to the words.
-          final orbSlot = typing
-              ? math.min(190.0, avail * 0.42)
-              : math.min(330.0, avail * 0.38);
+          final restSlot = math.min(330.0, avail * 0.38);
+          final typingSlot = math.min(190.0, avail * 0.42);
           // How much smaller the orb is DRAWN to sit in it: while typing,
           // the whole glow fits the slot; at rest, the sphere does (as it
           // always has — only a very short screen ever shrinks it).
-          final orbScale =
-              math.min(1.0, orbSlot / (typing ? _orbBox : _orbSize));
+          final restScale = math.min(1.0, restSlot / _orbSize);
+          final typingScale = math.min(1.0, typingSlot / _orbBox);
           return Container(
           // FULLY OPAQUE. At 0.82, and still at 0.94, the page ghosted
           // through: Home's headings and calendar sat faintly behind the
@@ -555,14 +619,30 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // reading, and in a screen measured by a LayoutBuilder every
               // such rebuild re-ran the layout up to the page. The orb and
               // its backdrop read the live level on their own frames.
-              SizedBox(
-                width: double.infinity,
-                height: orbSlot,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween<double>(end: orbScale),
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  builder: (_, scale, __) {
+              //
+              // THE WORDS MOVE WITH THE ORB (2026-09-24). The orb eased
+              // smaller over 220 ms, but on the keyboard's first frame its
+              // slot dropped from up to 330 dp to 190, the gap under it
+              // from 24 to 6, and the words jumped up ~140 dp while the orb
+              // was still shrinking (and down again on the way back). The
+              // slot and the gap now ease on the same 220 ms as the orb.
+              // The keyboard lays this column out on every one of its
+              // frames anyway, so this adds no new kind of work; the orb
+              // itself is still laid out once, in its fixed box.
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(end: typing ? 1.0 : 0.0),
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                builder: (_, k, __) {
+                  final scale = restScale + (typingScale - restScale) * k;
+                  return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                  SizedBox(
+                  width: double.infinity,
+                  height: restSlot + (typingSlot - restSlot) * k,
+                  child: Builder(
+                  builder: (_) {
                     final mood = _mood(micPaused);
                     // The level still arrives while paused (it is measured
                     // before the mute) — the orb must not react to it.
@@ -605,9 +685,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                       ],
                     );
                   },
-                ),
+                  ),
+                  ),
+                  SizedBox(height: 24 - 18 * k),
+                  ],
+                  );
+                },
               ),
-              SizedBox(height: typing ? 6 : 24),
               // AN ERROR SAYS WHAT WENT WRONG. The caption below maps every
               // phase it does not name to "Connecting…" — including error —
               // so a denied microphone, a failed upload and a timeout all
@@ -674,52 +758,141 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                   padding: const EdgeInsets.only(top: 14),
                   child: AnimatedSize(
                     duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    child: Column(
+                    curve: Motion.easeMove,
+                    child: Builder(builder: (context) {
+                    final ambient = DefaultTextStyle.of(context).style;
+                    final spot = ambient.merge(GoogleFonts.spaceGrotesk(
+                      color: _fromUser
+                          ? Colors.white.withValues(alpha: 0.62)
+                          : Colors.white,
+                      fontSize: typing ? 17 : (_fromUser ? 19 : 24),
+                      height: 1.3,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.4,
+                    ));
+                    final older = ambient.merge(GoogleFonts.spaceGrotesk(
+                      // Older lines stay readable (was 0.38 —
+                      // under 4.5:1 on the night ground).
+                      color: Colors.white.withValues(alpha: 0.56),
+                      fontSize: 15.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.2,
+                    ));
+                    // Was line [i] in the spotlight a moment ago?
+                    bool promoted(int i) => wasSpot == '$_turn|$i';
+                    return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         // While typing there is little room: the line
                         // being spoken, nothing older.
-                        for (final l in typing ? const <String>[] : previous)
+                        //
+                        // A FINISHED LINE SHRINKS INTO PLACE (2026-09-24).
+                        // It used to snap in one frame from the 24 pt
+                        // white spotlight to a 15.5 pt older line. The
+                        // line that was just being spoken now eases down
+                        // to the older size and dims; lines that were
+                        // already older stay exactly as they were.
+                        //
+                        // AS A PICTURE (2026-09-24, review): it first did
+                        // that by tweening its text style, which laid the
+                        // line out again at a new font size on every frame
+                        // of the move, while the orb was animating. It is
+                        // now laid out once, in the older style (weight,
+                        // spacing and wrap taken at once), and only DRAWN
+                        // larger and brighter at first.
+                        for (final (k, l) in (typing
+                                ? const <String>[]
+                                : previous)
+                            .indexed)
                           Padding(
+                            key: ValueKey('$_turn|${start + k}'),
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: Text(
-                              l,
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.spaceGrotesk(
-                                // Older lines stay readable (was 0.38 —
-                                // under 4.5:1 on the night ground).
-                                color: Colors.white.withValues(alpha: 0.56),
-                                fontSize: 15.5,
-                                height: 1.3,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.2,
+                            child: TextResize(
+                              size: older.fontSize!,
+                              from: promoted(start + k) ? spot.fontSize : null,
+                              child: _DimInto(
+                                text: l,
+                                style: older,
+                                from: promoted(start + k) ? spot.color : null,
                               ),
                             ),
                           ),
                         // The line being spoken RIGHT NOW — the spotlight.
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          switchInCurve: Curves.easeOut,
-                          child: Text(
-                            current,
-                            key: ValueKey('$_fromUser|$current'),
-                            textAlign: TextAlign.center,
-                            maxLines: typing ? 3 : 6,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.spaceGrotesk(
-                              color: _fromUser
-                                  ? Colors.white.withValues(alpha: 0.62)
-                                  : Colors.white,
-                              fontSize: typing ? 17 : (_fromUser ? 19 : 24),
-                              height: 1.3,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.4,
+                        //
+                        // WORDS APPEND, THE LINE DOES NOT FLICKER
+                        // (2026-09-24). This was keyed by its whole text,
+                        // so every word the pacer released (and every
+                        // partial transcript of his own words) cross-faded
+                        // the ENTIRE line into an almost identical copy,
+                        // two or three times a second: the centred line
+                        // shifted by half a word, the two copies overlapped
+                        // offset, and the line shimmered for as long as
+                        // anyone spoke. It is now keyed by WHICH line it is
+                        // (speaker, turn, index), so words simply appear at
+                        // its end. A new line fades in under the one that
+                        // just finished; a new turn cross-fades, quickly
+                        // out, then in, from the top.
+                        // Full width, so a leaving line keeps its own
+                        // wrap while the new one fades in over it.
+                        SizedBox(
+                          width: double.infinity,
+                          child: AnimatedSwitcher(
+                          duration: Motion.short,
+                          reverseDuration: Motion.out,
+                          switchInCurve: Motion.easeFadeIn,
+                          switchOutCurve: Motion.easeFadeOut,
+                          // A line that just finished is not faded out
+                          // here: it lives on above, shrinking into the
+                          // older lines, and a second fading copy of it
+                          // would be exactly the ghosting this replaced.
+                          // Only a new turn (or speaker) fades the old
+                          // line out.
+                          transitionBuilder: (child, a) {
+                            final k = (child.key as ValueKey<String>?)?.value;
+                            final promoted = k != null &&
+                                k != spotKey &&
+                                k.startsWith('$_fromUser|$_turn|');
+                            if (promoted) return const SizedBox.shrink();
+                            return FadeTransition(opacity: a, child: child);
+                          },
+                          // The leaving line does not hold the space open
+                          // (no size wobble): only the new one is laid out.
+                          layoutBuilder: (current, previous) => Stack(
+                            alignment: Alignment.topCenter,
+                            clipBehavior: Clip.none,
+                            children: [
+                              for (final p in previous)
+                                Positioned(
+                                    top: 0, left: 0, right: 0, child: p),
+                              if (current != null) current,
+                            ],
+                          ),
+                          // The keyboard coming up eases the size down
+                          // instead of jumping it, on the orb's 220 ms —
+                          // as a picture: the line is laid out once at its
+                          // new size on the keyboard's first frame, never
+                          // again on the frames after it (2026-09-24,
+                          // review: a font-size tween re-laid it out on
+                          // every one of them).
+                          child: TextResize(
+                            key: ValueKey(spotKey),
+                            size: spot.fontSize!,
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            child: Text(
+                              current,
+                              style: spot,
+                              textAlign: TextAlign.center,
+                              maxLines: typing ? 3 : 6,
+                              overflow: TextOverflow.ellipsis,
                             ),
+                          ),
                           ),
                         ),
                       ],
-                    ),
+                    );
+                    }),
                   ),
                   ),
                   ),
@@ -759,6 +932,78 @@ LinearGradient _sessionGround() {
     colors: [ink(0.09, 0.45), ink(0.035, 0.40), ink(0.06, 0.40)],
     stops: const [0.0, 0.5, 1.0],
   );
+}
+
+/// An older line of the words. The one that was just being spoken DIMS
+/// into the others (2026-09-24, review): it is drawn in the spotlight's
+/// colour and faded, as a layer, down to the older lines' brightness —
+/// tweening the text's own colour would build and shape its paragraph
+/// again on every frame. Once there it is plain text in the older colour,
+/// with no layer, which looks exactly the same. Only a lighter colour of
+/// the same hue can be faded down this way (the captions are all white on
+/// the night ground); anything else, and "Remove animations", takes the
+/// older colour at once.
+class _DimInto extends StatefulWidget {
+  const _DimInto({required this.text, required this.style, this.from});
+  final String text;
+
+  /// The older lines' style: where it ends up.
+  final TextStyle style;
+
+  /// The spotlight's colour it starts from; null: it is already older.
+  final Color? from;
+
+  @override
+  State<_DimInto> createState() => _DimIntoState();
+}
+
+class _DimIntoState extends State<_DimInto>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: Motion.short, value: 1.0)
+        ..addStatusListener((s) {
+          // Arrived: back to plain text (one build, no more frames).
+          if (s == AnimationStatus.completed && mounted) setState(() {});
+        });
+  Animation<double>? _fade;
+  bool _begun = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_begun) return;
+    _begun = true;
+    final from = widget.from;
+    final to = widget.style.color;
+    if (from == null || to == null || Motion.reduced(context)) return;
+    final sameHue = from.r == to.r && from.g == to.g && from.b == to.b;
+    if (!sameHue || from.a <= to.a) return;
+    _fade = _c.drive(Tween<double>(begin: 1.0, end: to.a / from.a)
+        .chain(CurveTween(curve: Motion.easeMove)));
+    _c.forward(from: 0.0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fade = _fade;
+    if (fade == null || !_c.isAnimating) {
+      return Text(widget.text, textAlign: TextAlign.center, style: widget.style);
+    }
+    return FadeTransition(
+      opacity: fade,
+      child: Text(
+        widget.text,
+        textAlign: TextAlign.center,
+        style: widget.style.copyWith(color: widget.from),
+      ),
+    );
+  }
 }
 
 /// Mute the assistant's voice without ending the conversation — for the
@@ -1363,6 +1608,9 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
       ignoring: t == null,
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 240),
+        // In on the arrival curve (with the rise below); out easing in.
+        // Both were linear.
+        curve: t == null ? Motion.easeFadeOut : Motion.easeEnter,
         opacity: t == null ? 0 : 1,
         // Faded all the way out: now the words can go.
         onEnd: () {
@@ -1375,10 +1623,18 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
           alignment: Alignment.bottomCenter,
           child: AnimatedPadding(
             duration: const Duration(milliseconds: 200),
+            curve: Motion.easeMove,
             padding: EdgeInsets.only(left: 16, right: 16, bottom: bottom),
             child: shown == null
                 ? const SizedBox.shrink()
-                : Container(
+                // It rises 8 dp as it fades in, like every other card that
+                // comes out of the mic (the fade itself is above).
+                : EnterOnce(
+                    key: ValueKey(shown),
+                    duration: const Duration(milliseconds: 240),
+                    fade: false,
+                    rise: 8,
+                    child: Container(
                     padding: const EdgeInsets.fromLTRB(14, 4, 2, 4),
                     decoration: BoxDecoration(
                       color: Neon.surfaceHigh,
@@ -1421,6 +1677,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
                         ),
                       ],
                     ),
+                  ),
                   ),
           ),
         ),

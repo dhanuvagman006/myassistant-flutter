@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 
@@ -139,15 +140,21 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
   Widget build(BuildContext context) {
     final show =
         _label != null && _label!.isNotEmpty && _elapsed < _staleAfter;
+    // ONE CLOCK (2026-09-24). The slide ran 260 ms on one curve and the
+    // fade 220 ms on a linear one, and it left on its arrival curve, so
+    // leaving started abruptly. Now both take 220 ms in (slide on the
+    // arrival curve) and 160 ms out, easing off and then going.
+    final d = show ? const Duration(milliseconds: 220) : const Duration(milliseconds: 160);
     return IgnorePointer(
       child: AnimatedSlide(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
+        duration: d,
+        curve: show ? Motion.easeEnter : Motion.easeExit,
         // Enters from ABOVE: the pill sits at the top of the screen, and
         // sliding up out of nowhere would read as coming from the dock.
-        offset: show ? Offset.zero : const Offset(0, -0.6),
+        offset: show ? Offset.zero : const Offset(0, -0.4),
         child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 220),
+          duration: d,
+          curve: show ? Motion.easeFadeIn : Motion.easeFadeOut,
           opacity: show ? 1 : 0,
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -196,7 +203,13 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
                 ),
                 const SizedBox(width: 11),
                 Flexible(
-                  child: Text(
+                  // As the wording changes ("… — one moment", "Still …")
+                  // the pill widens smoothly instead of in one frame.
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Motion.easeMove,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
                     _text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -206,6 +219,7 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.2,
                     ),
+                  ),
                   ),
                 ),
                 const SizedBox(width: 3),

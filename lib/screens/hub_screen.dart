@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
 import '../design/dock_metrics.dart';
-import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
 import 'calls_screen.dart';
@@ -171,9 +170,11 @@ class HubScreen extends StatelessWidget {
     );
   }
 
+  // No press dip (2026-09-24): a full-width row inside its grouped card
+  // pulled 8 dp in from the card's edges under the finger. The ripple is
+  // the acknowledgement.
   Widget _rowTile(BuildContext context, _Row r) {
-    return PressScale(
-        child: InkWell(
+    return InkWell(
       onTap: () =>
           Navigator.of(context).push(MaterialPageRoute(builder: r.builder)),
       child: Padding(
@@ -220,7 +221,7 @@ class HubScreen extends StatelessWidget {
           ],
         ),
       ),
-    ));
+    );
   }
 }
 

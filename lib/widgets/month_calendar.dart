@@ -141,8 +141,13 @@ class _MonthCalendarState extends State<MonthCalendar> {
     });
   }
 
+  /// Which way the last month change went (-1 back, 1 forward): the new
+  /// month comes in from that side.
+  int _travel = 1;
+
   void _shiftMonth(int delta) {
     HapticFeedback.selectionClick();
+    _travel = delta < 0 ? -1 : 1;
     var y = _year, m = _month + delta;
     if (m < 1) { m = 12; y--; }
     if (m > 12) { m = 1; y++; }
@@ -226,24 +231,62 @@ class _MonthCalendarState extends State<MonthCalendar> {
                 ],
               ),
               const SizedBox(height: 4),
-              if (_loading)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 30),
-                  child: Center(
-                      child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Neon.textLo))),
-                )
-              else
-                for (var r = 0; r < rows; r++)
-                  Row(
-                    children: [
-                      for (var c = 0; c < 7; c++)
-                        _dayCell(r * 7 + c - leading + 1, daysInMonth, today),
-                    ],
+              // THE MONTH TURNS, IT DOES NOT CUT (2026-09-24). Changing
+              // months swapped the whole grid in one frame. The new month
+              // now fades in from the side it was reached from, 16 dp,
+              // while the old one fades out.
+              AnimatedSwitcher(
+                duration: Motion.short,
+                reverseDuration: Motion.out,
+                switchInCurve: Motion.easeEnter,
+                switchOutCurve: Motion.easeFadeOut,
+                layoutBuilder: (current, previous) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: [...previous, if (current != null) current],
+                ),
+                transitionBuilder: (child, a) => FadeTransition(
+                  opacity: a,
+                  child: AnimatedBuilder(
+                    animation: a,
+                    // Only the arriving month moves; the leaving one fades.
+                    builder: (_, c) => Transform.translate(
+                      offset: Offset(
+                          a.status == AnimationStatus.reverse
+                              ? 0
+                              : 16 * _travel * (1 - a.value),
+                          0),
+                      child: c,
+                    ),
+                    // Moved as a layer, not drawn again on every frame.
+                    child: RepaintBoundary(child: child),
                   ),
+                ),
+                child: KeyedSubtree(
+                  key: ValueKey('$_year-$_month'),
+                  child: _loading
+                      ? Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 30),
+                          child: Center(
+                              child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Neon.textLo))),
+                        )
+                      : Column(
+                          children: [
+                            for (var r = 0; r < rows; r++)
+                              Row(
+                                children: [
+                                  for (var c = 0; c < 7; c++)
+                                    _dayCell(r * 7 + c - leading + 1,
+                                        daysInMonth, today),
+                                ],
+                              ),
+                          ],
+                        ),
+                ),
+              ),
               const SizedBox(height: 6),
               // GitHub-style legend, so the shading explains itself.
               Row(
@@ -308,7 +351,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
             _openDaySheet(day);
           }
         },
-        child: Container(
+        // The highlight moves to the tapped day instead of jumping.
+        child: AnimatedContainer(
+          duration: Motion.micro,
+          curve: Motion.easeMove,
           height: 40,
           margin: const EdgeInsets.all(2),
           decoration: BoxDecoration(
@@ -432,7 +478,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
     final title =
         '${wk[DateTime(_year, _month, day).weekday - 1]}, $day ${_mo[_month - 1]}';
 
-    showModalBottomSheet(
+    showAppSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,

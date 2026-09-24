@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 
 /// Legacy color names, remapped onto the Neon V2 palette.
@@ -254,22 +255,66 @@ class AppTheme {
 /// EVERY PAGE MOVES AT THE SAME PACE (2026-09-24, "need more smoothness
 /// while using the app").
 ///
-/// The same fade-and-rise every screen already used, but on the app's own
-/// clock: 240 ms in and 200 ms back, where the stock route took 300 ms
-/// both ways — slower than the voice screen, the cards and the toasts
-/// around it, so opening a page felt like waiting for it. Every
-/// MaterialPageRoute in the app reads its timing from here.
+/// On the app's own clock: 240 ms in and 200 ms back, where the stock
+/// route took 300 ms both ways — slower than the voice screen, the cards
+/// and the toasts around it, so opening a page felt like waiting for it.
+/// Every MaterialPageRoute in the app reads its timing from here (and the
+/// numbers themselves from design/motion.dart).
+///
+/// AND IN THE SAME DIRECTION (2026-09-24). That fade-and-rise was the
+/// Android 8 transition: every page floated up a quarter of the screen
+/// (about 220 dp on his phone) as a ghost, only a third opaque half-way,
+/// while the page under it sat still — and Back dropped it 220 dp again.
+/// On a phone running One UI 6 it read dated and floaty. Now a page slides
+/// in a short way from the side (8%) and is solid within half its time,
+/// while the page underneath steps back 4% and fades out of the way — onto
+/// the app's own ground, so the two never show through each other. Back
+/// plays it in reverse, easing off and then going. A full-screen modal
+/// (the document gallery, the studio) rises a little instead, because it
+/// is not a step deeper. With "Remove animations" on, pages just fade.
 class AppPageTransitions extends PageTransitionsBuilder {
   const AppPageTransitions();
 
-  static const Duration forward = Duration(milliseconds: 240);
-  static const Duration back = Duration(milliseconds: 200);
+  static const Duration forward = Motion.pageIn;
+  static const Duration back = Motion.pageBack;
 
   @override
   Duration get transitionDuration => forward;
 
   @override
   Duration get reverseTransitionDuration => back;
+
+  // A page one step deeper comes in from the side...
+  static const Offset _drill = Offset(0.08, 0);
+  // ...a full-screen modal rises a little instead.
+  static const Offset _rise = Offset(0, 0.06);
+
+  // Solid within the first half of the way in; dissolves on the way out.
+  static final Animatable<double> _fadeIn =
+      CurveTween(curve: const Interval(0.0, 0.5, curve: Motion.easeFadeIn));
+  static final Animatable<double> _fadeOut = Tween<double>(begin: 1, end: 0)
+      .chain(CurveTween(curve: Motion.easeFadeOut));
+
+  // The page underneath: out of the way quickly as a page opens over it,
+  // back in quickly as that page closes.
+  static final Animatable<double> _underLeaveFade = Tween<double>(
+          begin: 1, end: 0)
+      .chain(CurveTween(curve: const Interval(0.0, 0.3)));
+  static final Animatable<double> _underReturnFade =
+      CurveTween(curve: const Interval(0.0, 0.6, curve: Motion.easeFadeIn));
+  static final Animatable<Offset> _underLeaveSlide =
+      Tween<Offset>(begin: Offset.zero, end: const Offset(-0.04, 0))
+          .chain(CurveTween(curve: Motion.easeEnter));
+  static final Animatable<Offset> _underReturnSlide =
+      Tween<Offset>(begin: const Offset(-0.04, 0), end: Offset.zero)
+          .chain(CurveTween(curve: Motion.easeEnter));
+
+  @override
+  DelegatedTransitionBuilder? get delegatedTransition =>
+      (context, animation, secondaryAnimation, allowSnapshotting, child) =>
+          Motion.reduced(context)
+              ? child
+              : _underneath(context, secondaryAnimation, child);
 
   @override
   Widget buildTransitions<T>(
@@ -278,7 +323,71 @@ class AppPageTransitions extends PageTransitionsBuilder {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
     Widget child,
-  ) =>
-      const FadeUpwardsPageTransitionsBuilder().buildTransitions<T>(
-          route, context, animation, secondaryAnimation, child);
+  ) {
+    if (Motion.reduced(context)) {
+      return FadeTransition(opacity: animation, child: child);
+    }
+    if (route.fullscreenDialog) {
+      // Nothing moves underneath a modal (the route does not ask it to).
+      return _page(animation, _rise, child);
+    }
+    return _page(
+        animation, _drill, _underneath(context, secondaryAnimation, child));
+  }
+
+  /// The page itself: in on the arrival curve, out on the leaving one.
+  static Widget _page(Animation<double> animation, Offset from, Widget child) {
+    return DualTransitionBuilder(
+      animation: animation,
+      forwardBuilder: (context, a, child) => FadeTransition(
+        opacity: a.drive(_fadeIn),
+        child: SlideTransition(
+          position: a.drive(Tween<Offset>(begin: from, end: Offset.zero)
+              .chain(CurveTween(curve: Motion.easeEnter))),
+          child: child,
+        ),
+      ),
+      // Runs forward as the page leaves (Back).
+      reverseBuilder: (context, a, child) => FadeTransition(
+        opacity: a.drive(_fadeOut),
+        child: SlideTransition(
+          position: a.drive(Tween<Offset>(begin: Offset.zero, end: from)
+              .chain(CurveTween(curve: Motion.easeExit))),
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
+
+  /// The page underneath, while another opens over it or closes off it.
+  static Widget _underneath(
+      BuildContext context, Animation<double> secondary, Widget? child) {
+    final moving = DualTransitionBuilder(
+      animation: ReverseAnimation(secondary),
+      // The page above is closing: this one comes back.
+      forwardBuilder: (context, a, child) => FadeTransition(
+        opacity: a.drive(_underReturnFade),
+        child: SlideTransition(
+            position: a.drive(_underReturnSlide), child: child),
+      ),
+      // A page is opening over this one: it steps back and fades.
+      reverseBuilder: (context, a, child) => FadeTransition(
+        opacity: a.drive(_underLeaveFade),
+        child:
+            SlideTransition(position: a.drive(_underLeaveSlide), child: child),
+      ),
+      child: child,
+    );
+    if (!(ModalRoute.opaqueOf(context) ?? true)) return moving;
+    // On the app's ground while it moves, so a fading page shows the
+    // ground behind it and not the black of an empty window. Only while
+    // moving: at rest this draws nothing at all.
+    return DecoratedBox(
+      decoration: secondary.isAnimating
+          ? BoxDecoration(color: Neon.bg)
+          : const BoxDecoration(),
+      child: moving,
+    );
+  }
 }

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/widgets/action_cards.dart';
@@ -80,8 +81,8 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
     final child = _card(room);
     if (child == null) return const SizedBox.shrink();
     return AnimatedPositioned(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
+      duration: Motion.short,
+      curve: Motion.easeMove,
       left: 0,
       right: 0,
       bottom: bottom,
@@ -89,9 +90,40 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: room),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            child: child,
+          // CARDS COME OUT OF THE MIC (2026-09-24). The switcher below was
+          // created together with the first card, and a switcher never
+          // animates its first child — so every confirmation, script,
+          // sources and image card appeared at full size in one frame. The
+          // first card now fades in as it grows from 96% about its bottom
+          // edge (just above the mic, which it never crosses); leaving
+          // stays instant. A card replacing another fades and grows in on
+          // the same curve, anchored at the bottom, so a taller or shorter
+          // card no longer jumps its top edge (it was a linear cross-fade
+          // centred on both).
+          child: EnterOnce(
+            duration: const Duration(milliseconds: 240),
+            scaleFrom: 0.96,
+            alignment: Alignment.bottomCenter,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              reverseDuration: Motion.out,
+              switchInCurve: Motion.easeEnter,
+              switchOutCurve: Motion.easeFadeOut,
+              transitionBuilder: (child, a) => FadeTransition(
+                opacity: a,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.96, end: 1.0).animate(a),
+                  alignment: Alignment.bottomCenter,
+                  filterQuality: FilterQuality.medium,
+                  child: child,
+                ),
+              ),
+              layoutBuilder: (current, previous) => Stack(
+                alignment: Alignment.bottomCenter,
+                children: [...previous, if (current != null) current],
+              ),
+              child: child,
+            ),
           ),
         ),
       ),

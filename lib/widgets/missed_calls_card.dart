@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/call_history.dart';
@@ -32,13 +33,24 @@ class MissedCallsCard extends StatelessWidget {
     final svc = MissedCallsService.instance;
     return ValueListenableBuilder<List<CallEntry>>(
       valueListenable: svc.pending,
+      // THE SPACE AND THE CARD MOVE TOGETHER (2026-09-24). Only the size
+      // used to animate: the card was uncovered like a curtain as it
+      // arrived, and when it went its content vanished and a blank gap
+      // closed slowly under it. The card now fades in as its room opens,
+      // and the room closes on the standard curve in 180 ms. It still
+      // leaves on the frame it is dismissed.
       builder: (context, calls, _) => AnimatedSize(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
+        duration: const Duration(milliseconds: 180),
+        curve: Motion.easeMove,
         alignment: Alignment.topCenter,
         child: calls.isEmpty
             ? const SizedBox(width: double.infinity)
-            : _card(context, calls),
+            : EnterOnce(
+                key: const ValueKey('missed-calls-enter'),
+                duration: Motion.micro,
+                delay: const Duration(milliseconds: 60),
+                child: _card(context, calls),
+              ),
       ),
     );
   }

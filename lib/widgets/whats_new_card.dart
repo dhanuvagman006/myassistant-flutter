@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 
 /// WHAT'S NEW — a card at the top of Home, once per release.
@@ -50,12 +51,18 @@ class _WhatsNewCardState extends State<WhatsNewCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Fades in as its room opens, and the room closes on the standard
+    // curve in 180 ms once it is dismissed (2026-09-24: it was uncovered
+    // like a curtain, and left a blank gap that closed slowly).
     return AnimatedSize(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 180),
+      curve: Motion.easeMove,
       child: !_show
           ? const SizedBox(width: double.infinity)
-          : Container(
+          : EnterOnce(
+              duration: Motion.micro,
+              delay: const Duration(milliseconds: 60),
+              child: Container(
               margin: const EdgeInsets.only(bottom: 18),
               padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
               decoration: BoxDecoration(
@@ -97,6 +104,7 @@ class _WhatsNewCardState extends State<WhatsNewCard> {
                     ),
                 ],
               ),
+            ),
             ),
     );
   }

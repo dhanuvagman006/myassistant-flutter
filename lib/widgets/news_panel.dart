@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../models/news_item.dart';
@@ -71,6 +72,12 @@ class _NewsPanelState extends State<NewsPanel> {
     if (items.isEmpty) return const SizedBox.shrink();
     final media = MediaQuery.of(context);
 
+    // IT OPENS LIKE A SHEET, NOT IN ONE FRAME (2026-09-24). The scrim and
+    // a sheet 78% of the screen tall used to appear (and vanish) in a
+    // single frame. The scrim now fades in and the sheet fades in as it
+    // grows from 96%, anchored where its list ends — the dock's top edge,
+    // which the list must never cross, not even mid-animation. Closing
+    // stays instant: Back and ✕ take it away at once.
     return Positioned.fill(
       child: Stack(
         children: [
@@ -78,12 +85,20 @@ class _NewsPanelState extends State<NewsPanel> {
           // a task, and should never trap anyone.
           GestureDetector(
             onTap: _close,
-            child: Container(color: Colors.black.withValues(alpha: 0.55)),
+            child: EnterOnce(
+              duration: Motion.short,
+              child: Container(color: Colors.black.withValues(alpha: 0.55)),
+            ),
           ),
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
+            child: EnterOnce(
+              duration: const Duration(milliseconds: 280),
+              scaleFrom: 0.96,
+              alignment: Alignment.bottomCenter,
+              origin: Offset(0, -media.padding.bottom),
             child: Container(
               constraints: BoxConstraints(
                 maxHeight: media.size.height * 0.78,
@@ -116,6 +131,7 @@ class _NewsPanelState extends State<NewsPanel> {
                   ),
                 ],
               ),
+            ),
             ),
           ),
         ],
@@ -174,7 +190,13 @@ class _NewsPanelState extends State<NewsPanel> {
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Column(
+        // The story opens smoothly under its headline (it used to jump
+        // open in one frame), and its text fades in as the room opens.
+        child: AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Motion.easeMove,
+          alignment: Alignment.topCenter,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -226,7 +248,9 @@ class _NewsPanelState extends State<NewsPanel> {
             ),
             if (open) ...[
               const SizedBox(height: 8),
-              Padding(
+              EnterOnce(
+                duration: Motion.micro,
+                child: Padding(
                 padding: const EdgeInsets.only(left: 24, right: 4),
                 child: Text(
                   [item.snippet, ...item.extra]
@@ -239,6 +263,7 @@ class _NewsPanelState extends State<NewsPanel> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+              ),
               ),
               const SizedBox(height: 8),
               Padding(
@@ -260,6 +285,7 @@ class _NewsPanelState extends State<NewsPanel> {
               ),
             ],
           ],
+        ),
         ),
       ),
     );

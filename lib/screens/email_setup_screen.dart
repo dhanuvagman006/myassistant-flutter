@@ -371,10 +371,13 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 120),
       children: [
         Center(
+          // The app's one "success" moment, and its one overshoot: a
+          // single gentle one (2026-09-24 — it wobbled on elasticOut for
+          // 650 ms, the longest and bounciest motion in the app).
           child: TweenAnimationBuilder<double>(
             tween: Tween(begin: _justLinked ? 0.0 : 1.0, end: 1.0),
-            duration: const Duration(milliseconds: 650),
-            curve: Curves.elasticOut,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutBack,
             builder: (c, v, child) => Transform.scale(scale: v, child: child),
             child: Container(
               width: 74,

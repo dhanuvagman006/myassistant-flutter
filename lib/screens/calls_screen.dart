@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../models/call_outcome.dart';
 import '../services/api_service.dart';
@@ -50,7 +51,11 @@ class _CallsScreenState extends State<CallsScreen> {
         onRefresh: _load,
         color: Neon.violet,
         backgroundColor: Neon.surface,
-        child: _body(),
+        // No spinner flash on a quick load, and the list fades in.
+        child: LoadSwitch(
+          loading: _calls == null && _error == null,
+          child: _body(),
+        ),
       ),
     );
   }

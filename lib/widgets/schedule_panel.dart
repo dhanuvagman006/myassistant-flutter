@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../models/schedule_item.dart';
@@ -77,17 +78,31 @@ class _SchedulePanelState extends State<SchedulePanel> {
     if (items.isEmpty) return const SizedBox.shrink();
     final media = MediaQuery.of(context);
 
+    // IT OPENS LIKE A SHEET, NOT IN ONE FRAME (2026-09-24). The scrim and
+    // a sheet 78% of the screen tall used to appear (and vanish) in a
+    // single frame. The scrim now fades in and the sheet fades in as it
+    // grows from 96%, anchored where its list ends — the dock's top edge,
+    // which the list must never cross, not even mid-animation. Closing
+    // stays instant: Back and ✕ take it away at once.
     return Positioned.fill(
       child: Stack(
         children: [
           GestureDetector(
             onTap: _close,
-            child: Container(color: Colors.black.withValues(alpha: 0.55)),
+            child: EnterOnce(
+              duration: Motion.short,
+              child: Container(color: Colors.black.withValues(alpha: 0.55)),
+            ),
           ),
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
+            child: EnterOnce(
+              duration: const Duration(milliseconds: 280),
+              scaleFrom: 0.96,
+              alignment: Alignment.bottomCenter,
+              origin: Offset(0, -media.padding.bottom),
             child: Container(
               constraints:
                   BoxConstraints(maxHeight: media.size.height * 0.78),
@@ -117,6 +132,7 @@ class _SchedulePanelState extends State<SchedulePanel> {
                   ),
                 ],
               ),
+            ),
             ),
           ),
         ],
@@ -208,7 +224,12 @@ class _SchedulePanelState extends State<SchedulePanel> {
             Icon(_icon(item.kind), size: 16, color: Neon.textDim),
             const SizedBox(width: 10),
             Expanded(
-              child: Column(
+              // The row opens smoothly (it used to jump open in one frame).
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Motion.easeMove,
+                alignment: Alignment.topCenter,
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
@@ -240,7 +261,9 @@ class _SchedulePanelState extends State<SchedulePanel> {
                     ),
                   if (open) ...[
                     const SizedBox(height: 7),
-                    Row(
+                    EnterOnce(
+                      duration: Motion.micro,
+                      child: Row(
                       children: [
                         Icon(Icons.graphic_eq_rounded,
                             size: 15, color: Neon.cyan),
@@ -257,8 +280,10 @@ class _SchedulePanelState extends State<SchedulePanel> {
                         ),
                       ],
                     ),
+                    ),
                   ],
                 ],
+              ),
               ),
             ),
           ],

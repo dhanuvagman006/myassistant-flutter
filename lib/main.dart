@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 
 import 'core/bundled_fonts.dart';
 import 'design/accent_controller.dart';
+import 'design/motion.dart';
 import 'design/theme_controller.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/auth/assistant_setup_screen.dart';
@@ -214,8 +215,34 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  /// FROM THE SPLASH INTO THE APP, NOT A CUT (2026-09-24). After the
+  /// animated splash the app used to cut to Home in one frame, the dock
+  /// and mic at full size — on every cold launch — and sign-in, unlock
+  /// and setup-to-app were the same kind of cut. Each step now fades into
+  /// the next. What shows, and when it starts, is unchanged: the next
+  /// screen is built at once, only its first 280 ms are a fade.
+  ///
+  /// EXCEPT THE LOCK. Relocking switches INSTANTLY: a lock that faded in
+  /// would leave private content showing under a half-drawn lock.
   @override
   Widget build(BuildContext context) {
+    final gate = _gate();
+    return AnimatedSwitcher(
+      duration: gate is LockScreen
+          ? Duration.zero
+          : const Duration(milliseconds: 280),
+      reverseDuration: const Duration(milliseconds: 160),
+      switchInCurve: Motion.easeFadeIn,
+      switchOutCurve: Motion.easeFadeOut,
+      layoutBuilder: (current, previous) => Stack(
+        fit: StackFit.expand,
+        children: [...previous, if (current != null) current],
+      ),
+      child: KeyedSubtree(key: ValueKey(gate.runtimeType), child: gate),
+    );
+  }
+
+  Widget _gate() {
     if (_restoring) return const SplashScreen();
     final auth = AuthService.instance;
     if (!auth.isSignedIn) return const AuthScreen();

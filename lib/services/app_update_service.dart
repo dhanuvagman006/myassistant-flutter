@@ -15,6 +15,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/log.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../models/remote_config.dart';
 import 'api_service.dart';
@@ -205,7 +206,7 @@ class AppUpdateService {
       _cancelled = false;
       _installStarted = false;
       _autoStart = forced || unmetered;
-      await showModalBottomSheet<void>(
+      await showAppSheet<void>(
         context: context,
         // WITHOUT THIS THE SHEET IS CAPPED AT 56% OF THE SCREEN and
         // anything past that edge is simply clipped — which is how a
