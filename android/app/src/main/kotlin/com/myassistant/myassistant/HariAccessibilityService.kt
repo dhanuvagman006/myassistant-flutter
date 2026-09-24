@@ -1462,6 +1462,12 @@ class HariAccessibilityService : AccessibilityService() {
             // Emptied first, then typed: an app that skips a query equal
             // to the last one still sees the text arrive.
             ic.commitText("", 1, null)
+            // An editor that ignores "select all" still holds the text set
+            // before: whatever is left around the cursor is deleted too
+            // (editors clamp to what is there), so the text is never typed
+            // twice ("raviravi" would still pass holds(), which looks for
+            // the text inside the field).
+            ic.deleteSurroundingText(10_000, 10_000)
             ic.commitText(text, 1, null)
             // A read on the same connection comes back only after the
             // edits above are done — so the field is checked after them.
