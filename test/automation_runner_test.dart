@@ -199,11 +199,39 @@ void main() {
   });
 
   test('the owner coming back to the assistant ends the run', () async {
-    final dev = FakeDevice(screens: [screen('com.myassistant.myassistant', ['Home'])]);
-    final api = FakeApi([]);
+    final dev = FakeDevice(screens: [
+      screen(sw, ['Search']),
+      screen('com.myassistant.myassistant', ['Home']),
+    ]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 0}},
+    ]);
     await AutomationRunner(device: dev, api: api).run(swiggy());
     expect(api.finishes, ['returned']);
-    expect(api.steps, isEmpty);
+    expect(api.steps.length, 1);
+  });
+
+  test('a slow app start is waited for — our own screen first is not "coming back"', () async {
+    final dev = FakeDevice(screens: [
+      screen('com.myassistant.myassistant', ['Home']),
+      screen('com.myassistant.myassistant', ['Home']),
+      screen(sw, ['Search']),
+    ]);
+    final api = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api, startPoll: Duration.zero).run(swiggy());
+    expect(out.status, 'done');
+    expect(api.finishes, isEmpty);
+    expect(api.steps.single.screen['pkg'], sw);
+  });
+
+  test('an app that never comes to the front is reported, not called "you came back"', () async {
+    final dev = FakeDevice(screens: [screen('com.myassistant.myassistant', ['Home'])]);
+    final api = FakeApi([]);
+    final out = await AutomationRunner(device: dev, api: api, startPoll: Duration.zero).run(swiggy());
+    expect(out.status, 'failed');
+    expect(api.finishes, ['error']);
   });
 
   test('a task with no app starts from the home screen and may open any app', () async {
@@ -309,6 +337,22 @@ void main() {
     expect(second.status, 'busy');
     expect((await first).status, 'done');
     expect(runner.busy, isFalse);
+  });
+
+  test('the screenshot goes to the planner with the screen', () async {
+    final dev = FakeDevice(screens: [
+      {...screen(sw, []), 'shot': 'QUJD'},
+    ]);
+    final api = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(api.steps.single.screen['shot'], 'QUJD');
+    expect(AutomationRunner.statusLine('Swiggy', {'type': 'tap_xy', 'label': 'Food tab'}),
+        'Swiggy · tapping “Food tab”');
+    // With no element list, a new picture counts as the screen changing.
+    expect(AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'A'}) ==
+        AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'B'}), isFalse);
   });
 
   test('the bar describes each step in a few words', () {

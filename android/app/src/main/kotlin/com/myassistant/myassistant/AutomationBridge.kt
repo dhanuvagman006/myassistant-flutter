@@ -118,7 +118,15 @@ object AutomationBridge {
                             Log.w(TAG, "snapshot failed: ${e.javaClass.simpleName}")
                             null
                         }
-                        main.post { result.success(snap) }
+                        // The screenshot rides along — only for a screen the
+                        // run may touch.
+                        if (snap == null || snap["allowed"] != true || call.argument<Boolean>("shot") == false) {
+                            main.post { result.success(snap) }
+                        } else {
+                            svc.captureScreen { shot ->
+                                main.post { result.success(if (shot == null) snap else snap + ("shot" to shot)) }
+                            }
+                        }
                     }
                 }
                 "act" -> {

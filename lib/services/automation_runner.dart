@@ -223,8 +223,12 @@ class HttpAutomationApi implements AutomationApi {
 }
 
 class AutomationRunner {
-  AutomationRunner({AutomationDevice? device, AutomationApi? api, this.ownPackage = 'com.myassistant.myassistant'})
-      : device = device ?? ChannelAutomationDevice(),
+  AutomationRunner({
+    AutomationDevice? device,
+    AutomationApi? api,
+    this.ownPackage = 'com.myassistant.myassistant',
+    this.startPoll = const Duration(milliseconds: 300),
+  })  : device = device ?? ChannelAutomationDevice(),
         api = api ?? HttpAutomationApi();
 
   static final AutomationRunner instance = AutomationRunner();
@@ -232,6 +236,10 @@ class AutomationRunner {
   final AutomationDevice device;
   final AutomationApi api;
   final String ownPackage;
+
+  /// How often to look while waiting for the opened app to come to the
+  /// front (20 looks at most).
+  final Duration startPoll;
 
   bool _busy = false;
   bool get busy => _busy;
@@ -246,6 +254,9 @@ class AutomationRunner {
       case 'type':
         final t = (action['text'] as String? ?? '').trim();
         return '${where}typing “${t.length > 24 ? '${t.substring(0, 23)}…' : t}”';
+      case 'tap_xy':
+        final l = (action['label'] as String? ?? '').trim();
+        return l.isEmpty ? '${where}tapping' : '${where}tapping “${l.length > 28 ? '${l.substring(0, 27)}…' : l}”';
       case 'tap':
         return short.isEmpty ? '${where}tapping' : '${where}tapping “$short”';
       case 'scroll':
@@ -275,6 +286,10 @@ class AutomationRunner {
   static String signature(Map<String, dynamic> snap) {
     final nodes = (snap['nodes'] as List?) ?? const [];
     final b = StringBuffer(snap['pkg'] ?? '');
+    // An app with little or no element list: the picture is the screen.
+    if (nodes.length < 5 && snap['shot'] is String) {
+      b.write('#${(snap['shot'] as String).hashCode}');
+    }
     for (final n in nodes) {
       if (n is! Map) continue;
       b
@@ -349,6 +364,10 @@ class AutomationRunner {
       Map<String, dynamic>? last;
       String? before;
       var firstLook = true;
+      // Set once any other app has been in front. Before that, this app's
+      // own screen is a slow start, not the owner coming back (seen
+      // 2026-09-24: a run "stopped" 1.3 s in, before the app had opened).
+      var seenOther = false;
       for (var i = 0; i < d.maxSteps + 2; i++) {
         if (await device.stopRequested()) {
           final o = await _finish(d.runId, 'stopped', fallback: 'Stopped, as you asked.');
@@ -357,6 +376,18 @@ class AutomationRunner {
         }
 
         var snap = await device.snapshot();
+        for (var w = 0; w < 20 && !seenOther && snap?['pkg'] == ownPackage; w++) {
+          await Future<void>.delayed(startPoll);
+          snap = await device.snapshot();
+        }
+        if (!seenOther && snap?['pkg'] == ownPackage) {
+          final o = await _finish(d.runId, 'error',
+              detail: 'the app did not open',
+              fallback: "I couldn't get ${d.app.isEmpty ? 'the app' : d.app} to open.");
+          finalText = o.report;
+          return o;
+        }
+        if (snap != null && (snap['pkg'] as String? ?? '').isNotEmpty) seenOther = true;
         // Patience before handing over: a splash screen or a slow first
         // draw is not a payment app or the owner switching away.
         bool usable(Map<String, dynamic>? m) =>
@@ -410,6 +441,7 @@ class AutomationRunner {
           'pkg': snap['pkg'],
           'keyboard': snap['keyboard'] == true,
           'nodes': snap['nodes'] ?? const [],
+          if (snap['shot'] is String) 'shot': snap['shot'],
         };
         var resp = await api.step(d.runId, screen, last);
         if (resp == null) {

@@ -3,6 +3,7 @@ package com.myassistant.myassistant
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -13,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -24,6 +26,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 /**
  * THE ASSISTANT'S HANDS — uses the phone the way the owner would: opens
@@ -127,7 +131,10 @@ class HariAccessibilityService : AccessibilityService() {
         private val DESTRUCTIVE = Regex(
             "^\\s*(?:delete|delete all|delete permanently|delete for everyone|erase|erase all|" +
                 "clear (?:data|storage|all data|cache and data)|format|wipe|factory (?:data )?reset|" +
-                "reset (?:phone|device|all|settings)|empty (?:trash|bin)|uninstall|remove account)\\b",
+                "reset (?:phone|device|all|settings)|empty (?:trash|bin)|uninstall|remove account|" +
+                // Recent apps: closing everything is the owner's call (a
+                // run once did it to "restart" an app — and closed us).
+                "close all|clear all|end all|force stop)\\b",
             RegexOption.IGNORE_CASE
         )
         /** Settings that guard the phone itself. Checked only in Settings. */
@@ -258,6 +265,8 @@ class HariAccessibilityService : AccessibilityService() {
 
     fun snapshot(): Map<String, Any?> {
         val root = rootInActiveWindow
+        // Fresh, not the cached copy from the app's splash screen.
+        try { root?.refresh() } catch (_: Throwable) {}
         val pkg = root?.packageName?.toString() ?: ""
         val out = ArrayList<Map<String, Any?>>()
         val keep = ArrayList<AccessibilityNodeInfo>()
@@ -268,7 +277,25 @@ class HariAccessibilityService : AccessibilityService() {
             val dm = resources.displayMetrics
             val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
             walk(root, false, -1, out, keep, screenArea)
+            // The active window can be an empty layer over the app's real
+            // content (seen with a food-delivery app, 2026-09-24: every
+            // look came back blank while the app showed a full page).
+            // Then read the app's own windows, top-most first.
+            if (out.isEmpty()) {
+                try {
+                    for (w in windows.sortedByDescending { it.layer }) {
+                        if (w.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                        val r = w.root ?: continue
+                        if (r.packageName?.toString() != pkg) continue
+                        walk(r, false, -1, out, keep, screenArea)
+                        if (out.isNotEmpty()) break
+                    }
+                } catch (_: Throwable) {}
+            }
         }
+        // Counts only — what was on screen never goes to the log.
+        Log.i(TAG, "look $pkg ok=$ok nodes=${out.size} kids=${root?.childCount ?: -1} " +
+            "vis=${root?.isVisibleToUser} windows=${try { windows.size } catch (_: Throwable) { -1 }}")
         byId = keep
         return mapOf(
             "pkg" to pkg,
@@ -278,6 +305,79 @@ class HariAccessibilityService : AccessibilityService() {
             "stop" to stopRequested,
             "nodes" to out,
         )
+    }
+
+    /** The whole display in pixels (bounds and screenshots use this). */
+    private fun screenSize(): Pair<Int, Int> {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val b = (getSystemService(WINDOW_SERVICE) as WindowManager).currentWindowMetrics.bounds
+            if (b.width() > 0 && b.height() > 0) return b.width() to b.height()
+        }
+        val dm = resources.displayMetrics
+        return dm.widthPixels to dm.heightPixels
+    }
+
+    private fun norm(r: Rect): List<Int> {
+        val (w, h) = screenSize()
+        return listOf(r.left * 1000 / w, r.top * 1000 / h, r.right * 1000 / w, r.bottom * 1000 / h)
+            .map { it.coerceIn(0, 1000) }
+    }
+
+    private val shotWorker = Executors.newSingleThreadExecutor()
+
+    /**
+     * THE SCREEN AS THE OWNER SEES IT — a small JPEG (540 px wide), base64,
+     * or null. Android 11+ lets an accessibility service take it with the
+     * permission already granted; apps that forbid screenshots (banking,
+     * FLAG_SECURE) just come back null. Our own bar is hidden for the shot
+     * so it never covers what the planner needs to read. Only called
+     * during a run, for an app the run may touch.
+     */
+    fun captureScreen(done: (String?) -> Unit) {
+        if (Build.VERSION.SDK_INT < 30) { done(null); return }
+        main.post {
+            pill?.visibility = View.INVISIBLE
+            main.postDelayed({
+                try {
+                    takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor,
+                        object : TakeScreenshotCallback {
+                            override fun onSuccess(shot: ScreenshotResult) {
+                                pill?.visibility = View.VISIBLE
+                                shotWorker.execute {
+                                    done(try { encode(shot) } catch (e: Throwable) {
+                                        Log.w(TAG, "shot encode failed: ${e.javaClass.simpleName}")
+                                        null
+                                    })
+                                }
+                            }
+                            override fun onFailure(errorCode: Int) {
+                                pill?.visibility = View.VISIBLE
+                                Log.i(TAG, "shot unavailable ($errorCode)")
+                                done(null)
+                            }
+                        })
+                } catch (e: Throwable) {
+                    pill?.visibility = View.VISIBLE
+                    done(null)
+                }
+            }, 90)
+        }
+    }
+
+    private fun encode(shot: ScreenshotResult): String? {
+        val buffer = shot.hardwareBuffer
+        val hw = Bitmap.wrapHardwareBuffer(buffer, shot.colorSpace) ?: run { buffer.close(); return null }
+        val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
+        hw.recycle()
+        buffer.close()
+        val w = 540
+        val h = (soft.height * (w / soft.width.toFloat())).toInt().coerceAtLeast(1)
+        val small = Bitmap.createScaledBitmap(soft, w, h, true)
+        if (small != soft) soft.recycle()
+        val bos = ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.JPEG, 60, bos)
+        small.recycle()
+        return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
     }
 
     private fun keyboardOpen(): Boolean = try {
@@ -291,12 +391,24 @@ class HariAccessibilityService : AccessibilityService() {
         out: ArrayList<Map<String, Any?>>,
         keep: ArrayList<AccessibilityNodeInfo>,
         screenArea: Long,
+        depth: Int = 0,
     ) {
-        if (out.size >= MAX_NODES) return
-        if (!n.isVisibleToUser) return
+        if (out.size >= MAX_NODES || depth > 60) return
         val r = Rect()
         n.getBoundsInScreen(r)
-        if (r.width() <= 0 || r.height() <= 0) return
+        // AN INVISIBLE WRAPPER IS NOT AN EMPTY SCREEN. Some apps wrap the
+        // whole page in a container that reports zero size or "not
+        // visible" (seen 2026-09-24: every look at a food-delivery app came
+        // back blank while it showed a full page). Skip listing it, but
+        // always look inside.
+        if (!n.isVisibleToUser || r.width() <= 0 || r.height() <= 0) {
+            for (i in 0 until n.childCount) {
+                val c = n.getChild(i) ?: continue
+                walk(c, insideCard, clickUp, out, keep, screenArea, depth + 1)
+                if (out.size >= MAX_NODES) return
+            }
+            return
+        }
 
         val text = n.text?.toString()?.trim().orEmpty()
         val desc = n.contentDescription?.toString()?.trim().orEmpty()
@@ -343,6 +455,9 @@ class HariAccessibilityService : AccessibilityService() {
                     "sel" to if (n.isSelected) 1 else 0,
                     "pwd" to if (n.isPassword) 1 else 0,
                     "en" to if (n.isEnabled) 1 else 0,
+                    // Where it is, 0-1000 across and down — so the planner
+                    // can match the list to the screenshot.
+                    "b" to norm(r),
                 )
             )
             keep.add(n)
@@ -350,7 +465,7 @@ class HariAccessibilityService : AccessibilityService() {
         for (i in 0 until n.childCount) {
             val c = n.getChild(i) ?: continue
             val up = if (n.isClickable && myId >= 0) myId else clickUp
-            walk(c, insideCard || isCard, up, out, keep, screenArea)
+            walk(c, insideCard || isCard, up, out, keep, screenArea, depth + 1)
             if (out.size >= MAX_NODES) return
         }
     }
@@ -401,6 +516,30 @@ class HariAccessibilityService : AccessibilityService() {
         ).joinToString(" ")
     }
 
+    /** The kind of line a tap on these elements would cross, or null. */
+    private fun judgeTap(nodes: List<AccessibilityNodeInfo>, fg: String): String? {
+        for (judged in nodes) {
+            val words = tapWords(judged)
+            val merged = StringBuilder().also { collectText(judged, it, 0) }.toString()
+            if (PAY.containsMatchIn(merged)) return "payment"
+            judgeWords(words, fg)?.let { return it }
+            if (judged.isCheckable && CONSENT.containsMatchIn(merged)) return "consent"
+            if (fg in SETTINGS_APPS && SECURITY_SETTING.containsMatchIn(merged)) return "security"
+        }
+        return null
+    }
+
+    private fun judgeWords(words: List<String>, fg: String): String? {
+        val w = words.filter { it.isNotBlank() }
+        if (w.any { PAY.containsMatchIn(it) || PRICE_ONLY.matches(it) }) return "payment"
+        if (w.any { MONEY.containsMatchIn(it) }) return "money"
+        if (fg in MESSAGING && w.any { SEND.matches(it) }) return "message_send"
+        if (w.any { DESTRUCTIVE.containsMatchIn(it) }) return "destructive"
+        if (w.any { CONSENT.containsMatchIn(it) }) return "consent"
+        if (fg in SETTINGS_APPS && w.any { SECURITY_SETTING.containsMatchIn(it) }) return "security"
+        return null
+    }
+
     fun act(a: Map<String, Any?>): Map<String, Any?> {
         if (stopRequested) return mapOf("ok" to false, "error" to "stopped", "stop" to true)
         if (!running) return fail("not_running")
@@ -422,28 +561,31 @@ class HariAccessibilityService : AccessibilityService() {
                 while (target != null && !target.isClickable) target = target.parent
                 // Judged on what the click would ACTUALLY press: "₹312"
                 // is harmless text, its parent "Proceed to Pay" is not.
-                for (judged in listOfNotNull(n, target)) {
-                    val words = tapWords(judged)
-                    val merged = StringBuilder().also { collectText(judged, it, 0) }.toString()
-                    if (words.any { PAY.containsMatchIn(it) || PRICE_ONLY.matches(it) } ||
-                        PAY.containsMatchIn(merged)) {
-                        return blocked("payment")
-                    }
-                    if (words.any { MONEY.containsMatchIn(it) }) return blocked("money")
-                    if (fg in MESSAGING && words.any { SEND.matches(it) }) return blocked("message_send")
-                    if (words.any { DESTRUCTIVE.containsMatchIn(it) }) return blocked("destructive")
-                    if (CONSENT.containsMatchIn(ownLabel(judged)) ||
-                        (judged.isCheckable && CONSENT.containsMatchIn(merged))) return blocked("consent")
-                    if (fg in SETTINGS_APPS && (words + merged).any { SECURITY_SETTING.containsMatchIn(it) }) {
-                        return blocked("security")
-                    }
-                }
+                judgeTap(listOfNotNull(n, target), fg)?.let { return blocked(it) }
                 val ok = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 if (ok) mapOf("ok" to true, "how" to "click") else {
                     val r = Rect(); n.getBoundsInScreen(r)
                     if (tapAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
                     else fail("tap_failed")
                 }
+            }
+            // A point on the screenshot, for what the element list lacks.
+            // Judged twice: the planner's own words for it, and whatever
+            // element sits under the point.
+            "tap_xy" -> {
+                val (sw, sh) = screenSize()
+                val x = ((a["x"] as? Number)?.toFloat() ?: return fail("no_point")) * sw / 1000f
+                val y = ((a["y"] as? Number)?.toFloat() ?: return fail("no_point")) * sh / 1000f
+                judgeWords(listOf((a["label"] as? String).orEmpty()), fg)?.let { return blocked(it) }
+                val under = byId.filter {
+                    val r = Rect(); it.getBoundsInScreen(r); r.contains(x.toInt(), y.toInt())
+                }.minByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
+                if (under != null) {
+                    var t: AccessibilityNodeInfo? = under
+                    while (t != null && !t.isClickable) t = t.parent
+                    judgeTap(listOfNotNull(under, t), fg)?.let { return blocked(it) }
+                }
+                if (tapAt(x, y)) mapOf("ok" to true, "how" to "point") else fail("tap_failed")
             }
             "type" -> {
                 val n = node ?: return fail("no_such_element")

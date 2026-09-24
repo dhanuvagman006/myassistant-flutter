@@ -365,17 +365,32 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
         duration: const Duration(milliseconds: 280),
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
-        child: Container(
+        // ROOM FOR THE KEYBOARD. Above an open keyboard a phone has ~300
+        // points left, and the 330-point orb plus the dock's 120 did not
+        // fit: the column overflowed — painted, but outside its own
+        // bounds, where taps do not land — so the send arrow looked fine
+        // and did nothing (2026-09-24). While typing, the orb shrinks and
+        // the dock's space goes (the dock is hidden then). Only pad for
+        // the keyboard when the space we were given did not already make
+        // room for it.
+        child: LayoutBuilder(builder: (context, box) {
+          // From the window: the Scaffold zeroes viewInsets for its body
+          // once it has lifted it, so the body's own MediaQuery says 0.
+          final view = View.of(context);
+          final kb = view.viewInsets.bottom / view.devicePixelRatio;
+          final typing = kb > 0;
+          final lifted = box.maxHeight < MediaQuery.of(context).size.height - kb / 2;
+          final bottomPad = typing ? (lifted ? 12.0 : 12.0 + kb) : 120.0;
+          return Container(
           // FULLY OPAQUE. At 0.82, and still at 0.94, the page ghosted
           // through: Home's headings and calendar sat faintly behind the
           // orb and read as broken layering. The session is a place, not
           // a tint — a deep night in the accent's own hue, darkest at the
           // middle where the orb glows.
           decoration: BoxDecoration(gradient: _sessionGround()),
-          // The bottom padding clears the dock; the keyboard adds its own
-          // height on top so the text bar rides above it.
-          padding: EdgeInsets.fromLTRB(
-              28, 14, 28, 120 + MediaQuery.of(context).viewInsets.bottom),
+          // The bottom padding clears the dock; while typing the dock is
+          // hidden and the bar sits just above the keyboard.
+          padding: EdgeInsets.fromLTRB(28, 14, 28, bottomPad),
           child: Column(
             children: [
               // MUTE — read the answer instead of hearing it.
@@ -402,7 +417,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // backdrop's edges showed as a box around it.
               SizedBox(
                 width: double.infinity,
-                height: 330,
+                // Smaller while typing, so everything fits above the keyboard.
+                height: typing ? 190 : 330,
                 child: ValueListenableBuilder<double>(
                   valueListenable: engine.micLevelListenable,
                   builder: (_, level, __) {
@@ -436,7 +452,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                   },
                 ),
               ),
-              const SizedBox(height: 24),
+              SizedBox(height: typing ? 6 : 24),
               // AN ERROR SAYS WHAT WENT WRONG. The caption below maps every
               // phase it does not name to "Connecting…" — including error —
               // so a denied microphone, a failed upload and a timeout all
@@ -536,7 +552,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               _TypeBar(engine: engine),
             ],
           ),
-        ),
+          );
+        }),
       ),
     );
   }
