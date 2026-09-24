@@ -94,7 +94,7 @@ class _AccountSectionState extends State<AccountSection> {
           TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep my account')),
           TextButton(
             onPressed: () => Navigator.pop(c, true),
-            style: TextButton.styleFrom(foregroundColor: Neon.error),
+            style: TextButton.styleFrom(foregroundColor: Neon.errorInk),
             child: const Text('Continue'),
           ),
         ],
@@ -201,7 +201,7 @@ class _TypeToConfirmState extends State<_TypeToConfirm> {
         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
         TextButton(
           onPressed: matches ? () => Navigator.pop(context, true) : null,
-          style: TextButton.styleFrom(foregroundColor: Neon.error),
+          style: TextButton.styleFrom(foregroundColor: Neon.errorInk),
           child: const Text('Delete forever'),
         ),
       ],

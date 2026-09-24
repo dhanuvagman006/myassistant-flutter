@@ -65,13 +65,21 @@ PreferredSizeWidget appleAppBar(BuildContext context, String title,
     elevation: 0,
     centerTitle: true,
     leading: leading,
+    // A BARE TextStyle, ON PURPOSE (2026-09-24). This is the one place
+    // where the "bare fontWeight draws the regular file" rule does not
+    // hold: AppBar wraps its title in the theme's titleTextStyle, which is
+    // GoogleFonts.spaceGrotesk(w700), so this title inherits the family
+    // "SpaceGrotesk_700" and already draws from the bold file. Only size,
+    // colour and spacing are set here, so all 20 detail bars keep the one
+    // app-bar face the plain AppBars and LargeTitle use. (The clarity pass
+    // had switched it to Manrope SemiBold: a lighter, different face.)
     title: Text(
       title,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
         color: Neon.textHi,
-        fontSize: 17,
+        fontSize: NeonType.headline,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.2,
       ),
@@ -80,7 +88,11 @@ PreferredSizeWidget appleAppBar(BuildContext context, String title,
   );
 }
 
-/// The uppercase section label above a group.
+/// The uppercase section label above a group — the ONE label style on
+/// every tab (Hub had its own, in the accent at 11.5 sp, beside You's).
+///
+/// textLo, not textDim (2026-09-24): the labels at the top of You and Hub
+/// sit on the ambient wash, where textDim measured 3.6:1.
 class GroupLabel extends StatelessWidget {
   final String text;
   const GroupLabel(this.text, {super.key});
@@ -91,12 +103,7 @@ class GroupLabel extends StatelessWidget {
       padding: const EdgeInsets.only(left: 16, bottom: 7, top: 4),
       child: Text(
         text.toUpperCase(),
-        style: TextStyle(
-          color: Neon.textDim,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.4,
-        ),
+        style: NeonType.sectionLabel.copyWith(color: Neon.textLo),
       ),
     );
   }
@@ -115,7 +122,13 @@ class GroupedCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Neon.surface,
-      borderRadius: BorderRadius.circular(14),
+      // A hairline edge, as every other card in the app has: white on the
+      // #F7F7FB detail ground is 1.07:1, so without it the group had no
+      // visible edge (the "I never" card, 2026-09-24).
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Neon.line),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
@@ -151,7 +164,9 @@ class IconTile extends StatelessWidget {
         gradient: Neon.tile(color),
         borderRadius: BorderRadius.circular(size * 0.3),
       ),
-      child: Icon(icon, color: Colors.white, size: size * 0.55),
+      // White by day; dark ink on the evening theme's pastels, where
+      // white fell to 1.4–2.3:1 (Neon.onTile).
+      child: Icon(icon, color: Neon.onTile(color), size: size * 0.55),
     );
   }
 }
@@ -192,16 +207,14 @@ class AppleRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // The title in its real weight (see NeonType): it drew
+                // from the regular file, level with its own subtitle.
                 Text(
                   title,
                   maxLines: titleMaxLines,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: titleColor ?? Neon.textHi,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -0.2,
-                  ),
+                  style: NeonType.row
+                      .copyWith(color: titleColor ?? Neon.textHi),
                 ),
                 if (subtitle != null && subtitle!.isNotEmpty) ...[
                   const SizedBox(height: 1),
@@ -213,7 +226,8 @@ class AppleRow extends StatelessWidget {
                     overflow: trailing == null && onTap == null
                         ? null
                         : TextOverflow.ellipsis,
-                    style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.footnote),
                   ),
                 ],
               ],
@@ -291,7 +305,10 @@ class ApplePrimaryButton extends StatelessWidget {
       foregroundColor: Neon.onAccent,
       minimumSize: const Size.fromHeight(50),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      // Manrope, in its real weight. A bare TextStyle here REPLACES the
+      // theme's button font, so this label was drawn in the phone's
+      // default font, not the app's.
+      textStyle: NeonType.manrope(NeonType.rowTitle, FontWeight.w600),
     );
     return icon == null
         ? FilledButton(style: style, onPressed: onPressed, child: Text(label))

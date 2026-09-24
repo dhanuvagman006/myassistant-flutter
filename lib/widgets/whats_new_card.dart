@@ -97,7 +97,7 @@ class _WhatsNewCardState extends State<WhatsNewCard> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(text,
-                                style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.4)),
+                                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.4)),
                           ),
                         ],
                       ),

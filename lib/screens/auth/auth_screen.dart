@@ -133,7 +133,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             ? 'Your personal assistant, everywhere you go.'
                             : 'Sign in to continue.',
                         style: TextStyle(
-                            color: Neon.textLo, fontSize: 14.5, height: 1.4),
+                            color: Neon.textLo, fontSize: 15, height: 1.4),
                       ),
                       const SizedBox(height: 28),
 
@@ -269,8 +269,8 @@ class _AuthScreenState extends State<AuthScreen> {
                               Expanded(
                                 child: Text(_error!,
                                     style: TextStyle(
-                                        color: Neon.error,
-                                        fontSize: 13.5,
+                                        color: Neon.errorInk,
+                                        fontSize: 14,
                                         height: 1.3)),
                               ),
                             ],
@@ -315,7 +315,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                     text: 'I have read and accept the ',
                                     style: TextStyle(
                                         color: Neon.textLo,
-                                        fontSize: 12.5,
+                                        fontSize: 13,
                                         height: 1.45),
                                     children: [
                                       TextSpan(
@@ -393,7 +393,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                    color: Neon.textDim, fontSize: 12.5)),
+                                    color: Neon.textDim, fontSize: 13)),
                           ),
                           ),
                           const Expanded(child: Divider()),
@@ -452,7 +452,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           text: 'By continuing you agree to our ',
                           style: TextStyle(
                             color: Neon.textDim,
-                            fontSize: 11.5,
+                            fontSize: 12,
                             height: 1.5,
                           ),
                           children: [

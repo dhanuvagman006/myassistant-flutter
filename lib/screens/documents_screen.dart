@@ -124,7 +124,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           ]),
           const SizedBox(height: 2),
           Text("You'll get reminders 30 days and 7 days before, and on the day.",
-              style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+              style: TextStyle(color: Neon.textDim, fontSize: 12)),
           const SizedBox(height: 6),
           for (final d in due.take(4))
             InkWell(

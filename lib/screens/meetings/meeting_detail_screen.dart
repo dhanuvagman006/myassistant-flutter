@@ -135,7 +135,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
         if (people.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
-            child: Text(people, style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+            child: Text(people, style: TextStyle(color: Neon.textDim, fontSize: 13)),
           ),
       ],
     ));
@@ -152,7 +152,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
             child: Text(
                 'Writing your minutes — this takes a few minutes. You can '
                 'leave; a notification comes when they are ready.',
-                style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.45)),
+                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45)),
           ),
         ])),
       ];
@@ -164,7 +164,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Text((m['summary'] ?? "Couldn't process this recording.").toString(),
-                style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
+                style: TextStyle(color: Neon.textLo, fontSize: 14)),
           ),
         ])),
       ];
@@ -180,7 +180,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
       if ((m['summary'] ?? '').toString().isNotEmpty)
         Reveal(child: _section(Icons.subject_rounded, 'Summary', Neon.violet,
             Text(m['summary'].toString(),
-                style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.5)))),
+                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5)))),
       if (decisions.isNotEmpty) ...[
         const SizedBox(height: 12),
         Reveal(
@@ -208,7 +208,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text((a['text'] ?? '').toString(),
-                            style: TextStyle(color: Neon.textHi, fontSize: 13.5)),
+                            style: TextStyle(color: Neon.textHi, fontSize: 14)),
                         Text(
                           [
                             if ((a['owner'] ?? '').toString().isNotEmpty) a['owner'],
@@ -232,7 +232,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
           child: _section(Icons.send_rounded, 'Follow-up message', Neon.pink, Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(follow, style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.5)),
+              Text(follow, style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5)),
               const SizedBox(height: 10),
               Row(children: [
                 TextButton.icon(
@@ -271,7 +271,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
           children: [
             if (_showTranscript)
               Text(transcript,
-                  style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.5)),
+                  style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.5)),
             TextButton(
               onPressed: () => setState(() => _showTranscript = !_showTranscript),
               child: Text(_showTranscript ? 'Hide transcript' : 'Show full transcript'),
@@ -290,7 +290,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
             child: Container(width: 5, height: 5, decoration: BoxDecoration(shape: BoxShape.circle, color: tint)),
           ),
           const SizedBox(width: 9),
-          Expanded(child: Text(text, style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.45))),
+          Expanded(child: Text(text, style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45))),
         ]),
       );
 

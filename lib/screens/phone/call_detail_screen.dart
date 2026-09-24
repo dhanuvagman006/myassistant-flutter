@@ -245,7 +245,7 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                               Text((c['summary'] ?? '').toString(),
                                   style: TextStyle(
                                       color: Neon.textLo,
-                                      fontSize: 13.5,
+                                      fontSize: 14,
                                       height: 1.5)),
                             )),
                       const SizedBox(height: 12),
@@ -354,7 +354,7 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                                       (c['transcript'] ?? '').toString(),
                                       style: TextStyle(
                                           color: Neon.textLo,
-                                          fontSize: 12.5,
+                                          fontSize: 13,
                                           height: 1.5)),
                                 ),
                               ),
@@ -370,7 +370,7 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                                           : 'Show full transcript',
                                       style: TextStyle(
                                           color: Neon.pink,
-                                          fontSize: 12.5,
+                                          fontSize: 13,
                                           fontWeight: FontWeight.w600)),
                                 ),
                               ),
@@ -432,7 +432,7 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                     minLines: 2,
                     maxLines: 6,
                     style: TextStyle(
-                        color: Neon.textHi, fontSize: 13.5, height: 1.45),
+                        color: Neon.textHi, fontSize: 14, height: 1.45),
                     decoration: const InputDecoration(
                       filled: false,
                       border: InputBorder.none,

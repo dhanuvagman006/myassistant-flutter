@@ -109,7 +109,7 @@ class _StudioScreenState extends State<StudioScreen> {
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: Text('Remove', style: TextStyle(color: Neon.error))),
+              child: Text('Remove', style: TextStyle(color: Neon.errorInk))),
         ],
       ),
     );
@@ -215,7 +215,7 @@ class _StudioScreenState extends State<StudioScreen> {
               ),
             ListTile(
               leading: Icon(Icons.delete_outline_rounded, color: Neon.error),
-              title: Text('Delete', style: TextStyle(color: Neon.error)),
+              title: Text('Delete', style: TextStyle(color: Neon.errorInk)),
               onTap: () => Navigator.pop(c, 'delete'),
             ),
             const SizedBox(height: 8),
@@ -336,7 +336,7 @@ class _StudioScreenState extends State<StudioScreen> {
               const SizedBox(height: 14),
               Text(_error,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Neon.textLo, fontSize: 14.5)),
+                  style: TextStyle(color: Neon.textLo, fontSize: 15)),
               const SizedBox(height: 18),
               FilledButton(onPressed: _load, child: const Text('Try again')),
             ],
@@ -453,7 +453,7 @@ class _StudioScreenState extends State<StudioScreen> {
             Expanded(
               child: Text(text,
                   style: TextStyle(
-                      color: Neon.textLo, fontSize: 13.5, height: 1.4)),
+                      color: Neon.textLo, fontSize: 14, height: 1.4)),
             ),
           ],
         ),
@@ -475,7 +475,7 @@ class _StudioScreenState extends State<StudioScreen> {
               child: Text(
                 'New looks are not available right now. '
                 'Everything else here works.',
-                style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.35),
+                style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.35),
               ),
             ),
           ],
@@ -504,7 +504,7 @@ class _StudioScreenState extends State<StudioScreen> {
             child: Text(
               'One clear, well-lit photo — face and shoulders visible. Every '
               'look uses it, so you only do this once.',
-              style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.4),
+              style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.4),
             ),
           ),
       ],
@@ -588,7 +588,7 @@ class _StudioScreenState extends State<StudioScreen> {
         child: Text(t.toUpperCase(),
             style: TextStyle(
                 color: Neon.textDim,
-                fontSize: 12.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.5)),
       );
@@ -671,7 +671,7 @@ class _StudioScreenState extends State<StudioScreen> {
                     Text(r.blurb,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: Neon.textLo, fontSize: 12.5)),
+                        style: TextStyle(color: Neon.textLo, fontSize: 13)),
                   ],
                 ),
               ),
@@ -726,7 +726,7 @@ class _StudioScreenState extends State<StudioScreen> {
         child: Text(
           '${s.remaining} of ${s.limit} looks left today · '
           'Results are AI-generated from your own photo and saved to your files.',
-          style: TextStyle(color: Neon.textDim, fontSize: 11.5, height: 1.4),
+          style: TextStyle(color: Neon.textDim, fontSize: 12, height: 1.4),
         ),
       );
 }

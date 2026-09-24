@@ -129,41 +129,21 @@ class HubScreen extends StatelessWidget {
     );
   }
 
+  // THE SAME LABEL AND CARD AS THE YOU TAB (2026-09-24). Hub drew its own
+  // section label (accent, 11.5 sp, heavy, wide tracking) beside You's
+  // grey one on the neighbouring tab, and its groups had no edge on the
+  // ground. GroupLabel and GroupedCard are the shared pieces: one label
+  // style, a hairline edge, and the separators inset past the icon tile.
   Widget _group(BuildContext context, String title, List<_Row> rows) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 16, bottom: 7),
-            child: Text(
-              title.toUpperCase(),
-              style: TextStyle(
-                color: Neon.violet,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.1,
-              ),
-            ),
-          ),
-          Material(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(14),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (var i = 0; i < rows.length; i++) ...[
-                  if (i > 0)
-                    Padding(
-                      // Hairline inset to align with the text, iOS-style.
-                      padding: const EdgeInsets.only(left: 60),
-                      child: Divider(height: 1, thickness: 0.5, color: Neon.line),
-                    ),
-                  _rowTile(context, rows[i]),
-                ],
-              ],
-            ),
+          GroupLabel(title),
+          GroupedCard(
+            dividerInset: 60,
+            children: [for (final r in rows) _rowTile(context, r)],
           ),
         ],
       ),
@@ -190,7 +170,7 @@ class HubScreen extends StatelessWidget {
                 gradient: Neon.tile(r.color),
                 borderRadius: BorderRadius.circular(11),
               ),
-              child: Icon(r.icon, color: Colors.white, size: 19),
+              child: Icon(r.icon, color: Neon.onTile(r.color), size: 19),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -199,12 +179,7 @@ class HubScreen extends StatelessWidget {
                 children: [
                   Text(
                     r.title,
-                    style: TextStyle(
-                      color: Neon.textHi,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: -0.2,
-                    ),
+                    style: NeonType.row.copyWith(color: Neon.textHi),
                   ),
                   const SizedBox(height: 1),
                   Text(
@@ -212,7 +187,9 @@ class HubScreen extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 12.5, height: 1.3),
+                        color: Neon.textLo,
+                        fontSize: NeonType.footnote,
+                        height: 1.3),
                   ),
                 ],
               ),

@@ -186,7 +186,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
                     'Sources',
                     style: TextStyle(
                         color: Neon.textLo,
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.3),
                   ),
@@ -194,7 +194,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
                 IconButton(
                   tooltip: 'Close sources',
                   constraints:
-                      const BoxConstraints(minWidth: 44, minHeight: 44),
+                      const BoxConstraints(minWidth: 48, minHeight: 48),
                   padding: EdgeInsets.zero,
                   onPressed: e.dismissSearchResults,
                   icon: Icon(Icons.close_rounded,

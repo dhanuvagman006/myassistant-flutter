@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:myassistant/design/gyro_tilt.dart';
 import 'package:myassistant/design/motion.dart';
+import 'package:myassistant/design/neon_tokens.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/features/assistant/widgets/action_cards.dart';
@@ -469,7 +470,7 @@ void main() {
           tester.widget<Text>(line).style!.color!.a * _opacityProduct(tester, line);
       // Laid out once, at the older size, from its first frame there
       // (2026-09-24, review: a style tween re-laid it out every frame)...
-      expect(size(), 15.5,
+      expect(size(), NeonType.callout,
           reason: 'it is laid out again at a new font size on every frame of the move');
       // ...and only drawn larger and brighter at first.
       expect(drawn(), greaterThan(1.0),
@@ -478,7 +479,7 @@ void main() {
           reason: 'it snapped to the older lines\' brightness in one frame');
       expect(find.text('office tonight'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(size(), 15.5);
+      expect(size(), NeonType.callout);
       expect(drawn(), moreOrLessEquals(1.0, epsilon: 1e-6));
       // At rest: plain text in the older colour, no fading layer.
       expect(_opacityProduct(tester, line), 1.0);

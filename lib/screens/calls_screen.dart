@@ -84,7 +84,7 @@ class _CallsScreenState extends State<CallsScreen> {
                     'and tell him I\'ll be late". What they say back appears here.'
                 : '',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.45),
+            style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45),
           ),
         ],
       );
@@ -144,13 +144,13 @@ class _CallsScreenState extends State<CallsScreen> {
                     ),
                   ),
                   Text(_when(c.createdAt),
-                      style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+                      style: TextStyle(color: Neon.textDim, fontSize: 12)),
                 ],
               ),
               const SizedBox(height: 8),
               Text(
                 _headline(c),
-                style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.4),
+                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.4),
               ),
               // THE ANSWER IS THE POINT OF THE SCREEN, so their words get
               // their own block rather than being buried in the result line.
@@ -170,13 +170,13 @@ class _CallsScreenState extends State<CallsScreen> {
                       Text('They said',
                           style: TextStyle(
                               color: Neon.textDim,
-                              fontSize: 10.5,
+                              fontSize: 12,
                               letterSpacing: 0.4,
                               fontWeight: FontWeight.w700)),
                       const SizedBox(height: 4),
                       Text(said.join('  ·  '),
                           style: TextStyle(
-                              color: Neon.textHi, fontSize: 13.5, height: 1.4)),
+                              color: Neon.textHi, fontSize: 14, height: 1.4)),
                     ],
                   ),
                 ),
@@ -187,7 +187,7 @@ class _CallsScreenState extends State<CallsScreen> {
                   children: [
                     Text(open ? 'Hide the call' : 'Read the whole call',
                         style: TextStyle(
-                            color: tint, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                            color: tint, fontSize: 13, fontWeight: FontWeight.w600)),
                     Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
                         size: 17, color: tint),
                   ],
@@ -214,7 +214,7 @@ class _CallsScreenState extends State<CallsScreen> {
                                 : AssistantIdentity.name,
                             style: TextStyle(
                                 color: turn.them ? tint : Neon.textDim,
-                                fontSize: 11.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700),
                             overflow: TextOverflow.ellipsis,
                           ),

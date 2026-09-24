@@ -66,7 +66,7 @@ class HomeDashboard extends StatelessWidget {
                   child: RichText(
                     text: TextSpan(
                       style: GoogleFonts.spaceGrotesk(
-                        fontSize: 27,
+                        fontSize: NeonType.title2,
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.5,
                         color: Neon.textHi,
@@ -103,7 +103,7 @@ class HomeDashboard extends StatelessWidget {
                 Text(
                   '${wk[now.weekday - 1]}, ${now.day} ${mo[now.month - 1]}',
                   style: TextStyle(
-                      color: Neon.textLo, fontSize: 13.5),
+                      color: Neon.textLo, fontSize: NeonType.body),
                 ),
                 // COMING BACK IS THE HABIT. A quiet streak count
                 // beside the date — visible enough to notice, far
@@ -122,12 +122,16 @@ class HomeDashboard extends StatelessWidget {
                         Icon(Icons.local_fire_department_rounded,
                             size: 13, color: Neon.violet),
                         const SizedBox(width: 4),
+                        // Plain ink at night: the violet words sat on the
+                        // brightest pool of the dark ambient at 3.4:1.
                         Text(
                           '${StreakService.instance.count} days',
-                          style: TextStyle(
-                              color: Neon.violet,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700),
+                          style: NeonType.manrope(
+                                  NeonType.caption, FontWeight.w700)
+                              .copyWith(
+                                  color: Neon.isDark
+                                      ? Neon.textHi
+                                      : Neon.violet),
                         ),
                       ],
                     ),
@@ -141,12 +145,12 @@ class HomeDashboard extends StatelessWidget {
                       color: Neon.cyan.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(8),
                     ),
+                    // cyanInk: plain cyan words on this chip were 2.48:1.
                     child: Text(
                       b.weatherLine!,
-                      style: TextStyle(
-                          color: Neon.cyan,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600),
+                      style: NeonType.manrope(
+                              NeonType.caption, FontWeight.w600)
+                          .copyWith(color: Neon.cyanInk),
                     ),
                   ),
                 ],
@@ -176,14 +180,16 @@ class HomeDashboard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  // Medium, for real (it drew as regular): a step above
+                  // the feed, a step below the bold section titles.
                   Expanded(
                     child: Text(
                       DailyQuotes.today(),
-                      style: TextStyle(
+                      style: NeonType.manrope(
+                              NeonType.rowTitle, FontWeight.w500)
+                          .copyWith(
                         color: Neon.textHi,
-                        fontSize: 16.5,
                         height: 1.4,
-                        fontWeight: FontWeight.w600,
                         letterSpacing: 0.1,
                       ),
                     ),

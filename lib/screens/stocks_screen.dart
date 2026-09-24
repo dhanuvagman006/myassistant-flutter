@@ -88,7 +88,7 @@ class _StocksScreenState extends State<StocksScreen> {
                     'For information only — not investment advice. This app is not a '
                     'SEBI-registered adviser, and prices may be delayed. Do your own '
                     'research or consult a registered adviser before you invest.',
-                    style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.45),
+                    style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
                   ),
                 ),
               ],
@@ -121,7 +121,7 @@ class _StocksScreenState extends State<StocksScreen> {
                     child: Text(
                       summary,
                       style: TextStyle(
-                          color: Neon.textHi, fontSize: 13.5, height: 1.45),
+                          color: Neon.textHi, fontSize: 14, height: 1.45),
                     ),
                   ),
                 ],
@@ -223,7 +223,7 @@ class _StocksScreenState extends State<StocksScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(_s(i, 'name'),
-              style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+              style: TextStyle(color: Neon.textDim, fontSize: 12)),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -266,12 +266,12 @@ class _StocksScreenState extends State<StocksScreen> {
               children: [
                 Text(
                   _s(e, 'source'),
-                  style: TextStyle(color: AppleColors.blue, fontSize: 11),
+                  style: TextStyle(color: AppleColors.blue, fontSize: 12),
                 ),
                 const Spacer(),
                 Text(
                   _s(e, 'time'),
-                  style: TextStyle(color: Neon.textDim, fontSize: 11),
+                  style: TextStyle(color: Neon.textDim, fontSize: 12),
                 ),
               ],
             ),

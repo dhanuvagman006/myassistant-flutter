@@ -82,17 +82,13 @@ class MissedCallsCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Missed calls',
-                    style: TextStyle(
-                      color: Neon.textHi,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: NeonType.sectionTitle.copyWith(color: Neon.textHi),
                   ),
                 ),
                 IconButton(
                   tooltip: 'Dismiss missed calls',
                   constraints:
-                      const BoxConstraints(minWidth: 44, minHeight: 44),
+                      const BoxConstraints(minWidth: 48, minHeight: 48),
                   padding: EdgeInsets.zero,
                   onPressed: MissedCallsService.instance.dismiss,
                   icon: Icon(Icons.close_rounded,
@@ -106,7 +102,7 @@ class MissedCallsCard extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 2, bottom: 4),
                 child: Text(
                   '+$more more',
-                  style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                  style: TextStyle(color: Neon.textLo, fontSize: 13),
                 ),
               ),
           ],
@@ -133,17 +129,14 @@ class MissedCallsCard extends StatelessWidget {
                   c.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: NeonType.manrope(NeonType.callout, FontWeight.w600)
+                      .copyWith(color: Neon.textHi),
                 ),
                 Text(
                   '$when$times',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                  style: TextStyle(color: Neon.textLo, fontSize: 13),
                 ),
               ],
             ),
@@ -152,7 +145,7 @@ class MissedCallsCard extends StatelessWidget {
             TextButton.icon(
               style: TextButton.styleFrom(
                 foregroundColor: Neon.violet,
-                minimumSize: const Size(44, 44),
+                minimumSize: const Size(48, 48),
               ),
               onPressed: () => (onCallBack ??
                   AssistantEngine.instance.callBackMissed)(c),

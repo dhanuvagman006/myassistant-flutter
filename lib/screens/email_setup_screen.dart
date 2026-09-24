@@ -152,7 +152,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
           TextButton(
               onPressed: () => Navigator.pop(c, true),
               child: Text('Disconnect',
-                  style: TextStyle(color: Neon.error))),
+                  style: TextStyle(color: Neon.errorInk))),
         ],
       ),
     );
@@ -291,7 +291,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
           const SizedBox(height: 14),
           Text(_error,
               textAlign: TextAlign.center,
-              style: TextStyle(color: Neon.error, fontSize: 12.5)),
+              style: TextStyle(color: Neon.errorInk, fontSize: 13)),
         ],
         const SizedBox(height: 26),
         Reveal(
@@ -316,7 +316,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                   _showManual
                       ? 'Hide the manual setup'
                       : 'Use another mail service',
-                  style: TextStyle(color: Neon.cyan, fontSize: 13.5)),
+                  style: TextStyle(color: Neon.cyanInk, fontSize: 14)),
             ),
           ),
         ),
@@ -355,7 +355,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                         style: TextStyle(
                             color: Neon.onAccent,
                             fontWeight: FontWeight.w800,
-                            fontSize: 14.5)),
+                            fontSize: 15)),
               ),
             ),
           ),
@@ -407,7 +407,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                 ? 'Your mailbox is linked. Ask me to write a mail — it lands here.'
                 : '$_connectedAddress is linked. Ask me to write a mail — it lands here.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
+            style: TextStyle(color: Neon.textLo, fontSize: 14)),
         const SizedBox(height: 22),
         // THE SCREEN IS THE SENT LOG (his call, 2026-09-19: "I don't want
         // this screen… whatever mail I have sent should be visible here").
@@ -416,7 +416,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         const SizedBox(height: 22),
         Center(
           child: Text('Go back, tap the mic and say who to write to',
-              style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+              style: TextStyle(color: Neon.textDim, fontSize: 13)),
         ),
         const SizedBox(height: 30),
         PressScale(
@@ -432,9 +432,9 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
               ),
               child: Text('Disconnect',
                   style: TextStyle(
-                      color: Neon.error,
+                      color: Neon.errorInk,
                       fontWeight: FontWeight.w700,
-                      fontSize: 13.5)),
+                      fontSize: 14)),
             ),
           ),
         ),

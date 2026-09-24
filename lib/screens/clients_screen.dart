@@ -449,7 +449,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           TextButton(
               onPressed: () => Navigator.pop(context, true),
               child: Text('Delete',
-                  style: TextStyle(color: AppleColors.red))),
+                  style: TextStyle(color: Neon.errorInk))),
         ],
       ),
     );
@@ -600,12 +600,12 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                 Text(title,
                     style: TextStyle(
                         color: Neon.textHi,
-                        fontSize: 13.5,
+                        fontSize: 14,
                         fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text(body,
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 12.5, height: 1.35)),
+                        color: Neon.textLo, fontSize: 13, height: 1.35)),
               ],
             ),
           ),
@@ -735,7 +735,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           Row(
             children: [
               Text(_day(n.createdAt),
-                  style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+                  style: TextStyle(color: Neon.textDim, fontSize: 12)),
               const Spacer(),
               GestureDetector(
                 onTap: () async {
@@ -756,7 +756,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           const SizedBox(height: 4),
           Text(n.text,
               style: TextStyle(
-                  color: Neon.textHi, fontSize: 13.5, height: 1.35)),
+                  color: Neon.textHi, fontSize: 14, height: 1.35)),
         ],
       ),
     );
@@ -907,7 +907,7 @@ class _EditClientSheetState extends State<_EditClientSheet> {
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: TextStyle(color: AppleColors.red, fontSize: 13)),
+                style: TextStyle(color: Neon.errorInk, fontSize: 13)),
           ],
           const SizedBox(height: 16),
           ApplePrimaryButton(

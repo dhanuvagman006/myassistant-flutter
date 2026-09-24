@@ -879,10 +879,12 @@ class _HomeShellState extends State<HomeShell>
             _navItem(
                 1, Icons.grid_view_outlined, Icons.grid_view_rounded, 'Hub'),
             const SizedBox(width: 72), // notch space for the mic
-            _navItem(2, Icons.chat_bubble_outline_rounded,
-                Icons.chat_bubble_rounded, 'Chat'),
-            _navItem(3, Icons.person_outline_rounded, Icons.person_rounded,
-                'You'),
+            // One family for the resting icons (2026-09-24): Home and Hub
+            // used the square-cornered outlines while Chat and You used
+            // the rounded ones. The selected tab keeps its filled one.
+            _navItem(2, Icons.chat_bubble_outline, Icons.chat_bubble_rounded,
+                'Chat'),
+            _navItem(3, Icons.person_outline, Icons.person_rounded, 'You'),
           ],
         ),
       ),
@@ -947,7 +949,9 @@ class _HomeShellState extends State<HomeShell>
             const SizedBox(height: 3),
             // The dock is a fixed 66 dp: its labels grow with the system
             // text size only up to 1.3x (at 2x they ran out of the bar),
-            // the way the system's own navigation labels do.
+            // the way the system's own navigation labels do. 12 sp, the
+            // app's floor (was 11), and the selected tab is bold for real:
+            // "Home" and "Chat" measured the same 3 px stems on build 106.
             MediaQuery.withClampedTextScaling(
               maxScaleFactor: 1.3,
               child: TweenAnimationBuilder<Color?>(
@@ -957,11 +961,11 @@ class _HomeShellState extends State<HomeShell>
                 builder: (_, color, __) => Text(label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: color,
-                    )),
+                    // One weight in both states (motion: a label that
+                    // thickens when picked re-centres in one frame); the
+                    // pick shows by colour and the icon's small growth.
+                    style: NeonType.manrope(NeonType.caption, FontWeight.w600)
+                        .copyWith(color: color)),
               ),
             ),
           ],
@@ -977,7 +981,7 @@ class _HomeShellState extends State<HomeShell>
 /// under it kept working as if it could be seen (2026-09-24, measuring the
 /// voice screen and the keyboard on his phone):
 ///
-///  * PAINT. The four tabs — Home's blurred glass cards among them — were
+///  * PAINT. The four tabs — Home's feed and calendar among them — were
 ///    drawn again on every frame the orb moved. Once the session has faded
 ///    all the way in ([InlineCaptionOverlay.covering]) they are not
 ///    painted at all; they are back on the frame it starts to leave.

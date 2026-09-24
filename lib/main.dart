@@ -6,6 +6,7 @@ import 'core/bundled_fonts.dart';
 import 'design/accent_controller.dart';
 import 'design/motion.dart';
 import 'design/theme_controller.dart';
+import 'design/neon_tokens.dart';
 import 'screens/auth/auth_screen.dart';
 import 'screens/auth/assistant_setup_screen.dart';
 import 'screens/auth/phone_verify_screen.dart';
@@ -30,6 +31,11 @@ Future<void> main() async {
   // Background call-recording scans (WorkManager) — cheap registration;
   // the periodic task itself only exists while AI call analysis is on.
   await BackgroundScan.init();
+  // Every Manrope weight, asked for together and early (2026-09-24): the
+  // clarity pass added Medium, Bold and ExtraBold, which a phone updating
+  // from build 107 has never downloaded. They load while the rest of
+  // startup runs, and runApp waits at most 400 ms for them (NeonType).
+  final fonts = NeonType.preload();
   try {
     await Firebase.initializeApp();
     await PushService.instance.init();
@@ -80,6 +86,7 @@ Future<void> main() async {
   } catch (_) {
     // Unknown build is survivable; a wrong one is not.
   }
+  await fonts; // usually long done; never throws
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
   runApp(const MyAssistantApp());
 }

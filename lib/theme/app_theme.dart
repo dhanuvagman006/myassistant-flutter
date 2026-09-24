@@ -23,6 +23,16 @@ class AppColors {
 class AppTheme {
   /// Space Grotesk for display/headlines (techy, geometric), Manrope for
   /// body (clean, readable) — Neon Design System V2.0.
+  ///
+  /// WEIGHTS (2026-09-24). google_fonts registers every weight as its own
+  /// family ("Manrope_700"), so a Text that only sets fontWeight keeps
+  /// the regular file of the style it inherits from here. Until the fonts
+  /// ship as a pubspec `fonts:` family, text that needs its weight takes
+  /// it from NeonType.manrope. The lasting fix, once the .ttf files are in
+  /// the app: declare family 'Manrope' (400, 500, 600, 700, 800) and
+  /// 'SpaceGrotesk' (500, 600, 700) in pubspec, use
+  /// `base.apply(fontFamily: 'Manrope', …)` and `ThemeData(fontFamily:
+  /// 'Manrope')` here, and let NeonType.manrope return a plain TextStyle.
   static TextTheme _text(TextTheme base) {
     final body = GoogleFonts.manropeTextTheme(base).apply(
       bodyColor: Neon.textHi,
@@ -82,7 +92,7 @@ class AppTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
         titleTextStyle: GoogleFonts.spaceGrotesk(
-          fontSize: 21,
+          fontSize: NeonType.title3,
           fontWeight: FontWeight.w700,
           color: Neon.textHi,
         ),
@@ -103,7 +113,7 @@ class AppTheme {
           foregroundColor: Neon.onInk,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
           textStyle: GoogleFonts.manrope(
-              fontWeight: FontWeight.w600, fontSize: 15.5),
+              fontWeight: FontWeight.w600, fontSize: NeonType.callout),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14)),
         ),
@@ -117,9 +127,12 @@ class AppTheme {
               borderRadius: BorderRadius.circular(14)),
         ),
       ),
+      // WORDS IN CYAN TAKE cyanInk (2026-09-24): every text button in the
+      // light theme ("Try again", "Cancel", "Open app info") was #0891B2
+      // on white, 3.7:1. The same hue, deep enough to read.
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: Neon.cyan,
+          foregroundColor: Neon.cyanInk,
           textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
         ),
       ),
@@ -146,7 +159,7 @@ class AppTheme {
         ),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => GoogleFonts.manrope(
-            fontSize: 11.5,
+            fontSize: NeonType.caption,
             fontWeight: FontWeight.w600,
             color: states.contains(WidgetState.selected)
                 ? Neon.textHi
@@ -157,7 +170,7 @@ class AppTheme {
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: SegmentedButton.styleFrom(
           selectedBackgroundColor: Neon.violet.withValues(alpha: 0.22),
-          selectedForegroundColor: Neon.cyan,
+          selectedForegroundColor: Neon.cyanInk,
           foregroundColor: Neon.textLo,
           side: BorderSide(color: Neon.line),
           textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
@@ -196,9 +209,11 @@ class AppTheme {
           side: BorderSide(color: Neon.lineBright),
         ),
         titleTextStyle: GoogleFonts.spaceGrotesk(
-            fontSize: 19, fontWeight: FontWeight.w700, color: Neon.textHi),
-        contentTextStyle:
-            GoogleFonts.manrope(fontSize: 14.5, color: Neon.textLo, height: 1.45),
+            fontSize: NeonType.title3,
+            fontWeight: FontWeight.w700,
+            color: Neon.textHi),
+        contentTextStyle: GoogleFonts.manrope(
+            fontSize: NeonType.callout, color: Neon.textLo, height: 1.45),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: Neon.surface,

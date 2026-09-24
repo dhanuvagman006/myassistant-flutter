@@ -37,7 +37,7 @@ class _VoicePickerScreenState extends State<VoicePickerScreen> {
             padding: const EdgeInsets.only(left: 4, bottom: 14),
             child: Text(
               'Tap a voice — it applies to your next conversation.',
-              style: TextStyle(color: Neon.textLo, fontSize: 13.5),
+              style: TextStyle(color: Neon.textLo, fontSize: 14),
             ),
           ),
           GroupedCard(

@@ -167,14 +167,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
             children: [
               Text(label,
                   style:
-                      TextStyle(color: Neon.textDim, fontSize: 11)),
+                      TextStyle(color: Neon.textDim, fontSize: 12)),
               const SizedBox(height: 3),
               Text(value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                       color: color ?? Neon.textHi,
-                      fontSize: 14.5,
+                      fontSize: 15,
                       fontWeight: FontWeight.w700)),
             ],
           ),
@@ -234,7 +234,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
           '${isIncome ? '+' : '−'}₹${_fmt(e['amount'])}/mo',
           style: TextStyle(
               color: color,
-              fontSize: 14.5,
+              fontSize: 15,
               fontWeight: FontWeight.w700),
         ),
       ),
@@ -361,7 +361,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                     selectedColor: Neon.textHi.withValues(alpha: 0.10),
                     labelStyle: TextStyle(
                         color: _kind == k[0] ? Neon.textHi : Neon.textLo,
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: _kind == k[0]
                             ? FontWeight.w700
                             : FontWeight.w500),
@@ -380,7 +380,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(_problem!,
-                    style: TextStyle(color: Neon.error, fontSize: 13)),
+                    style: TextStyle(color: Neon.errorInk, fontSize: 13)),
               ),
           ],
         ),

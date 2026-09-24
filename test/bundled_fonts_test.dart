@@ -23,7 +23,8 @@ void main() {
 
   test('the folder is an asset and main() turns fetching off first', () {
     expect(File('pubspec.yaml').readAsStringSync(), contains('- assets/google_fonts/'));
-    final main = File('lib/main.dart').readAsStringSync();
+    // Windows checkouts carry CRLF line endings.
+    final main = File('lib/main.dart').readAsStringSync().replaceAll('\r\n', '\n');
     expect(main, contains('WidgetsFlutterBinding.ensureInitialized();\n  useBundledFonts();'));
     GoogleFonts.config.allowRuntimeFetching = true;
     useBundledFonts();

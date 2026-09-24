@@ -108,7 +108,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         child: Text(
           (name is String && name.isNotEmpty) ? name[0].toUpperCase() : '?',
           style: TextStyle(
-              color: Neon.cyan, fontSize: 30, fontWeight: FontWeight.w700),
+              color: Neon.cyanInk, fontSize: 30, fontWeight: FontWeight.w700),
         ),
       );
 
@@ -158,8 +158,8 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: selected ? Neon.cyan : Neon.textLo,
-              fontSize: 12.5,
+              color: selected ? Neon.cyanInk : Neon.textLo,
+              fontSize: 13,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
             ),
           ),

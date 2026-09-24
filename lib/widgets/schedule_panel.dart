@@ -185,8 +185,8 @@ class _SchedulePanelState extends State<SchedulePanel> {
               'Could not read ${engine.scheduleFailed.join(", ")} — this list '
               'may be incomplete.',
               style: GoogleFonts.spaceGrotesk(
-                color: Neon.warning,
-                fontSize: 12.5,
+                color: Neon.warningInk,
+                fontSize: 13,
                 height: 1.3,
                 fontWeight: FontWeight.w600,
               ),
@@ -214,7 +214,7 @@ class _SchedulePanelState extends State<SchedulePanel> {
               child: Text(
                 item.time,
                 style: GoogleFonts.spaceGrotesk(
-                  color: open ? Neon.cyan : Neon.textLo,
+                  color: open ? Neon.cyanInk : Neon.textLo,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -236,7 +236,7 @@ class _SchedulePanelState extends State<SchedulePanel> {
                     item.title,
                     style: GoogleFonts.spaceGrotesk(
                       color: Neon.textHi,
-                      fontSize: 15.5,
+                      fontSize: 16,
                       height: 1.3,
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.2,
@@ -253,7 +253,7 @@ class _SchedulePanelState extends State<SchedulePanel> {
                             : TextOverflow.ellipsis,
                         style: GoogleFonts.spaceGrotesk(
                           color: Neon.textDim,
-                          fontSize: 12.5,
+                          fontSize: 13,
                           height: 1.35,
                           fontWeight: FontWeight.w500,
                         ),
@@ -272,8 +272,8 @@ class _SchedulePanelState extends State<SchedulePanel> {
                           child: Text(
                             'Looking this up — ask me anything about it',
                             style: GoogleFonts.spaceGrotesk(
-                              color: Neon.cyan,
-                              fontSize: 12.5,
+                              color: Neon.cyanInk,
+                              fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
                           ),

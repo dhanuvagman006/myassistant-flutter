@@ -426,7 +426,7 @@ class AppFeedback {
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: Neon.textHi, fontSize: 13.5, height: 1.35),
+                  color: Neon.textHi, fontSize: 14, height: 1.35),
             ),
           ),
         ],

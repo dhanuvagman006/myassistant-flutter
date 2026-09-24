@@ -33,33 +33,41 @@ class NeonEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // In the brand's own colours (2026-09-24): a teal glyph in a
+            // violet-to-teal ring sat under a Hub row that shows the same
+            // feature in indigo, so the two read as different things.
             Container(
               width: 84,
               height: 84,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: Neon.gVioletCyan,
+                gradient: Neon.gBrand,
                 boxShadow: Neon.glow(Neon.violet, blur: 34, alpha: 0.35),
               ),
               padding: const EdgeInsets.all(2),
               child: Container(
                 decoration: BoxDecoration(
                     shape: BoxShape.circle, color: Neon.surface),
-                child: Icon(icon, size: 34, color: Neon.cyan),
+                child: Icon(icon, size: 34, color: Neon.violet),
               ),
             ),
             const SizedBox(height: Neon.s5),
+            // Bold for real: copyWith(w700) on the theme style kept its
+            // medium font file (see NeonType).
             Text(title,
                 textAlign: TextAlign.center,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700)),
+                style: Theme.of(context).textTheme.titleMedium?.merge(
+                    NeonType.manrope(NeonType.rowTitle, FontWeight.w700))),
             if (body != null) ...[
               const SizedBox(height: Neon.s2),
-              Text(body!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Neon.textLo, height: 1.4)),
+              // Narrow enough that the lines balance: at full width the
+              // copy left one-word widows ("…when it / ends.").
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: Text(body!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Neon.textLo, height: 1.4)),
+              ),
             ],
             if (action != null) ...[
               const SizedBox(height: Neon.s5),

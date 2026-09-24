@@ -169,7 +169,7 @@ class _NewsPanelState extends State<NewsPanel> {
             '$n stories',
             style: GoogleFonts.spaceGrotesk(
               color: Neon.textDim,
-              fontSize: 12.5,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -221,7 +221,7 @@ class _NewsPanelState extends State<NewsPanel> {
                     item.title,
                     style: GoogleFonts.spaceGrotesk(
                       color: Neon.textHi,
-                      fontSize: 15.5,
+                      fontSize: 16,
                       height: 1.32,
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.2,
@@ -258,7 +258,7 @@ class _NewsPanelState extends State<NewsPanel> {
                       .join(' '),
                   style: GoogleFonts.spaceGrotesk(
                     color: Neon.textLo,
-                    fontSize: 13.5,
+                    fontSize: 14,
                     height: 1.45,
                     fontWeight: FontWeight.w500,
                   ),
@@ -276,7 +276,7 @@ class _NewsPanelState extends State<NewsPanel> {
                       'Reading this out — ask me anything about it',
                       style: GoogleFonts.spaceGrotesk(
                         color: Neon.pink,
-                        fontSize: 12.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),

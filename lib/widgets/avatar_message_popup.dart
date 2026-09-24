@@ -163,7 +163,7 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
                               ? 'AI-generated message · ${widget.index} of ${widget.total}'
                               : 'AI-generated message',
                           style:
-                              TextStyle(color: Neon.textDim, fontSize: 11.5)),
+                              TextStyle(color: Neon.textDim, fontSize: 12)),
                     ],
                   ),
                 ),
