@@ -107,6 +107,8 @@ class _GuideScreenState extends State<GuideScreen> {
                 itemBuilder: (_, i) {
                   final p = pages[i];
                   return Center(
+                    // Scrolls when short on room instead of overflowing.
+                    child: SingleChildScrollView(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 420),
                       child: Padding(
@@ -148,6 +150,7 @@ class _GuideScreenState extends State<GuideScreen> {
                           ],
                         ),
                       ),
+                    ),
                     ),
                   );
                 },

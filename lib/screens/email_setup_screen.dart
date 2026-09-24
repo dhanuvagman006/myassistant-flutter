@@ -263,11 +263,15 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                               fontSize: 24,
                               fontWeight: FontWeight.w800)),
                     const SizedBox(width: 12),
-                    const Text('Continue with Google',
-                        style: TextStyle(
-                            color: Color(0xFF1B1D28),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700)),
+                    const Flexible(
+                      child: Text('Continue with Google',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: Color(0xFF1B1D28),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700)),
+                    ),
                   ],
                 ),
               ),

@@ -143,16 +143,19 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
             children: [
               Row(
                 children: [
-                  Text(
-                    'Assign a task',
-                    style: GoogleFonts.spaceGrotesk(
-                      color: Colors.white,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
+                  Expanded(
+                    child: Text(
+                      'Assign a task',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.4,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.of(context).maybePop(),
                     icon: const Icon(Icons.close_rounded),

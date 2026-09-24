@@ -93,7 +93,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(children: [
+          // Wraps to a second line on narrow screens / large text.
+          Wrap(spacing: 10, runSpacing: 8, children: [
             FilledButton(
               style: FilledButton.styleFrom(
                   backgroundColor: Neon.violet,
@@ -103,7 +104,6 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               onPressed: _saveUrl,
               child: const Text('Save'),
             ),
-            const SizedBox(width: 10),
             OutlinedButton(
               style: OutlinedButton.styleFrom(
                   foregroundColor: AppleColors.blue,

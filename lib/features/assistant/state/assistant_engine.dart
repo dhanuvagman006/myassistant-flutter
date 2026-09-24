@@ -367,6 +367,14 @@ class AssistantEngine extends ChangeNotifier {
   /// turn), so this goes down the SAME socket rather than starting a
   /// second, classic conversation beside it — two engines answering one
   /// question is how you get two answers.
+  /// The text box has focus: typed means typed — the microphone stops
+  /// listening until the keyboard closes.
+  void setTyping(bool on) {
+    if (_liveSvc.typingMute == on) return;
+    _liveSvc.typingMute = on;
+    AppLog.add('live', on ? 'typing: mic paused' : 'typing done: mic back');
+  }
+
   Future<void> sendTypedMessage(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
@@ -706,6 +714,24 @@ class AssistantEngine extends ChangeNotifier {
 
   bool _started = false;
 
+  /// OFFLINE RETRIES BACK OFF — 4 s, 8 s, 16 s, 32 s, then once a minute —
+  /// so a phone without signal is not woken every 4 seconds for as long as
+  /// the app is open. A successful connect starts the count again.
+  int _connectFailures = 0;
+  Timer? _reconnect;
+
+  static Duration reconnectDelay(int failures) {
+    final s = 4 << (failures - 1).clamp(0, 4);
+    return Duration(seconds: s > 60 ? 60 : s);
+  }
+
+  /// Stops a pending reconnect (tests tear the engine down with this).
+  @visibleForTesting
+  void cancelReconnect() {
+    _reconnect?.cancel();
+    _reconnect = null;
+  }
+
   Future<void> start() async {
     if (_started) return;
     _started = true;
@@ -862,6 +888,7 @@ class AssistantEngine extends ChangeNotifier {
         },
       );
       connected = true;
+      _connectFailures = 0;
       errorMessage = null;
       // THE REAL READY SIGNAL. The SSE session is open and the backend
       // answered — this, and only this, is what unlocks the greeting.
@@ -883,7 +910,10 @@ class AssistantEngine extends ChangeNotifier {
       errorMessage = 'Could not reach the assistant service.';
       AppLog.add('engine', 'connect failed: $e');
       // Retry quietly — the screen shows the offline banner meanwhile.
-      Future.delayed(const Duration(seconds: 4), () {
+      _connectFailures++;
+      _reconnect?.cancel();
+      _reconnect = Timer(reconnectDelay(_connectFailures), () {
+        _reconnect = null;
         if (_started && !connected) _connect();
       });
     }
@@ -3951,6 +3981,12 @@ class AssistantEngine extends ChangeNotifier {
     while (DateTime.now().isBefore(until) &&
         (_ttsActive || _speakQueue.isNotEmpty || phase == AssistantPhase.speaking)) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    // A TASK IS ITS OWN FLOW: "On it" → the bar → the report. The voice
+    // session closes here so nothing else is heard or said meanwhile —
+    // left open, it answered room noise while the task ran (2026-09-24).
+    if (inlineVoice || liveActive) {
+      await endInlineConversation();
     }
     _leftForExternalApp = true;
     final out = await AutomationRunner.instance.run(d);

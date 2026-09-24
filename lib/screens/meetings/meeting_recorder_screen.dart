@@ -209,6 +209,13 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
               style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w700)),
         ),
         body: SafeArea(
+          // Full height when there is room (the Spacer puts the button at
+          // the bottom); scrolls while the keyboard is up instead of
+          // pushing the record button off the screen.
+          child: LayoutBuilder(builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: box.maxHeight),
+          child: IntrinsicHeight(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             child: Column(
@@ -273,6 +280,9 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
               ],
             ),
           ),
+          ),
+          ),
+          )),
         ),
       ),
     );

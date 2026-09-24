@@ -25,6 +25,9 @@ class NeonEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
+      // Scrolls when space is short (keyboard up, large text) instead of
+      // spilling past its edge — found by test/layout_sweep_test.dart.
+      child: SingleChildScrollView(
       child: Padding(
         padding: const EdgeInsets.all(Neon.s7),
         child: Column(
@@ -64,6 +67,7 @@ class NeonEmptyState extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }

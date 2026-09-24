@@ -3,6 +3,7 @@
 // followed by a fresh look, whether the screen changed is reported back,
 // and payment / Stop / another app taking over end the run with a report.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/services/automation_runner.dart';
 
 class FakeDevice implements AutomationDevice {
@@ -353,6 +354,11 @@ void main() {
     // With no element list, a new picture counts as the screen changing.
     expect(AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'A'}) ==
         AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'B'}), isFalse);
+  });
+
+  test('offline, the assistant retries less and less often, down to once a minute', () {
+    expect([1, 2, 3, 4, 5, 9].map((n) => AssistantEngine.reconnectDelay(n).inSeconds).toList(),
+        [4, 8, 16, 32, 60, 60]);
   });
 
   test('the bar describes each step in a few words', () {

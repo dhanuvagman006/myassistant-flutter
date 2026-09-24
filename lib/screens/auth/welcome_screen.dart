@@ -86,6 +86,12 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         fit: StackFit.expand,
         children: [
           SafeArea(
+            // Full height when there is room (the Spacers centre the
+            // story); scrolls instead of overflowing when there is not.
+            child: LayoutBuilder(builder: (context, box) => SingleChildScrollView(
+            child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
@@ -157,6 +163,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 ),
               ),
             ),
+            ),
+            ),
+            )),
           ),
           // Confetti on top of everything, taps pass straight through.
           IgnorePointer(

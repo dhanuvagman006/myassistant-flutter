@@ -501,6 +501,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               else
               Expanded(
                 flex: 7,
+                // Clipped to its own space: long replies once ran down over
+                // the text box while the keyboard was up (2026-09-24).
+                child: ClipRect(
+                // Taller than its space (a long reply, keyboard up): cut
+                // off quietly at the edge instead of overflowing.
+                child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
                 child: Align(
                   alignment: Alignment.topCenter,
                   child: AnimatedSize(
@@ -509,7 +516,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        for (final l in previous)
+                        // While typing there is little room: the line
+                        // being spoken, nothing older.
+                        for (final l in typing ? const <String>[] : previous)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 12),
                             child: Text(
@@ -532,11 +541,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             current,
                             key: ValueKey('$_fromUser|$current'),
                             textAlign: TextAlign.center,
+                            maxLines: typing ? 3 : 6,
+                            overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.spaceGrotesk(
                               color: _fromUser
                                   ? Colors.white.withValues(alpha: 0.62)
                                   : Colors.white,
-                              fontSize: _fromUser ? 19 : 24,
+                              fontSize: typing ? 17 : (_fromUser ? 19 : 24),
                               height: 1.3,
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.4,
@@ -547,6 +558,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                     ),
                   ),
                 ),
+              ),
+              ),
               ),
               // TYPE INSTEAD OF TALKING.
               _TypeBar(engine: engine),
@@ -784,12 +797,14 @@ class _TypeBarState extends State<_TypeBar> {
       if (has != _has) setState(() => _has = has);
     });
     _focus.addListener(() {
+      widget.engine.setTyping(_focus.hasFocus);
       if (mounted) setState(() {}); // the pill lights up while typing
     });
   }
 
   @override
   void dispose() {
+    widget.engine.setTyping(false);
     _c.dispose();
     _focus.dispose();
     super.dispose();

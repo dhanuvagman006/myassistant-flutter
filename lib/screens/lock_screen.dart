@@ -59,9 +59,13 @@ class _LockScreenState extends State<LockScreen> {
     return Scaffold(
       body: SafeArea(
         child: Center(
+          // Scrolls when the keyboard (left up by another app) leaves too
+          // little room for the pad.
+          child: SingleChildScrollView(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 320),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.lock_outline_rounded, size: 44, color: cs.primary),
@@ -140,6 +144,7 @@ class _LockScreenState extends State<LockScreen> {
                   ),
               ],
             ),
+          ),
           ),
         ),
       ),

@@ -59,6 +59,11 @@ class LiveService {
   /// AvatarService drives this flag from the real audio in the room.
   bool remoteSpeaking = false;
 
+  /// The owner is typing. Nothing from the microphone goes up meanwhile:
+  /// a room's chatter heard during a typed request was answered as if it
+  /// were a command (2026-09-24).
+  bool typingMute = false;
+
   /// Fires when the server reports the avatar starting/stopping speech.
   void Function(bool speaking)? onAvatarSpeaking;
 
@@ -401,7 +406,7 @@ class LiveService {
           // finishes her sentence, then the microphone is live again.
           // Talking over her does nothing — the trade he asked for — and
           // the server is set to NO_INTERRUPTION to match.
-          if (playing || remoteSpeaking) {
+          if (playing || remoteSpeaking || typingMute) {
             if (_speaking) {
               _gateAbort();
               _endUtterance();
