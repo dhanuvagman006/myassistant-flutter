@@ -128,6 +128,26 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="google.navigation"/>
         </intent>
+        <!-- PAY BY VOICE: upi://pay opens GPay / PhonePe / Paytm / BHIM
+             prefilled. Undeclared, Android 11+ reports no app can open it. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="upi"/>
+        </intent>
+        <!-- CALL FOLLOW-UPS: an SMS, or a WhatsApp chat, with the message
+             filled in for the user to send. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="sms"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="sms"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="whatsapp"/>
+        </intent>
     </queries>
 
     <!-- No cleartext in release: the session token travels on every

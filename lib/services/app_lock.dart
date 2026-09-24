@@ -90,8 +90,22 @@ class AppLock extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Re-arm when the app goes to background (called from the lifecycle
-  /// observer in main.dart) so returning to the app asks again.
+  /// AWAY LONG ENOUGH TO ASK AGAIN. Relocking on every pause locked the
+  /// app for a camera shot, a WhatsApp message or a UPI PIN — and the lock
+  /// screen replaces the whole app, which ends a live voice session. A
+  /// minute away is "left"; less is "stepped out for a moment".
+  static const grace = Duration(minutes: 1);
+  DateTime? _pausedAt;
+
+  void notePaused([DateTime? now]) => _pausedAt = now ?? DateTime.now();
+
+  void noteResumed([DateTime? now]) {
+    final at = _pausedAt;
+    _pausedAt = null;
+    if (at != null && (now ?? DateTime.now()).difference(at) > grace) relock();
+  }
+
+  /// Re-arm so returning to the app asks again.
   void relock() {
     if (_enabled) {
       _unlockedThisSession = false;

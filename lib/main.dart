@@ -186,8 +186,10 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Ask again whenever the app leaves the foreground (F1).
-    if (state == AppLifecycleState.paused) AppLock.instance.relock();
+    // Ask again after the app has been away for a while (F1) — not for a
+    // quick trip to the camera or a UPI app (AppLock.grace).
+    if (state == AppLifecycleState.paused) AppLock.instance.notePaused();
+    if (state == AppLifecycleState.resumed) AppLock.instance.noteResumed();
     // Coming BACK to the foreground refetches the home brief. Without this
     // the dashboard showed whatever the 5-minute timer last saw, which read
     // as "changes only appear after closing and reopening the app".

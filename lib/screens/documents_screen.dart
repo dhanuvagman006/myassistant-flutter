@@ -91,6 +91,63 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     );
   }
 
+  /// Policies, licences and passports running out within two months (or
+  /// already lapsed), soonest first. Their reminders are already set.
+  List<UserDocument> _renewals(List<UserDocument> docs) {
+    final due = docs
+        .where((d) => (d.daysToExpiry() ?? 999) <= 60)
+        .toList()
+      ..sort((a, b) => a.daysToExpiry()!.compareTo(b.daysToExpiry()!));
+    return due;
+  }
+
+  Widget _renewalsCard(List<UserDocument> docs) {
+    final due = _renewals(docs);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: Neon.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Neon.warning.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.autorenew_rounded, size: 18, color: Neon.warning),
+            const SizedBox(width: 8),
+            Text(due.length == 1 ? '1 renewal coming up' : '${due.length} renewals coming up',
+                style: TextStyle(
+                    color: Neon.textHi,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 2),
+          Text("You'll get reminders 30 days and 7 days before, and on the day.",
+              style: TextStyle(color: Neon.textDim, fontSize: 11.5)),
+          const SizedBox(height: 6),
+          for (final d in due.take(4))
+            InkWell(
+              onTap: () => _open(d),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(d.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Neon.textLo, fontSize: 13)),
+                  ),
+                  const SizedBox(width: 8),
+                  ExpiryBadge(document: d),
+                ]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _body(List<UserDocument>? docs) {
     if (_error != null) {
       return NeonErrorState(
@@ -144,6 +201,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               ),
             ),
           ),
+          if (_renewals(docs).isNotEmpty)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              sliver: SliverToBoxAdapter(child: _renewalsCard(docs)),
+            ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
             sliver: SliverGrid(

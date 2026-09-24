@@ -13,15 +13,15 @@ class WhatsNewCard extends StatefulWidget {
   const WhatsNewCard({super.key});
 
   /// Bump with every release that has something worth telling.
-  static const release = '0.2.95';
+  static const release = '0.2.96';
   static const items = <(IconData, String)>[
-    (Icons.graphic_eq_rounded, 'A new listening screen: the orb ripples with your voice, and background noise is far less likely to set it off.'),
-    (Icons.phone_in_talk_rounded, 'Call notes, clearer: calls grouped by day, a summary for each, and an honest status when one is still being analysed.'),
-    (Icons.search_rounded, 'Search everything — documents, clients, reminders and chats — from the button on Home.'),
-    (Icons.notifications_active_rounded, 'All your reminders in one place: Hub → Reminders. Add, tick off, or see which ones will call you.'),
-    (Icons.undo_rounded, 'Swiped something by mistake? Every swipe and tick can now be undone.'),
-    (Icons.manage_accounts_rounded, 'Sign out, export or delete your account from the You tab.'),
-    (Icons.apps_rounded, 'Say "open Swiggy" (or any app): it opens the app — or its Play Store page if it is missing, then opens it once installed.'),
+    (Icons.payments_rounded, 'Pay by voice: "pay Ravi 500" opens GPay or PhonePe ready to go — you approve with your UPI PIN.'),
+    (Icons.event_available_rounded, 'Scan an insurance policy, licence or passport — you get renewal reminders 30 days and 7 days before it expires.'),
+    (Icons.send_rounded, 'After a call: one tap sends a follow-up confirming what you agreed, by WhatsApp or SMS.'),
+    (Icons.reply_rounded, 'Say "reply to Ramesh\'s last email — Friday works" and it replies in the same thread.'),
+    (Icons.fingerprint_rounded, 'Lock the app with your fingerprint: You → Privacy & security.'),
+    (Icons.apps_rounded, 'Say "open Swiggy" (or any app): it opens — or its Play Store page, then opens once installed.'),
+    (Icons.graphic_eq_rounded, 'A new listening screen that ripples with your voice, and ignores background noise.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';

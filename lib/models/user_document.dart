@@ -49,6 +49,10 @@ class UserDocument {
   final int? clientId; // professional mode: which case file it's filed in
   final int createdAt;
 
+  /// yyyy-mm-dd the document expires or must be renewed (insurance,
+  /// licence, passport, PUC, warranty…), or '' — read by the server.
+  final String expiresOn;
+
   const UserDocument({
     required this.id,
     required this.filename,
@@ -60,7 +64,32 @@ class UserDocument {
     required this.note,
     this.clientId,
     required this.createdAt,
+    this.expiresOn = '',
   });
+
+  /// Whole days until expiry (negative once lapsed), or null if none.
+  int? daysToExpiry([DateTime? now]) {
+    final e = DateTime.tryParse(expiresOn);
+    if (expiresOn.isEmpty || e == null) return null;
+    final n = now ?? DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    return DateTime(e.year, e.month, e.day).difference(today).inDays;
+  }
+
+  /// "Expires in 12 days", "Expires today", "Expired 3 days ago",
+  /// "Valid till 12 Oct 2027" — or null when there is no expiry.
+  String? expiryLabel([DateTime? now]) {
+    final d = daysToExpiry(now);
+    if (d == null) return null;
+    if (d < 0) return d == -1 ? 'Expired yesterday' : 'Expired ${-d} days ago';
+    if (d == 0) return 'Expires today';
+    if (d == 1) return 'Expires tomorrow';
+    if (d <= 60) return 'Expires in $d days';
+    final e = DateTime.parse(expiresOn);
+    const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return 'Valid till ${e.day} ${mo[e.month - 1]} ${e.year}';
+  }
 
   bool get isPdf => mime == 'application/pdf';
 
@@ -125,6 +154,7 @@ class UserDocument {
         note: (j['note'] ?? '').toString(),
         clientId: (j['clientId'] as num?)?.toInt(),
         createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
+        expiresOn: (j['expiresOn'] ?? '').toString(),
       );
 
   static List<UserDocument> listFromJson(dynamic j) {

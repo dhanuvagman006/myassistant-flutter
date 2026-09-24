@@ -385,10 +385,47 @@ class DocumentGridTile extends StatelessWidget {
                 Text(date,
                     style: TextStyle(color: Neon.textDim, fontSize: 11)),
               ],
+              if (d.expiryLabel() != null) ...[
+                const SizedBox(height: 3),
+                ExpiryBadge(document: d),
+              ],
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// When a policy, licence or passport runs out — amber inside a month,
+/// red once lapsed. Renewal reminders are already set by the server.
+class ExpiryBadge extends StatelessWidget {
+  final UserDocument document;
+  const ExpiryBadge({super.key, required this.document});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = document.expiryLabel();
+    if (label == null) return const SizedBox.shrink();
+    final days = document.daysToExpiry() ?? 999;
+    final tint = days < 0
+        ? Neon.error
+        : days <= 30
+            ? Neon.warning
+            : Neon.success;
+    return Row(
+      children: [
+        Icon(days < 0 ? Icons.event_busy_rounded : Icons.event_available_rounded,
+            size: 12, color: tint),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: tint, fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+      ],
     );
   }
 }
