@@ -11,6 +11,7 @@ import '../features/assistant/widgets/action_cards.dart'
 import '../models/client.dart';
 import '../models/user_document.dart';
 import '../services/api_service.dart';
+import 'business_card_flow.dart';
 import '../services/document_events.dart';
 import '../widgets/document_tile.dart';
 
@@ -79,7 +80,15 @@ class _ClientsScreenState extends State<ClientsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: appleAppBar(context, 'Clients & patients'),
+      appBar: appleAppBar(context, 'Clients & patients', actions: [
+        IconButton(
+          tooltip: 'Scan a business card',
+          icon: const Icon(Icons.contact_mail_rounded),
+          onPressed: () async {
+            await BusinessCardFlow.scan(context);
+          },
+        ),
+      ]),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Neon.violet,
         foregroundColor: Colors.white,

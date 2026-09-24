@@ -9,6 +9,7 @@ import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'phone/call_notes_screen.dart';
 import 'reminders_screen.dart';
+import 'meetings/meetings_screen.dart';
 import 'email_setup_screen.dart';
 import 'features_screen.dart';
 import 'stocks_screen.dart';
@@ -49,6 +50,13 @@ class HubScreen extends StatelessWidget {
               Icons.notifications_active_rounded,
               Neon.accentA,
               (c) => const RemindersScreen(),
+            ),
+            _Row(
+              'Meetings',
+              'Record a meeting — get minutes, decisions and action items',
+              Icons.groups_rounded,
+              Neon.accentB,
+              (c) => const MeetingsScreen(),
             ),
           ]),
           _group(context, 'Phone', [

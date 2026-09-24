@@ -13,15 +13,15 @@ class WhatsNewCard extends StatefulWidget {
   const WhatsNewCard({super.key});
 
   /// Bump with every release that has something worth telling.
-  static const release = '0.2.96';
+  static const release = '0.2.97';
   static const items = <(IconData, String)>[
+    (Icons.groups_rounded, 'Record a meeting (Hub → Meetings, or say "record this meeting"): get minutes, decisions and action items — share them as a PDF.'),
+    (Icons.contact_mail_rounded, 'Scan a visiting card: the person is saved, one tap adds them to your contacts, another says hello on WhatsApp.'),
     (Icons.payments_rounded, 'Pay by voice: "pay Ravi 500" opens GPay or PhonePe ready to go — you approve with your UPI PIN.'),
-    (Icons.event_available_rounded, 'Scan an insurance policy, licence or passport — you get renewal reminders 30 days and 7 days before it expires.'),
+    (Icons.event_available_rounded, 'Scan an insurance policy, licence or passport — renewal reminders 30 days and 7 days before it expires.'),
     (Icons.send_rounded, 'After a call: one tap sends a follow-up confirming what you agreed, by WhatsApp or SMS.'),
     (Icons.reply_rounded, 'Say "reply to Ramesh\'s last email — Friday works" and it replies in the same thread.'),
     (Icons.fingerprint_rounded, 'Lock the app with your fingerprint: You → Privacy & security.'),
-    (Icons.apps_rounded, 'Say "open Swiggy" (or any app): it opens — or its Play Store page, then opens once installed.'),
-    (Icons.graphic_eq_rounded, 'A new listening screen that ripples with your voice, and ignores background noise.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';

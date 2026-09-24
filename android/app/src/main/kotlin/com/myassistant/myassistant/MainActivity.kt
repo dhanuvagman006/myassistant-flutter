@@ -508,6 +508,41 @@ class MainActivity : FlutterFragmentActivity() {
                     // people say "BigBasket" for "BigBasket: Grocery Store"
                     // — and ranked, so the closest label wins rather than
                     // whichever package happened to be enumerated first.
+                    // BUSINESS CARD → PHONE CONTACTS. The phone's own "new
+                    // contact" screen, filled in from the card; the user taps
+                    // Save there. No contacts-write permission is needed —
+                    // the contacts app does the writing.
+                    "insertContact" -> {
+                        try {
+                            val i = Intent(android.provider.ContactsContract.Intents.Insert.ACTION).apply {
+                                type = android.provider.ContactsContract.RawContacts.CONTENT_TYPE
+                                putExtra(android.provider.ContactsContract.Intents.Insert.NAME,
+                                    call.argument<String>("name") ?: "")
+                                val phone = call.argument<String>("phone") ?: ""
+                                if (phone.isNotEmpty()) {
+                                    putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, phone)
+                                    putExtra(android.provider.ContactsContract.Intents.Insert.PHONE_TYPE,
+                                        android.provider.ContactsContract.CommonDataKinds.Phone.TYPE_WORK)
+                                }
+                                val email = call.argument<String>("email") ?: ""
+                                if (email.isNotEmpty()) {
+                                    putExtra(android.provider.ContactsContract.Intents.Insert.EMAIL, email)
+                                    putExtra(android.provider.ContactsContract.Intents.Insert.EMAIL_TYPE,
+                                        android.provider.ContactsContract.CommonDataKinds.Email.TYPE_WORK)
+                                }
+                                val company = call.argument<String>("company") ?: ""
+                                if (company.isNotEmpty()) putExtra(android.provider.ContactsContract.Intents.Insert.COMPANY, company)
+                                val title = call.argument<String>("title") ?: ""
+                                if (title.isNotEmpty()) putExtra(android.provider.ContactsContract.Intents.Insert.JOB_TITLE, title)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(i)
+                            result.success(true)
+                        } catch (e: Throwable) {
+                            Log.w("hari/contacts", "insert failed: ${e.javaClass.simpleName}")
+                            result.success(false)
+                        }
+                    }
                     "launchApp" -> {
                         val want = (call.argument<String>("name") ?: "")
                             .lowercase().replace(Regex("[^a-z0-9]"), "")
@@ -578,6 +613,17 @@ class MainActivity : FlutterFragmentActivity() {
             .setMethodCallHandler { call, result ->
                 val ctx = applicationContext
                 when (call.method) {
+                    // MEETING RECORDER: the screen stays on while it records.
+                    // A locked screen sends the app to the background, and
+                    // Android stops an app's microphone there.
+                    "keepScreenOn" -> {
+                        val on = call.argument<Boolean>("on") == true
+                        runOnUiThread {
+                            if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(true)
+                    }
                     "torch" -> result.success(
                         DeviceControl.torch(ctx, call.argument<Boolean>("on") == true))
                     "volume" -> result.success(

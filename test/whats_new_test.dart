@@ -16,7 +16,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await show(tester);
     expect(find.text("What's new"), findsOneWidget);
-    expect(find.textContaining('Pay by voice'), findsOneWidget);
+    expect(find.textContaining('Record a meeting'), findsOneWidget);
   });
 
   testWidgets('closed once, it does not come back for this release', (tester) async {

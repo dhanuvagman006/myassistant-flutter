@@ -21,6 +21,11 @@ import '../../../services/notification_service.dart';
 import '../../../design/theme_controller.dart';
 import '../../../shell/home_shell.dart';
 import '../../../screens/documents_screen.dart';
+import '../../../screens/phone/call_notes_screen.dart';
+import '../../../screens/reminders_screen.dart';
+import '../../../screens/business_card_flow.dart';
+import '../../../screens/meetings/meeting_recorder_screen.dart';
+import '../../../screens/meetings/meetings_screen.dart';
 import '../../../screens/clients_screen.dart';
 import '../../../screens/finance_screen.dart';
 import '../../../screens/stocks_screen.dart';
@@ -2333,6 +2338,10 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed);
         break;
 
+      case 'scan_business_card':
+        unawaited(_scanBusinessCard());
+        break;
+
       case 'open_app_screen':
         // A screen inside THIS app, opened by voice. The four main tabs go
         // through the shell; everything else is a pushed route.
@@ -2343,7 +2352,7 @@ class AssistantEngine extends ChangeNotifier {
             HomeShell.requestedTab.value = tabs[screen];
           } else {
             final nav = AvatarMessageService.navigatorKey.currentState;
-            final builder = _appScreenBuilder(screen);
+            final builder = _appScreenBuilder(screen, e);
             if (nav == null || builder == null) {
               _reportDeviceFailure('open_app_screen',
                   target: screen, reason: 'that screen is not available');
@@ -3847,7 +3856,18 @@ class AssistantEngine extends ChangeNotifier {
   /// for anything unknown is deliberate: the tool already validates its
   /// enum, and a screen that cannot be built must be reported as a
   /// failure rather than silently doing nothing.
-  WidgetBuilder? _appScreenBuilder(String screen) => switch (screen) {
+  WidgetBuilder? _appScreenBuilder(String screen,
+          [Map<String, dynamic> e = const {}]) =>
+      switch (screen) {
+        'meetings' => (_) => const MeetingsScreen(),
+        // "Record this meeting" — straight into recording.
+        'meeting_recorder' => (_) => MeetingRecorderScreen(
+              autoStart: true,
+              title: (e['title'] ?? '').toString(),
+              participants: (e['participants'] ?? '').toString(),
+            ),
+        'reminders' => (_) => const RemindersScreen(),
+        'call_notes' => (_) => const CallNotesScreen(),
         'documents' => (_) => const DocumentsScreen(),
         'clients' => (_) => const ClientsScreen(),
         'finance' => (_) => const FinanceScreen(),
@@ -3856,6 +3876,39 @@ class AssistantEngine extends ChangeNotifier {
         'mcp' => (_) => const McpServersScreen(),
         _ => null,
       };
+
+  /// "Scan this visiting card" — the camera, the server's reading, and the
+  /// result sheet (add to contacts / say hello / call). The voice loop is
+  /// held shut meanwhile, as for any camera flow.
+  Future<void> _scanBusinessCard() async {
+    _deviceFlowActive = true;
+    final liveGated = liveActive;
+    if (liveGated) _liveSvc.remoteSpeaking = true;
+    try {
+      await _voice.stopSpeaking();
+      final ctx = AvatarMessageService.navigatorKey.currentContext;
+      if (ctx == null || !ctx.mounted) {
+        _reportDeviceFailure('scan_business_card', reason: 'no screen to show the camera on');
+        return;
+      }
+      final person = await BusinessCardFlow.scan(ctx);
+      if (person == null) {
+        _reportDeviceFailure('scan_business_card', reason: 'cancelled or unreadable');
+        await _tellModel('[SYSTEM] The card scan was cancelled or could not be '
+            'read, so nothing was saved. Say so in ONE short sentence.');
+      } else {
+        final company = (person['company'] ?? '').toString();
+        await _tellModel('[SYSTEM] Saved ${person['name']}'
+            '${company.isEmpty ? '' : ' of $company'} from the business card. '
+            'Buttons to add them to phone contacts and say hello on WhatsApp '
+            'are on screen. Confirm in ONE short sentence.');
+      }
+    } finally {
+      _deviceFlowActive = false;
+      if (liveGated) _liveSvc.remoteSpeaking = false;
+      _setPhase(AssistantPhase.completed);
+    }
+  }
 
   /// Tell the server a device action failed. Fire and forget: a failed
   /// report must never turn into a second visible failure.
