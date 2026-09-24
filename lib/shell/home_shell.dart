@@ -559,7 +559,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // There is no second screen any more, so the stale-flag self-heal
       // that used to guard both handlers is gone with it — the orb now
       // answers every tap, which is what it should always have done.
-      floatingActionButton: AssistantOrbButton(
+      // Hidden while the keyboard is up: docked, it floated over the text
+      // box (seen 2026-09-24). Send is on the box; Stop is one tap away
+      // once the keyboard closes.
+      floatingActionButton: MediaQuery.of(context).viewInsets.bottom > 0
+          ? null
+          : AssistantOrbButton(
         onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;

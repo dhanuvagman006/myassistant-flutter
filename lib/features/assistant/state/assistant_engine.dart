@@ -3912,7 +3912,13 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> _runAutomation(Map<String, dynamic> e) async {
     final d = AutomationDirective.fromEvent(e);
     if (d == null) return;
-    final st = await AutomationRunner.instance.device.status();
+    var st = await AutomationRunner.instance.device.status();
+    // Switched on but not bound yet (the app was just restarted or
+    // updated): Android reconnects it within seconds — wait, don't nag.
+    for (var i = 0; i < 12 && !st.connected && st.enabled; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      st = await AutomationRunner.instance.device.status();
+    }
     if (!st.connected) {
       _openAutomationSetup(d);
       return;

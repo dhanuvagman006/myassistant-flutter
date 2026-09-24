@@ -111,7 +111,17 @@ class HariAccessibilityService : AccessibilityService() {
         val NEVER = MONEY_APPS + PERMISSION_APPS + INSTALLERS
         private val SETTINGS_APPS = setOf(
             "com.android.settings", "com.samsung.android.settings",
+            // Settings search runs in its own package — same rules.
+            "com.android.settings.intelligence", "com.google.android.settings.intelligence",
             "com.samsung.android.biometrics.app.setting", "com.samsung.android.lool",
+        )
+        /** Declarations, "I agree", terms, accepting cookies: consent is theirs. */
+        private val CONSENT = Regex(
+            "\\b(?:i (?:hereby )?(?:agree|declare|accept|certify|confirm|consent|undertake)|" +
+                "agree (?:and|&) continue|agree to (?:the |all )?terms|" +
+                "accept (?:all|cookies|all cookies|the terms|terms)|terms (?:and|&) conditions|" +
+                "self[- ]declaration|declaration)\\b",
+            RegexOption.IGNORE_CASE
         )
         /** Deleting is final — the owner's own tap. */
         private val DESTRUCTIVE = Regex(
@@ -422,6 +432,8 @@ class HariAccessibilityService : AccessibilityService() {
                     if (words.any { MONEY.containsMatchIn(it) }) return blocked("money")
                     if (fg in MESSAGING && words.any { SEND.matches(it) }) return blocked("message_send")
                     if (words.any { DESTRUCTIVE.containsMatchIn(it) }) return blocked("destructive")
+                    if (CONSENT.containsMatchIn(ownLabel(judged)) ||
+                        (judged.isCheckable && CONSENT.containsMatchIn(merged))) return blocked("consent")
                     if (fg in SETTINGS_APPS && (words + merged).any { SECURITY_SETTING.containsMatchIn(it) }) {
                         return blocked("security")
                     }

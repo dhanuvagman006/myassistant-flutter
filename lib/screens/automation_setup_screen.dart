@@ -179,6 +179,8 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
                 _never(Icons.send_rounded, 'Send a message or post for you'),
                 _never(Icons.delete_forever_rounded,
                     'Delete anything, or change security settings'),
+                _never(Icons.gavel_rounded,
+                    'Tick a declaration or "I agree" for you, or solve a CAPTCHA'),
                 const SizedBox(height: 6),
                 Text(
                   'At any of those steps I stop, hand the phone back to you and '
