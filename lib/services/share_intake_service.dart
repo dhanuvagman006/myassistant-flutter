@@ -66,7 +66,8 @@ class ShareIntakeService {
         : 'Here is something I shared with you — summarise it for me:\n$text';
     try {
       await AssistantEngine.instance.askAssistant(ask);
-      AppFeedback.toast(url != null ? 'Reading that page…' : 'Reading that…');
+      AppFeedback.toast(url != null ? 'Reading that page…' : 'Reading that…',
+          tone: FeedbackTone.progress);
       return true;
     } catch (e) {
       AppLog.add('share', 'shared text failed: $e');
@@ -121,6 +122,7 @@ class ShareIntakeService {
     var saved = 0;
     var failed = 0;
     var skipped = 0;
+    var tooLarge = 0;
     for (final f in files) {
       // A SHARED LINK IS A QUESTION, NOT A DOCUMENT. "Share → Hari" from a
       // browser hands over a URL; filing that as a file would save nothing
@@ -147,8 +149,9 @@ class ShareIntakeService {
       }
       try {
         if (await File(path).length() > _maxShareBytes) {
-          failed++;
-          AppFeedback.toast('That file is too large to save (20 MB max).');
+          // Counted, not toasted here: a second toast at the end used to
+          // blame the connection for a file that was simply too big.
+          tooLarge++;
           continue;
         }
         final bytes = await File(path).readAsBytes();
@@ -177,9 +180,15 @@ class ShareIntakeService {
       return; // its own message was already shown
     }
     if (saved > 0) {
-      AppFeedback.toast(saved == 1
-          ? 'Got it — reading it now…'
-          : 'Got them — reading $saved files now…');
+      AppFeedback.toast(
+          saved == 1
+              ? 'Got it — reading it now…'
+              : 'Got them — reading $saved files now…',
+          tone: FeedbackTone.progress);
+    } else if (tooLarge > 0 && failed == 0) {
+      AppFeedback.toast(tooLarge == 1
+          ? 'That file is too large to save (20 MB max).'
+          : 'Those files are too large to save (20 MB max each).');
     } else if (failed > 0) {
       AppFeedback.toast("Couldn't save that — check your connection.");
     } else if (skipped > 0) {

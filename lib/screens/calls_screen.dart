@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../models/call_outcome.dart';
 import '../services/api_service.dart';
+import '../services/assistant_identity.dart';
 
 /// CALLS THE ASSISTANT MADE — and what the other person said back.
 ///
@@ -43,10 +45,7 @@ class _CallsScreenState extends State<CallsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        title: const Text('Calls'),
-      ),
+      appBar: appleAppBar(context, 'Calls'),
       body: RefreshIndicator(
         onRefresh: _load,
         color: Neon.violet,
@@ -98,7 +97,7 @@ class _CallsScreenState extends State<CallsScreen> {
     final tint = c.inProgress
         ? Neon.cyan
         : c.answered
-            ? const Color(0xFF35C48D)
+            ? Neon.success
             : c.missed
                 ? Neon.violet
                 : Neon.error;
@@ -197,12 +196,17 @@ class _CallsScreenState extends State<CallsScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 62,
+                        // The name the user gave their assistant, in a
+                        // column that grows with large text instead of
+                        // cutting it to "Assis…".
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                              minWidth: 62,
+                              maxWidth: MediaQuery.sizeOf(context).width * 0.3),
                           child: Text(
                             turn.them
                                 ? (c.contact.split(' ').first)
-                                : 'Assistant',
+                                : AssistantIdentity.name,
                             style: TextStyle(
                                 color: turn.them ? tint : Neon.textDim,
                                 fontSize: 11.5,

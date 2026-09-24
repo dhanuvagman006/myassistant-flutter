@@ -82,7 +82,7 @@ void openDocument(BuildContext context, UserDocument d,
 /// with auth headers. So: fetch the bytes with auth, write them to the
 /// cache, and hand THAT file to whichever viewer the phone has.
 Future<void> _openFile(BuildContext context, UserDocument d) async {
-  AppFeedback.toast('Opening…');
+  AppFeedback.toast('Opening…', tone: FeedbackTone.progress);
   try {
     final file = await ApiService.downloadDocument(d.id);
     final dir = await getTemporaryDirectory();
@@ -99,7 +99,8 @@ Future<void> _openFile(BuildContext context, UserDocument d) async {
       // is how most phones open these without an Office app installed.
       AppFeedback.toast(d.isPdf
           ? 'No app on this phone can open PDFs — install a PDF reader.'
-          : 'No app here opens a ${documentTypeLabel(d)} — use Share to open it in Google ${d.kind == 'sheet' ? 'Sheets' : d.kind == 'slides' ? 'Slides' : 'Docs'} or Drive.');
+          : 'No app here opens a ${documentTypeLabel(d)} — use Share to open it in a '
+              '${d.kind == 'sheet' ? 'spreadsheet' : d.kind == 'slides' ? 'slides' : 'documents'} app.');
     }
   } catch (_) {
     AppFeedback.toast("Couldn't open that document — try again.");
@@ -496,8 +497,7 @@ Future<void> showDocumentActions(
         await shareDocumentFile(d);
       } catch (_) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Couldn't prepare that to share.")));
+          AppFeedback.show("Couldn't prepare that to share.", context: context);
         }
       }
     case DocumentMenuAction.delete:

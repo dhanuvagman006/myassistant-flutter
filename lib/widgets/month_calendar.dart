@@ -436,7 +436,11 @@ class _MonthCalendarState extends State<MonthCalendar> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (sheetCtx) => StatefulBuilder(
+      builder: (sheetCtx) {
+        // Said inside the sheet: a toast raised here would land on the
+        // page BEHIND it, under the barrier, where nobody sees it.
+        String? problem;
+        return StatefulBuilder(
         builder: (ctx, setSheet) {
           final items = List<_CalItem>.of(_days[day] ?? const []);
           return Container(
@@ -545,21 +549,19 @@ class _MonthCalendarState extends State<MonthCalendar> {
                                       final ok =
                                           await _deleteItem(day, it);
                                       if (!ctx.mounted) return;
-                                      if (ok) {
-                                        setSheet(() {});
-                                      } else {
-                                        ScaffoldMessenger.of(ctx)
-                                            .showSnackBar(const SnackBar(
-                                                content: Text(
-                                                    "Couldn't delete that.")));
-                                      }
+                                      setSheet(() => problem = ok
+                                          ? null
+                                          : "Couldn't delete that — check "
+                                              'your connection.');
                                     },
                                   )
                                 else
                                   Padding(
                                     padding:
                                         const EdgeInsets.only(right: 10),
-                                    child: Text('Google',
+                                    // From the linked calendar: removed
+                                    // there, not here.
+                                    child: Text('Calendar',
                                         style: TextStyle(
                                             color: Neon.textDim,
                                             fontSize: 10.5)),
@@ -570,11 +572,26 @@ class _MonthCalendarState extends State<MonthCalendar> {
                       ],
                     ),
                   ),
+                if (problem != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(children: [
+                      Icon(Icons.error_outline_rounded,
+                          size: 16, color: Neon.error),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(problem!,
+                            style:
+                                TextStyle(color: Neon.error, fontSize: 13)),
+                      ),
+                    ]),
+                  ),
               ],
             ),
           );
         },
-      ),
+      );
+      },
     );
   }
 }

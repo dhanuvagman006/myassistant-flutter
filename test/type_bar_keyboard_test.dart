@@ -83,4 +83,96 @@ void main() {
     expect(checked, greaterThan(0), reason: 'the long reply was on screen');
     engine.caption.value = null;
   });
+
+  // ENTER SENDS (2026-09-24, s5.png): the keyboard's Send key typed a
+  // newline — the field told Android it was multi-line — and only the
+  // arrow sent. And the screen still said "Listening…" with the mic paused.
+  Future<void> openSession(WidgetTester tester) async {
+    tester.view.devicePixelRatio = 2.625;
+    tester.view.physicalSize = const Size(1080, 2340);
+    addTearDown(tester.view.reset);
+    final engine = AssistantEngine.instance
+      ..inlineVoice = true
+      ..phase = AssistantPhase.listening;
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(body: InlineCaptionOverlay()),
+    ));
+    engine.notifyListeners();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets('the keyboard Send key sends, and the keyboard stays up', (tester) async {
+    await openSession(tester);
+    final field = find.byType(TextField);
+    await tester.showKeyboard(field);
+    expect(tester.testTextInput.setClientArgs!['inputType']['name'], 'TextInputType.text',
+        reason: "a multi-line field makes the keyboard's Send key type a newline");
+    await tester.enterText(field, 'what time is it');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pump();
+    expect(find.text('what time is it'), findsNothing, reason: 'sent: the box is cleared');
+    final editable = tester.state<EditableTextState>(find.byType(EditableText));
+    expect(editable.widget.focusNode.hasFocus, isTrue, reason: 'the keyboard stays up');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a newline that arrives anyway sends instead of wrapping', (tester) async {
+    await openSession(tester);
+    final field = find.byType(TextField);
+    await tester.showKeyboard(field);
+    await tester.enterText(field, 'uninstall instagram');
+    tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: 'uninstall instagram\n',
+        selection: TextSelection.collapsed(offset: 20)));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('uninstall instagram'), findsNothing, reason: 'Enter sent it');
+    expect(find.textContaining('\n'), findsNothing);
+    // Pasted lines become one message, not a four-line box.
+    await tester.enterText(field, 'first line\nsecond line');
+    await tester.pump();
+    expect(find.text('first line second line'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('while typing, the screen says the mic is paused', (tester) async {
+    await openSession(tester);
+    expect(find.text('Listening…'), findsOneWidget);
+    await tester.showKeyboard(find.byType(TextField));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(AssistantEngine.instance.micPausedForTyping, isTrue);
+    expect(find.text('Mic paused while you type'), findsOneWidget);
+    expect(find.text('Listening…'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the mic comes back when the session ends or the keyboard closes',
+      (tester) async {
+    await openSession(tester);
+    final engine = AssistantEngine.instance;
+    final editable = tester.state<EditableTextState>(find.byType(EditableText));
+
+    // Keyboard closed with Back: the field keeps focus on its own, and the
+    // focus is what held the mic paused.
+    await tester.showKeyboard(find.byType(TextField));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 1190);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(engine.micPausedForTyping, isTrue);
+    tester.view.resetViewInsets();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(editable.widget.focusNode.hasFocus, isFalse);
+    expect(engine.micPausedForTyping, isFalse);
+
+    // Session ended while typing: no deaf mic carried into the next one.
+    await tester.showKeyboard(find.byType(TextField));
+    await tester.pump();
+    expect(engine.micPausedForTyping, isTrue);
+    engine
+      ..inlineVoice = false
+      ..phase = AssistantPhase.idle
+      ..notifyListeners();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(editable.widget.focusNode.hasFocus, isFalse);
+    expect(engine.micPausedForTyping, isFalse);
+  });
 }

@@ -108,7 +108,7 @@ class EmailSentListState extends State<EmailSentList> {
                         fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
                 Text(
-                  'Tap the mic and say "send a mail to ravi@example.com '
+                  'Go back, tap the mic and say "send a mail to ravi@example.com '
                   'saying I\'ll be there by six". Ask again later and just '
                   'say "the same address" — I remember who you write to.',
                   textAlign: TextAlign.center,

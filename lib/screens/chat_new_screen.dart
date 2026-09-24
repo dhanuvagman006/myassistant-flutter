@@ -7,6 +7,7 @@ import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
 import 'chat_group_screen.dart';
 import 'chat_screen.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
 ///  WHO CAN I TALK TO, AND WHO DO I HAVE TO INVITE.
@@ -87,9 +88,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
       await Share.share(text);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the invite.')),
-        );
+        AppFeedback.show('Could not open the invite.', context: context);
       }
     }
   }
@@ -110,9 +109,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
     setState(() => _creating = false);
     final id = ((r?['group'] as Map?)?['id'] as num?)?.toInt();
     if (id == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not create the group.')),
-      );
+      AppFeedback.show('Could not create the group.', context: context);
       return;
     }
     Navigator.of(context).pushReplacement(MaterialPageRoute(
@@ -190,7 +187,8 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
                     ),
                     Expanded(
                       child: ListView(
-                        padding: const EdgeInsets.only(bottom: 110),
+                        padding: EdgeInsets.only(
+                            bottom: 110 + MediaQuery.paddingOf(context).bottom),
                         children: [
                           if (onApp.isEmpty && invite.isEmpty)
                             Padding(

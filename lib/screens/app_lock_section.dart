@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/app_lock.dart';
+import '../services/app_feedback.dart';
 
 /// PRIVACY & SECURITY — the app lock's switch.
 ///
@@ -38,9 +39,7 @@ class _AppLockSectionState extends State<AppLockSection> {
 
   void _snack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    AppFeedback.show(text, context: context);
   }
 
   /// Asks for a 4-digit PIN. [confirm] asks twice (setting a new one).

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
@@ -27,6 +28,7 @@ import '../screens/home_dashboard.dart';
 import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
 import '../screens/quick_task_screen.dart';
+import '../services/app_feedback.dart';
 import '../services/app_update_service.dart';
 import '../services/assistant_identity.dart';
 import '../services/brief_service.dart';
@@ -110,6 +112,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     HomeShell.requestedTab.removeListener(_onTabRequested);
+    AssistantEngine.instance.removeListener(_onEngineForPicker);
+    _tabChanges.dispose();
+    // Only if it is still ours: a rebuilt shell (theme flip) has set its own.
+    if (AppFeedback.sessionVisible == _sessionVisible) {
+      AppFeedback.sessionVisible = null;
+    }
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -141,8 +149,75 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     HomeShell.requestedTab.value = null; // consume, so it fires once
     if (want < 0 || want > 3 || want == _tab) return;
     _endConversationOnNavigate();
-    HomeShell.lastTab = want;
-    setState(() => _tab = want);
+    _switchTab(want);
+  }
+
+  /// Moving to another tab takes the old tab's toast and the lingering
+  /// answer card with it — they were about the screen being left.
+  void _switchTab(int i) {
+    AppFeedback.dismiss();
+    HomeShell.lastTab = i;
+    _tabChanges.value++;
+    setState(() => _tab = i);
+  }
+
+  /// Ticks on every tab switch (the answer card listens).
+  final ValueNotifier<int> _tabChanges = ValueNotifier<int>(0);
+
+  bool _sessionVisible() => voiceSessionOnScreen(AssistantEngine.instance);
+
+  /// SYSTEM BACK CLOSES WHAT IS OPEN, TOPMOST FIRST.
+  ///
+  /// The news and schedule panels, the voice session and the answer cards
+  /// are layers of this screen, not routes — so Back used to skip them
+  /// and leave the app, and they were still open on return.
+  bool _overlayOpen(AssistantEngine e) =>
+      e.newsItems.isNotEmpty ||
+      e.scheduleItems.isNotEmpty ||
+      voiceSessionOnScreen(e) ||
+      e.searchResults.isNotEmpty ||
+      e.presentedText != null ||
+      e.generatedImage != null;
+
+  void _closeTopmost() {
+    final e = AssistantEngine.instance;
+    if (e.newsItems.isNotEmpty) {
+      e.clearNews();
+    } else if (e.scheduleItems.isNotEmpty) {
+      e.clearSchedule();
+    } else if (voiceSessionOnScreen(e)) {
+      unawaited(e.endInlineConversation());
+    } else if (e.presentedText != null) {
+      e.dismissPresentedText();
+    } else if (e.generatedImage != null) {
+      e.dismissGeneratedImage();
+    } else if (e.searchResults.isNotEmpty) {
+      e.dismissSearchResults();
+    }
+  }
+
+  /// THE DUPLICATE-NAME PICKER FOLLOWS THE CONVERSATION.
+  ///
+  /// The engine also asks "which one?" out loud. Answered by voice, the
+  /// sheet used to stay open — and swiping the stale sheet away later
+  /// counted as "cancel" and tore down the live turn. It now closes itself
+  /// the moment the choice is made (or the turn is reset), and a new
+  /// picker replaces an old one instead of stacking on it.
+  int _pickerGen = 0;
+  Route<dynamic>? _pickerRoute;
+
+  void _closePickerQuietly() {
+    final r = _pickerRoute;
+    _pickerRoute = null;
+    _pickerGen++; // its result is ours, not the user's: ignored
+    if (r != null && r.isActive) r.navigator?.removeRoute(r);
+  }
+
+  void _onEngineForPicker() {
+    if (_pickerRoute != null &&
+        AssistantEngine.instance.ambiguousContacts.isEmpty) {
+      _closePickerQuietly();
+    }
   }
 
   /// The greeting the orb will speak, cached in the assistant's voice.
@@ -200,6 +275,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     HomeShell.requestedTab.addListener(_onTabRequested);
+    // Toasts step clear of the voice screen's text box, and anything the
+    // assistant also says out loud is not repeated as a toast.
+    AppFeedback.sessionVisible = _sessionVisible;
+    AssistantEngine.instance.addListener(_onEngineForPicker);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuickTaskLaunch());
     final engine = AssistantEngine.instance;
     engine.start();
@@ -258,9 +337,19 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         onChosen(null);
         return;
       }
+      _closePickerQuietly();
+      final gen = ++_pickerGen;
       ContactPickerSheet.show(context,
-              spokenName: spokenName, matches: matches)
-          .then(onChosen);
+              spokenName: spokenName,
+              matches: matches,
+              onRoute: (r) {
+                if (gen == _pickerGen) _pickerRoute = r;
+              })
+          .then((chosen) {
+        if (gen != _pickerGen) return; // closed by us, not the user
+        _pickerRoute = null;
+        onChosen(chosen);
+      });
     };
     _bootOnce();
   }
@@ -469,7 +558,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // The keyboard hides the dock (the Scaffold stops extending the body
+    // behind it), so there is nothing to fade into while it is up.
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final engine = AssistantEngine.instance;
+    return ListenableBuilder(
+      listenable: engine,
+      builder: (context, child) => PopScope(
+        canPop: !_overlayOpen(engine),
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _closeTopmost();
+        },
+        child: child!,
+      ),
+      child: Scaffold(
       backgroundColor: Neon.bg,
       extendBody: true,
       // The ambient ground sits behind every tab, so switching tabs does
@@ -489,36 +591,50 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           // CONTENT MUST NOT END MID-LETTER. Every tab is a scrolling
           // list under a floating mic and a notched dock, so whatever is
           // passing behind them showed as ghost text sliced by the orb.
-          // A short fade to the page ground makes the list dissolve into
-          // the dock instead — the standard fix, and the reason lists
-          // also carry bottom padding so the LAST card clears it.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 92,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Neon.bg.withValues(alpha: 0.0),
-                      Neon.bg.withValues(alpha: 0.85),
-                      Neon.bg,
-                    ],
-                    stops: const [0.0, 0.55, 1.0],
+          //
+          // SOLID FROM THE BAR DOWN (2026-09-24, hub.png / you.png). The
+          // fade used to be a fixed 92 dp that ignored how tall the dock
+          // really is (66 dp + the system navigation inset), so at the
+          // notch around the mic it was only ~20% opaque and list text
+          // showed through the ring. It is now sized from the body's own
+          // padding (bar + inset): fully opaque from the bar's top edge
+          // down — the notch ring is always plain ground — with a short
+          // fade above it where the mic rises over the list.
+          if (!keyboardUp)
+            Builder(builder: (context) {
+              final dockTop = MediaQuery.paddingOf(context).bottom;
+              const rise = 52.0; // the mic rises 38 dp over the bar + glow
+              final h = dockTop + rise;
+              return Positioned(
+                key: const ValueKey('dock-fade'),
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: h,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Neon.bg.withValues(alpha: 0.0),
+                          Neon.bg.withValues(alpha: 0.85),
+                          Neon.bg,
+                          Neon.bg,
+                        ],
+                        stops: [0.0, 0.6 * rise / h, rise / h, 1.0],
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ),
+              );
+            }),
           // Floating captions for the inline (no-screen) conversation.
           const InlineCaptionOverlay(),
           // The last spoken answer lingers as a readable card once the
           // voice stops — spoken words evaporate; this one doesn't.
-          const AnswerAfterglow(),
+          AnswerAfterglow(dismissOn: _tabChanges),
           // The cards a turn produces — a confirmation to tap, a call in
           // progress, a written piece, search results. These lived only
           // inside the old conversation screen, which is why Home had to
@@ -544,9 +660,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             // top is empty, is never overdrawn by the dock or the cards,
             // and is where a status banner belongs anyway.
             top: 10 + MediaQuery.of(context).viewPadding.top,
-            child: const Align(
-              alignment: Alignment.center,
-              child: AssistantActivityPill(),
+            // During a voice session the top-right corner holds the Sound
+            // button: the pill drops below that row instead of covering it.
+            child: ListenableBuilder(
+              listenable: engine,
+              builder: (_, child) => AnimatedPadding(
+                duration: const Duration(milliseconds: 200),
+                padding: EdgeInsets.only(
+                    top: voiceSessionOnScreen(engine) ? 56 : 0),
+                child: child,
+              ),
+              child: const Align(
+                alignment: Alignment.center,
+                child: AssistantActivityPill(),
+              ),
             ),
           ),
         ],
@@ -599,9 +726,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       bottomNavigationBar: BottomAppBar(
         color: Neon.surface,
         elevation: 0,
-        height: 66,
+        height: Dock.barHeight,
         shape: const CircularNotchedRectangle(),
-        notchMargin: 8,
+        // A snug cradle: the visible mic is 64 dp inside its 76 dp box, so
+        // a wide margin left a thick ring of whatever was behind the bar.
+        notchMargin: 4,
         padding: EdgeInsets.zero,
         child: Row(
           children: [
@@ -618,6 +747,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -627,9 +757,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       child: InkWell(
         onTap: () {
           HapticFeedback.selectionClick();
-          if (i != _tab) _endConversationOnNavigate();
-          HomeShell.lastTab = i;
-          setState(() => _tab = i);
+          if (i == _tab) return;
+          _endConversationOnNavigate();
+          _switchTab(i);
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -659,12 +789,20 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 3),
-            Text(label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? Neon.violet : Neon.textDim,
-                )),
+            // The dock is a fixed 66 dp: its labels grow with the system
+            // text size only up to 1.3x (at 2x they ran out of the bar),
+            // the way the system's own navigation labels do.
+            MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? Neon.violet : Neon.textDim,
+                  )),
+            ),
           ],
         ),
       ),

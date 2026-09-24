@@ -7,6 +7,7 @@ import '../models/user_document.dart';
 import '../services/api_service.dart';
 import '../services/document_events.dart';
 import '../widgets/document_tile.dart';
+import '../services/app_feedback.dart';
 
 /// MY DOCUMENTS — the user's OWN documents: scans, shared-in files, IDs,
 /// receipts. Strictly the personal area: anything filed under a client or
@@ -71,8 +72,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       return true;
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Couldn't delete. Check your connection and try again.")));
+        AppFeedback.show("Couldn't delete. Check your connection and try again.", context: context);
       }
       return false;
     }

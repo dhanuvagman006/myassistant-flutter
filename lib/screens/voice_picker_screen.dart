@@ -28,9 +28,10 @@ class _VoicePickerScreenState extends State<VoicePickerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(backgroundColor: Neon.bg, title: const Text('Voice')),
+      appBar: appleAppBar(context, 'Assistant voice'),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+        padding: EdgeInsets.fromLTRB(
+            16, 12, 16, 40 + MediaQuery.paddingOf(context).bottom),
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 14),

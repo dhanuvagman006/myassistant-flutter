@@ -166,6 +166,10 @@ class AppleRow extends StatelessWidget {
   final VoidCallback? onTap;
   final Color? titleColor;
 
+  /// Lines the title may use before it is cut (a note or a summary shown
+  /// as the title needs more than one).
+  final int titleMaxLines;
+
   const AppleRow({
     super.key,
     this.leading,
@@ -174,6 +178,7 @@ class AppleRow extends StatelessWidget {
     this.trailing,
     this.onTap,
     this.titleColor,
+    this.titleMaxLines = 1,
   });
 
   @override
@@ -189,7 +194,7 @@ class AppleRow extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  maxLines: 1,
+                  maxLines: titleMaxLines,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: titleColor ?? Neon.textHi,
@@ -202,14 +207,21 @@ class AppleRow extends StatelessWidget {
                   const SizedBox(height: 1),
                   Text(
                     subtitle!,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    // Room for a longer line at large text sizes; with
+                    // nothing on the right it may run as long as it needs.
+                    maxLines: trailing == null && onTap == null ? null : 3,
+                    overflow: trailing == null && onTap == null
+                        ? null
+                        : TextOverflow.ellipsis,
                     style: TextStyle(color: Neon.textLo, fontSize: 12.5),
                   ),
                 ],
               ],
             ),
           ),
+          // A gap before whatever sits on the right: subtitles used to run
+          // right up to the colour dot, the voice name and the switches.
+          if (trailing != null || onTap != null) const SizedBox(width: 12),
           trailing ??
               (onTap != null
                   ? Icon(Icons.chevron_right_rounded,
@@ -276,7 +288,7 @@ class ApplePrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final style = FilledButton.styleFrom(
       backgroundColor: Neon.violet,
-      foregroundColor: Colors.white,
+      foregroundColor: Neon.onAccent,
       minimumSize: const Size.fromHeight(50),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),

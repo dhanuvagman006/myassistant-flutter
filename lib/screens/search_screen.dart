@@ -189,7 +189,8 @@ class _SearchScreenState extends State<SearchScreen> {
     final r = searchCorpus(c, q);
     if (r.isEmpty) return _hint(Icons.search_off_rounded, 'Nothing matches "$q".');
     return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 40),
+      padding: EdgeInsets.fromLTRB(
+          12, 4, 12, 40 + MediaQuery.paddingOf(context).bottom),
       children: [
         if (r.documents.isNotEmpty) ...[
           _section('Documents', r.documents.length),

@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/meetings_service.dart';
+import '../../services/app_feedback.dart';
 
 /// THE MINUTES. Summary, what was decided, who does what by when, a
 /// follow-up message ready to send, and the whole thing as a PDF.
@@ -65,8 +66,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
           subject: 'Minutes — ${_m?['title'] ?? 'meeting'}');
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Couldn't make the PDF — try again.")));
+        AppFeedback.show("Couldn't make the PDF — try again.", context: context);
       }
     } finally {
       if (mounted) setState(() => _sharing = false);
@@ -239,8 +239,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
                   onPressed: () async {
                     await Clipboard.setData(ClipboardData(text: follow));
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Copied.')));
+                      AppFeedback.copied(context, 'Copied.');
                     }
                   },
                   icon: const Icon(Icons.copy_rounded, size: 16),

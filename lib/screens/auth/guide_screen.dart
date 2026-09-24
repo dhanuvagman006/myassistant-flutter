@@ -51,7 +51,7 @@ class _GuideScreenState extends State<GuideScreen> {
         icon: Icons.tune_rounded,
         title: 'Make it yours',
         body:
-            'Pick a voice and a face under the You tab, add your own '
+            'Pick a voice under the You tab, add your own '
             'rules — or just say "your name is Nova now" and $a renames '
             'itself.',
       ),
@@ -183,7 +183,7 @@ class _GuideScreenState extends State<GuideScreen> {
                       onPressed: _next,
                       style: FilledButton.styleFrom(
                         backgroundColor: Neon.violet,
-                        foregroundColor: Colors.white,
+                        foregroundColor: Neon.onAccent,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                         textStyle: const TextStyle(

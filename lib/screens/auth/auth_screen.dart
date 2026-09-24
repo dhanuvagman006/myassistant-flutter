@@ -362,7 +362,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               onPressed: null,
                               style: FilledButton.styleFrom(
                                 backgroundColor: Neon.violet,
-                                foregroundColor: Colors.white,
+                                foregroundColor: Neon.onAccent,
                                 minimumSize: const Size.fromHeight(50),
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12)),
@@ -384,12 +384,17 @@ class _AuthScreenState extends State<AuthScreen> {
                       Row(
                         children: [
                           const Expanded(child: Divider()),
-                          Padding(
+                          Flexible(
+                            flex: 3,
+                            child: Padding(
                             padding:
                                 const EdgeInsets.symmetric(horizontal: 12),
                             child: Text('or continue with',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                     color: Neon.textDim, fontSize: 12.5)),
+                          ),
                           ),
                           const Expanded(child: Divider()),
                         ],

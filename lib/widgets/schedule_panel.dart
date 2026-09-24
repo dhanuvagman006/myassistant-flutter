@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../models/schedule_item.dart';
@@ -104,7 +105,7 @@ class _SchedulePanelState extends State<SchedulePanel> {
                   Flexible(
                     child: ListView.separated(
                       padding: EdgeInsets.fromLTRB(
-                          16, 4, 16, 16 + media.padding.bottom),
+                          16, 4, 16, Dock.clearance(context, gap: 16)),
                       itemCount: items.length,
                       separatorBuilder: (_, __) =>
                           Divider(height: 18, thickness: 1, color: Neon.line),

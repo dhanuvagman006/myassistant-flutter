@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 
 /// Full-screen avatar face gallery — real portraits in a scrollable grid,
 /// tap to choose. The choice saves immediately (no separate Save step) and
@@ -39,9 +41,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (r == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't save — try again.")),
-      );
+      AppFeedback.show("Couldn't save — try again.", context: context);
       return;
     }
     Navigator.of(context).pop(id);
@@ -89,12 +89,10 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
 
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Text('Avatar face'),
-      ),
+      appBar: appleAppBar(context, 'Avatar face'),
       body: GridView.count(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+            16, 8, 16, 32 + MediaQuery.paddingOf(context).bottom),
         crossAxisCount: 3,
         mainAxisSpacing: 12,
         crossAxisSpacing: 12,

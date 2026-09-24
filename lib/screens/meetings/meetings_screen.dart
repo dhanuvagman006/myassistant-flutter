@@ -43,7 +43,7 @@ class _MeetingsScreenState extends State<MeetingsScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _record,
         backgroundColor: Neon.violet,
-        foregroundColor: Colors.white,
+        foregroundColor: Neon.onAccent,
         icon: const Icon(Icons.fiber_manual_record_rounded),
         label: const Text('Record a meeting'),
       ),

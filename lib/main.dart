@@ -106,6 +106,9 @@ class MyAssistantApp extends StatelessWidget {
         // Lets the avatar-message popup appear from a push tap no matter
         // which screen is on top.
         navigatorKey: AvatarMessageService.navigatorKey,
+        // Toasts wait while a sheet or dialog covers the screen, and do not
+        // follow the user off the page they belonged to.
+        navigatorObservers: [AppFeedback.observer],
         theme: AppTheme.light(),
         darkTheme: AppTheme.light(),
         themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself

@@ -5,10 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../../design/apple_kit.dart';
+import '../../core/log.dart';
 import '../../design/neon_tokens.dart';
 import '../../features/assistant/state/assistant_engine.dart';
 import '../../services/meetings_service.dart';
 import 'meeting_detail_screen.dart';
+import '../../services/app_feedback.dart';
 
 /// MEETING RECORDER. Owner's pick, 2026-09-23 ("Meeting recorder →
 /// minutes"). Records the room — compact AAC, about 15 MB an hour — and
@@ -153,16 +156,16 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _stage = _Stage.ready);
-      _snack('Upload failed — ${e.toString().replaceFirst('Exception: ', '')} '
+      // The raw error goes to the log; the user gets a sentence.
+      AppLog.add('meeting', 'upload failed: $e');
+      _snack("Couldn't upload the recording — check your connection. "
           'The recording is kept; try Stop again.');
     }
   }
 
   void _snack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    AppFeedback.show(text, context: context);
   }
 
   String get _clock {
@@ -201,13 +204,7 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
       },
       child: Scaffold(
         backgroundColor: Neon.bg,
-        appBar: AppBar(
-          backgroundColor: Neon.bg,
-          elevation: 0,
-          iconTheme: IconThemeData(color: Neon.textHi),
-          title: Text('Record a meeting',
-              style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w700)),
-        ),
+        appBar: appleAppBar(context, 'Record a meeting'),
         body: SafeArea(
           // Full height when there is room (the Spacer puts the button at
           // the bottom); scrolls while the keyboard is up instead of

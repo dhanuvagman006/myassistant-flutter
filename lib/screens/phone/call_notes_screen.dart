@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/call_notes_service.dart';
 import '../../services/call_recording_watcher.dart';
 import 'call_detail_screen.dart';
+import '../../services/app_feedback.dart';
 
 /// CALL NOTES — the phone keeps its own dialer and its own recorder; this
 /// screen owns the consent toggle, walks the user to the system setting
@@ -92,8 +94,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
     final ok = await svc.setAnalysis(true);
     if (!ok) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Couldn't save the setting — try again.")));
+        AppFeedback.show("Couldn't save the setting — try again.", context: context);
       }
       return;
     }
@@ -124,7 +125,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
             Text(
               'Turn on your phone\'s own call recording:\n\n'
               '1. The call settings screen opens next.\n'
-              '2. Tap "Record calls" (Samsung) or "Recording".\n'
+              '2. Tap "Record calls" or "Recording".\n'
               '3. Switch on "Auto record calls".\n\n'
               'From then on, every recorded call is analysed here '
               'automatically.',
@@ -139,9 +140,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                   Navigator.pop(ctx);
                   final ok = await svc.openSystemCallSettings();
                   if (!ok && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text(
-                            'Open your Phone app → Settings → Record calls.')));
+                    AppFeedback.show('Open your Phone app → Settings → Record calls.', context: context);
                   }
                 },
                 child: const Text('Open call settings'),
@@ -162,16 +161,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
         .length;
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        elevation: 0,
-        iconTheme: IconThemeData(color: Neon.textHi),
-        title: Text('Call notes',
-            style: GoogleFonts.spaceGrotesk(
-                color: Neon.textHi,
-                fontWeight: FontWeight.w700,
-                fontSize: 20)),
-      ),
+      appBar: appleAppBar(context, 'Call notes'),
       body: SafeArea(
         child: RefreshIndicator(
           color: Neon.violet,
@@ -240,11 +230,13 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                             Icon(Icons.settings_phone_rounded,
                                 size: 15, color: Neon.cyan),
                             const SizedBox(width: 7),
-                            Text('Recorder setup / open call settings',
-                                style: TextStyle(
-                                    color: Neon.cyan,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600)),
+                            Flexible(
+                              child: Text('Set up call recording',
+                                  style: TextStyle(
+                                      color: Neon.cyan,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600)),
+                            ),
                           ],
                         ),
                       ),

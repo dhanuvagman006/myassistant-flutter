@@ -10,6 +10,7 @@ import '../design/gyro_motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  DIAGNOSTICS — "why isn't it working?", answered on the phone itself.
@@ -57,9 +58,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     final v = _url.text.trim();
     await ApiService.setServerOverride(v.isEmpty ? null : v);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Server set to ${ApiService.baseUrl}. '
-            'Restart the app to reconnect everything.')));
+    AppFeedback.show('Server set to ${ApiService.baseUrl}. '
+            'Restart the app to reconnect everything.', context: context);
     setState(() {});
   }
 
@@ -76,7 +76,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       backgroundColor: Neon.bg,
       appBar: appleAppBar(context, 'Connection & diagnostics'),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+            16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
         children: [
           const GroupLabel('Server URL'),
           TextField(
@@ -98,7 +99,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             FilledButton(
               style: FilledButton.styleFrom(
                   backgroundColor: Neon.violet,
-                  foregroundColor: Colors.white,
+                  foregroundColor: Neon.onAccent,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12))),
               onPressed: _saveUrl,
@@ -157,7 +158,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 leading: IconTile(
                     Icons.face_retouching_natural, AppleColors.purple),
                 title: 'Assistant',
-                subtitle: 'Name, voice, style, standing rules',
+                subtitle: 'Voice, standing rules, app lock',
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const AssistantSettingsScreen())),
               ),

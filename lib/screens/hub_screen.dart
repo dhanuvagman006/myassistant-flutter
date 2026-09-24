@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+import '../design/apple_kit.dart';
+import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
@@ -29,20 +30,12 @@ class HubScreen extends StatelessWidget {
     return SafeArea(
       bottom: false,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 120),
+        // The last row clears the dock and the mic on every phone (a fixed
+        // 120 left it under the mic with 3-button navigation).
+        padding: EdgeInsets.fromLTRB(16, 18, 16, Dock.clearance(context)),
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 20),
-            child: Text(
-              'Hub',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 32,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.6,
-                color: Neon.textHi,
-              ),
-            ),
-          ),
+          // The same large title every tab uses.
+          const LargeTitle('Hub'),
           _group(context, 'Your day', [
             _Row(
               'Reminders',

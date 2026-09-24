@@ -209,10 +209,16 @@ class AppTheme {
               BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
         ),
       ),
+      // Every toast goes through AppFeedback; these are the same rules as
+      // a safety net: a ✕ on every toast, and a swipe either way closes it.
       snackBarTheme: SnackBarThemeData(
         backgroundColor: Neon.surfaceHigh,
         contentTextStyle: GoogleFonts.manrope(color: Neon.textHi),
         behavior: SnackBarBehavior.floating,
+        showCloseIcon: true,
+        closeIconColor: Neon.textLo,
+        actionTextColor: Neon.violet,
+        dismissDirection: DismissDirection.horizontal,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Neon.rMd),
           side: BorderSide(color: Neon.lineBright),
