@@ -1,7 +1,9 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../../design/gpu_programs.dart';
 import '../state/assistant_state.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -45,20 +47,61 @@ class SiriOrb extends StatefulWidget {
 
 enum _OrbMode { idle, connecting, listening, thinking, speaking, error }
 
+/// What the painter reads on every frame: the clock (seconds round a
+/// 60-second loop) and the smoothed level. Changed by the controller,
+/// repainted from directly — no widget is rebuilt for a frame of the orb.
+class _OrbClock extends ChangeNotifier {
+  double t = 0;
+  double level = 0;
+
+  /// The GPU program's shader: made on the first frame drawn with it and
+  /// reused for the orb's life — each frame's numbers are copied into that
+  /// frame's picture, so one object serves them all.
+  ui.FragmentShader? shader;
+
+  void changed() => notifyListeners();
+
+  @override
+  void dispose() {
+    shader?.dispose();
+    super.dispose();
+  }
+}
+
 class _SiriOrbState extends State<SiriOrb> with SingleTickerProviderStateMixin {
   late final AnimationController _t;
-  double _smooth = 0; // smoothed level, so waves flow instead of twitch
+
+  /// PAINT-ONLY FRAMES (2026-09-24, GPU pass). The orb used to rebuild its
+  /// widgets on every frame, forever — on the splash of every cold start
+  /// and on Welcome until the button is tapped — and its painter said
+  /// "repaint" to every rebuild, and it eased the level inside build().
+  /// The controller now moves [_clock] (easing the level, once a frame, as
+  /// build used to), and only the orb's own layer is repainted.
+  final _OrbClock _clock = _OrbClock();
 
   @override
   void initState() {
     super.initState();
     _t = AnimationController(vsync: this, duration: const Duration(seconds: 60))
+      ..addListener(_onFrame)
       ..repeat();
+    // The shader for this orb: the splash shows it on the very first
+    // frames of a cold start, so start loading it right away.
+    GpuProgram.siriOrb.load();
+  }
+
+  void _onFrame() {
+    // Smoothed level, so waves flow instead of twitch.
+    _clock
+      ..level += (widget.level.clamp(0.0, 1.0) - _clock.level) * 0.22
+      ..t = _t.value * 60 // seconds
+      ..changed();
   }
 
   @override
   void dispose() {
     _t.dispose();
+    _clock.dispose();
     super.dispose();
   }
 
@@ -75,31 +118,31 @@ class _SiriOrbState extends State<SiriOrb> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _t,
-      builder: (context, _) {
-        _smooth += (widget.level.clamp(0.0, 1.0) - _smooth) * 0.22;
-        return RepaintBoundary(
-          child: CustomPaint(
-            size: Size.square(widget.size),
-            painter: _OrbPainter(
-              t: _t.value * 60, // seconds
-              mode: _mode,
-              level: _smooth,
-            ),
-          ),
-        );
-      },
+    return RepaintBoundary(
+      child: CustomPaint(
+        size: Size.square(widget.size),
+        painter: _OrbPainter(
+          clock: _clock,
+          mode: _mode,
+          dpr: MediaQuery.maybeDevicePixelRatioOf(context) ?? 3.0,
+        ),
+      ),
     );
   }
 }
 
 class _OrbPainter extends CustomPainter {
-  _OrbPainter({required this.t, required this.mode, required this.level});
+  _OrbPainter({required this.clock, required this.mode, required this.dpr})
+      : super(repaint: clock);
 
-  final double t;
+  final _OrbClock clock;
   final _OrbMode mode;
-  final double level;
+
+  /// The screen's density: the GPU program anti-aliases over one pixel.
+  final double dpr;
+
+  double get t => clock.t;
+  double get level => clock.level;
 
   // Wave colours per state — three layers, front to back.
   List<Color> get _waveColors => switch (mode) {
@@ -160,22 +203,100 @@ class _OrbPainter extends CustomPainter {
         _ => 0.7, // idle drifts almost imperceptibly
       };
 
+  bool get _active => mode == _OrbMode.listening || mode == _OrbMode.speaking;
+
+  // 1. Halo — the room-glow that says "on" from a distance.
+  double get _haloStrength => switch (mode) {
+        _OrbMode.listening => 0.30 + 0.35 * level,
+        _OrbMode.speaking => 0.30 + 0.25 * level,
+        _OrbMode.thinking => 0.22,
+        // Connecting breathes: the only state whose glow oscillates.
+        _OrbMode.connecting => 0.10 + 0.10 * (0.5 + 0.5 * math.sin(t * 2.4)),
+        _OrbMode.error => 0.18,
+        _OrbMode.idle => 0.0,
+      };
+
+  int get _layers => mode == _OrbMode.idle || mode == _OrbMode.error ? 1 : 3;
+
   @override
   void paint(Canvas canvas, Size size) {
+    final program = GpuProgram.siriOrb.program;
+    if (program != null) {
+      _paintGpu(canvas, size, program);
+    } else {
+      _paintCanvas(canvas, size);
+    }
+  }
+
+  final Paint _gpu = Paint();
+
+  /// THE GPU PATH (2026-09-24, GPU pass): the whole orb in ONE rectangle,
+  /// drawn by shaders/siri_orb.frag. The blurred waves were the cost — a
+  /// blurred path has no fast route on the phone's GPU, so each of the
+  /// three went through its own offscreen texture and a two-pass blur
+  /// every frame. The program works the blur out directly instead.
+  void _paintGpu(Canvas canvas, Size size, ui.FragmentProgram program) {
+    final shader = clock.shader ??= program.fragmentShader();
+    final r = size.width * 0.42;
+    final halo = _halo;
+    final waves = _waveColors;
+    final active = _active;
+    var i = 0;
+    void f(double v) => shader.setFloat(i++, v);
+    // uGeom
+    f(size.width);
+    f(1 / dpr);
+    f(_layers.toDouble());
+    f(_amp * size.height);
+    // uHalo, uRim
+    f(halo.r);
+    f(halo.g);
+    f(halo.b);
+    f(_haloStrength);
+    f(active ? 0.65 : 0.35);
+    f(0);
+    f(0);
+    f(0);
+    // uWave0..2: colour and strength.
+    for (var k = 0; k < 3; k++) {
+      final c = waves[k % waves.length];
+      f(c.r);
+      f(c.g);
+      f(c.b);
+      f(active ? 0.95 - k * 0.25 : 0.75 - k * 0.2);
+    }
+    // uPhaseA/B: each wave's two harmonic phases, wrapped to one turn.
+    const tau = 2 * math.pi;
+    final phases = List<double>.generate(6, (j) {
+      final k = j % 3;
+      final speed = _speed * (1.0 + k * 0.18) * (k.isEven ? 1 : -1);
+      final seed = k * 2.1;
+      return j < 3
+          ? (speed * t + seed) % tau
+          : (-speed * 1.35 * t + seed * 2.3) % tau;
+    });
+    for (var j = 0; j < 6; j++) {
+      f(phases[j]);
+      if (j == 2 || j == 5) f(0);
+    }
+    // The halo reaches past the orb's box (1.55 x 0.42 of it from the
+    // centre), exactly as the circle it replaces did.
+    final c = size.center(Offset.zero);
+    final reach = _haloStrength > 0.01 ? r * 1.55 : r + 2;
+    canvas.drawRect(
+        Rect.fromCircle(center: c, radius: reach), _gpu..shader = shader);
+  }
+
+  /// THE CANVAS PATH — the orb as it was drawn before the GPU program,
+  /// kept for the frames before the program has loaded and for any phone
+  /// that cannot load it.
+  void _paintCanvas(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
     final r = size.width * 0.42;
-    final active = mode == _OrbMode.listening || mode == _OrbMode.speaking;
+    final active = _active;
 
     // 1. Halo — the room-glow that says "on" from a distance.
-    final haloStrength = switch (mode) {
-      _OrbMode.listening => 0.30 + 0.35 * level,
-      _OrbMode.speaking => 0.30 + 0.25 * level,
-      _OrbMode.thinking => 0.22,
-      // Connecting breathes: the only state whose glow oscillates.
-      _OrbMode.connecting => 0.10 + 0.10 * (0.5 + 0.5 * math.sin(t * 2.4)),
-      _OrbMode.error => 0.18,
-      _OrbMode.idle => 0.0,
-    };
+    final haloStrength = _haloStrength;
     if (haloStrength > 0.01) {
       canvas.drawCircle(
         c,
@@ -205,7 +326,7 @@ class _OrbPainter extends CustomPainter {
     canvas.clipPath(Path()..addOval(Rect.fromCircle(center: c, radius: r * 0.94)));
     final colors = _waveColors;
     final amp = _amp * size.height;
-    final layers = mode == _OrbMode.idle || mode == _OrbMode.error ? 1 : 3;
+    final layers = _layers;
     for (var i = 0; i < layers; i++) {
       final seed = i * 2.1;
       final layerAmp = amp * (1.0 - i * 0.22);
@@ -302,6 +423,10 @@ class _OrbPainter extends CustomPainter {
     );
   }
 
+  // Frames repaint through [clock]. A rebuild repaints only when the state
+  // it shows changed — it used to be every rebuild, and it rebuilt every
+  // frame.
   @override
-  bool shouldRepaint(_OrbPainter old) => true;
+  bool shouldRepaint(_OrbPainter old) =>
+      old.clock != clock || old.mode != mode || old.dpr != dpr;
 }

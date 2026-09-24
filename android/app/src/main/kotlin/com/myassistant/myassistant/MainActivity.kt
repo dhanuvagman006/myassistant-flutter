@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.os.Process
 import android.provider.Settings
 import android.telecom.TelecomManager
@@ -31,6 +33,57 @@ class MainActivity : FlutterFragmentActivity() {
      * channel message pushed at launch is lost in the first.
      */
     private var pendingQuickTask = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        preferFastestRefreshRate()
+    }
+
+    /**
+     * THE PANEL'S FASTEST RATE, WHEN THE PHONE ALLOWS IT (2026-09-24,
+     * GPU pass).
+     *
+     * His phone's panel can run at 90 Hz, and nothing asked for it: an app
+     * that does not say otherwise gets whatever the system picks. This
+     * asks, for this window only, for the display mode with the highest
+     * refresh rate at the current resolution. Flutter follows the display
+     * on its own — it draws a frame per refresh — so there is nothing to
+     * change on the Dart side.
+     *
+     * ONLY A REQUEST. Android weighs it against the user's own setting,
+     * and the setting wins: on Samsung's "Standard" motion smoothness (the
+     * owner's choice today, 60 Hz) the panel stays at 60 and this changes
+     * nothing; on "Adaptive" the window gets 90 Hz while it is on screen
+     * (a frame budget of 11.1 ms instead of 16.7, and the panel held at
+     * 90 while the app is open — the price of the smoother motion).
+     */
+    private fun preferFastestRefreshRate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val screen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                this.display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            } ?: return
+            val current = screen.mode
+            val fastest = screen.supportedModes
+                .filter {
+                    it.physicalWidth == current.physicalWidth &&
+                        it.physicalHeight == current.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate } ?: return
+            val attrs = window.attributes
+            if (attrs.preferredDisplayModeId != fastest.modeId) {
+                attrs.preferredDisplayModeId = fastest.modeId
+                window.attributes = attrs
+            }
+            Log.i("hari/display", "asked for ${fastest.refreshRate} Hz (now ${current.refreshRate} Hz)")
+        } catch (e: Throwable) {
+            // A display that will not say: leave it to the system.
+            Log.w("hari/display", "refresh-rate request skipped: ${e.javaClass.simpleName}")
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

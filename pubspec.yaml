@@ -99,6 +99,11 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # The on-phone frame benchmark (integration_test/ux_bench_test.dart,
+  # run with test_driver/perf_driver.dart in profile mode). Ships with the
+  # Flutter SDK; not built into the release app.
+  integration_test:
+    sdk: flutter
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
 
@@ -111,6 +116,14 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+
+  # GPU programs for the always-moving pictures (lib/design/gpu_programs.dart).
+  # impellerc compiles them with the app, for every renderer the phone
+  # might use; each widget still has its Canvas painter to fall back on.
+  shaders:
+    - shaders/voice_backdrop.frag
+    - shaders/siri_orb.frag
+    - shaders/ambient.frag
 
   assets:
     - assets/icon/

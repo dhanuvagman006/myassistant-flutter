@@ -87,11 +87,16 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      AnimatedBuilder(
-                        animation: _rings,
-                        builder: (_, __) => CustomPaint(
+                      // ITS OWN LAYER, repainted straight from the
+                      // controller (2026-09-24, GPU pass). Each ring frame
+                      // used to rebuild this and re-record the whole
+                      // splash with it — name, tagline, backdrop and
+                      // loader — for as long as the session took to
+                      // restore.
+                      RepaintBoundary(
+                        child: CustomPaint(
                           size: const Size(190, 190),
-                          painter: _SplashRings(_rings.value),
+                          painter: _SplashRings(_rings),
                         ),
                       ),
                       const SiriOrb(
@@ -150,7 +155,8 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                     const SizedBox(height: Neon.s7),
-                    const NeonLoader(size: 26),
+                    // Its own layer too: it spins for the whole splash.
+                    const RepaintBoundary(child: NeonLoader(size: 26)),
                   ],
                 ),
               ),
@@ -164,22 +170,25 @@ class _SplashScreenState extends State<SplashScreen>
 
 /// Soft rings washing outward from the orb — quiet, slow, no strobe.
 class _SplashRings extends CustomPainter {
-  final double t;
-  _SplashRings(this.t);
+  _SplashRings(this.t) : super(repaint: t);
+
+  /// 0..1 round one wash; frames repaint from it directly.
+  final Animation<double> t;
+
+  final Paint _ring = Paint()..style = PaintingStyle.stroke;
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
     final s = size.shortestSide / 2;
     for (final phase in const [0.0, 0.33, 0.66]) {
-      final p = (t + phase) % 1.0;
+      final p = (t.value + phase) % 1.0;
       final radius = s * (0.68 + p * 0.46);
       final alpha = (1 - p) * 0.22 * math.sin(math.pi * p.clamp(0.05, 1.0));
       canvas.drawCircle(
         c,
         radius,
-        Paint()
-          ..style = PaintingStyle.stroke
+        _ring
           ..strokeWidth = 1.6 - p * 1.0
           ..color = Neon.violet.withValues(alpha: alpha.clamp(0.0, 1.0)),
       );

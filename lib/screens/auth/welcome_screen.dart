@@ -168,12 +168,14 @@ class _WelcomeScreenState extends State<WelcomeScreen>
             )),
           ),
           // Confetti on top of everything, taps pass straight through.
+          // ITS OWN LAYER, repainted straight from the controller
+          // (2026-09-24, GPU pass): each of its frames used to rebuild it
+          // and re-record the whole page under it — title, button and all.
           IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _confetti,
-              builder: (_, __) => CustomPaint(
+            child: RepaintBoundary(
+              child: CustomPaint(
                 painter: _ConfettiPainter(
-                    t: _confetti.value, particles: _particles),
+                    animation: _confetti, particles: _particles),
               ),
             ),
           ),
@@ -228,13 +230,16 @@ class _Particle {
 }
 
 class _ConfettiPainter extends CustomPainter {
-  _ConfettiPainter({required this.t, required this.particles});
+  _ConfettiPainter({required this.animation, required this.particles})
+      : super(repaint: animation);
 
-  final double t; // 0..1 overall timeline
+  /// 0..1 overall timeline; frames repaint from it directly.
+  final Animation<double> animation;
   final List<_Particle> particles;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final t = animation.value;
     if (t >= 1) return;
     final paint = Paint();
     for (final p in particles) {
@@ -266,5 +271,6 @@ class _ConfettiPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ConfettiPainter old) => old.t != t;
+  bool shouldRepaint(_ConfettiPainter old) =>
+      old.animation != animation || old.particles != particles;
 }
