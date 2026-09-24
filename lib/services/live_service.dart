@@ -689,6 +689,20 @@ class LiveService {
   /// is never cut off mid-word.
   bool get modelTurn => _active && _modelTurn(_now());
 
+  /// True while the owner is mid-utterance (with the speaker gate on: while
+  /// it holds or streams one). A rebuild waits for this too, so his
+  /// sentence is never cut off and lost with the old session.
+  bool get ownerTalking =>
+      _active &&
+      (_speaking ||
+          (_gateActive &&
+              (_gateState == _GateState.holding ||
+                  _gateState == _GateState.accepted)));
+
+  /// Changes whenever a session stops, so a caller that waited can tell
+  /// the session it waited on from one started since.
+  int get era => _era;
+
   bool _toolRunning(DateTime now) =>
       _toolsInFlight > 0 && now.difference(_toolStartedAt) < _toolCap;
 

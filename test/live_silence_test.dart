@@ -207,6 +207,34 @@ void main() {
     expect(r.svc.modelTurn, isTrue);
   });
 
+  // A rebuild (location allowed mid-session) waits for these too, so the
+  // owner is never cut off mid-sentence.
+  test('ownerTalking: from onset until the hangover ends it', () {
+    expect(r.svc.ownerTalking, isFalse);
+    r.feed(speech, 3);
+    expect(r.svc.ownerTalking, isTrue);
+    expect(r.svc.modelTurn, isFalse, reason: 'his turn, not hers');
+    r.feed(quiet, 4);
+    expect(r.svc.ownerTalking, isFalse);
+  });
+
+  test('ownerTalking: the speaker gate holding an utterance', () async {
+    r.svc.speakerGateEnabled = true;
+    r.svc.speakerScorer = (pcm) async => 0.9;
+    r.feed(speech, 2);
+    expect(r.svc.ownerTalking, isTrue, reason: 'held, not yet scored');
+    r.feed(quiet, 4);
+    await Future<void>.delayed(Duration.zero);
+    expect(r.svc.ownerTalking, isFalse);
+  });
+
+  test('era changes when a session stops', () async {
+    final before = r.svc.era;
+    r.svc.debugEndSession();
+    await r.svc.stop(); // nothing open: only the era moves
+    expect(r.svc.era, isNot(before));
+  });
+
   test('a typed request keeps the uplink up until the answer comes', () {
     r.feed(quiet, 12);
     expect(r.markers, ['audio_pause']);

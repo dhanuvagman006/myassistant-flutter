@@ -4521,12 +4521,16 @@ class AssistantEngine extends ChangeNotifier {
   /// Location was allowed in the middle of a live session: start it again
   /// so the new one is set up with location on — the tools that need it
   /// offered, the prompt no longer saying it is off. Only once her answer
-  /// has finished and nothing is waiting on the owner; "ask me again" is
-  /// promised only when the new session is actually up.
+  /// has finished, the owner is not mid-sentence and nothing is waiting on
+  /// him; "ask me again" is promised only when the new session is up.
   Future<void> _rebuildLiveForLocation() async {
+    final era = _liveSvc.era;
+    bool busy() =>
+        _liveSvc.modelTurn || _liveSvc.ownerTalking || _sessionWaiting;
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (liveActive &&
-        (_liveSvc.modelTurn || _sessionWaiting) &&
+        _liveSvc.era == era &&
+        busy() &&
         DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(milliseconds: 300));
     }
@@ -4535,7 +4539,13 @@ class AssistantEngine extends ChangeNotifier {
       AppFeedback.toast('Location is on.');
       return;
     }
-    if (_liveSvc.modelTurn || _sessionWaiting) {
+    if (_liveSvc.era != era) {
+      // Closed and opened again meanwhile: that session was set up after
+      // the grant, so it already has location — never restart it.
+      AppFeedback.toast('Location is on — ask me again.');
+      return;
+    }
+    if (busy()) {
       // Never cut a task in half for this.
       AppFeedback.toast('Location is on — it applies from the next '
           'conversation.');
