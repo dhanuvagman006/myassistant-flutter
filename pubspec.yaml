@@ -116,6 +116,9 @@ flutter:
     - assets/icon/
     - assets/sounds/
     - assets/wake/
+    # Manrope + Space Grotesk, every weight, so text never starts in a
+    # fallback font and swaps (lib/core/bundled_fonts.dart).
+    - assets/google_fonts/
     # On-device speaker-ID model (sherpa-onnx CAM++ zh/en) — voice
     # enrollment + owner-only listening. Runs fully offline.
     - assets/models/
