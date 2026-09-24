@@ -321,6 +321,16 @@ class Neon {
 ///  code asks for. [manrope] asks google_fonts for the weight itself.
 ///  Once the fonts are bundled as a pubspec family, only this class needs
 ///  to change.
+///
+///  NEW WEIGHT FILES, AND WHEN THEY ARRIVE. Build 107 only ever asked for
+///  Manrope Regular and SemiBold, so those are the two files a phone has
+///  cached. This pass also asks for Medium, Bold and ExtraBold. Until the
+///  fonts ship inside the app (branch ux-fonts: ship it WITH or BEFORE
+///  this one), those three come from the network, so the first launch
+///  after the update, or any launch offline, would draw the section
+///  titles, the dock, the chips and the calendar in the phone's fallback
+///  font, then swap each weight as it lands. [preload] asks for all of
+///  them together at startup.
 /// ─────────────────────────────────────────────────────────────────────────
 abstract final class NeonType {
   static const double caption = 12; // the floor: meta, badges, the dock
@@ -341,6 +351,39 @@ abstract final class NeonType {
   static TextStyle manrope(double size, [FontWeight weight = FontWeight.w400]) =>
       _cache[weight.value * 1000 + (size * 10).round()] ??=
           GoogleFonts.manrope(fontSize: size, fontWeight: weight);
+
+  /// Every weight [manrope] is asked for anywhere in lib/ (clarity_test
+  /// fails if a call site uses one that is not here).
+  static const List<FontWeight> weights = [
+    FontWeight.w400,
+    FontWeight.w500,
+    FontWeight.w600,
+    FontWeight.w700,
+    FontWeight.w800,
+  ];
+
+  /// Starts every Manrope weight in [weights] loading AT ONCE, and
+  /// completes when they are all in or when [wait] runs out, whichever is
+  /// first. Never throws: offline, a failed fetch only means the fallback
+  /// font, which is what the screen would have drawn anyway.
+  ///
+  /// main() starts this before the other startup work and waits for it
+  /// just before runApp. On a normal launch the files are already on the
+  /// phone and load while Firebase starts, so it costs nothing and the
+  /// first frame is already in the real weights, with no swap. On the
+  /// first launch after the update it holds the splash for at most [wait],
+  /// and a file that is still downloading lands behind the splash, not
+  /// under a reader on Home. Still worth doing once the fonts are bundled:
+  /// a bundled file loads asynchronously too.
+  static Future<void> preload(
+      {Duration wait = const Duration(milliseconds: 400)}) {
+    for (final w in weights) {
+      GoogleFonts.manrope(fontWeight: w);
+    }
+    return GoogleFonts.pendingFonts()
+        .timeout(wait)
+        .then<void>((_) {}, onError: (Object _) {});
+  }
 
   /// A row's title — Hub, You and every AppleRow.
   static final TextStyle row =

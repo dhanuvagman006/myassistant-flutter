@@ -28,6 +28,7 @@ import 'package:myassistant/screens/assistant_settings_screen.dart';
 import 'package:myassistant/screens/automation_setup_screen.dart';
 import 'package:myassistant/screens/home_dashboard.dart';
 import 'package:myassistant/screens/hub_screen.dart';
+import 'package:myassistant/theme/app_theme.dart';
 import 'package:myassistant/widgets/document_tile.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
 import 'package:myassistant/widgets/month_calendar.dart';
@@ -140,6 +141,62 @@ void main() {
     });
   });
 
+  // Review of the clarity pass (2026-09-24): build 107 had only ever
+  // fetched Manrope Regular and SemiBold; this pass adds Medium, Bold and
+  // ExtraBold. Until ux-fonts bundles them, they come from the network.
+  group('the new weight files', () {
+    test('every weight a call site asks NeonType for is preloaded', () {
+      final call = RegExp(r'(?<!GoogleFonts\.)\bmanrope\(');
+      final weight = RegExp(r'FontWeight\.w(\d)00');
+      final missing = <String>{};
+      for (final (path, src) in libSources()) {
+        for (final m in call.allMatches(src)) {
+          // The call's own arguments, up to its closing bracket.
+          var depth = 1, i = m.end;
+          while (depth > 0 && i < src.length) {
+            final c = src[i++];
+            if (c == '(') depth++;
+            if (c == ')') depth--;
+          }
+          for (final w in weight.allMatches(src.substring(m.end, i))) {
+            final fw = FontWeight.values[int.parse(w.group(1)!) - 1];
+            if (!NeonType.weights.contains(fw)) missing.add('$path w${w[1]}00');
+          }
+        }
+      }
+      expect(missing, isEmpty,
+          reason: 'add it to NeonType.weights so main() preloads it');
+      expect(NeonType.weights,
+          containsAll([FontWeight.w500, FontWeight.w700, FontWeight.w800]));
+    });
+
+    test('main() asks for them first and waits for them before runApp', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final start = main.indexOf('final fonts = NeonType.preload();');
+      final wait = main.indexOf('await fonts;');
+      expect(start, isNot(-1));
+      expect(start, lessThan(main.indexOf('Firebase.initializeApp()')),
+          reason: 'loads while Firebase starts, not after it');
+      expect(wait, greaterThan(start));
+      expect(wait, lessThan(main.indexOf('runApp(')));
+    });
+
+    testWidgets('the wait is capped and never throws, even offline',
+        (t) async {
+      await offline(() async {
+        var done = false;
+        Object? error;
+        NeonType.preload(wait: const Duration(milliseconds: 400)).then<void>(
+            (_) => done = true,
+            onError: (Object e) => error = e);
+        await t.pump(const Duration(milliseconds: 400));
+        await t.pump();
+        expect(error, isNull);
+        expect(done, isTrue, reason: 'runApp never waits past the cap');
+      });
+    });
+  });
+
   group('shared pieces', () {
     testWidgets('GroupLabel: one style, real bold, readable ink', (t) async {
       await t.pumpWidget(
@@ -149,6 +206,37 @@ void main() {
       expect(s.fontSize, NeonType.footnote);
       expect(s.color, Neon.textLo,
           reason: 'textDim was 3.6:1 on the ambient wash');
+    });
+
+    // Review (2026-09-24): the clarity pass had moved these titles to
+    // Manrope SemiBold on the belief that the bare style drew the regular
+    // file. Inside an AppBar it inherits the theme's SpaceGrotesk_700, so
+    // it already drew bold — and the swap gave detail bars a different
+    // face from every plain AppBar.
+    testWidgets('detail-bar titles keep the app-bar face: Space Grotesk bold',
+        (t) async {
+      TextStyle drawn(String text) => t
+          .widget<RichText>(find.descendant(
+              of: find.text(text), matching: find.byType(RichText)))
+          .text
+          .style!;
+      await offline(() async {
+        await t.pumpWidget(MaterialApp(
+          theme: AppTheme.light(),
+          home: Builder(
+            builder: (context) => Scaffold(
+              appBar: appleAppBar(context, 'Reminders'),
+              body: Scaffold(appBar: AppBar(title: const Text('Plain'))),
+            ),
+          ),
+        ));
+      });
+      final detail = drawn('Reminders');
+      expect(detail.fontFamily, 'SpaceGrotesk_700');
+      expect(detail.fontFamily, drawn('Plain').fontFamily,
+          reason: 'one app-bar title face across the app');
+      expect(detail.fontSize, NeonType.headline);
+      expect(detail.color, Neon.textHi);
     });
 
     testWidgets(

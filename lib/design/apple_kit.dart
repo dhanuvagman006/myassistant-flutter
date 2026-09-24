@@ -65,12 +65,24 @@ PreferredSizeWidget appleAppBar(BuildContext context, String title,
     elevation: 0,
     centerTitle: true,
     leading: leading,
+    // A BARE TextStyle, ON PURPOSE (2026-09-24). This is the one place
+    // where the "bare fontWeight draws the regular file" rule does not
+    // hold: AppBar wraps its title in the theme's titleTextStyle, which is
+    // GoogleFonts.spaceGrotesk(w700), so this title inherits the family
+    // "SpaceGrotesk_700" and already draws from the bold file. Only size,
+    // colour and spacing are set here, so all 20 detail bars keep the one
+    // app-bar face the plain AppBars and LargeTitle use. (The clarity pass
+    // had switched it to Manrope SemiBold: a lighter, different face.)
     title: Text(
       title,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: NeonType.manrope(NeonType.headline, FontWeight.w600)
-          .copyWith(color: Neon.textHi, letterSpacing: -0.2),
+      style: TextStyle(
+        color: Neon.textHi,
+        fontSize: NeonType.headline,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.2,
+      ),
     ),
     actions: actions,
   );
