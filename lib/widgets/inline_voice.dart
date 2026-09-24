@@ -14,6 +14,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
 import '../services/app_feedback.dart';
 import '../services/auth_service.dart';
+import 'overflow_fade.dart';
 import 'voice_orb.dart';
 
 /// Is the full-screen voice session on screen right now? One definition
@@ -651,16 +652,11 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                 // Clipped to its own space: long replies once ran down over
                 // the text box while the keyboard was up (2026-09-24).
                 child: LayoutBuilder(
-                builder: (context, area) => ShaderMask(
+                builder: (context, area) => TopFadeWhenOverflowing(
                 // A soft top edge: when a reply is taller than its space the
-                // OLDEST words fade out up there — never a hard slice.
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (r) => const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black],
-                  stops: [0.0, 1.0],
-                ).createShader(Rect.fromLTWH(0, 0, r.width, 14)),
+                // OLDEST words fade out up there — never a hard slice. Only
+                // then: a mask over words that fit was a full-size layer on
+                // every frame of the orb (2026-09-24, see the widget).
                 child: ClipRect(
                 // Taller than its space (a long reply, keyboard up): cut at
                 // the TOP. The line being spoken now — often the question

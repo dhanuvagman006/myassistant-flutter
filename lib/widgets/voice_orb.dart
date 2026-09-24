@@ -1,9 +1,11 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../design/gpu_programs.dart';
 import '../design/neon_tokens.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
@@ -163,9 +165,29 @@ class _VoiceOrbState extends State<VoiceOrb>
     super.dispose();
   }
 
+  /// ONE PAINTER FOR AS LONG AS WHAT IT DRAWS IS THE SAME (2026-09-24,
+  /// GPU pass). The voice screen rebuilds the orb several times a second
+  /// (the caption pacer runs five times a second); each rebuild used to
+  /// hand it a brand-new painter, which then built its gradients and laid
+  /// out the mic glyph all over again. The painter, and everything it has
+  /// already worked out, is now kept until the size or the colours change.
+  _SpherePainter? _painter;
+
   @override
   Widget build(BuildContext context) {
     final d = widget.size;
+    var painter = _painter;
+    if (painter == null ||
+        painter.diameter != d ||
+        painter.violet != Neon.violet ||
+        painter.pink != Neon.pink) {
+      painter = _painter = _SpherePainter(
+        motion: _motion,
+        diameter: d,
+        violet: Neon.violet,
+        pink: Neon.pink,
+      );
+    }
     // Its own layer: the sphere repaints every frame while it moves, and
     // without a boundary each of those frames re-recorded the whole voice
     // screen around it — captions, text box and all.
@@ -173,14 +195,7 @@ class _VoiceOrbState extends State<VoiceOrb>
       child: SizedBox(
         width: d * 1.6, // room for the glow
         height: d * 1.6,
-        child: CustomPaint(
-          painter: _SpherePainter(
-            motion: _motion,
-            diameter: d,
-            violet: Neon.violet,
-            pink: Neon.pink,
-          ),
-        ),
+        child: CustomPaint(painter: painter),
       ),
     );
   }
@@ -205,11 +220,6 @@ class _SpherePainter extends CustomPainter {
   /// colour.
   final Color violet, pink;
 
-  /// The mic glyph, laid out once per painter. It is text in the icon
-  /// font, exactly as the Icon widget draws it, so it stays as crisp at
-  /// every density — painted here so it breathes with the sphere.
-  TextPainter? _glyph;
-
   /// THE REFERENCE'S LIGHTING, THE APP'S COLOUR.
   ///
   /// His correction: "the exact same design and background but in current
@@ -230,12 +240,24 @@ class _SpherePainter extends CustomPainter {
         .toColor();
   }
 
+  /// NOTHING BUILT PER FRAME (2026-09-24, GPU pass). The gradients, blurs,
+  /// clip and sparkle depend only on the box and the colours, yet every
+  /// frame of a session used to create them all again. They are made on
+  /// the first frame and kept for this painter's life (and the painter is
+  /// kept across rebuilds, see [_VoiceOrbState._painter]).
+  _SphereKit? _kit;
+
+  _SphereKit _kitFor(Size size) {
+    final k = _kit;
+    if (k != null && k.size == size) return k;
+    return _kit = _SphereKit(size, diameter, violet, pink);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    // The sphere is [diameter] across — less only when the box it was
-    // given is smaller still.
-    final r = math.min(diameter, size.shortestSide) / 2;
+    final k = _kitFor(size);
+    final c = k.centre;
+    final r = k.r;
     final t = motion.phase;
     final glow = motion.glow;
 
@@ -248,115 +270,120 @@ class _SpherePainter extends CustomPainter {
     canvas.translate(-c.dx, -c.dy);
 
     // The light it throws, in the accent's own hue.
-    canvas.drawCircle(
-      c,
-      r * 0.96,
-      Paint()
-        ..color = violet.withValues(alpha: 0.22 + glow * 0.16)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16),
-    );
+    canvas.drawCircle(c, r * 0.96,
+        k.light..color = violet.withValues(alpha: 0.22 + glow * 0.16));
 
     // THE BODY. The focal point is up and to the left, which is where the
     // reference puts its light; everything else follows from that.
-    canvas.drawCircle(
-      c,
-      r,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.38, -0.42),
-          radius: 0.95,
-          colors: [
-            // The same four stops the reference has, re-hued: lit, body,
-            // and a shaded underside pulled toward the gradient partner
-            // so the ball carries the brand's violet-into-magenta.
-            _ramp(violet, 0.86),
-            _ramp(violet, 0.70),
-            _ramp(violet, 0.54, pink, 0.25),
-            _ramp(violet, 0.33, pink, 0.40),
-          ],
-          stops: const [0.0, 0.34, 0.72, 1.0],
-        ).createShader(Rect.fromCircle(center: c, radius: r)),
-    );
+    canvas.drawCircle(c, r, k.body);
 
     // The shaded underside, so it reads as a ball and not a disc.
-    canvas.drawCircle(
-      c,
-      r,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(0.25, 0.85),
-          radius: 0.8,
-          colors: [
-            _ramp(violet, 0.20, pink, 0.3).withValues(alpha: 0.55),
-            _ramp(violet, 0.20, pink, 0.3).withValues(alpha: 0.0),
-          ],
-          stops: const [0.0, 1.0],
-        ).createShader(Rect.fromCircle(center: c, radius: r)),
-    );
+    canvas.drawCircle(c, r, k.shade);
 
     // LIGHT INSIDE IT — a soft glow drifting round within the ball, a
     // touch brighter with the voice, so the sphere itself looks alive.
+    // The gradient is made once round the origin and moved into place;
+    // its strength rides on the paint's alpha, which gives the same
+    // colour, stop for stop, as a gradient rebuilt with that alpha.
     final orbit = t * 2 * math.pi;
     final inner = c +
         Offset(math.cos(orbit) * r * 0.38, math.sin(orbit) * r * 0.30 + r * 0.18);
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: c, radius: r)));
-    canvas.drawCircle(
-      inner,
-      r * 0.75,
-      Paint()
-        ..shader = RadialGradient(colors: [
-          Color.lerp(pink, Colors.white, 0.25)!
-              .withValues(alpha: 0.28 + glow * 0.30),
-          pink.withValues(alpha: 0),
-        ]).createShader(Rect.fromCircle(center: inner, radius: r * 0.75)),
-    );
+    canvas.clipPath(k.clip);
+    canvas.translate(inner.dx, inner.dy);
+    canvas.drawCircle(Offset.zero, r * 0.75,
+        k.inner..color = Color.fromRGBO(0, 0, 0, 0.28 + glow * 0.30));
     canvas.restore();
 
     // THE HIGHLIGHT — a soft oval where the light lands, not a hard dot.
-    final hl = Rect.fromCenter(
-      center: c + Offset(-r * 0.32, -r * 0.46),
-      width: r * 0.76,
-      height: r * 0.50,
-    );
-    canvas.drawOval(
-      hl,
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.42)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16),
-    );
+    canvas.drawOval(k.highlightRect, k.highlight);
 
     // THE SPARKLE at the upper right: a four-point star and two dots,
     // exactly where the reference has them.
-    final star = c + Offset(r * 0.44, -r * 0.50);
-    _star(canvas, star, r * 0.17, Colors.white.withValues(alpha: 0.95));
-    canvas.drawCircle(c + Offset(r * 0.68, -r * 0.40), r * 0.035,
-        Paint()..color = Colors.white.withValues(alpha: 0.85));
-    canvas.drawCircle(c + Offset(r * 0.30, -r * 0.26), r * 0.022,
-        Paint()..color = Colors.white.withValues(alpha: 0.60));
+    canvas.drawPath(k.star, k.starPaint);
+    canvas.drawCircle(c + Offset(r * 0.68, -r * 0.40), r * 0.035, k.dotBright);
+    canvas.drawCircle(c + Offset(r * 0.30, -r * 0.26), r * 0.022, k.dotSoft);
 
     // THE MICROPHONE, on top of it all.
-    final glyph = _glyph ??= TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(Icons.mic_rounded.codePoint),
-        style: TextStyle(
-          inherit: false,
-          color: Colors.white,
-          fontSize: diameter * 0.36,
-          fontFamily: Icons.mic_rounded.fontFamily,
-          package: Icons.mic_rounded.fontPackage,
-          height: 1.0,
-          leadingDistribution: TextLeadingDistribution.even,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final glyph = _Glyph.of(diameter);
     glyph.paint(canvas, c - Offset(glyph.width / 2, glyph.height / 2));
     canvas.restore();
   }
 
+  // Frames repaint through [motion]; a new painter only when what it
+  // draws with changed.
+  @override
+  bool shouldRepaint(_SpherePainter old) =>
+      old.motion != motion ||
+      old.diameter != diameter ||
+      old.violet != violet ||
+      old.pink != pink;
+}
+
+/// What the sphere paints with, worked out once for a box and colours.
+class _SphereKit {
+  _SphereKit(this.size, double diameter, Color violet, Color pink) {
+    centre = size.center(Offset.zero);
+    // The sphere is [diameter] across — less only when the box it was
+    // given is smaller still.
+    r = math.min(diameter, size.shortestSide) / 2;
+    final ball = Rect.fromCircle(center: centre, radius: r);
+    light = Paint()..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16);
+    body = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(-0.38, -0.42),
+        radius: 0.95,
+        colors: [
+          // The same four stops the reference has, re-hued: lit, body,
+          // and a shaded underside pulled toward the gradient partner
+          // so the ball carries the brand's violet-into-magenta.
+          _SpherePainter._ramp(violet, 0.86),
+          _SpherePainter._ramp(violet, 0.70),
+          _SpherePainter._ramp(violet, 0.54, pink, 0.25),
+          _SpherePainter._ramp(violet, 0.33, pink, 0.40),
+        ],
+        stops: const [0.0, 0.34, 0.72, 1.0],
+      ).createShader(ball);
+    final under = _SpherePainter._ramp(violet, 0.20, pink, 0.3);
+    shade = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(0.25, 0.85),
+        radius: 0.8,
+        colors: [
+          under.withValues(alpha: 0.55),
+          under.withValues(alpha: 0.0),
+        ],
+        stops: const [0.0, 1.0],
+      ).createShader(ball);
+    inner = Paint()
+      ..shader = RadialGradient(colors: [
+        Color.lerp(pink, Colors.white, 0.25)!,
+        pink.withValues(alpha: 0),
+      ]).createShader(Rect.fromCircle(center: Offset.zero, radius: r * 0.75));
+    clip = Path()..addOval(ball);
+    highlightRect = Rect.fromCenter(
+      center: centre + Offset(-r * 0.32, -r * 0.46),
+      width: r * 0.76,
+      height: r * 0.50,
+    );
+    highlight = Paint()
+      ..color = Colors.white.withValues(alpha: 0.42)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16);
+    star = _starPath(centre + Offset(r * 0.44, -r * 0.50), r * 0.17);
+  }
+
+  final Size size;
+  late final Offset centre;
+  late final double r;
+  late final Paint light, body, shade, inner, highlight;
+  late final Path clip, star;
+  late final Rect highlightRect;
+  final Paint starPaint = Paint()..color = Colors.white.withValues(alpha: 0.95);
+  final Paint dotBright = Paint()..color = Colors.white.withValues(alpha: 0.85);
+  final Paint dotSoft = Paint()..color = Colors.white.withValues(alpha: 0.60);
+
   /// A four-point star with concave sides — the "sparkle" shape.
-  void _star(Canvas canvas, Offset c, double r, Color color) {
+  static Path _starPath(Offset c, double r) {
     final p = Path();
     const inner = 0.30;
     for (var i = 0; i < 4; i++) {
@@ -372,18 +399,54 @@ class _SpherePainter extends CustomPainter {
       }
       p.lineTo(waist.dx, waist.dy);
     }
-    p.close();
-    canvas.drawPath(p, Paint()..color = color);
+    return p..close();
   }
+}
 
-  // Frames repaint through [motion]; a new painter only when what it
-  // draws with changed.
-  @override
-  bool shouldRepaint(_SpherePainter old) =>
-      old.motion != motion ||
-      old.diameter != diameter ||
-      old.violet != violet ||
-      old.pink != pink;
+/// How many times the orb has laid out its mic glyph so far. The test
+/// that pins "once per size, never per rebuild" reads it.
+@visibleForTesting
+int get debugOrbGlyphLayouts => _Glyph._layouts;
+
+/// THE MIC GLYPH, LAID OUT ONCE PER SIZE (2026-09-24, GPU pass).
+///
+/// It is text in the icon font, exactly as the Icon widget draws it, so it
+/// stays as crisp at every density — painted in the sphere so it breathes
+/// with it. It used to be laid out afresh by every new painter, and the
+/// voice screen made a new painter several times a second; now each size
+/// is laid out once for the app's life.
+///
+/// Still text, on purpose. Drawing it from a picture instead (so the
+/// renderer would not rasterise it at each new breathing scale) softened
+/// its edges by about half a pixel, and the glyph cache that saves is
+/// small and fills within the first seconds of a session.
+class _Glyph {
+  static final Map<double, TextPainter> _made = {};
+  static int _layouts = 0;
+
+  static TextPainter of(double diameter) =>
+      _made[diameter] ??= _make(diameter);
+
+  static TextPainter _make(double diameter) {
+    // Only a handful of orb sizes exist; never keep more than a few.
+    if (_made.length >= 4) _made.remove(_made.keys.first)?.dispose();
+    _layouts++;
+    return TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.mic_rounded.codePoint),
+        style: TextStyle(
+          inherit: false,
+          color: Colors.white,
+          fontSize: diameter * 0.36,
+          fontFamily: Icons.mic_rounded.fontFamily,
+          package: Icons.mic_rounded.fontPackage,
+          height: 1.0,
+          leadingDistribution: TextLeadingDistribution.even,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
 }
 
 /// The space behind the orb. Same two brand hues as before, rebuilt to
@@ -443,7 +506,18 @@ class _BackdropScene extends ChangeNotifier {
   /// 0..1 — the bloom-in (see [_VoiceOrbBackdropState._bloomDelay]).
   double appear = 0;
 
+  /// The GPU program's shader (see [_BackdropPainter._paintGpu]): made on
+  /// the first frame drawn with it and reused — each frame's numbers are
+  /// copied into that frame's picture, so one object serves them all.
+  ui.FragmentShader? shader;
+
   void changed() => notifyListeners();
+
+  @override
+  void dispose() {
+    shader?.dispose();
+    super.dispose();
+  }
 }
 
 class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
@@ -465,9 +539,11 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   /// an offscreen layer, forty-odd motes and two liquid rings — and it
   /// used to be built and drawn in full on the very frame the screen
   /// appeared. It now draws nothing for its first [_bloomDelay] seconds
-  /// and then fades in over [_bloomFade], through the layer it already
-  /// paints into, so the fade itself costs nothing extra: the ground, the
-  /// orb and the words arrive first, the aurora blooms in after them.
+  /// and then fades in over [_bloomFade] — one more number the GPU
+  /// program multiplies by (or, drawing with the Canvas, the alpha of the
+  /// layer it already paints into), so the fade itself costs nothing
+  /// extra: the ground, the orb and the words arrive first, the aurora
+  /// blooms in after them.
   static const _bloomDelay = 0.12, _bloomFade = 0.35;
   double _shownFor = 0;
   double get _appear =>
@@ -485,6 +561,9 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   @override
   void initState() {
     super.initState();
+    // Load the GPU program now, while this sits built and hidden behind
+    // Home, so the first session never draws with the fallback or waits.
+    GpuProgram.voiceBackdrop.load();
     _sync();
   }
 
@@ -563,6 +642,7 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
             orbRadius: widget.orbSize / 2,
             violet: Neon.violet,
             pink: Neon.pink,
+            dpr: MediaQuery.maybeDevicePixelRatioOf(context) ?? 3.0,
           ),
           child: const SizedBox.expand(),
         ),
@@ -594,6 +674,7 @@ class _BackdropPainter extends CustomPainter {
     required this.orbRadius,
     required this.violet,
     required this.pink,
+    required this.dpr,
   }) : super(repaint: scene);
 
   final _BackdropScene scene;
@@ -602,34 +683,168 @@ class _BackdropPainter extends CustomPainter {
   /// The accent pair (see [_SpherePainter.violet]).
   final Color violet, pink;
 
+  /// The screen's density: the GPU program anti-aliases over one device
+  /// pixel.
+  final double dpr;
+
   /// Where the reference's rings sit, as multiples of the sphere's radius
   /// — fewer than before; they are depth now, not the subject.
+  /// (shaders/voice_backdrop.frag has the same five.)
   static const _rings = [1.39, 1.91, 2.42, 2.9, 3.4];
+
+  static const _tau = 2 * math.pi;
+
+  /// The tunnel's left-to-right colours: accent, ink, partner. Worked out
+  /// once per painter, not per frame.
+  late final List<Color> _sweepColors = [
+    HSLColor.fromColor(violet).withLightness(0.46).toColor(),
+    HSLColor.fromColor(violet).withSaturation(0.35).withLightness(0.18).toColor(),
+    HSLColor.fromColor(pink).withLightness(0.44).toColor(),
+  ];
+
+  // The motes' colour runs from these two across the width (the accent
+  // and its partner, each 55% of the way to white).
+  late final Color _moteLeft = Color.lerp(violet, Colors.white, 0.55)!;
+  late final Color _moteRight = Color.lerp(pink, Colors.white, 0.55)!;
+  final Paint _mote = Paint();
+  final Paint _gpu = Paint();
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Not faded in yet: draw nothing at all.
+    if (scene.appear <= 0) return;
+    final program = GpuProgram.voiceBackdrop.program;
+    if (program != null) {
+      _paintGpu(canvas, size, program);
+    } else {
+      _paintCanvas(canvas, size);
+    }
+  }
+
+  /// THE GPU PATH (2026-09-24, GPU pass): the whole scene but the dust in
+  /// ONE rectangle, drawn by shaders/voice_backdrop.frag — no offscreen
+  /// layer, no paths, no second pass for the fade. Everything that moves
+  /// is worked out here once per frame (the positions of the clouds, the
+  /// angles of the ripples) and handed over as numbers, each angle wrapped
+  /// to one turn so the GPU never sees a clock that grows all session.
+  void _paintGpu(Canvas canvas, Size size, ui.FragmentProgram program) {
+    final sc = scene;
+    final sec = sc.sec, level = sc.level, think = sc.think;
+    final r = orbRadius;
+    final c = size.center(Offset.zero);
+    final shader = sc.shader ??= program.fragmentShader();
+    var i = 0;
+    void f(double v) => shader.setFloat(i++, v);
+    void rgb(Color col) {
+      f(col.r);
+      f(col.g);
+      f(col.b);
+      f(1);
+    }
+
+    // uGeom, uState
+    f(size.width);
+    f(size.height);
+    f(r);
+    f(1 / dpr);
+    f(sc.appear);
+    f(level);
+    f(sc.pulseAmt);
+    f(think);
+    // uClouds: the two drifting clouds' centres (the third sits on the orb).
+    f(c.dx - r * 0.95 + math.cos(sec * 0.21) * r * 0.3);
+    f(c.dy + math.sin(sec * 0.17) * r * 0.18);
+    f(c.dx + r * 0.95 + math.cos(sec * 0.19 + 2.1) * r * 0.3);
+    f(c.dy + math.sin(sec * 0.23 + 1.3) * r * 0.18);
+    // uCloudA: their strengths, and the tunnel's breath.
+    f(0.34 + level * 0.16);
+    f(0.27 + level * 0.14);
+    f(0.16 + level * 0.20);
+    f(1 + 0.025 * math.sin(sec * 0.7) + level * 0.04);
+    // uPhase: the round-the-orb colour's turn, the pulse clock, the comets.
+    f((sec * 0.35) % _tau);
+    f(sc.pulse % 1.0);
+    f((sec * _tau * 0.55) % _tau);
+    f(0);
+    // uLiquid0/1: each strand's three ripple phases, and its amplitude.
+    final amp = r * (0.018 + level * 0.12) * (1 - think * 0.7);
+    for (var j = 0; j < 2; j++) {
+      final phase = sec * 2.1 + j * 1.9;
+      f((phase * 1.3) % _tau);
+      f((phase * 1.7) % _tau);
+      f((phase * 2.3) % _tau);
+      f(amp * (1 - j * 0.4));
+    }
+    rgb(violet);
+    rgb(pink);
+    for (final col in _sweepColors) {
+      rgb(col);
+    }
+    canvas.drawRect(Offset.zero & size, _gpu..shader = shader);
+    // The dust stays on the Canvas, faded the same way the program fades
+    // everything else.
+    _paintMotes(canvas, size, fadeHere: true);
+  }
+
+  /// 2. DUST drifting outward. Drawn last on the GPU path (a mote passing
+  /// over a hairline ring instead of under it is not something an eye can
+  /// catch), in the offscreen layer on the Canvas path.
+  void _paintMotes(Canvas canvas, Size size, {required bool fadeHere}) {
+    final sec = scene.sec;
+    final c = size.center(Offset.zero);
+    final r = orbRadius;
+    final maxD = size.width * 0.56;
+    final appear = scene.appear;
+    for (final m in _motes) {
+      final life = (m.offset + sec * m.speed) % 1.0;
+      final dist = r * 1.3 + life * (maxD - r * 1.3);
+      final a = m.angle + sec * 0.025;
+      final pos = c + Offset(math.cos(a) * dist, math.sin(a) * dist * 0.7);
+      final fade = math.sin(life * math.pi);
+      final tw = 0.55 + 0.45 * math.sin(sec * m.twinkle + m.offset * 6.3);
+      var alpha = 0.5 * fade * tw;
+      // Outside the layer, the top/bottom melt and the bloom-in are this
+      // mote's own to apply.
+      if (fadeHere) alpha *= _edgeFade(pos.dy / size.height) * appear;
+      if (alpha <= 0) continue;
+      _mote.color = Color.lerp(
+              _moteLeft, _moteRight, (pos.dx / size.width).clamp(0.0, 1.0))!
+          .withValues(alpha: alpha);
+      canvas.drawCircle(pos, m.size, _mote);
+    }
+  }
+
+  /// The top and bottom melt: 0 at the edges, 1 from 22% in.
+  static double _edgeFade(double v) {
+    if (v <= 0 || v >= 1) return 0;
+    if (v < 0.22) return v / 0.22;
+    if (v > 0.78) return (1 - v) / 0.22;
+    return 1;
+  }
+
+  // Worked out once per box, not once per frame (the Canvas path only).
+  Shader? _sweep;
+  Size? _sweepSize;
+
+  /// THE CANVAS PATH — the picture as it was drawn before the GPU program,
+  /// kept for the frames before the program has loaded and for any phone
+  /// that cannot load it.
+  void _paintCanvas(Canvas canvas, Size size) {
     final sec = scene.sec, pulse = scene.pulse, level = scene.level;
     final pulseAmt = scene.pulseAmt, think = scene.think;
     // The bloom-in, applied through the one offscreen layer this already
-    // paints into, so fading costs nothing. Not faded in yet: draw
-    // nothing at all, not even the layer.
+    // paints into, so fading costs nothing.
     final appear = scene.appear;
-    if (appear <= 0) return;
     final c = size.center(Offset.zero);
     final r = orbRadius;
     final bounds = Offset.zero & size;
 
     // Left-to-right sweep for the tunnel: accent, ink, partner.
-    final sweep = LinearGradient(
-      colors: [
-        HSLColor.fromColor(violet).withLightness(0.46).toColor(),
-        HSLColor.fromColor(violet)
-            .withSaturation(0.35)
-            .withLightness(0.18)
-            .toColor(),
-        HSLColor.fromColor(pink).withLightness(0.44).toColor(),
-      ],
-    ).createShader(bounds);
+    if (_sweep == null || _sweepSize != size) {
+      _sweepSize = size;
+      _sweep = LinearGradient(colors: _sweepColors).createShader(bounds);
+    }
+    final sweep = _sweep!;
     // Round-the-orb sweep for the rings that hug it, turning slowly.
     final around = SweepGradient(
       colors: [violet, pink, Color.lerp(violet, pink, 0.4)!, violet],
@@ -682,24 +897,7 @@ class _BackdropPainter extends CustomPainter {
     cloud(c, r * 1.8, Color.lerp(violet, pink, 0.45)!, 0.16 + level * 0.20);
 
     // 2. DUST drifting outward.
-    final maxD = size.width * 0.56;
-    for (final m in _motes) {
-      final life = (m.offset + sec * m.speed) % 1.0;
-      final dist = r * 1.3 + life * (maxD - r * 1.3);
-      final a = m.angle + sec * 0.025;
-      final pos = c + Offset(math.cos(a) * dist, math.sin(a) * dist * 0.7);
-      final fade = math.sin(life * math.pi);
-      final tw = 0.55 + 0.45 * math.sin(sec * m.twinkle + m.offset * 6.3);
-      final hue =
-          Color.lerp(violet, pink, (pos.dx / size.width).clamp(0.0, 1.0))!;
-      canvas.drawCircle(
-        pos,
-        m.size,
-        Paint()
-          ..color = Color.lerp(hue, Colors.white, 0.55)!
-              .withValues(alpha: 0.5 * fade * tw),
-      );
-    }
+    _paintMotes(canvas, size, fadeHere: false);
 
     // 3. The TUNNEL, breathing very slightly.
     final breathe = 1 + 0.025 * math.sin(sec * 0.7) + level * 0.04;
@@ -840,6 +1038,6 @@ class _BackdropPainter extends CustomPainter {
       old.scene != scene ||
       old.orbRadius != orbRadius ||
       old.violet != violet ||
-      old.pink != pink;
+      old.pink != pink ||
+      old.dpr != dpr;
 }
-

@@ -167,14 +167,18 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: AnimatedBuilder(
-                    animation: _spin,
-                    builder: (_, __) => CustomPaint(
+                // THE SPINNER AND THE DOTS ON THEIR OWN LAYERS, repainted
+                // straight from the controller (2026-09-24, GPU pass).
+                // Each spinner frame used to rebuild them and re-record
+                // the whole pill round them — its shadow, border and
+                // label — for as long as a tool ran.
+                RepaintBoundary(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CustomPaint(
                       painter: _SweepPainter(
-                        t: _spin.value,
+                        t: _spin,
                         color: Neon.violet,
                         track: Neon.line,
                       ),
@@ -205,9 +209,11 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
                   ),
                 ),
                 const SizedBox(width: 3),
-                AnimatedBuilder(
-                  animation: _spin,
-                  builder: (_, __) => _Dots(t: _spin.value, color: Neon.textLo),
+                RepaintBoundary(
+                  child: CustomPaint(
+                    size: _DotsPainter.size,
+                    painter: _DotsPainter(t: _spin, color: Neon.textLo),
+                  ),
                 ),
               ],
             ),
@@ -221,10 +227,13 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
 /// The ring: a short arc travelling round a faint track. Read at a glance
 /// as "running", and cheap enough to repeat indefinitely.
 class _SweepPainter extends CustomPainter {
-  final double t;
+  _SweepPainter({required this.t, required this.color, required this.track})
+      : super(repaint: t);
+
+  /// 0..1 round one turn; frames repaint from it directly.
+  final Animation<double> t;
   final Color color;
   final Color track;
-  const _SweepPainter({required this.t, required this.color, required this.track});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -238,7 +247,7 @@ class _SweepPainter extends CustomPainter {
         ..color = track,
     );
     canvas.drawArc(
-      r, t * math.pi * 2, math.pi * 0.62, false,
+      r, t.value * math.pi * 2, math.pi * 0.62, false,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
@@ -248,38 +257,40 @@ class _SweepPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_SweepPainter o) => o.t != t || o.color != color;
+  bool shouldRepaint(_SweepPainter o) =>
+      o.t != t || o.color != color || o.track != track;
 }
 
 /// Three dots rising in sequence — the moving ellipsis the label gave up.
-class _Dots extends StatelessWidget {
-  final double t;
+///
+/// Painted, not built: they were three small widgets rebuilt on every
+/// frame of the spinner. The same dots — 3.4 across, 1.4 apart each side,
+/// lifting 1.8 — drawn in one painter.
+class _DotsPainter extends CustomPainter {
+  _DotsPainter({required this.t, required this.color}) : super(repaint: t);
+
+  /// The row the three dots take up, exactly as their widgets did.
+  static const size = Size(3 * (1.4 + 3.4 + 1.4), 3.4);
+
+  final Animation<double> t;
   final Color color;
-  const _Dots({required this.t, required this.color});
+
+  final Paint _dot = Paint();
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(3, (i) {
-        // Each dot runs the same cycle a third of a beat behind the last.
-        final phase = (t + i * 0.18) % 1.0;
-        final lift = math.sin(phase * math.pi * 2).clamp(-1.0, 1.0);
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 1.4),
-          child: Transform.translate(
-            offset: Offset(0, -lift * 1.8),
-            child: Container(
-              width: 3.4,
-              height: 3.4,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.45 + 0.55 * ((lift + 1) / 2)),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        );
-      }),
-    );
+  void paint(Canvas canvas, Size size) {
+    for (var i = 0; i < 3; i++) {
+      // Each dot runs the same cycle a third of a beat behind the last.
+      final phase = (t.value + i * 0.18) % 1.0;
+      final lift = math.sin(phase * math.pi * 2).clamp(-1.0, 1.0);
+      canvas.drawCircle(
+        Offset(1.4 + 1.7 + i * (1.4 + 3.4 + 1.4), 1.7 - lift * 1.8),
+        1.7,
+        _dot..color = color.withValues(alpha: 0.45 + 0.55 * ((lift + 1) / 2)),
+      );
+    }
   }
+
+  @override
+  bool shouldRepaint(_DotsPainter o) => o.t != t || o.color != color;
 }

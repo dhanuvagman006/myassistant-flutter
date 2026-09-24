@@ -45,7 +45,14 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
   // conversation screen for the microphone.
   final _voice = VoiceService.instance;
   _Stage _stage = _Stage.idle;
-  double _level = 0;
+
+  /// THE MIC LEVEL, READ BY THE ORB ON ITS OWN FRAMES (2026-09-24, GPU
+  /// pass). Every reading used to setState the whole screen — the text
+  /// box, the fonts, the orb and its backdrop, all rebuilt inside a
+  /// LayoutBuilder several times a second while he spoke. The orb and its
+  /// backdrop read the live value themselves, as they do on the voice
+  /// screen; only a change of stage rebuilds this screen now.
+  final ValueNotifier<double> _level = ValueNotifier<double>(0);
   bool _voiceReady = false;
 
   @override
@@ -69,6 +76,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
   @override
   void dispose() {
     _text.dispose();
+    _level.dispose();
     unawaited(_voice.stopWatching().catchError((_) {}));
     super.dispose();
   }
@@ -85,15 +93,13 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
           _text.selection = TextSelection.collapsed(offset: p.length);
         },
         onLevel: (l) {
-          if (mounted) setState(() => _level = l);
+          if (mounted) _level.value = l;
         },
       );
       if (!mounted) return;
       if (said.trim().isNotEmpty) _text.text = said.trim();
-      setState(() {
-        _stage = _Stage.idle;
-        _level = 0;
-      });
+      _level.value = 0;
+      setState(() => _stage = _Stage.idle);
       // Speaking a task is a complete gesture — they said the thing and
       // expect it to go. Making them hunt for a send button afterwards
       // is the sort of extra tap that stops a widget being used at all.
@@ -190,7 +196,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                           mood: _stage == _Stage.listening
                               ? OrbMood.listening
                               : OrbMood.idle,
-                          level: _level,
+                          levelListenable: _level,
                         ),
                       ),
                       VoiceOrb(
@@ -198,7 +204,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         mood: _stage == _Stage.listening
                             ? OrbMood.listening
                             : OrbMood.idle,
-                        level: _level,
+                        levelListenable: _level,
                       ),
                     ],
                   ),
