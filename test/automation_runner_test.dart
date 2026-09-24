@@ -5,7 +5,13 @@
 // failed step (the second one hands over), Stop answers at once even while
 // the server thinks, the owner's turn reads nothing until Continue, and
 // payment / Stop / another app taking over end the run with a report.
+// Phase B: the first look waits for the app (not a fixed delay), each action
+// waits for its own effect with its own budget, a picture-only screen's
+// "changed" comes from a brightness grid, clocks ticking are not changes,
+// and the upload leaves out empty keys.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
@@ -94,8 +100,24 @@ class FakeDevice implements AutomationDevice {
     return onAct?.call(action) ?? {'ok': true};
   }
 
+  /// Every settle asked for, with its budget.
+  final settles = <({int quiet, int max, int expect, int min})>[];
+  String settleReason = 'quiet';
+
   @override
-  Future<void> settle({int quietMs = 450, int maxMs = 4000}) async => log.add('settle');
+  Future<Map<String, dynamic>?> settle(
+      {int quietMs = 450, int maxMs = 4000, int expectMs = 0, int minMs = 250}) async {
+    settles.add((quiet: quietMs, max: maxMs, expect: expectMs, min: minMs));
+    log.add('settle');
+    return {'ms': 10, 'reason': settleReason};
+  }
+
+  @override
+  Future<Map<String, dynamic>?> waitForApp(String pkg, {int maxMs = 5000}) async {
+    log.add('wait:$pkg');
+    return {'ok': true, 'reason': 'drawn', 'ms': 5, 'pkg': pkg};
+  }
+
   @override
   Future<bool> stopRequested() async => stop;
   @override
@@ -195,9 +217,12 @@ void main() {
     expect(api.steps[1].last, {'ok': true, 'changed': true});
     expect(api.steps[2].last, {'ok': true, 'changed': false});
     expect(api.steps[3].last, {'ok': true, 'changed': true});
-    // Every action is followed by settling and a fresh look.
-    final seq = dev.log.where((l) => l.startsWith('act') || l == 'settle' || l == 'look').toList();
-    expect(seq.take(5), ['settle', 'look', 'act:type', 'settle', 'look']);
+    // The first look waits for the app itself; every action is followed by
+    // settling and a fresh look.
+    final seq = dev.log
+        .where((l) => l.startsWith('act') || l.startsWith('wait:') || l == 'settle' || l == 'look')
+        .toList();
+    expect(seq.take(5), ['wait:$sw', 'look', 'act:type', 'settle', 'look']);
     expect(dev.log.first, 'begin:$sw');
     expect(dev.log[1], 'launch:$sw|');
     expect(dev.log.last, 'end');
@@ -464,6 +489,43 @@ void main() {
         {'ok': true, 'submitted': false, 'submit_refused': true, 'changed': true});
   });
 
+  // The phone never overwrites a clipboard it cannot put back. When a search
+  // box ignored set text and the text could not be typed again another way,
+  // the phone says so in "how" — the one field the server passes on to the
+  // planner — so it submits or taps a suggestion (rule 3b).
+  test('set text the app did not answer, with no clean way to retype, reaches the planner', () async {
+    const ig = 'com.instagram.android';
+    final dev = FakeDevice(screens: [
+      screen(ig, ['Search']),
+      screen(ig, ['Search', 'ravi']),
+    ])
+      ..onAct = (_) => {'ok': true, 'verified': true, 'submitted': false, 'how': 'paste_unavailable'};
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'type', 'id': 0, 'text': 'ravi'}},
+      {'status': 'failed', 'report': 'Could not find it.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy(pkg: ig));
+    expect(api.steps[1].last,
+        {'ok': true, 'how': 'paste_unavailable', 'submitted': false, 'changed': true});
+  });
+
+  // A point under the keyboard: Back closes it, the page slides, and the
+  // phone presses nothing there (the planner aimed at the keyboard's
+  // picture). The failure goes back as it is, so the planner looks again.
+  test('a point under the keyboard comes back as keyboard_closed, not a tap', () async {
+    final dev = FakeDevice(screens: [
+      screen('com.whatsapp', ['Message']),
+      screen('com.whatsapp', ['Message', 'Send']),
+    ])
+      ..onAct = (_) => {'ok': false, 'error': 'keyboard_closed'};
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap_xy', 'x': 900, 'y': 950, 'label': 'Enter'}},
+      {'status': 'failed', 'report': 'Stopped.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy(pkg: 'com.whatsapp'));
+    expect(api.steps[1].last, {'ok': false, 'error': 'keyboard_closed', 'changed': true});
+  });
+
   test('while an app installs, a task does not start — and leaves the install bar alone', () async {
     final dev = FakeDevice(screens: [screen(sw, ['Search'])])..beginResult = false;
     final api = FakeApi([]);
@@ -651,6 +713,160 @@ void main() {
     // With no element list, a new picture counts as the screen changing.
     expect(AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'A'}) ==
         AutomationRunner.signature({'pkg': sw, 'nodes': [], 'shot': 'B'}), isFalse);
+  });
+
+  // ---- Faster, surer steps (phase B, 2026-09-24) ----
+
+  String grid(int Function(int i) cell) =>
+      base64Encode(Uint8List.fromList(List<int>.generate(24 * 48, cell)));
+
+  test('a picture-only screen changes when its brightness grid does — not for a pixel or two', () {
+    final a = grid((i) => (i * 7) % 200);
+    expect(AutomationRunner.gridChanged(a, a), isFalse, reason: 'identical');
+    // One cell (a blinking cursor) is not a change.
+    final one = grid((i) => i == 100 ? 255 : (i * 7) % 200);
+    expect(AutomationRunner.gridChanged(a, one), isFalse);
+    // Differences of 10 levels or less (JPEG noise, a dimmed bar) are not either.
+    final dim = grid((i) => (i * 7) % 200 + 8);
+    expect(AutomationRunner.gridChanged(a, dim), isFalse);
+    // 3% of the cells (a cart bar appearing) is.
+    final bar = grid((i) => i >= 1152 - 35 ? 255 : (i * 7) % 200);
+    expect(AutomationRunner.gridChanged(a, bar), isTrue);
+    expect(AutomationRunner.gridChanged(a, 'not base64!'), isTrue);
+  });
+
+  test('a clock or a countdown ticking is not the screen changing; a cart count is', () {
+    Map<String, dynamic> s(List<String> t) => screen(sw, t);
+    bool changed(List<String> a, List<String> b) =>
+        AutomationRunner.changedBetween(s(a), s(b));
+    expect(changed(['12:03', 'Search'], ['12:04', 'Search']), isFalse);
+    expect(changed(['Arrives by 3:05 pm'], ['Arrives by 3:06 pm']), isFalse);
+    expect(changed(['Paradise · 30 mins'], ['Paradise · 35 mins']), isFalse);
+    expect(changed(['Resend OTP in 45 s'], ['Resend OTP in 44 s']), isFalse);
+    expect(changed(['View Cart · 1 item'], ['View Cart · 2 items']), isTrue);
+    expect(changed(['ADD'], ['−  1  +']), isTrue);
+  });
+
+  test('in a picture-only app "changed" comes from the grid, not the picture\'s bytes', () {
+    final g = grid((i) => (i * 3) % 180);
+    Map<String, dynamic> look(String shot, String grid) =>
+        {...screen(sw, []), 'shot': shot, 'grid': grid};
+    // A new picture (the status bar clock) with the same grid: unchanged.
+    expect(AutomationRunner.changedBetween(look('AAAA', g), look('BBBB', g)), isFalse);
+    final moved = grid((i) => i < 200 ? 250 : (i * 3) % 180);
+    expect(AutomationRunner.changedBetween(look('AAAA', g), look('BBBB', moved)), isTrue);
+    // Another app in front is a change whatever the grid says.
+    expect(AutomationRunner.changedBetween(
+        look('AAAA', g), {...screen('com.other', []), 'shot': 'AAAA', 'grid': g}), isTrue);
+  });
+
+  test('a tap_xy that did nothing in a picture-only app is reported unchanged to the server', () async {
+    final g = grid((i) => (i * 5) % 220);
+    final dev = FakeDevice(screens: [
+      {...screen(sw, []), 'shot': 'QUFB', 'grid': g},
+      {...screen(sw, []), 'shot': 'QkJC', 'grid': g}, // only the clock moved
+    ]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap_xy', 'x': 500, 'y': 900, 'label': 'ADD'}},
+      {'status': 'handoff', 'report': 'I could not confirm it was added.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(api.steps[1].last, {'ok': true, 'changed': false});
+    expect(api.steps[1].screen.containsKey('grid'), isFalse, reason: 'the grid stays on the phone');
+  });
+
+  test('each action waits for its own effect, with its own budget', () {
+    final tap = AutomationRunner.settleFor({'type': 'tap', 'id': 3});
+    expect((tap.expect, tap.max), (1200, 2500));
+    final typed = AutomationRunner.settleFor({'type': 'type', 'id': 1, 'text': 'x'});
+    expect(typed.max, 800, reason: 'typing without Enter shows at once');
+    final searched = AutomationRunner.settleFor({'type': 'type', 'id': 1, 'text': 'x', 'submit': true});
+    expect(searched.expect, 2500, reason: 'results take a moment to load');
+    final wait = AutomationRunner.settleFor({'type': 'wait'});
+    expect(wait.min, greaterThanOrEqualTo(1000), reason: 'a wait really waits');
+    expect(AutomationRunner.settleFor({'type': 'scroll'}).expect, 800);
+    for (final t in ['tap', 'tap_xy', 'type', 'wait', 'scroll', 'back', 'open_app', 'home']) {
+      final b = AutomationRunner.settleFor({'type': t});
+      expect(b.expect, greaterThan(0), reason: '$t waits for an effect after the action');
+      expect(b.max, lessThanOrEqualTo(5000), reason: '$t never waits longer than 5 s');
+    }
+  });
+
+  test('the loop asks the phone for those budgets after every action', () async {
+    final dev = FakeDevice(screens: [
+      screen(sw, ['Search']),
+      screen(sw, ['Search', 'Biryani']),
+      screen(sw, ['Biryani', 'ADD']),
+    ]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'type', 'id': 0, 'text': 'biryani', 'submit': true}},
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 1}},
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(dev.settles.map((s) => s.expect), [2500, 1200]);
+    expect(dev.settles.map((s) => s.max), [4000, 2500]);
+  });
+
+  test('the first look waits for the app itself — no fixed delay before the first step', () async {
+    final dev = FakeDevice(screens: [screen(sw, ['Search'])]);
+    final api = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    final clock = Stopwatch()..start();
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    clock.stop();
+    expect(dev.log.where((l) => l.startsWith('wait:')).toList(), ['wait:$sw']);
+    expect(dev.settles, isEmpty, reason: 'no fixed settle before the first look');
+    expect(clock.elapsedMilliseconds, lessThan(700));
+    // A task from the home screen (or the browser) waits for any app but this one.
+    final dev2 = FakeDevice(screens: [screen('com.sec.android.app.launcher', ['Phone'])]);
+    await AutomationRunner(device: dev2, api: FakeApi([{'status': 'done', 'report': 'ok'}]))
+        .run(const AutomationDirective(runId: 13, goal: 'g', anyApp: true));
+    expect(dev2.log.where((l) => l.startsWith('wait:')).toList(), ['wait:']);
+  });
+
+  test('the upload leaves out empty keys — the server reads them as their defaults', () {
+    final compact = AutomationRunner.compactNodes([
+      {'id': 0, 'up': -1, 'cls': 'TextView', 'text': 'Veg Biryani', 'desc': '', 'hint': '', 'rid': '',
+        'label': '', 'click': 0, 'edit': 0, 'scroll': 0, 'check': 0, 'checked': 0, 'sel': 0, 'pwd': 0,
+        'en': 1, 'b': [10, 20, 500, 60]},
+      {'id': 1, 'up': 0, 'cls': 'Button', 'text': 'ADD', 'desc': '', 'hint': '', 'rid': 'add',
+        'label': '', 'click': 1, 'edit': 0, 'scroll': 0, 'check': 0, 'checked': 0, 'sel': 0, 'pwd': 0,
+        'en': 0, 'b': [800, 20, 950, 60]},
+    ]);
+    expect(compact[0], {'id': 0, 'cls': 'TextView', 'text': 'Veg Biryani', 'b': [10, 20, 500, 60]});
+    expect(compact[1], {'id': 1, 'up': 0, 'cls': 'Button', 'text': 'ADD', 'rid': 'add', 'click': 1,
+      'en': 0, 'b': [800, 20, 950, 60]});
+
+    // 160 realistic elements: well under 25 KB, and much smaller than before.
+    final nodes = [
+      for (var i = 0; i < 160; i++)
+        {'id': i, 'up': i % 4 == 0 ? -1 : i - 1, 'cls': i % 4 == 0 ? 'ViewGroup' : 'TextView',
+          'text': i % 4 == 0 ? '' : 'Dish number $i · ₹${100 + i}', 'desc': '', 'hint': '', 'rid': '',
+          'label': i % 4 == 0 ? 'Dish number $i · ₹${100 + i} · 4.${i % 10} · 30 mins' : '',
+          'click': i % 4 == 0 ? 1 : 0, 'edit': 0, 'scroll': 0, 'check': 0, 'checked': 0, 'sel': 0,
+          'pwd': 0, 'en': 1, 'b': [0, i * 6, 1000, i * 6 + 5]},
+    ];
+    final full = jsonEncode(nodes).length;
+    final small = jsonEncode(AutomationRunner.compactNodes(nodes)).length;
+    expect(small, lessThanOrEqualTo(25000));
+    expect(small, lessThan(full * 0.7));
+  });
+
+  test('the screen goes to the server compacted', () async {
+    final dev = FakeDevice(screens: [
+      {'pkg': sw, 'keyboard': false, 'nodes': [
+        {'id': 0, 'up': -1, 'text': 'Search', 'desc': '', 'click': 1, 'edit': 0, 'en': 1, 'b': [0, 0, 10, 10]},
+      ]},
+    ]);
+    final api = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(api.steps.single.screen['nodes'], [
+      {'id': 0, 'text': 'Search', 'click': 1, 'b': [0, 0, 10, 10]},
+    ]);
   });
 
   test('offline, the assistant retries less and less often, down to once a minute', () {

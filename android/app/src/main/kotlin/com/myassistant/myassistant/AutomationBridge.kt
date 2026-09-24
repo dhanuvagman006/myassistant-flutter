@@ -17,7 +17,10 @@ import android.provider.Settings
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * "hari/automation" — the Dart task loop's line to the accessibility
@@ -31,6 +34,14 @@ object AutomationBridge {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
+    /**
+     * How long a look waits for its picture after the element walk. A
+     * picture takes ~100-600 ms (a "too soon" retry and the Android 14
+     * secure-window check add 350 ms each); past this the look goes
+     * without one rather than hold the step.
+     */
+    private const val SHOT_WAIT_MS = 2500L
+
     private fun component(ctx: Context) = ComponentName(ctx, HariAccessibilityService::class.java)
 
     /**
@@ -41,7 +52,7 @@ object AutomationBridge {
      */
     private val LOOP_CALLS = setOf(
         "begin", "launch", "allow", "say", "snapshot", "act", "settle",
-        "stopRequested", "ownerWait", "ownerAnswer",
+        "stopRequested", "ownerWait", "ownerAnswer", "waitForApp",
     )
 
     /** Switched on in Settings — true a moment before the service binds. */
@@ -139,26 +150,59 @@ object AutomationBridge {
                 "stopRequested" -> result.success(svc?.stopRequested ?: false)
                 "snapshot" -> {
                     if (svc == null) { result.success(null); return@setMethodCallHandler }
+                    // THE ELEMENTS AND THE PICTURE AT ONCE (2026-09-24). The
+                    // picture used to start only after the whole element
+                    // walk — 150-400 ms a step. Now both start together.
+                    // The picture is only taken of a screen the run may
+                    // touch (asked first), and dropped if the walk then finds
+                    // another app in front. access.shot says how it came out;
+                    // a black (secure) picture is never sent.
+                    val shooting = call.argument<Boolean>("shot") != false && svc.mayPhotograph()
+                    val shot = AtomicReference<HariAccessibilityService.Shot?>(null)
+                    val gotShot = CountDownLatch(1)
+                    if (shooting) svc.captureScreen { s -> shot.set(s); gotShot.countDown() }
                     worker.execute {
                         val snap = try { svc.snapshot() } catch (e: Throwable) {
                             Log.w(TAG, "snapshot failed: ${e.javaClass.simpleName}")
                             null
                         }
-                        // The screenshot rides along — only for a screen the
-                        // run may touch. access.shot says how it came out; a
-                        // black (secure) picture is never sent.
-                        if (snap == null) {
-                            main.post { result.success(null) }
-                        } else if (snap["allowed"] != true || call.argument<Boolean>("shot") == false) {
-                            svc.noPicture()
-                            main.post { result.success(withShot(snap, "none", null, 0L, 0)) }
-                        } else {
-                            svc.captureScreen { shot ->
-                                main.post {
-                                    result.success(withShot(snap, shot.status, shot.jpeg, shot.ms, shot.kb))
-                                }
+                        if (shooting) {
+                            try { gotShot.await(SHOT_WAIT_MS, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) {}
+                        }
+                        val s = shot.get()
+                        when {
+                            snap == null -> {
+                                svc.noPicture()
+                                main.post { result.success(null) }
+                            }
+                            snap["allowed"] != true || !shooting -> {
+                                svc.noPicture()
+                                main.post { result.success(withShot(snap, "none", null, 0L, 0, null)) }
+                            }
+                            s == null -> {
+                                // Still coming after the wait: this look goes
+                                // without it (a late picture never counts).
+                                svc.noPicture()
+                                main.post { result.success(withShot(snap, "failed", null, SHOT_WAIT_MS, 0, null)) }
+                            }
+                            else -> {
+                                svc.shotSent(s.status)
+                                main.post { result.success(withShot(snap, s.status, s.jpeg, s.ms, s.kb, s.grid)) }
                             }
                         }
+                    }
+                }
+                // The first look waits for the opened app to be drawn, not a
+                // fixed time (HariAccessibilityService.waitForApp).
+                "waitForApp" -> {
+                    if (svc == null) { result.success(null); return@setMethodCallHandler }
+                    val pkg = call.argument<String>("pkg") ?: ""
+                    val max = (call.argument<Number>("maxMs") ?: 5000).toLong()
+                    worker.execute {
+                        val r = try { svc.waitForApp(pkg, max) } catch (e: Throwable) {
+                            mapOf("ok" to false, "reason" to "exception:${e.javaClass.simpleName}")
+                        }
+                        main.post { result.success(r) }
                     }
                 }
                 "act" -> {
@@ -175,24 +219,35 @@ object AutomationBridge {
                         main.post { result.success(r) }
                     }
                 }
+                // Waits for the last action's effect; answers {ms, reason}
+                // (HariAccessibilityService.settle).
                 "settle" -> {
-                    if (svc == null) { result.success(false); return@setMethodCallHandler }
+                    if (svc == null) { result.success(null); return@setMethodCallHandler }
                     val quiet = (call.argument<Number>("quietMs") ?: 450).toLong()
                     val max = (call.argument<Number>("maxMs") ?: 4000).toLong()
-                    svc.settle(quiet, max) { result.success(true) }
+                    val expect = (call.argument<Number>("expectMs") ?: 0).toLong()
+                    val min = (call.argument<Number>("minMs") ?: 250).toLong()
+                    svc.settle(quiet, max, expect, min) { ms, reason ->
+                        result.success(mapOf("ms" to ms, "reason" to reason))
+                    }
                 }
                 else -> result.notImplemented()
             }
         }
     }
 
-    /** The look plus its picture: access.shot, and times/sizes for the log. */
+    /**
+     * The look plus its picture: access.shot, times/sizes for the log, and
+     * the picture's brightness grid (stays on the phone: the Dart loop
+     * compares it to tell whether a picture-only screen changed).
+     */
     private fun withShot(snap: Map<String, Any?>, status: String, jpeg: String?,
-                         ms: Long, kb: Int): Map<String, Any?> {
+                         ms: Long, kb: Int, grid: String?): Map<String, Any?> {
         @Suppress("UNCHECKED_CAST")
         val access = (snap["access"] as? Map<String, Any?>).orEmpty() + ("shot" to status)
         var out = snap + ("access" to access) + ("shot_ms" to ms)
         if (jpeg != null) out = out + ("shot" to jpeg) + ("shot_kb" to kb)
+        if (grid != null) out = out + ("grid" to grid)
         return out
     }
 

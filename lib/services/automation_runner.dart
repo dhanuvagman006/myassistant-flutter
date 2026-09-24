@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
@@ -123,7 +124,15 @@ abstract class AutomationDevice {
   Future<void> say(String text);
   Future<Map<String, dynamic>?> snapshot();
   Future<Map<String, dynamic>> act(Map<String, dynamic> action);
-  Future<void> settle({int quietMs = 450, int maxMs = 4000});
+  /// Waits for the screen after an action. With [expectMs] > 0 it waits for
+  /// the LAST ACTION's effect (a change after it, then [quietMs] of calm);
+  /// with 0, for the screen to calm down. Answers {ms, reason}: none |
+  /// quiet | stable | cap | stop (null when the phone could not say).
+  Future<Map<String, dynamic>?> settle(
+      {int quietMs = 450, int maxMs = 4000, int expectMs = 0, int minMs = 250});
+  /// Waits for the opened app ([pkg]; empty: any app but this one) to be in
+  /// front and drawn, at most [maxMs]. Answers {ok, reason, ms, pkg}.
+  Future<Map<String, dynamic>?> waitForApp(String pkg, {int maxMs = 5000});
   Future<bool> stopRequested();
   /// The owner's turn: the bar shows [text] and Continue. Resolves to
   /// "continue", "stop" or "timeout". Reads nothing on the screen.
@@ -221,10 +230,31 @@ class ChannelAutomationDevice implements AutomationDevice {
   }
 
   @override
-  Future<void> settle({int quietMs = 450, int maxMs = 4000}) => _ch
-      .invokeMethod('settle', {'quietMs': quietMs, 'maxMs': maxMs})
-      .timeout(Duration(milliseconds: maxMs + 1500))
-      .catchError((_) => null);
+  Future<Map<String, dynamic>?> settle(
+      {int quietMs = 450, int maxMs = 4000, int expectMs = 0, int minMs = 250}) async {
+    try {
+      final m = await _ch.invokeMethod('settle', {
+        'quietMs': quietMs,
+        'maxMs': maxMs,
+        'expectMs': expectMs,
+        'minMs': minMs,
+      }).timeout(Duration(milliseconds: maxMs + 1500));
+      return m is Map ? _map(m) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>?> waitForApp(String pkg, {int maxMs = 5000}) async {
+    try {
+      final m = await _ch.invokeMethod('waitForApp', {'pkg': pkg, 'maxMs': maxMs})
+          .timeout(Duration(milliseconds: maxMs + 2000));
+      return m is Map ? _map(m) : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Future<bool> stopRequested() async =>
@@ -298,8 +328,8 @@ class AutomationRunner {
   final AutomationApi api;
   final String ownPackage;
 
-  /// How often to look while waiting for the opened app to come to the
-  /// front (20 looks at most).
+  /// How often to look again when the opened app is still not in front
+  /// after the phone's own wait for it (waitForApp) — 5 looks at most.
   final Duration startPoll;
 
   /// How often Stop is checked while the server thinks about a step.
@@ -346,27 +376,119 @@ class AutomationRunner {
     }
   }
 
-  /// Did anything visible change? Text, ticks and selections, in order.
-  static String signature(Map<String, dynamic> snap) {
+  /// HOW LONG TO WAIT AFTER EACH KIND OF ACTION (2026-09-24). [expect]: how
+  /// long its effect may take to start (after it, "nothing changed" is the
+  /// answer); [quiet]: the calm that means it has finished; [max]: the cap;
+  /// [min]: never sooner. A tap's result (ADD → the cart bar) can take
+  /// 0.4-1.5 s; typed text without Enter shows at once; a search with Enter
+  /// loads results; "wait" is for a page still loading.
+  static ({int quiet, int max, int expect, int min}) settleFor(Map<String, dynamic> action) {
+    switch (action['type']) {
+      case 'type':
+        return action['submit'] == true
+            ? (quiet: 450, max: 4000, expect: 2500, min: 250)
+            : (quiet: 200, max: 800, expect: 600, min: 150);
+      case 'wait':
+        return (quiet: 1000, max: 5000, expect: 1500, min: 1000);
+      case 'scroll':
+      case 'swipe':
+        return (quiet: 300, max: 1500, expect: 800, min: 200);
+      case 'open_app':
+        return (quiet: 700, max: 5000, expect: 2500, min: 300);
+      default: // tap, tap_xy, long_press, back, home, the shade
+        return (quiet: 450, max: 2500, expect: 1200, min: 250);
+    }
+  }
+
+  /// A clock or a countdown ("12:03", "3:05 pm", "12 mins", "45 s")
+  /// ticking by itself is not the screen changing.
+  static final _clock =
+      RegExp(r'\b\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]\.?\s?m\b\.?)?', caseSensitive: false);
+  static final _countdown = RegExp(
+      r'\b\d+\s*(?:s|secs?|seconds?|mins?|minutes?|hrs?|hours?)\b',
+      caseSensitive: false);
+  static String _steady(Object? s) =>
+      '${s ?? ''}'.replaceAll(_clock, '#').replaceAll(_countdown, '#');
+
+  /// Did anything visible change? Text, ticks and selections, in order —
+  /// with clocks and countdowns left out. [picture]: in an app with (almost)
+  /// no element list, a fallback hash of the picture counts too.
+  static String signature(Map<String, dynamic> snap, {bool picture = true}) {
     final nodes = (snap['nodes'] as List?) ?? const [];
     final b = StringBuffer(snap['pkg'] ?? '');
     // An app with little or no element list: the picture is the screen.
-    if (nodes.length < 5 && snap['shot'] is String) {
+    if (picture && nodes.length < 5 && snap['shot'] is String) {
       b.write('#${(snap['shot'] as String).hashCode}');
     }
     for (final n in nodes) {
       if (n is! Map) continue;
       b
         ..write('|')
-        ..write(n['text'] ?? '')
+        ..write(_steady(n['text']))
         ..write('/')
-        ..write(n['desc'] ?? '')
+        ..write(_steady(n['desc']))
         ..write('/')
-        ..write(n['label'] ?? '')
+        ..write(_steady(n['label']))
         ..write(n['checked'] == 1 ? '+c' : '')
         ..write(n['sel'] == 1 ? '+s' : '');
     }
     return b.toString();
+  }
+
+  /// DID A PICTURE-ONLY SCREEN CHANGE? [a] and [b] are the phone's
+  /// brightness grids (24 × 48 cells, base64, status bar left out). A hash
+  /// of the picture said "changed" for any pixel — a blinking cursor, a
+  /// banner — so a tap that did nothing looked like progress. Changed: more
+  /// than 1.5% of the cells differ by more than 10 levels.
+  static bool gridChanged(String a, String b) {
+    final List<int> x;
+    final List<int> y;
+    try {
+      x = base64Decode(a);
+      y = base64Decode(b);
+    } catch (_) {
+      return a != b;
+    }
+    if (x.isEmpty || x.length != y.length) return true;
+    var n = 0;
+    for (var i = 0; i < x.length; i++) {
+      if ((x[i] - y[i]).abs() > 10) n++;
+    }
+    return n > x.length * 0.015;
+  }
+
+  /// Did the last action change the screen between look [a] and look [b]?
+  /// Apps with (almost) no element list are judged on the picture's grid;
+  /// the rest on the element list.
+  static bool changedBetween(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final few = ((b['nodes'] as List?)?.length ?? 0) < 5;
+    final ga = a['grid'];
+    final gb = b['grid'];
+    if (few && ga is String && gb is String && a['pkg'] == b['pkg']) {
+      return gridChanged(ga, gb) ||
+          signature(a, picture: false) != signature(b, picture: false);
+    }
+    return signature(a) != signature(b);
+  }
+
+  /// THE UPLOAD WITHOUT THE BLANKS (2026-09-24). Most elements are plain
+  /// text: their empty desc/hint/rid/label and zero flags were most of each
+  /// step's upload. The server reads a missing key as its default (""/0,
+  /// en 1, up -1), so only the rest is sent; id and the box always are.
+  static List<Map<String, dynamic>> compactNodes(List nodes) => [
+        for (final n in nodes)
+          if (n is Map)
+            {
+              for (final e in n.entries)
+                if (_keepKey('${e.key}', e.value)) '${e.key}': e.value,
+            },
+      ];
+
+  static bool _keepKey(String k, Object? v) {
+    if (k == 'id' || k == 'b') return true;
+    if (k == 'en') return v != 1;
+    if (k == 'up') return v != -1;
+    return !(v == null || v == '' || v == 0 || v == false);
   }
 
   Future<AutomationOutcome> _finish(int runId, String reason,
@@ -469,11 +591,19 @@ class AutomationRunner {
         finalText = o.report;
         return o;
       }
-      // Apps take a moment to draw their first real screen.
-      await device.settle(quietMs: 700, maxMs: 6000);
+      // THE FIRST LOOK WAITS FOR THE APP, NOT THE CLOCK (2026-09-24): as
+      // soon as it is in front and drawn (a splash, a shimmer and a blank
+      // start are waited out on the phone), instead of a fixed 0.7-6 s of
+      // silence and then up to 20 more looks for it to come to the front.
+      final appClock = Stopwatch()..start();
+      final ready = await device.waitForApp(d.web || fromHome ? '' : pkg);
+      AppLog.add('auto',
+          'app run=${d.runId} ready=${ready?['reason'] ?? '-'} ms=${appClock.elapsedMilliseconds}');
 
       Map<String, dynamic>? last;
-      String? before;
+      // The look before this one: whether the last action changed anything
+      // is judged against it (changedBetween).
+      Map<String, dynamic>? before;
       var firstLook = true;
       // Set once any other app has been in front. Before that, this app's
       // own screen is a slow start, not the owner coming back (seen
@@ -495,7 +625,7 @@ class AutomationRunner {
 
         final lookClock = Stopwatch()..start();
         var snap = await device.snapshot();
-        for (var w = 0; w < 20 && !seenOther && snap?['pkg'] == ownPackage; w++) {
+        for (var w = 0; w < 5 && !seenOther && snap?['pkg'] == ownPackage; w++) {
           await Future<void>.delayed(startPoll);
           snap = await device.snapshot();
         }
@@ -577,13 +707,13 @@ class AutomationRunner {
         }
 
         // VERIFY: did the last action change anything on screen?
-        final now = signature(snap);
-        if (last != null) last['changed'] = before == null || now != before;
+        final now = snap;
+        if (last != null) last['changed'] = before == null || changedBetween(before, now);
         final access = snap['access'];
         final screen = <String, dynamic>{
           'pkg': snap['pkg'],
           'keyboard': snap['keyboard'] == true,
-          'nodes': snap['nodes'] ?? const [],
+          'nodes': compactNodes((snap['nodes'] as List?) ?? const []),
           if (snap['shot'] is String) 'shot': snap['shot'],
           // What the phone could see: shot ok/black/failed…, tree
           // ok/empty/no_root, locked. A black picture is never sent.
@@ -640,12 +770,20 @@ class AutomationRunner {
             before = now;
             continue;
           }
+          // Wait for THIS action's effect (budgets per kind: settleFor).
+          final budget = settleFor(action);
           final settleClock = Stopwatch()..start();
-          await device.settle(
-              quietMs: 450, maxMs: action['type'] == 'type' ? 2500 : 4000);
+          final settled = await device.settle(
+              quietMs: budget.quiet, maxMs: budget.max, expectMs: budget.expect, minMs: budget.min);
           settleClock.stop();
           _logStep(d.runId, seq, snap, lookClock, postClock,
-              act: actClock, settle: settleClock);
+              act: actClock,
+              settle: settleClock,
+              note: [
+                'settle=${settled?['reason'] ?? '-'}',
+                if (r['how'] != null) 'how=${r['how']}',
+                if (r['remapped'] == true) 'remapped',
+              ].join(' '));
           last = {
             'ok': r['ok'] == true,
             if (r['error'] != null) 'error': '${r['error']}',
