@@ -150,7 +150,7 @@ class _SearchScreenState extends State<SearchScreen> {
           controller: _query,
           autofocus: true,
           textInputAction: TextInputAction.search,
-          style: TextStyle(color: Neon.textHi, fontSize: 16.5),
+          style: TextStyle(color: Neon.textHi, fontSize: 17),
           decoration: InputDecoration(
             hintText: 'Search documents, clients, reminders…',
             hintStyle: TextStyle(color: Neon.textDim),
@@ -258,7 +258,7 @@ class _SearchScreenState extends State<SearchScreen> {
         padding: const EdgeInsets.fromLTRB(6, 16, 6, 8),
         child: Text('$title · $n',
             style: TextStyle(
-                color: Neon.textLo, fontSize: 12.5, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+                color: Neon.textLo, fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
       );
 
   Widget _row({
@@ -291,7 +291,7 @@ class _SearchScreenState extends State<SearchScreen> {
               : Text(subtitle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Neon.textLo, fontSize: 12.5)),
+                  style: TextStyle(color: Neon.textLo, fontSize: 13)),
         ),
       );
 }

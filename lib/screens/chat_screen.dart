@@ -287,7 +287,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Text('${g.unread}',
                     style: TextStyle(
                         color: Neon.onAccent,
-                        fontSize: 11.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700)),
               )
             : null,
@@ -323,13 +323,13 @@ class _ChatScreenState extends State<ChatScreen> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-              color: t.unread > 0 ? Neon.textHi : Neon.textLo, fontSize: 12.5)),
+              color: t.unread > 0 ? Neon.textHi : Neon.textLo, fontSize: 13)),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(_when(t.lastAt),
-              style: TextStyle(color: Neon.textDim, fontSize: 11)),
+              style: TextStyle(color: Neon.textDim, fontSize: 12)),
           const SizedBox(height: 4),
           if (t.unread > 0)
             Container(
@@ -341,7 +341,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text('${t.unread}',
                   style: TextStyle(
                       color: Neon.onAccent,
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700)),
             ),
         ],
@@ -528,7 +528,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
               PopupMenuItem(
                 value: 'clear',
                 child:
-                    Text('Clear chat', style: TextStyle(color: Neon.error)),
+                    Text('Clear chat', style: TextStyle(color: Neon.errorInk)),
               ),
             ],
           ),
@@ -667,7 +667,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                         color: m.mine
                             ? Neon.onAccent.withValues(alpha: 0.7)
                             : Neon.textDim,
-                        fontSize: 10.5)),
+                        fontSize: 12)),
               ),
             if (m.documentId != null)
               Padding(
@@ -682,7 +682,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                       width: 190,
                       height: 140,
                       fit: BoxFit.cover,
-                      cacheWidth: 400,
+                      // Decoded at the size it is drawn (2026-09-24): 400
+                      // px was upscaled about 1.25x on his phone (190 dp at
+                      // 2.625) and looked soft. A tenth over, for the crop.
+                      cacheWidth:
+                          (190 * MediaQuery.devicePixelRatioOf(context) * 1.1)
+                              .round(),
                       errorBuilder: (_, __, ___) => Container(
                         width: 190,
                         height: 60,
@@ -709,7 +714,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                               color: m.mine
                                   ? Neon.onAccent.withValues(alpha: 0.75)
                                   : Neon.textLo,
-                              fontSize: 13.5,
+                              fontSize: 14,
                               fontStyle: FontStyle.italic)),
                     ],
                   )
@@ -744,7 +749,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         content: Text(
           'This removes the messages from your copy only. '
           '${widget.name} keeps theirs.',
-          style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 13.5),
+          style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 14),
         ),
         actions: [
           TextButton(
@@ -753,7 +758,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(c).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Neon.error),
+            style: TextButton.styleFrom(foregroundColor: Neon.errorInk),
             child: const Text('Clear',
                 style: TextStyle(fontWeight: FontWeight.w700)),
           ),
@@ -792,7 +797,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
               ListTile(
                 leading: Icon(Icons.undo_rounded, color: Neon.error),
                 title: Text('Delete for everyone',
-                    style: TextStyle(color: Neon.error)),
+                    style: TextStyle(color: Neon.errorInk)),
                 onTap: () => Navigator.of(c).pop('everyone'),
               ),
             ListTile(

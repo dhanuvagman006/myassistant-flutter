@@ -121,7 +121,7 @@ class _AppLockSectionState extends State<AppLockSection> {
           child: Text(
             'Locks when you have been away for more than a minute. Your PIN '
             'stays on this phone.',
-            style: TextStyle(color: Neon.textDim, fontSize: 11.5),
+            style: TextStyle(color: Neon.textDim, fontSize: 12),
           ),
         ),
       ],

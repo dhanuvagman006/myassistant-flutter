@@ -34,7 +34,7 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
             Text(
               'Your colour paints the orb, the mic, every icon tile and '
               'each highlight in the app. Tap one to see it straight away.',
-              style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.5),
+              style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
             ),
             const SizedBox(height: 22),
             Wrap(
@@ -63,7 +63,7 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
                       'This is how your colour looks on buttons and the mic.',
                       style: TextStyle(
                           color: Colors.white,
-                          fontSize: 13.5,
+                          fontSize: 14,
                           height: 1.4,
                           fontWeight: FontWeight.w600),
                     ),
@@ -119,7 +119,7 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                         color: selected ? Neon.textHi : Neon.textDim,
-                        fontSize: 11.5,
+                        fontSize: 12,
                         fontWeight:
                             selected ? FontWeight.w700 : FontWeight.w500)),
               ),

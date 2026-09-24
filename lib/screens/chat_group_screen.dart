@@ -199,7 +199,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
             style: GoogleFonts.spaceGrotesk(
                 color: Neon.textHi, fontWeight: FontWeight.w700, fontSize: 17)),
         content: Text(body,
-            style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 13.5)),
+            style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 14)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(c).pop(false),
@@ -207,7 +207,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(c).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Neon.error),
+            style: TextButton.styleFrom(foregroundColor: Neon.errorInk),
             child: Text(action,
                 style: const TextStyle(fontWeight: FontWeight.w700)),
           ),
@@ -240,7 +240,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
               ListTile(
                 leading: Icon(Icons.undo_rounded, color: Neon.error),
                 title: Text('Delete for everyone',
-                    style: TextStyle(color: Neon.error)),
+                    style: TextStyle(color: Neon.errorInk)),
                 onTap: () => Navigator.of(c).pop('everyone'),
               ),
             ListTile(
@@ -300,7 +300,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
               ),
               PopupMenuItem(
                 value: 'leave',
-                child: Text('Leave group', style: TextStyle(color: Neon.error)),
+                child: Text('Leave group', style: TextStyle(color: Neon.errorInk)),
               ),
             ],
           ),
@@ -313,7 +313,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                     fontWeight: FontWeight.w700, fontSize: 17)),
             Text(
               _members > 0 ? '$_members members' : 'Group',
-              style: TextStyle(color: Neon.textLo, fontSize: 11.5),
+              style: TextStyle(color: Neon.textLo, fontSize: 12),
             ),
           ],
         ),
@@ -404,7 +404,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                     'Let my assistant reply here',
                     style: TextStyle(
                         color: Neon.textHi,
-                        fontSize: 13.5,
+                        fontSize: 14,
                         fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 2),
@@ -412,7 +412,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                     'In this group, members’ assistants may answer for '
                     'them while they are away.',
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 11.5, height: 1.35),
+                        color: Neon.textLo, fontSize: 12, height: 1.35),
                   ),
                 ],
               ),

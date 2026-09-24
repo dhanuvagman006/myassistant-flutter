@@ -102,7 +102,7 @@ class ContactPickerSheet extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Neon.textHi,
-                      fontSize: 15.5,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

@@ -187,14 +187,14 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   'now on, listen only to me. One, two, three, four, five — '
                   'today is a really good day."',
                   style: TextStyle(
-                      color: Neon.textHi, fontSize: 15.5, height: 1.5),
+                      color: Neon.textHi, fontSize: 16, height: 1.5),
                 ),
                 const SizedBox(height: 16),
                 LinearProgressIndicator(
                     color: Neon.violet, backgroundColor: Neon.bg),
                 const SizedBox(height: 10),
                 Text('Recording ${seconds}s — speak naturally.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+                    style: TextStyle(color: Neon.textDim, fontSize: 13)),
               ],
             ),
             actions: [
@@ -315,48 +315,47 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         trailing: _themeTick(mode == ThemeMode3.dark),
                         onTap: () => ThemeController.setMode(ThemeMode3.dark),
                       ),
+                      // In the Appearance card (2026-09-24): it floated
+                      // 10 dp under it as a card with no label of its own.
+                      AppleRow(
+                        leading: IconTile(
+                            Icons.palette_rounded, AppleColors.purple),
+                        title: 'Theme colour',
+                        subtitle: 'Paints the orb, the mic and every highlight',
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ValueListenableBuilder<Color>(
+                              valueListenable: AccentController.seed,
+                              builder: (_, seed, __) => Container(
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: Neon.tile(seed),
+                                  border: Border.all(color: Neon.line),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(Icons.chevron_right_rounded,
+                                color: Neon.textDim, size: 20),
+                          ],
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const ThemeColourScreen()),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 10),
-                GroupedCard(
-                  dividerInset: 60,
-                  children: [
-                    AppleRow(
-                      leading: IconTile(
-                          Icons.palette_rounded, AppleColors.purple),
-                      title: 'Theme colour',
-                      subtitle: 'Paints the orb, the mic and every highlight',
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ValueListenableBuilder<Color>(
-                            valueListenable: AccentController.seed,
-                            builder: (_, seed, __) => Container(
-                              width: 22,
-                              height: 22,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: Neon.tile(seed),
-                                border: Border.all(color: Neon.line),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(Icons.chevron_right_rounded,
-                              color: Neon.textDim, size: 20),
-                        ],
-                      ),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                            builder: (_) => const ThemeColourScreen()),
-                      ),
-                    ),
-                  ],
-                ),
                 const SizedBox(height: 24),
 
-                const GroupLabel('Assistant voice'),
+                // ONE VOICE CARD (2026-09-24). "ASSISTANT VOICE" sat over a
+                // row called "Assistant voice", and "RECOGNISE MY VOICE"
+                // over "Voice ID": a label per row, each repeating it.
+                const GroupLabel('Voice'),
                 GroupedCard(
                   dividerInset: 60,
                   children: [
@@ -372,7 +371,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                             _voiceName(_voice),
                             style: TextStyle(
                                 color: Neon.textLo,
-                                fontSize: 13.5,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(width: 6),
@@ -393,17 +392,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         if (picked != null && mounted) _pickVoice(picked);
                       },
                     ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
-                // "Live captions" was here: a switch nothing read (captions
-                // always show in the voice overlay), describing a
-                // conversation screen that no longer exists.
-                const GroupLabel('Recognise my voice'),
-                GroupedCard(
-                  dividerInset: 60,
-                  children: [
+                    // "Live captions" was here: a switch nothing read
+                    // (captions always show in the voice overlay),
+                    // describing a conversation screen that no longer
+                    // exists.
                     AppleRow(
                       leading: IconTile(
                           Icons.record_voice_over_rounded, AppleColors.teal),
@@ -415,8 +407,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                               'only you.',
                       trailing: OutlinedButton(
                         onPressed: _enrolling ? null : _enrollVoice,
+                        // The app's own accent: this was the one #3B5BDB
+                        // highlight on a page where every other is violet.
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: AppleColors.blue,
+                          foregroundColor: Neon.violet,
                           side: BorderSide(color: Neon.line),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
@@ -476,7 +470,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     'decision — e.g. "Always ask before sending messages", '
                     '"Call me by my first name". You can also just say these in '
                     'conversation.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                    // textLo: textDim fell under 4.5:1 on the ambient wash.
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.footnote),
                   ),
                 ),
                 if (_rules.isNotEmpty) ...[
@@ -514,7 +510,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   IconButton(
                       onPressed: _addRule,
                       icon: Icon(Icons.add_circle_rounded,
-                          color: AppleColors.blue)),
+                          color: Neon.violet)),
                 ]),
                 const SizedBox(height: 24),
 

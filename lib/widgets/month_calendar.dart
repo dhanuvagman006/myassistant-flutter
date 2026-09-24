@@ -18,6 +18,34 @@ import '../services/brief_service.dart';
 class MonthCalendar extends StatefulWidget {
   const MonthCalendar({super.key});
 
+  /// THE BUSY SCALE, IN THE BRAND'S OWN COLOURS: one, two, three or more
+  /// things on a day.
+  ///
+  /// These were GitHub's contribution greens, which is why the one busy
+  /// day on a violet screen glowed green and read as someone else's
+  /// design. Same three-step idea, violet → magenta.
+  ///
+  /// A GETTER, READ FRESH (2026-09-24). As a static final list it kept
+  /// the old accent after a colour change until the app restarted. The
+  /// first step is now a pale tint of the accent by day (a dim one by
+  /// night), so a one-item day is quiet and its number reads in plain
+  /// ink: the old fixed violet-black on #596DDE was 3.77:1. Numbers on
+  /// every step take [Neon.textOn], 4.5:1 or better (pinned by
+  /// test/contrast_test.dart).
+  static List<Color> get heatColors => [
+        Neon.isDark
+            ? Color.lerp(Neon.violet, Neon.surface, 0.55)!
+            : Color.lerp(Neon.violet, Colors.white, 0.62)!,
+        Neon.violet,
+        // A shade deeper by day: with the Crimson accent the partner was
+        // too light for white words and too dark for black ones (4.4:1).
+        Neon.isDark
+            ? Neon.pink
+            : HSLColor.fromColor(Neon.pink)
+                .withLightness(HSLColor.fromColor(Neon.pink).lightness * 0.9)
+                .toColor(),
+      ];
+
   @override
   State<MonthCalendar> createState() => _MonthCalendarState();
 }
@@ -48,17 +76,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
     'August', 'September', 'October', 'November', 'December'
   ];
 
-  // THE BUSY SCALE, IN THE BRAND'S OWN COLOURS.
-  //
-  // These were GitHub's contribution greens, which is why the one busy
-  // day on a violet screen glowed green and read as someone else's
-  // design. Same three-step idea, violet → magenta. The name stays so
+  // The busy scale (see [MonthCalendar.heatColors]). The name stays so
   // every call site below is untouched.
-  static final _greens = [
-    Color.lerp(Neon.violet, Colors.white, 0.35)!,
-    Neon.violet,
-    Neon.pink,
-  ];
+  static List<Color> get _greens => MonthCalendar.heatColors;
 
   @override
   void initState() {
@@ -157,8 +177,12 @@ class _MonthCalendarState extends State<MonthCalendar> {
     _fetch();
   }
 
+  // EMPTY DAYS ARE PLAIN CARD (2026-09-24). Thirty grey tiles, each with
+  // a border at 1.15:1 against the card, filled half of Home with noise
+  // even when nothing was on. Only days that hold something are coloured
+  // now, so the busy ones are what the eye finds.
   Color _tileColor(int count) {
-    if (count <= 0) return Neon.surfaceHigh;
+    if (count <= 0) return Colors.transparent;
     if (count == 1) return _greens[0];
     if (count == 2) return _greens[1];
     return _greens[2];
@@ -184,24 +208,35 @@ class _MonthCalendarState extends State<MonthCalendar> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header: month + arrows, styled like the other section titles.
+        // Header: month + arrows in the SAME look as the agenda and
+        // promises headers above it. A bare 15 dp icon and 13 sp text made
+        // the biggest block on Home look like it came from another app.
         Row(
           children: [
-            Icon(Icons.calendar_month_rounded,
-                size: 15, color: Neon.textHi),
-            const SizedBox(width: 7),
-            Text('${_mo[_month - 1]} $_year',
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.2)),
-            const Spacer(),
-            _chev(Icons.chevron_left_rounded, () => _shiftMonth(-1)),
-            _chev(Icons.chevron_right_rounded, () => _shiftMonth(1)),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                gradient: Neon.tile(Neon.violet),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(Icons.calendar_month_rounded,
+                  size: 15, color: Neon.onTile(Neon.violet)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('${_mo[_month - 1]} $_year',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: NeonType.sectionTitle.copyWith(color: Neon.textHi)),
+            ),
+            _chev(Icons.chevron_left_rounded, 'Previous month',
+                () => _shiftMonth(-1)),
+            _chev(Icons.chevron_right_rounded, 'Next month',
+                () => _shiftMonth(1)),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
@@ -217,10 +252,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
                     Expanded(
                       child: Center(
                         child: Text(d,
-                            style: TextStyle(
-                                color: Neon.textDim,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600)),
+                            style: NeonType.manrope(
+                                    NeonType.caption, FontWeight.w600)
+                                .copyWith(color: Neon.textDim)),
                       ),
                     ),
                 ],
@@ -250,25 +284,26 @@ class _MonthCalendarState extends State<MonthCalendar> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Text('Less',
-                      style:
-                          TextStyle(color: Neon.textDim, fontSize: 9.5)),
-                  const SizedBox(width: 4),
-                  for (final c in [Neon.surfaceHigh, ..._greens]) ...[
+                      style: TextStyle(
+                          color: Neon.textDim, fontSize: NeonType.caption)),
+                  const SizedBox(width: 5),
+                  // "Nothing on" is an outline, as the empty days are now.
+                  for (final c in [Colors.transparent, ..._greens]) ...[
                     Container(
-                      width: 9,
-                      height: 9,
+                      width: 10,
+                      height: 10,
                       decoration: BoxDecoration(
                         color: c,
                         borderRadius: BorderRadius.circular(2.5),
-                        border: Border.all(color: Neon.line, width: 0.5),
+                        border: Border.all(color: Neon.lineBright, width: 0.5),
                       ),
                     ),
                     const SizedBox(width: 3),
                   ],
-                  const SizedBox(width: 1),
+                  const SizedBox(width: 2),
                   Text('More',
-                      style:
-                          TextStyle(color: Neon.textDim, fontSize: 9.5)),
+                      style: TextStyle(
+                          color: Neon.textDim, fontSize: NeonType.caption)),
                 ],
               ),
             ],
@@ -285,7 +320,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
 
   Widget _dayCell(int day, int daysInMonth, DateTime today) {
     if (day < 1 || day > daysInMonth) {
-      return const Expanded(child: SizedBox(height: 40));
+      return const Expanded(child: SizedBox(height: 42));
     }
     final count = _days[day]?.length ?? 0;
     final isToday =
@@ -309,33 +344,34 @@ class _MonthCalendarState extends State<MonthCalendar> {
           }
         },
         child: Container(
-          height: 40,
+          height: 38,
           margin: const EdgeInsets.all(2),
           decoration: BoxDecoration(
             color: _tileColor(count),
             borderRadius: BorderRadius.circular(8),
             // Violet, the app's primary accent — a white ring on a grid
-            // of gray tiles never read as "today".
+            // of gray tiles never read as "today". Empty days have no
+            // border at all (see _tileColor).
             border: isSelected
                 ? Border.all(color: Neon.violet, width: 1.6)
                 : isToday
                     ? Border.all(
                         color: Neon.violet.withValues(alpha: 0.55),
                         width: 1.2)
-                    : Border.all(color: Neon.line, width: 0.5),
+                    : null,
           ),
           child: Center(
+            // 13 sp (was 11.5), in its real weight: today and the picked
+            // day are now genuinely heavier, not only asked to be.
             child: Text(
               '$day',
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight:
-                    isToday || isSelected ? FontWeight.w800 : FontWeight.w500,
-                color: count >= 2
-                    ? Colors.white
-                    : filled
-                        ? const Color(0xFF2B0B45)
-                        : Neon.textLo,
+              style: NeonType.manrope(
+                      NeonType.footnote,
+                      isToday || isSelected
+                          ? FontWeight.w800
+                          : FontWeight.w500)
+                  .copyWith(
+                color: filled ? Neon.textOn(_tileColor(count)) : Neon.textLo,
               ),
             ),
           ),
@@ -356,8 +392,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
       return [
         Padding(
           padding: const EdgeInsets.only(left: 2),
+          // textLo: textDim fell to 3.6:1 on the ambient wash.
           child: Text('Nothing on $label.',
-              style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
+              style:
+                  TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
         ),
       ];
     }
@@ -397,13 +435,11 @@ class _MonthCalendarState extends State<MonthCalendar> {
     ];
   }
 
-  Widget _chev(IconData icon, VoidCallback onTap) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 20, color: Neon.textLo),
-        ),
+  /// 48 dp to the finger (was 28: a 20 px arrow with 4 px around it).
+  Widget _chev(IconData icon, String label, VoidCallback onTap) => IconButton(
+        tooltip: label,
+        onPressed: onTap,
+        icon: Icon(icon, size: 22, color: Neon.textLo),
       );
 
   // ---------------- DAY SHEET (any day but today) ----------------
@@ -484,7 +520,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                       Text(
                           '${items.length} item${items.length == 1 ? '' : 's'}',
                           style: TextStyle(
-                              color: Neon.textDim, fontSize: 12.5)),
+                              color: Neon.textDim, fontSize: 13)),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -493,7 +529,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text('Nothing on this day.',
                         style: TextStyle(
-                            color: Neon.textDim, fontSize: 13.5)),
+                            color: Neon.textDim, fontSize: 14)),
                   )
                 else
                   ConstrainedBox(
@@ -535,7 +571,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                                     it.title,
                                     style: TextStyle(
                                         color: Neon.textHi,
-                                        fontSize: 13.5,
+                                        fontSize: 14,
                                         height: 1.3),
                                   ),
                                 ),
@@ -564,7 +600,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                                     child: Text('Calendar',
                                         style: TextStyle(
                                             color: Neon.textDim,
-                                            fontSize: 10.5)),
+                                            fontSize: 12)),
                                   ),
                               ],
                             ),
@@ -582,7 +618,7 @@ class _MonthCalendarState extends State<MonthCalendar> {
                       Expanded(
                         child: Text(problem!,
                             style:
-                                TextStyle(color: Neon.error, fontSize: 13)),
+                                TextStyle(color: Neon.errorInk, fontSize: 13)),
                       ),
                     ]),
                   ),

@@ -206,7 +206,7 @@ class _CardResultSheetState extends State<CardResultSheet> {
             const SizedBox(width: 10),
             Expanded(
                 child: Text(text,
-                    style: TextStyle(color: Neon.textLo, fontSize: 13.5))),
+                    style: TextStyle(color: Neon.textLo, fontSize: 14))),
           ]),
         );
     return SafeArea(
@@ -222,7 +222,7 @@ class _CardResultSheetState extends State<CardResultSheet> {
               Flexible(
                 child: Text('Saved to your people',
                     style: TextStyle(
-                        color: Neon.success,
+                        color: Neon.successInk,
                         fontSize: 13,
                         fontWeight: FontWeight.w600)),
               ),
@@ -282,7 +282,7 @@ class _CardResultSheetState extends State<CardResultSheet> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(_problem!,
-                        style: TextStyle(color: Neon.error, fontSize: 13)),
+                        style: TextStyle(color: Neon.errorInk, fontSize: 13)),
                   ),
                 ]),
               ),

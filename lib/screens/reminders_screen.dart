@@ -229,7 +229,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
                     r.text,
                     style: TextStyle(
                       color: r.done ? Neon.textDim : Neon.textHi,
-                      fontSize: 14.5,
+                      fontSize: 15,
                       height: 1.3,
                       decoration: r.done ? TextDecoration.lineThrough : null,
                     ),
@@ -238,10 +238,12 @@ class _RemindersScreenState extends State<RemindersScreen> {
                     const SizedBox(height: 3),
                     Text(
                       dueLabel(r.dueAt!, DateTime.now()),
-                      style: TextStyle(
-                        color: overdue ? Neon.warning : Neon.textLo,
-                        fontSize: 12.5,
-                        fontWeight: overdue ? FontWeight.w600 : FontWeight.w400,
+                      // warningInk: amber words were 3.19:1 on white — the
+                      // most urgent line on the page, and the faintest.
+                      style: NeonType.manrope(NeonType.footnote,
+                              overdue ? FontWeight.w600 : FontWeight.w400)
+                          .copyWith(
+                        color: overdue ? Neon.warningInk : Neon.textLo,
                       ),
                     ),
                   ],
@@ -458,7 +460,7 @@ class _NewReminderSheetState extends State<_NewReminderSheet> {
           ],
           if (_error != null) ...[
             const SizedBox(height: 10),
-            Text(_error!, style: TextStyle(color: Neon.error, fontSize: 13)),
+            Text(_error!, style: TextStyle(color: Neon.errorInk, fontSize: 13)),
           ],
           const SizedBox(height: 16),
           FilledButton(

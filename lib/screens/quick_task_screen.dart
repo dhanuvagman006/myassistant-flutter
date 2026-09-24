@@ -248,7 +248,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         cursorColor: Neon.violet,
                         style: GoogleFonts.spaceGrotesk(
                           color: Colors.white,
-                          fontSize: 15.5,
+                          fontSize: 16,
                           fontWeight: FontWeight.w600,
                         ),
                         decoration: InputDecoration(
@@ -257,7 +257,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                           hintText: 'Book a cab at 6, or anything else…',
                           hintStyle: GoogleFonts.spaceGrotesk(
                             color: Colors.white.withValues(alpha: 0.30),
-                            fontSize: 15.5,
+                            fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                           contentPadding:

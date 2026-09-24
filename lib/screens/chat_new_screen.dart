@@ -221,7 +221,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
         child: Text(
           '${text.toUpperCase()}  ·  $n',
           style: GoogleFonts.spaceGrotesk(
-            fontSize: 11.5,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.6,
             color: Neon.textLo,
@@ -259,7 +259,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
       leading: _avatar(p.name, selected: selected),
       title: Text(p.name.isEmpty ? p.phone : p.name,
           style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w600)),
-      subtitle: Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 12.5)),
+      subtitle: Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 13)),
     );
   }
 
@@ -268,7 +268,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
         title: Text(p.name.isEmpty ? p.phone : p.name,
             style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w600)),
         subtitle:
-            Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 12.5)),
+            Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 13)),
         trailing: TextButton(
           onPressed: () => _sendInvite(p),
           style: TextButton.styleFrom(foregroundColor: Neon.violet),

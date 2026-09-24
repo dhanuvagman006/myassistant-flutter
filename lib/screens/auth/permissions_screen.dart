@@ -251,7 +251,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                     'for you, and you can change any of them later in '
                     'Settings.',
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 14.5, height: 1.45),
+                        color: Neon.textLo, fontSize: 15, height: 1.45),
                   ),
                   const SizedBox(height: 22),
                   const GroupLabel('Needed'),
@@ -279,7 +279,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                       ),
                       child: Text(_error!,
                           style: TextStyle(
-                              color: Neon.error,
+                              color: Neon.errorInk,
                               fontSize: 13,
                               height: 1.4)),
                     ),

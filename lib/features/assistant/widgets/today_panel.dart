@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,152 +7,23 @@ import '../../../models/brief.dart';
 import '../../../widgets/month_calendar.dart';
 import '../../../widgets/whats_new_card.dart';
 import '../../../services/api_service.dart';
-import '../../../services/assistant_identity.dart';
 import '../../../services/brief_service.dart';
-import '../../../services/call_service.dart';
 import '../state/assistant_engine.dart';
 import '../../../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
-///  TODAY PANEL — the home screen's command center.
+///  TODAY — the Home tab's feed: suggestions that fit the hour, messages
+///  other people's assistants left for you, the agenda (reminders and
+///  meetings), promises Hari heard you make, and the month. Quick actions
+///  feed straight into the running conversation, so the page and the
+///  voice agent are one system.
 ///
-///  Collapsed: one glass pill above the control bar with a live summary
-///  ("3 on your plate · 1 message"). The live conversation stays the star;
-///  the pill only whispers what's waiting.
-///
-///  Tap: a glass sheet with the whole day — agenda (reminders + meetings),
-///  promises Hari heard you make, messages other people's assistants left
-///  for you, and which of your contacts are on the app. Quick actions feed
-///  straight into the running conversation (spoken brief, new reminder,
-///  document scan) — the dashboard and the voice agent are one system.
+///  The collapsed "Today" pill, its blurred sheet and the person sheet
+///  were removed on 2026-09-24: none of them could be reached any more,
+///  and each blurred everything behind it on every frame, under a surface
+///  90% opaque that hid most of the blur anyway. If one comes back, give
+///  it an opaque Neon.surface and no BackdropFilter.
 /// ─────────────────────────────────────────────────────────────────────────
-class TodayPill extends StatelessWidget {
-  const TodayPill({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: BriefService.instance,
-      builder: (context, _) {
-        final b = BriefService.instance.brief;
-        final hasUrgent = b.messages.isNotEmpty;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-          child: GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              BriefService.instance.refresh(force: true);
-              _openTodaySheet(context);
-            },
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(Neon.rPill),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Neon.surface.withValues(alpha: 0.92),
-                    borderRadius: BorderRadius.circular(Neon.rPill),
-                    border: Border.all(
-                      color: hasUrgent
-                          ? Neon.cyan.withValues(alpha: 0.45)
-                          : Neon.line,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: Neon.gVioletCyan,
-                        ),
-                        child: const Icon(Icons.wb_twilight_rounded,
-                            size: 13, color: Colors.white),
-                      ),
-                      const SizedBox(width: 10),
-                      Flexible(
-                        child: Text(
-                          b.summary,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Neon.textHi,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.1,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.keyboard_arrow_up_rounded,
-                          size: 18, color: Neon.textDim),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-void _openTodaySheet(BuildContext context) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.45),
-    builder: (_) => const _TodaySheet(),
-  );
-}
-
-class _TodaySheet extends StatelessWidget {
-  const _TodaySheet();
-
-  @override
-  Widget build(BuildContext context) {
-    final h = MediaQuery.of(context).size.height;
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-        child: Container(
-          constraints: BoxConstraints(maxHeight: h * 0.82),
-          decoration: BoxDecoration(
-            color: Neon.surface.withValues(alpha: 0.86),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
-            border: Border(top: BorderSide(color: Neon.lineBright)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Neon.textDim.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const Flexible(child: TodayBriefBody(showHeader: true)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _KeepAlive extends StatefulWidget {
   const _KeepAlive({required this.child});
   final Widget child;
@@ -175,8 +44,7 @@ class _KeepAliveState extends State<_KeepAlive>
   }
 }
 
-/// The whole day as a scrollable feed — shared by the (legacy) sheet and
-/// the Home dashboard tab, so both always show the same live data.
+/// The whole day as a scrollable feed: the Home dashboard tab.
 class TodayBriefBody extends StatelessWidget {
   final bool showHeader;
   final EdgeInsets padding;
@@ -346,7 +214,7 @@ class TodayBriefBody extends StatelessWidget {
                     const SizedBox(width: 4),
                     Text(b.screenTime!,
                         style: TextStyle(
-                            color: Neon.textDim, fontSize: 11.5)),
+                            color: Neon.textDim, fontSize: NeonType.caption)),
                   ],
                 ),
               ),
@@ -395,39 +263,55 @@ class TodayBriefBody extends StatelessWidget {
                 ('What is tomorrow like?', 'What does my day tomorrow look like?'),
                 ('Write an email', 'I want to send an email — ask me the details.'),
               ];
+    // 48 DP TO THE FINGER, 34 TO THE EYE (2026-09-24). The chips were 34
+    // dp tall with a bare GestureDetector: the most-used shortcut on the
+    // first screen was a small target. The row is now 48 tall and every
+    // chip takes the whole height; the chip itself looks the same.
+    //
+    // Clip.none: clipped at the page padding, the third chip was sliced
+    // through its border 20 dp short of the screen edge, which looked
+    // like a rendering fault rather than "scroll for more".
     return SizedBox(
-      height: 34,
+      height: 48,
       child: ListView.separated(
+        clipBehavior: Clip.none,
         scrollDirection: Axis.horizontal,
         itemCount: ideas.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) => PressScale(
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () {
               HapticFeedback.selectionClick();
               final nav = Navigator.of(context);
               if (nav.canPop()) nav.pop();
               AssistantEngine.instance.askAssistant(ideas[i].$2);
             },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
-              decoration: BoxDecoration(
-                color: Neon.violet.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(Neon.rPill),
-                border:
-                    Border.all(color: Neon.violet.withValues(alpha: 0.28)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.graphic_eq_rounded, size: 13, color: Neon.violet),
-                  const SizedBox(width: 6),
-                  Text(ideas[i].$1,
-                      style: TextStyle(
-                          color: Neon.textHi,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600)),
-                ],
+            child: SizedBox(
+              height: 48,
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: Neon.violet.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(Neon.rPill),
+                    border: Border.all(
+                        color: Neon.violet.withValues(alpha: 0.28)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.graphic_eq_rounded,
+                          size: 13, color: Neon.violet),
+                      const SizedBox(width: 6),
+                      Text(ideas[i].$1,
+                          style: NeonType.manrope(
+                                  NeonType.footnote, FontWeight.w600)
+                              .copyWith(color: Neon.textHi)),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -450,15 +334,14 @@ class TodayBriefBody extends StatelessWidget {
                 gradient: Neon.tile(tint),
                 borderRadius: BorderRadius.circular(9),
               ),
-              child: Icon(icon, size: 15, color: Colors.white),
+              // Dark ink on the evening pastels (Neon.onTile).
+              child: Icon(icon, size: 15, color: Neon.onTile(tint)),
             ),
             const SizedBox(width: 10),
+            // Bold for real (NeonType): it drew from the regular file,
+            // no heavier than the cards under it.
             Text(title,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.1)),
+                style: NeonType.sectionTitle.copyWith(color: Neon.textHi)),
           ],
         ),
       );
@@ -466,8 +349,10 @@ class TodayBriefBody extends StatelessWidget {
   /// An empty section still deserves a warm line, not gray silence.
   Widget _emptyLine(String text,
           {IconData icon = Icons.check_circle_rounded, Color? tint}) =>
+      // Flush with the section header above and the calendar below: the
+      // extra 4 dp on the left made these the only indented cards on Home.
       Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 4),
+        padding: const EdgeInsets.only(bottom: 4),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
@@ -524,19 +409,18 @@ class TodayBriefBody extends StatelessWidget {
           color: (isMeeting ? Neon.cyan : Neon.violet).withValues(alpha: 0.14),
           borderRadius: BorderRadius.circular(Neon.rSm),
         ),
+        // cyanInk: plain cyan words on this tint were 2.75:1.
         child: Text(
           _timeLabel(a.atMs),
-          style: TextStyle(
-              color: isMeeting ? Neon.cyan : Neon.violet,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700),
+          style: NeonType.manrope(NeonType.caption, FontWeight.w700)
+              .copyWith(color: isMeeting ? Neon.cyanInk : Neon.violet),
         ),
       ),
       child: Text(a.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-              color: Neon.textHi, fontSize: 13.5, height: 1.25)),
+              color: Neon.textHi, fontSize: NeonType.body, height: 1.25)),
     );
     // Meetings live in Google Calendar — nothing to delete here. Reminders
     // are ours: swipe either way to clear one.
@@ -576,8 +460,8 @@ class TodayBriefBody extends StatelessWidget {
           finish(done: true);
         },
         child: Padding(
-          // 12 on each side of an 18 px icon: a 42 px target, not a 30 px one.
-          padding: const EdgeInsets.all(12),
+          // 15 on each side of an 18 px icon: a 48 px target (was 42).
+          padding: const EdgeInsets.all(15),
           child: Icon(Icons.radio_button_unchecked_rounded,
               size: 18, color: Neon.pink),
         ),
@@ -589,15 +473,15 @@ class TodayBriefBody extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: Neon.textHi, fontSize: 13.5, height: 1.25)),
+                  color: Neon.textHi, fontSize: NeonType.body, height: 1.25)),
           if (p.dueLabel != null)
             Padding(
               padding: const EdgeInsets.only(top: 2),
+              // warningInk: amber words were 2.78:1 on this card, the
+              // least readable line on Home for the most urgent news.
               child: Text(p.dueLabel!,
-                  style: TextStyle(
-                      color: Neon.warning,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600)),
+                  style: NeonType.manrope(NeonType.caption, FontWeight.w600)
+                      .copyWith(color: Neon.warningInk)),
             ),
         ],
       ),
@@ -634,16 +518,14 @@ class TodayBriefBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(m.from,
-                style: TextStyle(
-                    color: Neon.cyan,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700)),
+                style: NeonType.manrope(NeonType.caption, FontWeight.w700)
+                    .copyWith(color: Neon.cyanInk)),
             const SizedBox(height: 2),
             Text(m.text,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: Neon.textHi, fontSize: 13.5, height: 1.25)),
+                    color: Neon.textHi, fontSize: NeonType.body, height: 1.25)),
           ],
         ),
       );
@@ -690,189 +572,6 @@ class TodayBriefBody extends StatelessWidget {
           ],
         ),
       ));
-}
-
-/// ─────────────────────────────────────────────────────────────────────────
-///  PERSON SHEET — tap a circle avatar to act on that person: message them
-///  through their assistant, or call them. Their agent is on the app, which
-///  is exactly why they're in this row.
-/// ─────────────────────────────────────────────────────────────────────────
-
-class _PersonSheet extends StatefulWidget {
-  const _PersonSheet({required this.person});
-  final CirclePerson person;
-
-  @override
-  State<_PersonSheet> createState() => _PersonSheetState();
-}
-
-class _PersonSheetState extends State<_PersonSheet> {
-  final _msg = TextEditingController();
-  bool _composing = false;
-
-  @override
-  void dispose() {
-    _msg.dispose();
-    super.dispose();
-  }
-
-  void _sendMessage() {
-    final text = _msg.text.trim();
-    if (text.isEmpty) return;
-    final name = widget.person.name;
-    // Pop the person sheet AND the today sheet underneath so the user sees
-    // the conversation reacting to what they just asked for.
-    Navigator.of(context).popUntil((r) => r.isFirst);
-    AssistantEngine.instance
-        .askAssistant('Send a message to $name saying: $text');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final p = widget.person;
-    final inset = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
-      padding: EdgeInsets.only(bottom: inset),
-      child: ClipRRect(
-        borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(Neon.rXl)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 26),
-            decoration: BoxDecoration(
-              color: Neon.surface.withValues(alpha: 0.92),
-              border: Border(top: BorderSide(color: Neon.lineBright)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    TodayBriefBody._initialsDot(p.name, Neon.gVioletPink,
-                        size: 44),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(p.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  color: Neon.textHi,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 2),
-                          Text(
-                            p.phone.isNotEmpty
-                                ? '${p.phone} · on the app'
-                                : 'on the app',
-                            style: TextStyle(
-                                color: Neon.textLo, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (_composing) ...[
-                  TextField(
-                    controller: _msg,
-                    autofocus: true,
-                    minLines: 1,
-                    maxLines: 3,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _sendMessage(),
-                    style:
-                        TextStyle(color: Neon.textHi, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Message for ${p.name.split(' ').first}…',
-                      hintStyle: TextStyle(color: Neon.textDim),
-                      filled: true,
-                      fillColor: Neon.surfaceHigh,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(Neon.rMd),
-                        borderSide: BorderSide(color: Neon.line),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(Neon.rMd),
-                        borderSide: BorderSide(color: Neon.line),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(Neon.rMd),
-                        borderSide: BorderSide(color: Neon.violet),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _actionButton(Icons.send_rounded,
-                      'Send via ${AssistantIdentity.name}',
-                      Neon.gVioletCyan, _sendMessage),
-                ] else ...[
-                  _actionButton(Icons.chat_bubble_rounded,
-                      'Message via ${AssistantIdentity.name}',
-                      Neon.gVioletCyan, () => setState(() => _composing = true)),
-                  const SizedBox(height: 8),
-                  if (p.phone.isNotEmpty)
-                    _actionButton(Icons.call_rounded, 'Call', Neon.gCyanLime,
-                        () {
-                      Navigator.of(context).pop();
-                      CallService.instance.call(p.phone);
-                    }),
-                  const SizedBox(height: 8),
-                  _actionButton(Icons.auto_awesome_rounded,
-                      'Ask ${AssistantIdentity.name} about them',
-                      Neon.gPinkViolet, () {
-                    Navigator.of(context).popUntil((r) => r.isFirst);
-                    AssistantEngine.instance
-                        .askAssistant('What do you know about ${p.name}?');
-                  }),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _actionButton(
-      IconData icon, String label, Gradient g, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.mediumImpact();
-        onTap();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: Neon.surfaceHigh,
-          borderRadius: BorderRadius.circular(Neon.rMd),
-          border: Border.all(color: Neon.line),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(shape: BoxShape.circle, gradient: g),
-              child: Icon(icon, size: 14, color: Colors.white),
-            ),
-            const SizedBox(width: 10),
-            Text(label,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// ─────────────────────────────────────────────────────────────────────────

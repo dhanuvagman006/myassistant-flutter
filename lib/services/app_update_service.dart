@@ -484,7 +484,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                             child: Text('•  $line',
                                 style: TextStyle(
                                     color: Neon.textLo,
-                                    fontSize: 13.5,
+                                    fontSize: 14,
                                     height: 1.35)),
                           ),
                       ],
@@ -492,7 +492,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                         const SizedBox(height: 10),
                         Text('This update is required to keep using the app.',
                             style:
-                                TextStyle(color: Neon.error, fontSize: 12.5)),
+                                TextStyle(color: Neon.errorInk, fontSize: 13)),
                       ],
                       if (!busy &&
                           !AppUpdateService.autoStart &&
@@ -503,7 +503,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                           "it won't start until you say so.",
                           style: TextStyle(
                               color: Neon.textDim,
-                              fontSize: 12.5,
+                              fontSize: 13,
                               height: 1.35),
                         ),
                       ],
@@ -538,7 +538,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                   'The app will close and reopen by itself in a moment. '
                   'Nothing is lost — this is the update finishing.',
                   style: TextStyle(
-                      color: Neon.textLo, fontSize: 12.5, height: 1.35),
+                      color: Neon.textLo, fontSize: 13, height: 1.35),
                 ),
               ] else if (busy) ...[
                 LinearProgressIndicator(
@@ -555,7 +555,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                             ? 'Verified — starting the install…'
                             : 'Downloading ${(_progress! * 100).toStringAsFixed(0)}%'
                                 '${cfg.apkSize > 0 ? ' of ${_size(cfg.apkSize)}' : ''}',
-                        style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                        style: TextStyle(color: Neon.textDim, fontSize: 13),
                       ),
                     ),
                     // A download in progress must be stoppable. Closing the
@@ -574,7 +574,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
               ],
               if (_error != null) ...[
                 Text(_error!,
-                    style: TextStyle(color: Neon.error, fontSize: 12.5)),
+                    style: TextStyle(color: Neon.errorInk, fontSize: 13)),
                 const SizedBox(height: 10),
               ],
               if (!busy)

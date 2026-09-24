@@ -307,7 +307,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
               Text(
                 'A photo of the real thing keeps its exact colour, print and '
                 'texture. Without one it is made from your description.',
-                style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.4),
+                style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.4),
               ),
               const SizedBox(height: 12),
               _garmentRow(),
@@ -327,7 +327,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
             Text(
               'AI-generated from your own photo. Saved to your files and '
               'labelled as AI-generated.',
-              style: TextStyle(color: Neon.textDim, fontSize: 11.5, height: 1.4),
+              style: TextStyle(color: Neon.textDim, fontSize: 12, height: 1.4),
             ),
           ],
         ),
@@ -337,7 +337,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
 
   Widget _label(String t) => Text(t,
       style: TextStyle(
-          color: Neon.textHi, fontSize: 14.5, fontWeight: FontWeight.w600));
+          color: Neon.textHi, fontSize: 15, fontWeight: FontWeight.w600));
 
   Widget _baseRow() {
     final mine = widget.state.myPhotos;
@@ -366,7 +366,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
               Text('Using your photo',
                   style: TextStyle(
                       color: Neon.textHi,
-                      fontSize: 14.5,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: 2),
               Text(
@@ -375,7 +375,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                     : (_basePhoto!.label.isEmpty
                         ? 'Your saved photo'
                         : _basePhoto!.label),
-                style: TextStyle(color: Neon.textLo, fontSize: 12.5),
+                style: TextStyle(color: Neon.textLo, fontSize: 13),
               ),
             ],
           ),
@@ -468,9 +468,14 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                 width: 52,
                 height: 52,
                 color: Neon.surfaceHigh,
+                // Decoded small, like the network branch below: the picked
+                // photo (up to 2000 px, ~16 MB decoded) was decoded at full
+                // size for a 52 dp thumbnail.
                 child: _garmentBytes != null
                     ? Image.memory(_bytes(_garmentBytes!),
-                        fit: BoxFit.cover)
+                        fit: BoxFit.cover,
+                        cacheWidth: 160,
+                        filterQuality: FilterQuality.medium)
                     : Image.network(
                         ApiService.documentFileUrl(widget.state.wardrobe
                             .firstWhere((p) => p.id == _garmentId,
@@ -617,7 +622,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
               )
             : Text(_result == null ? 'Make it' : 'Make another',
                 style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 15.5)),
+                    fontWeight: FontWeight.w700, fontSize: 16)),
       );
 
   /// Honest progress. There is no percentage to report, so the copy tracks
@@ -665,7 +670,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                   Text('Saved to your files',
                       style: TextStyle(
                           color: Neon.textHi,
-                          fontSize: 14.5,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 3),
                   Text(

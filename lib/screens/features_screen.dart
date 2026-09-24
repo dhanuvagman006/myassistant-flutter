@@ -109,13 +109,13 @@ class FeaturesScreen extends StatelessWidget {
                               Text(items[i].$1,
                                   style: TextStyle(
                                       color: Neon.textHi,
-                                      fontSize: 14.5,
+                                      fontSize: 15,
                                       fontWeight: FontWeight.w700)),
                               const SizedBox(height: 2),
                               Text(items[i].$2,
                                   style: TextStyle(
                                       color: Neon.textLo,
-                                      fontSize: 12.5,
+                                      fontSize: 13,
                                       height: 1.35)),
                             ],
                           ),

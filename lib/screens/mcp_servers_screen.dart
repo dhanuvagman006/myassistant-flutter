@@ -176,19 +176,19 @@ class _McpServersScreenState extends State<McpServersScreen> {
           Text(
             '$label · ${s['transport']} · ${tools.length} tool${tools.length == 1 ? '' : 's'}',
             style: TextStyle(
-                color: Neon.textDim, fontSize: 12.5),
+                color: Neon.textDim, fontSize: 13),
           ),
           if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(s['lastError'],
-                style: TextStyle(color: AppleColors.red, fontSize: 12)),
+                style: TextStyle(color: Neon.errorInk, fontSize: 12)),
           ],
           if (s['hasSecrets'] == true) ...[
             const SizedBox(height: 8),
             Row(children: [
               Text('Authentication: ',
                   style: TextStyle(
-                      color: Neon.textDim, fontSize: 12.5)),
+                      color: Neon.textDim, fontSize: 13)),
               // The credential itself is never sent to the app.
               Text('••••••••',
                   style: TextStyle(color: Neon.textLo, letterSpacing: 2)),
@@ -214,7 +214,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                     border: Border.all(color: Neon.line),
                   ),
                   child: Text(t['name'] ?? '',
-                      style: TextStyle(color: c, fontSize: 11)),
+                      style: TextStyle(color: c, fontSize: 12)),
                 );
               }).toList(),
             ),
@@ -237,7 +237,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                 TextButton(
                     onPressed: () => _confirmDelete(id, s['name'] ?? ''),
                     child: Text('Remove',
-                        style: TextStyle(color: AppleColors.red))),
+                        style: TextStyle(color: Neon.errorInk))),
               ],
             ),
         ],
@@ -263,7 +263,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
           TextButton(
               onPressed: () => Navigator.pop(c, true),
               child: Text('Remove',
-                  style: TextStyle(color: AppleColors.red))),
+                  style: TextStyle(color: Neon.errorInk))),
         ],
       ),
     );
@@ -315,7 +315,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               Text(
                 'The token is encrypted on the server and never sent back to this app.',
                 style: TextStyle(
-                    color: Neon.textDim, fontSize: 11.5),
+                    color: Neon.textDim, fontSize: 12),
               ),
               const SizedBox(height: 16),
               ApplePrimaryButton(

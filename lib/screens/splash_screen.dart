@@ -145,7 +145,7 @@ class _SplashScreenState extends State<SplashScreen>
                           _lines[_line],
                           key: ValueKey(_line),
                           style:
-                              TextStyle(color: Neon.textLo, fontSize: 13.5),
+                              TextStyle(color: Neon.textLo, fontSize: 14),
                         ),
                       ),
                     ),

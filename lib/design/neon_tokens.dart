@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MYASSISTANT · Design System V3.0 — "Daylight"
@@ -130,6 +131,62 @@ class Neon {
       ? const Color(0xFF14121C)
       : const Color(0xFFFFFFFF);
 
+  // WORDS IN A COLOUR (2026-09-24, the clarity pass). An accent that is
+  // fine for an icon, a border or a fill is often too light for text: on
+  // the light theme cyan #0891B2 measured 2.5–3.2:1 as words on Home's
+  // tinted chips and cards, amber #D97706 2.8–3.2:1 on the most urgent
+  // labels in the app (a promise due, an expiring passport, an overdue
+  // reminder), and the reds and greens 3.3–3.8:1 on white. These are the
+  // same hues, deep enough to read (4.5:1 or better where each is used —
+  // test/contrast_test.dart measures them). Colour words with the *Ink
+  // token; keep the plain one for icons, borders and fills.
+  static Color get cyanInk =>
+      isDark ? const Color(0xFF3FE3FD) : const Color(0xFF155E75);
+  static Color get warningInk =>
+      isDark ? const Color(0xFFFFD03E) : const Color(0xFFA14A07);
+  static Color get errorInk =>
+      isDark ? const Color(0xFFFF8585) : const Color(0xFFC62828);
+  static Color get successInk =>
+      isDark ? const Color(0xFF62F49B) : const Color(0xFF137333);
+
+  static const Color _nightInk = Color(0xFF14121C);
+
+  /// Ink for a GLYPH on [ground]: white unless the ground is light enough
+  /// that white falls under 3:1 (the WCAG minimum for icons), then the
+  /// same near-black [onAccent] uses. White stays wherever it passes —
+  /// that is the brand look by day.
+  static Color glyphOn(Color ground) =>
+      ground.computeLuminance() > 0.3 ? _nightInk : const Color(0xFFFFFFFF);
+
+  /// Ink for WORDS on [ground]: whichever of white and near-black reads
+  /// better. Text needs 4.5:1, so this flips to dark sooner than
+  /// [glyphOn] does.
+  static Color textOn(Color ground) {
+    final l = ground.computeLuminance();
+    final white = 1.05 / (l + 0.05);
+    final dark = (l + 0.05) / (_nightInk.computeLuminance() + 0.05);
+    return dark > white ? _nightInk : const Color(0xFFFFFFFF);
+  }
+
+  /// The glyph on a [tile] of [c] (IconTile, the Hub rows, Home's section
+  /// headers). In the evening the dark theme's pastels put white glyphs at
+  /// 1.4–2.3:1 on the cyan, amber and mint tiles, so those get dark ink;
+  /// every light-theme tile keeps its white glyph (3.3–4.6:1), so nothing
+  /// changes by day. Read at the point the glyph sits on the gradient.
+  static Color onTile(Color c) {
+    final g = tile(c);
+    return glyphOn(Color.lerp(g.colors.first, g.colors.last, 0.35)!);
+  }
+
+  /// The glyph on the brand gradient (the mic, the send arrow). White on
+  /// the dark theme's pastel accent measured 2.4–2.5:1, and about 1.3:1
+  /// with Lime, Mint or Amber; decided by the LIGHTER of the two stops so
+  /// the glyph reads across the whole disc.
+  static Color get onBrand {
+    final a = violet.computeLuminance(), b = pink.computeLuminance();
+    return glyphOn(a > b ? violet : pink);
+  }
+
   // Hairlines on cards — a touch brighter on pure black, or cards lose
   // their edges entirely.
   static Color get line => isDark
@@ -246,4 +303,58 @@ class Neon {
             blurRadius: blur,
             offset: const Offset(2, 6)),
       ];
+}
+
+/// ─────────────────────────────────────────────────────────────────────────
+///  THE TYPE SCALE (2026-09-24, the clarity pass).
+///
+///  The app had 28 font sizes, many half a point apart (12.5 beside 13,
+///  13.5 beside 14). Steps that small cannot be told apart, so they read
+///  as untidy rather than as hierarchy, and 44 labels sat under 12 sp.
+///  These are the sizes text should use, and 12 is the floor.
+///
+///  REAL WEIGHTS. The fonts come through google_fonts, which gives every
+///  weight its own family ("Manrope_700"). A bare TextStyle(fontWeight:
+///  w700) keeps the theme's REGULAR family and draws from the 400 file:
+///  on build 106 a w700 tab label and w500 text had the same 3 px stems,
+///  so titles, the selected tab and today's date lost the weight step the
+///  code asks for. [manrope] asks google_fonts for the weight itself.
+///  Once the fonts are bundled as a pubspec family, only this class needs
+///  to change.
+/// ─────────────────────────────────────────────────────────────────────────
+abstract final class NeonType {
+  static const double caption = 12; // the floor: meta, badges, the dock
+  static const double footnote = 13; // subtitles, section labels, chips
+  static const double body = 14; // list and card text
+  static const double callout = 15; // Home section titles
+  static const double rowTitle = 16; // a row's title
+  static const double headline = 17; // a card's title, detail bars
+  static const double title3 = 20;
+  static const double title2 = 26; // Home's greeting
+  static const double largeTitle = 32; // a tab's title
+
+  static final Map<int, TextStyle> _cache = {};
+
+  /// Manrope at [size], drawn in its real [weight] (see above). Cached:
+  /// one style, and one font lookup, per size and weight for the run —
+  /// these sit in rows that rebuild while a list scrolls.
+  static TextStyle manrope(double size, [FontWeight weight = FontWeight.w400]) =>
+      _cache[weight.value * 1000 + (size * 10).round()] ??=
+          GoogleFonts.manrope(fontSize: size, fontWeight: weight);
+
+  /// A row's title — Hub, You and every AppleRow.
+  static final TextStyle row =
+      manrope(rowTitle, FontWeight.w600).copyWith(letterSpacing: -0.2);
+
+  /// The small uppercase label over a group. ONE style on every tab: Hub
+  /// had its own (accent, 11.5, heavy, wide) next to You's.
+  static final TextStyle sectionLabel =
+      manrope(footnote, FontWeight.w700).copyWith(letterSpacing: 0.6);
+
+  /// A Home section header ("Today's agenda") and the calendar's month.
+  static final TextStyle sectionTitle =
+      manrope(callout, FontWeight.w700).copyWith(letterSpacing: 0.1);
+
+  /// A card's own title ("One-time permission", "Missed calls").
+  static final TextStyle cardTitle = manrope(headline, FontWeight.w700);
 }

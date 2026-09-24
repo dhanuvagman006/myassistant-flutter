@@ -78,7 +78,7 @@ class ToolCard extends StatelessWidget {
               activity.label,
               style: TextStyle(
                 color: Neon.textHi,
-                fontSize: 13.5,
+                fontSize: 14,
               ),
             ),
           ),
@@ -131,7 +131,7 @@ class SearchResultCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: Neon.textHi,
-                fontSize: 14.5,
+                fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -244,7 +244,7 @@ class CallStatusCard extends StatelessWidget {
                   '${status.label} — ${status.contactName}',
                   style: TextStyle(
                       color: Neon.textHi,
-                      fontSize: 14.5,
+                      fontSize: 15,
                       fontWeight: FontWeight.w600),
                 ),
               ),
@@ -312,7 +312,7 @@ class _StepLabel extends StatelessWidget {
   Widget build(BuildContext context) => Text(
         text,
         style:
-            TextStyle(color: Neon.textDim, fontSize: 10.5),
+            TextStyle(color: Neon.textDim, fontSize: 12),
       );
 }
 
@@ -353,7 +353,7 @@ class ConfirmationCard extends StatelessWidget {
             Text(
               'Call ${pending.contact!.name} (${pending.contact!.phone}) and say:',
               style: TextStyle(
-                  color: Neon.textLo, fontSize: 13.5),
+                  color: Neon.textLo, fontSize: 14),
             ),
             const SizedBox(height: 8),
             Container(
@@ -375,7 +375,7 @@ class ConfirmationCard extends StatelessWidget {
           ] else
             Text(
               pending.question ?? 'Shall I go ahead?',
-              style: TextStyle(color: Neon.textHi, fontSize: 14.5),
+              style: TextStyle(color: Neon.textHi, fontSize: 15),
             ),
           const SizedBox(height: 14),
           Row(
@@ -502,7 +502,7 @@ class _DocumentCardState extends State<DocumentCard> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: Neon.textHi,
-                          fontSize: 14.5,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -520,7 +520,7 @@ class _DocumentCardState extends State<DocumentCard> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: Neon.textLo,
-                            fontSize: 12.5,
+                            fontSize: 13,
                             height: 1.3,
                           ),
                         ),
@@ -541,7 +541,7 @@ class _DocumentCardState extends State<DocumentCard> {
                 child: OutlinedButton.icon(
                   onPressed: _sending ? null : _send,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Neon.cyan,
+                    foregroundColor: Neon.cyanInk,
                     side: BorderSide(color: Neon.cyan.withValues(alpha: 0.5)),
                     padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
@@ -672,7 +672,7 @@ class ScriptCard extends StatelessWidget {
                 overflow: TextOverflow.fade,
                 style: TextStyle(
                   color: Neon.textHi,
-                  fontSize: 13.5,
+                  fontSize: 14,
                   height: 1.45,
                 ),
               ),
@@ -681,8 +681,8 @@ class ScriptCard extends StatelessWidget {
             Text(
               'Tap to open full screen',
               style: TextStyle(
-                color: Neon.cyan.withValues(alpha: 0.8),
-                fontSize: 11.5,
+                color: Neon.cyanInk,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.3,
               ),
@@ -914,7 +914,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Neon.textLo,
-                    fontSize: 12.5,
+                    fontSize: 13,
                     height: 1.3,
                   ),
                 ),
@@ -1049,7 +1049,7 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
             if (docs.length > 1)
               Text('${_index + 1} of ${docs.length}',
                   style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 12,
                       color: Colors.white.withValues(alpha: 0.6))),
           ],
         ),

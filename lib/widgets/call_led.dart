@@ -126,7 +126,7 @@ class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Neon.textHi,
-                      fontSize: 12.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

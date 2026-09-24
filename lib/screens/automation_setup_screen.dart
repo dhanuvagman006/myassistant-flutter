@@ -81,10 +81,13 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
     }
   }
 
-  Widget _never(IconData icon, String text) => Padding(
+  // ONE QUIET GLYPH (2026-09-24). Six red icons of mixed meaning — a
+  // crossed-out card beside a plain "send" arrow, a bin, a gavel — read as
+  // errors or as things to tap, when the list is a reassurance.
+  Widget _never(String text) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(icon, size: 18, color: AppleColors.red),
+          Icon(Icons.block_rounded, size: 18, color: Neon.textLo),
           const SizedBox(width: 10),
           Expanded(
               child: Text(text,
@@ -99,15 +102,15 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
             radius: 13,
             backgroundColor: Neon.violet.withValues(alpha: 0.18),
             child: Text('$n',
-                style: TextStyle(
-                    color: Neon.violet, fontWeight: FontWeight.w700, fontSize: 13)),
+                style: NeonType.manrope(NeonType.footnote, FontWeight.w700)
+                    .copyWith(color: Neon.violet)),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title,
-                  style: TextStyle(
-                      color: Neon.textHi, fontWeight: FontWeight.w600, fontSize: 15)),
+                  style: NeonType.manrope(NeonType.callout, FontWeight.w600)
+                      .copyWith(color: Neon.textHi)),
               const SizedBox(height: 3),
               Text(body,
                   style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.4)),
@@ -138,23 +141,24 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
               Row(children: [
                 IconTile(Icons.touch_app_rounded, AppleColors.purple),
                 const SizedBox(width: 12),
+                // The card's title, bold for real (it drew as regular, so
+                // the page read as one wall of text).
                 Expanded(
                   child: Text(
                       _on ? 'Switched on — ready' : 'One-time permission',
-                      style: TextStyle(
-                          color: _on ? AppleColors.green : Neon.textHi,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 17)),
+                      style: NeonType.cardTitle.copyWith(
+                          color: _on ? Neon.successInk : Neon.textHi)),
                 ),
               ]),
               const SizedBox(height: 12),
+              // textLo under a textHi title: explanation, not headline.
               Text(
                 'Ask me to "order veg biryani from a 4-star place", "turn on '
                 'Bluetooth" or "fill this form with my details" and I use your '
                 'phone for you — open any app, search, choose, add to cart, fill '
                 'in, change a setting. A small bar with a Stop button shows the '
                 'whole time I am working.',
-                style: TextStyle(color: Neon.textHi, fontSize: 14, height: 1.45),
+                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45),
               ),
               if (goal != null && goal.isNotEmpty) ...[
                 const SizedBox(height: 12),
@@ -173,20 +177,21 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
               child: Column(children: [
-                _never(Icons.credit_card_off_rounded,
-                    'Pay, place a paid order or book a paid ride'),
-                _never(Icons.money_off_rounded, 'Send or move money'),
-                _never(Icons.password_rounded, 'Type passwords, PINs, OTPs or card numbers'),
-                _never(Icons.send_rounded, 'Send a message or post for you'),
-                _never(Icons.delete_forever_rounded,
-                    'Delete anything, or change security settings'),
-                _never(Icons.gavel_rounded,
+                _never('Pay, place a paid order or book a paid ride'),
+                _never('Send or move money'),
+                _never('Type passwords, PINs, OTPs or card numbers'),
+                _never('Send a message or post for you'),
+                _never('Delete anything, or change security settings'),
+                _never(
                     'Tick a declaration or "I agree" for you, or solve a CAPTCHA'),
                 const SizedBox(height: 6),
                 Text(
                   'At any of those steps I stop, hand the phone back to you and '
                   'tell you exactly what I did and what is left.',
-                  style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.4),
+                  style: TextStyle(
+                      color: Neon.textLo,
+                      fontSize: NeonType.footnote,
+                      height: 1.4),
                 ),
               ]),
             ),
@@ -222,13 +227,9 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
             _step(
               1,
               'Turn on "MyAssistant — do it for me"',
+              // The button is the bar pinned under the page (see below).
               'Tap below, open "Installed apps" (or "Downloaded apps"), tap '
                   '"MyAssistant — do it for me", switch it on and tap Allow.',
-              action: FilledButton.icon(
-                onPressed: _openSettings,
-                icon: const Icon(Icons.settings_accessibility_rounded),
-                label: const Text('Open settings'),
-              ),
             ),
             if (_triedOnce || _switchedInSettings)
               _step(
@@ -259,6 +260,33 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
             ]),
         ],
       ),
+      // THE ONE ACTION, ALWAYS IN REACH (2026-09-24). "Open settings" sat
+      // under three sections of explanation, below the fold, and the eye
+      // went to the "I never" list first. While the switch is off it is
+      // pinned under the page; the steps still say what to do in
+      // Settings. Same button, same _openSettings.
+      bottomNavigationBar: _on
+          ? null
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                color: Neon.bg,
+                border: Border(top: BorderSide(color: Neon.line)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _openSettings,
+                      icon: const Icon(Icons.settings_accessibility_rounded),
+                      label: const Text('Open settings'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
     );
   }
 }

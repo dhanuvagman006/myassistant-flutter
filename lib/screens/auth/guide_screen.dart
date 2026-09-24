@@ -143,7 +143,7 @@ class _GuideScreenState extends State<GuideScreen> {
                               p.body,
                               style: TextStyle(
                                 color: Neon.textLo,
-                                fontSize: 15.5,
+                                fontSize: 16,
                                 height: 1.55,
                               ),
                             ),

@@ -176,8 +176,10 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                           ),
                         ],
                       ),
-                      child: const Icon(Icons.mic_rounded,
-                          color: Colors.white, size: 30),
+                      // Dark ink on the evening theme's pastel accent,
+                      // where white measured 2.4:1 (Neon.onBrand).
+                      child: Icon(Icons.mic_rounded,
+                          color: Neon.onBrand, size: 30),
                     ),
             ),
           ],
@@ -634,13 +636,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                         _status(micPaused),
                         key: ValueKey(_status(micPaused)),
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.spaceGrotesk(
-                          // Readable on the night ground (was 0.45).
-                          color: Colors.white.withValues(alpha: 0.66),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
-                        ),
+                        // Readable on the night ground (was 0.45).
+                        style: _VoiceType.status,
                       ),
                     ),
                   ),
@@ -690,15 +687,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             child: Text(
                               l,
                               textAlign: TextAlign.center,
-                              style: GoogleFonts.spaceGrotesk(
-                                // Older lines stay readable (was 0.38 —
-                                // under 4.5:1 on the night ground).
-                                color: Colors.white.withValues(alpha: 0.56),
-                                fontSize: 15.5,
-                                height: 1.3,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.2,
-                              ),
+                              // Older lines stay readable (was 0.38 —
+                              // under 4.5:1 on the night ground).
+                              style: _VoiceType.older,
                             ),
                           ),
                         // The line being spoken RIGHT NOW — the spotlight.
@@ -750,6 +741,44 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   }
 }
 
+/// THE VOICE SCREEN'S TYPE (2026-09-24, the clarity pass).
+///
+/// Space Grotesk, the display face, is kept for the one line being spoken
+/// (the spotlight) and nothing else. Its quirky y and g made the status
+/// line, the older lines, the typed message and the buttons at 13–15.5 sp
+/// read worse than Manrope, and look like another app beside Home and
+/// Hub. Built once: the pacer rebuilds this screen five times a second,
+/// and every GoogleFonts call made a new style and a font-load future.
+abstract final class _VoiceType {
+  static final TextStyle status =
+      NeonType.manrope(NeonType.callout, FontWeight.w600).copyWith(
+          color: Colors.white.withValues(alpha: 0.66), letterSpacing: 0.3);
+  static final TextStyle older =
+      NeonType.manrope(NeonType.callout, FontWeight.w600).copyWith(
+          color: Colors.white.withValues(alpha: 0.56),
+          height: 1.3,
+          letterSpacing: -0.1);
+  static final TextStyle error =
+      NeonType.manrope(NeonType.rowTitle, FontWeight.w600).copyWith(
+          color: Colors.white.withValues(alpha: 0.88), height: 1.3);
+  static final TextStyle input =
+      NeonType.manrope(NeonType.rowTitle, FontWeight.w500)
+          .copyWith(color: Colors.white);
+
+  /// 52% white (was 45%, 4.4:1): 5.3:1 on the text box, pinned by
+  /// test/contrast_test.dart.
+  static final TextStyle hint =
+      NeonType.manrope(NeonType.rowTitle, FontWeight.w500)
+          .copyWith(color: Colors.white.withValues(alpha: 0.52));
+  static final TextStyle chip =
+      NeonType.manrope(NeonType.footnote, FontWeight.w600)
+          .copyWith(color: Colors.white.withValues(alpha: 0.66));
+  static final TextStyle button =
+      NeonType.manrope(NeonType.callout, FontWeight.w700);
+  static final TextStyle mute =
+      NeonType.manrope(NeonType.footnote, FontWeight.w700);
+}
+
 /// The session's ground: opaque, deep, tinted by the user's accent so it
 /// belongs to their theme. Always dark — the orb and captions are drawn
 /// for night, in both app themes.
@@ -798,12 +827,7 @@ class _ErrorCaption extends StatelessWidget {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white.withValues(alpha: 0.88),
-              fontSize: 16,
-              height: 1.3,
-              fontWeight: FontWeight.w600,
-            ),
+            style: _VoiceType.error,
           ),
           const SizedBox(height: 18),
           Wrap(
@@ -878,10 +902,8 @@ class _PillButton extends StatelessWidget {
           ),
           child: Text(
             label,
-            style: GoogleFonts.spaceGrotesk(
+            style: _VoiceType.button.copyWith(
               color: primary ? Colors.white : Colors.white.withValues(alpha: 0.8),
-              fontSize: 14.5,
-              fontWeight: FontWeight.w700,
             ),
           ),
         ),
@@ -908,8 +930,8 @@ class _MuteButton extends StatelessWidget {
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          // 44 dp tall: a comfortable target (was ~36).
-          constraints: const BoxConstraints(minHeight: 44),
+          // 48 dp tall, like every other target on this screen (was 44).
+          constraints: const BoxConstraints(minHeight: 48),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
           decoration: BoxDecoration(
             color: muted
@@ -935,10 +957,7 @@ class _MuteButton extends StatelessWidget {
               Text(
                 // "Sound" alone read as either a state or an action.
                 muted ? 'Muted' : 'Sound on',
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.1,
+                style: _VoiceType.mute.copyWith(
                   color: muted ? Neon.violet : Colors.white.withValues(alpha: 0.75),
                 ),
               ),
@@ -970,11 +989,7 @@ class _MicPausedChip extends StatelessWidget {
               'Mic paused while you type',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.spaceGrotesk(
-                color: Colors.white.withValues(alpha: 0.66),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+              style: _VoiceType.chip,
             ),
           ),
         ],
@@ -1134,10 +1149,12 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: focused ? 0.10 : 0.07),
           borderRadius: BorderRadius.circular(28),
+          // The resting outline at 22% white: at 10% it was 1.26:1 and the
+          // box all but vanished when not focused.
           border: Border.all(
             color: focused
                 ? Neon.violet.withValues(alpha: 0.55)
-                : Colors.white.withValues(alpha: 0.10),
+                : Colors.white.withValues(alpha: 0.22),
           ),
         ),
         padding: const EdgeInsets.fromLTRB(16, 3, 3, 3),
@@ -1166,11 +1183,7 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                 onEditingComplete: () {},
                 keyboardAppearance: Brightness.dark,
                 cursorColor: Neon.violet,
-                style: GoogleFonts.spaceGrotesk(
-                  color: Colors.white,
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: _VoiceType.input,
                 decoration: InputDecoration(
                   isDense: true,
                   filled: false,
@@ -1179,11 +1192,7 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                   focusedBorder: InputBorder.none,
                   disabledBorder: InputBorder.none,
                   hintText: connecting ? 'Connecting…' : 'Type a message…',
-                  hintStyle: GoogleFonts.spaceGrotesk(
-                    color: Colors.white.withValues(alpha: 0.45),
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  hintStyle: _VoiceType.hint,
                   contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
@@ -1215,9 +1224,12 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                               ? null
                               : Colors.white.withValues(alpha: 0.08),
                         ),
+                        // Neon.onBrand on the gradient: white was 2.4:1 on
+                        // the evening theme's pastel accent.
                         child: Icon(Icons.arrow_upward_rounded,
-                            color: Colors.white
-                                .withValues(alpha: canSend ? 1 : 0.35),
+                            color: canSend
+                                ? Neon.onBrand
+                                : Colors.white.withValues(alpha: 0.35),
                             size: 21),
                       ),
                     ),
@@ -1417,7 +1429,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
                         IconButton(
                           tooltip: 'Dismiss',
                           constraints: const BoxConstraints(
-                              minWidth: 44, minHeight: 44),
+                              minWidth: 48, minHeight: 48),
                           padding: EdgeInsets.zero,
                           onPressed: _close,
                           icon: Icon(Icons.close_rounded,

@@ -77,7 +77,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
           'recording files on the phone are never touched.\n'
           '• Depending on where you live, you may need to tell the other '
           'person the call is recorded. That part is on you.',
-          style: TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.45),
+          style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45),
         ),
         actions: [
           TextButton(
@@ -130,7 +130,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               'From then on, every recorded call is analysed here '
               'automatically.',
               style:
-                  TextStyle(color: Neon.textLo, fontSize: 13.5, height: 1.5),
+                  TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -233,8 +233,8 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                             Flexible(
                               child: Text('Set up call recording',
                                   style: TextStyle(
-                                      color: Neon.cyan,
-                                      fontSize: 12.5,
+                                      color: Neon.cyanInk,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.w600)),
                             ),
                           ],
@@ -281,7 +281,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                     child: Text(g.label.toUpperCase(),
                         style: TextStyle(
                             color: Neon.textDim,
-                            fontSize: 11,
+                            fontSize: 12,
                             letterSpacing: 0.8,
                             fontWeight: FontWeight.w600)),
                   ),
@@ -379,14 +379,14 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               color: Neon.textHi,
-                              fontSize: 14.5,
+                              fontSize: 15,
                               fontWeight: FontWeight.w600),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(clockLabel(at),
                           style:
-                              TextStyle(color: Neon.textDim, fontSize: 11.5)),
+                              TextStyle(color: Neon.textDim, fontSize: 12)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -420,7 +420,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               child: Text(text,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color, fontSize: 12.5, height: 1.35)),
+                  style: TextStyle(color: color, fontSize: 13, height: 1.35)),
             ),
           ],
         );
@@ -429,7 +429,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
         return Text(sum.isEmpty ? 'Analysed — tap for details.' : sum,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.4));
+            style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.4));
       case 'processing':
         return Row(
           children: [
@@ -441,7 +441,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
             ),
             const SizedBox(width: 7),
             Text('Analysing…',
-                style: TextStyle(color: Neon.cyan, fontSize: 12.5)),
+                style: TextStyle(color: Neon.cyanInk, fontSize: 13)),
           ],
         );
       case 'skipped':

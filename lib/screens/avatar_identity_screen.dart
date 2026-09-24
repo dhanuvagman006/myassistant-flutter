@@ -122,7 +122,7 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
                   'your voice — generated for exactly what you asked to '
                   'say. It is always labelled as AI-generated.',
                   style: TextStyle(
-                      color: Neon.textLo, fontSize: 13.5, height: 1.45),
+                      color: Neon.textLo, fontSize: 14, height: 1.45),
                 ),
                 const SizedBox(height: 20),
 
@@ -275,13 +275,13 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
           Text(title,
               style: TextStyle(
                   color: Neon.textHi,
-                  fontSize: 14.5,
+                  fontSize: 15,
                   fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 8),
         Text(subtitle,
             style:
-                TextStyle(color: Neon.textDim, fontSize: 12.5, height: 1.4)),
+                TextStyle(color: Neon.textDim, fontSize: 13, height: 1.4)),
         const SizedBox(height: 12),
         child,
       ]),

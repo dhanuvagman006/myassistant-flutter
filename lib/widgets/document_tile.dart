@@ -109,6 +109,9 @@ Future<void> _openFile(BuildContext context, UserDocument d) async {
 
 /// Human name for the file type, used in labels and error copy.
 String documentTypeLabel(UserDocument d) {
+  // A video is kind "other" (it opens like any other file), but on the
+  // grid it deserves its own name and glyph, not the blank grey one.
+  if (d.mime.startsWith('video/')) return 'Video';
   switch (d.kind) {
     case 'pdf':
       return 'PDF';
@@ -127,6 +130,9 @@ String documentTypeLabel(UserDocument d) {
 
 /// Icon + colour for a file that cannot be previewed as an image.
 ({IconData icon, Color color}) documentGlyph(UserDocument d) {
+  if (d.mime.startsWith('video/')) {
+    return (icon: Icons.movie_rounded, color: Neon.violet);
+  }
   switch (d.kind) {
     case 'pdf':
       return (icon: Icons.picture_as_pdf_rounded, color: Neon.pink);
@@ -165,7 +171,7 @@ Future<bool> confirmDeleteDocument(BuildContext context, UserDocument d,
             child: const Text('Cancel')),
         TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Delete', style: TextStyle(color: Neon.error))),
+            child: Text('Delete', style: TextStyle(color: Neon.errorInk))),
       ],
     ),
   );
@@ -255,7 +261,7 @@ Widget documentMenu({
           child: ListTile(
               dense: true,
               leading: Icon(Icons.delete_outline_rounded, color: Neon.error),
-              title: Text('Delete', style: TextStyle(color: Neon.error)))),
+              title: Text('Delete', style: TextStyle(color: Neon.errorInk)))),
     ],
   );
 }
@@ -313,13 +319,13 @@ class DocumentListTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                             color: Neon.textHi,
-                            fontSize: 14.5,
+                            fontSize: 15,
                             fontWeight: FontWeight.w600,
                             height: 1.25)),
                     if (meta.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(meta,
-                          style: TextStyle(color: Neon.textLo, fontSize: 12.5)),
+                          style: TextStyle(color: Neon.textLo, fontSize: 13)),
                     ],
                   ],
                 ),
@@ -332,6 +338,9 @@ class DocumentListTile extends StatelessWidget {
     );
   }
 }
+
+/// "20 Sept 2026" inside an automatic title.
+final _titleDate = RegExp(r'(\d{1,2}) ([A-Za-z]{3,4}) (\d{4})');
 
 /// One cell in the My documents grid.
 class DocumentGridTile extends StatelessWidget {
@@ -352,9 +361,17 @@ class DocumentGridTile extends StatelessWidget {
     // that all look alike — a deck and a sheet are otherwise two identical
     // tiles. Images keep the plain date; they show what they are.
     final type = documentTypeLabel(d);
-    final date = [if (type.isNotEmpty) type, documentDateLabel(d)]
-        .where((s) => s.isNotEmpty)
-        .join(' · ');
+    // THE DATE ONCE (2026-09-24). Automatic titles already carry it, and
+    // the line under them said it again in another spelling ("Document ·
+    // 20 Sept 2026" over "PDF · 20 Sep 2026"). A date inside the title is
+    // also held together, so it never breaks as "20 / Sept 2026".
+    final titleHasDate = _titleDate.hasMatch(d.title);
+    final title = d.title.replaceAllMapped(
+        _titleDate, (m) => '${m[1]} ${m[2]} ${m[3]}');
+    final date = [
+      if (type.isNotEmpty) type,
+      if (!titleHasDate) documentDateLabel(d),
+    ].where((s) => s.isNotEmpty).join(' · ');
     return Material(
       color: Neon.surface,
       borderRadius: BorderRadius.circular(16),
@@ -373,18 +390,18 @@ class DocumentGridTile extends StatelessWidget {
             children: [
               Expanded(child: DocumentThumb(document: d, radius: 10)),
               const SizedBox(height: 8),
-              Text(d.title,
+              Text(title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: Neon.textHi,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      height: 1.25)),
+                  style: NeonType.manrope(NeonType.footnote, FontWeight.w600)
+                      .copyWith(color: Neon.textHi, height: 1.25)),
               if (date.isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Text(date,
-                    style: TextStyle(color: Neon.textDim, fontSize: 11)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Neon.textDim, fontSize: NeonType.caption)),
               ],
               if (d.expiryLabel() != null) ...[
                 const SizedBox(height: 3),
@@ -414,6 +431,12 @@ class ExpiryBadge extends StatelessWidget {
         : days <= 30
             ? Neon.warning
             : Neon.success;
+    // The words take the *Ink shade: amber words were 3.19:1 on white.
+    final ink = days < 0
+        ? Neon.errorInk
+        : days <= 30
+            ? Neon.warningInk
+            : Neon.successInk;
     return Row(
       children: [
         Icon(days < 0 ? Icons.event_busy_rounded : Icons.event_available_rounded,
@@ -423,8 +446,8 @@ class ExpiryBadge extends StatelessWidget {
           child: Text(label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: tint, fontSize: 11, fontWeight: FontWeight.w600)),
+              style: NeonType.manrope(NeonType.caption, FontWeight.w600)
+                  .copyWith(color: ink)),
         ),
       ],
     );
@@ -480,7 +503,7 @@ Future<void> showDocumentActions(
           ),
           ListTile(
             leading: Icon(Icons.delete_outline_rounded, color: Neon.error),
-            title: Text('Delete', style: TextStyle(color: Neon.error)),
+            title: Text('Delete', style: TextStyle(color: Neon.errorInk)),
             onTap: () => Navigator.pop(ctx, DocumentMenuAction.delete),
           ),
           const SizedBox(height: 8),

@@ -249,7 +249,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                     'talking to. You can rename it any time by simply '
                     'telling it so.',
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 14.5, height: 1.45),
+                        color: Neon.textLo, fontSize: 15, height: 1.45),
                   ),
                   const SizedBox(height: 26),
                   TextField(
@@ -297,7 +297,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                   Text(
                     'Your assistant greets and talks in this language. '
                     'Change it any time by just asking.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 12.5),
+                    style: TextStyle(color: Neon.textDim, fontSize: 13),
                   ),
                   const SizedBox(height: 10),
                   Wrap(
@@ -351,7 +351,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                                       '“Hi, I\'m $n. How can I help you today?”',
                                       style: TextStyle(
                                           color: Neon.textLo,
-                                          fontSize: 13.5,
+                                          fontSize: 14,
                                           fontStyle: FontStyle.italic,
                                           height: 1.35),
                                     ),
@@ -365,7 +365,7 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                     const SizedBox(height: 14),
                     Text(_error!,
                         style:
-                            TextStyle(color: Neon.error, fontSize: 13)),
+                            TextStyle(color: Neon.errorInk, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
                   _busy

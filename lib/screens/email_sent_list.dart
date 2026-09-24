@@ -67,7 +67,7 @@ class EmailSentListState extends State<EmailSentList> {
             Text('SENT',
                 style: TextStyle(
                     color: Neon.violet,
-                    fontSize: 11.5,
+                    fontSize: 12,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.1)),
             const Spacer(),
@@ -171,14 +171,14 @@ class EmailSentListState extends State<EmailSentList> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: Neon.textHi,
-                                fontSize: 13.5,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w700),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(_when((m['at'] as num?)?.toInt() ?? 0),
                             style: TextStyle(
-                                color: Neon.textDim, fontSize: 11)),
+                                color: Neon.textDim, fontSize: 12)),
                       ],
                     ),
                     const SizedBox(height: 3),
