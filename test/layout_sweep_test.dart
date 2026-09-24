@@ -44,7 +44,41 @@ import 'package:myassistant/screens/diagnostics_screen.dart';
 import 'package:myassistant/screens/avatar_identity_screen.dart';
 import 'package:myassistant/shell/home_shell.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
+import 'package:myassistant/features/assistant/state/assistant_state.dart';
+import 'package:myassistant/widgets/inline_voice.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// The voice screen as it is during a conversation, with a long answer.
+class _VoiceScreen extends StatefulWidget {
+  const _VoiceScreen();
+  @override
+  State<_VoiceScreen> createState() => _VoiceScreenState();
+}
+
+class _VoiceScreenState extends State<_VoiceScreen> {
+  @override
+  void initState() {
+    super.initState();
+    AssistantEngine.instance
+      ..inlineVoice = true
+      ..phase = AssistantPhase.listening;
+    AssistantEngine.instance.caption.value = const CaptionLine('you',
+        'Book a table for four at a quiet place near the office for tomorrow at eight and '
+        'tell me the menu highlights before you confirm anything with them');
+  }
+
+  @override
+  void dispose() {
+    AssistantEngine.instance
+      ..inlineVoice = false
+      ..phase = AssistantPhase.idle;
+    AssistantEngine.instance.caption.value = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(body: InlineCaptionOverlay());
+}
 
 class Phone {
   final String name;
@@ -99,6 +133,8 @@ final screens = <String, Widget Function()>{
   'Studio': () => const StudioScreen(),
   'Diagnostics': () => const DiagnosticsScreen(),
   'Avatar identity': () => const AvatarIdentityScreen(),
+  'Voice screen (long reply)': () => const _VoiceScreen(),
+  'Do it for me (switched on)': () => const AutomationSetupScreen(),
 };
 
 void main() {
