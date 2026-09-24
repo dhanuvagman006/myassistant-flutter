@@ -2,6 +2,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
+import 'core/bundled_fonts.dart';
 import 'design/accent_controller.dart';
 import 'design/theme_controller.dart';
 import 'screens/auth/auth_screen.dart';
@@ -24,6 +25,7 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  useBundledFonts();
   // Background call-recording scans (WorkManager) — cheap registration;
   // the periodic task itself only exists while AI call analysis is on.
   await BackgroundScan.init();
