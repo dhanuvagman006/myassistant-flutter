@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_state.dart';
 
@@ -31,7 +32,7 @@ class ContactPickerSheet extends StatelessWidget {
     ValueChanged<Route<dynamic>>? onRoute,
   }) {
     HapticFeedback.mediumImpact();
-    return showModalBottomSheet<ContactMatch>(
+    return showAppSheet<ContactMatch>(
       context: context,
       useRootNavigator: true,
       backgroundColor: Neon.surface,

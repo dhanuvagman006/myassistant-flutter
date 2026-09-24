@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
@@ -188,6 +189,9 @@ class _ChatScreenState extends State<ChatScreen> {
             child: RefreshIndicator(
               color: Neon.violet,
               onRefresh: _load,
+              // No spinner flash on a quick load, and the list fades in.
+              child: LoadSwitch(
+              loading: _error == null && threads == null,
               child: _error != null
                   ? ListView(children: [
                       Padding(
@@ -244,6 +248,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ? _groupTile(_groups[i])
                                   : _tile(threads[i - _groups.length]),
                             ),
+              ),
             ),
           ),
         ],

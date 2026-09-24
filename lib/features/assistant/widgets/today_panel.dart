@@ -671,9 +671,11 @@ class TodayBriefBody extends StatelessWidget {
     );
   }
 
+  // No press dip (2026-09-24): these tiles are not tap targets (the dip
+  // was a false "tap me"), and they are swiped away — the tile being
+  // swiped was visibly shrunk for the whole swipe.
   static Widget _glassTile({required Widget leading, required Widget child}) =>
-      PressScale(
-          child: Container(
+      Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -689,7 +691,7 @@ class TodayBriefBody extends StatelessWidget {
             Expanded(child: child),
           ],
         ),
-      ));
+      );
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -1095,8 +1097,23 @@ class _SkeletonTiles extends StatefulWidget {
 class _SkeletonTilesState extends State<_SkeletonTiles>
     with SingleTickerProviderStateMixin {
   late final AnimationController _pulse = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 900))
-    ..repeat(reverse: true);
+      vsync: this, duration: const Duration(milliseconds: 900));
+  // Made once (it was a new animation on every build).
+  late final Animation<double> _breath =
+      Tween(begin: 0.45, end: 1.0).animate(_pulse);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations": a still skeleton.
+    if (Motion.reduced(context)) {
+      _pulse
+        ..stop()
+        ..value = 1.0;
+    } else if (!_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {
@@ -1122,7 +1139,7 @@ class _SkeletonTilesState extends State<_SkeletonTiles>
       label: 'Loading your day',
       child: RepaintBoundary(
         child: FadeTransition(
-          opacity: Tween(begin: 0.45, end: 1.0).animate(_pulse),
+          opacity: _breath,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

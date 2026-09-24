@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
@@ -67,7 +68,8 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
+class _HomeShellState extends State<HomeShell>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   /// The cached profile is written once at sign-in and can go stale — a
   /// renamed account kept being greeted by its old name. One quiet
   /// round-trip at startup keeps the spoken name current.
@@ -144,7 +146,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     HomeShell.requestedTab.removeListener(_onTabRequested);
     AssistantEngine.instance.removeListener(_onEngineForPicker);
     AssistantEngine.instance.removeListener(_onEngineForToast);
+    _cancelToastLift();
     _tabChanges.dispose();
+    _tabFade.dispose();
     // Only if it is still ours: a rebuilt shell (theme flip) has set its own.
     if (AppFeedback.sessionVisible == _sessionVisible) {
       AppFeedback.sessionVisible = null;
@@ -190,7 +194,25 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     HomeShell.lastTab = i;
     _tabChanges.value++;
     setState(() => _tab = i);
+    // The new tab fades in over the ground (see [_tabFade]).
+    if (!Motion.reduced(context)) _tabFade.forward(from: 0);
   }
+
+  /// TABS FADE THROUGH, THEY DO NOT CUT (2026-09-24).
+  ///
+  /// Switching tabs is the most frequent move in the app, and it was the
+  /// only one with no transition: the whole page swapped in one frame
+  /// while the dock's pill was still animating beside it. The new tab now
+  /// fades in over the ground in 180 ms — no slide, because tabs are peers,
+  /// not steps deeper. Nothing is rebuilt: the same IndexedStack keeps
+  /// every tab's state, scroll and half-typed message exactly as before.
+  ///
+  /// It rests at 1 (fully shown) and only runs for those 180 ms, so launch
+  /// and an idle Home still ask the phone for no frames.
+  late final AnimationController _tabFade =
+      AnimationController(vsync: this, duration: Motion.tab, value: 1.0);
+  late final Animation<double> _tabOpacity =
+      _tabFade.drive(CurveTween(curve: Motion.easeFadeIn));
 
   /// Ticks on every tab switch (the answer card listens).
   final ValueNotifier<int> _tabChanges = ValueNotifier<int>(0);
@@ -203,8 +225,38 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   void _onEngineForToast() {
     final now = _sessionVisible();
-    if (now && !_sessionWasVisible) AppFeedback.sessionOpened();
+    if (now && !_sessionWasVisible) _liftToastOnceCovered();
     _sessionWasVisible = now;
+  }
+
+  /// ONE MOTION AT A TIME (2026-09-24). The toast used to blink out and
+  /// replay its entrance higher up at the very moment the session was
+  /// fading in — a second movement at the busiest moment. It now moves
+  /// once the session has finished fading in and the screen is still.
+  VoidCallback? _pendingLift;
+
+  void _liftToastOnceCovered() {
+    _cancelToastLift();
+    // An Undo toast still closes at once, exactly as before (its change
+    // goes through); only a plain toast waits to move.
+    if (InlineCaptionOverlay.covering.value || AppFeedback.showingUndo) {
+      AppFeedback.sessionOpened();
+      return;
+    }
+    void lift() {
+      if (!InlineCaptionOverlay.covering.value) return;
+      _cancelToastLift();
+      if (mounted && _sessionVisible()) AppFeedback.sessionOpened();
+    }
+
+    _pendingLift = lift;
+    InlineCaptionOverlay.covering.addListener(lift);
+  }
+
+  void _cancelToastLift() {
+    final l = _pendingLift;
+    if (l != null) InlineCaptionOverlay.covering.removeListener(l);
+    _pendingLift = null;
   }
 
   /// SYSTEM BACK CLOSES WHAT IS OPEN, TOPMOST FIRST.
@@ -526,7 +578,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         }
       }
 
-      await showModalBottomSheet<void>(
+      await showAppSheet<void>(
         context: context,
         isDismissible: false,
         enableDrag: false,
@@ -627,14 +679,29 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         children: [
           _UnderSession(
             engine: engine,
-            child: IndexedStack(
-              index: _tab,
-              children: const [
-                HomeDashboard(),
-                HubScreen(),
-                ChatScreen(),
-                AssistantSettingsScreen(),
-              ],
+            child: FadeTransition(
+              opacity: _tabOpacity,
+              child: IndexedStack(
+                index: _tab,
+                // ONLY THE TAB ON SCREEN MAY ANIMATE (2026-09-24). An
+                // IndexedStack hides the other tabs but leaves their
+                // animations running: a spinner on a hidden Chat (a first
+                // load, or forever if a request hangs) kept the phone
+                // redrawing the visible screen 60 times a second, which
+                // quietly undid "an idle Home asks for no frames". Hidden
+                // tabs now pause their animations and pick them up when
+                // shown; nothing in them depends on those animations
+                // (Chat's poll already checks the tab is visible).
+                children: [
+                  for (final (i, tab) in const [
+                    HomeDashboard(),
+                    HubScreen(),
+                    ChatScreen(),
+                    AssistantSettingsScreen(),
+                  ].indexed)
+                    TickerMode(enabled: i == _tab, child: tab),
+                ],
+              ),
             ),
           ),
           // CONTENT MUST NOT END MID-LETTER. Every tab is a scrolling
@@ -661,7 +728,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 bottom: 0,
                 height: h,
                 child: IgnorePointer(
-                  child: DecoratedBox(
+                  // It comes back with the dock when the keyboard closes:
+                  // faded in, not switched on in one frame.
+                  child: EnterOnce(
+                    duration: Motion.micro,
+                    child: DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
@@ -674,6 +745,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                         ],
                         stops: [0.0, 0.6 * rise / h, rise / h, 1.0],
                       ),
+                    ),
                     ),
                   ),
                 ),
@@ -716,7 +788,10 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             child: ListenableBuilder(
               listenable: engine,
               builder: (_, child) => AnimatedPadding(
-                duration: const Duration(milliseconds: 200),
+                // In step with the session's own 240 ms fade (it was a
+                // linear 200 ms: the pill dropped on a different clock).
+                duration: const Duration(milliseconds: 240),
+                curve: Motion.easeMove,
                 padding: EdgeInsets.only(
                     top: voiceSessionOnScreen(engine) ? 56 : 0),
                 child: child,
@@ -743,9 +818,18 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // Hidden while the keyboard is up: docked, it floated over the text
       // box (seen 2026-09-24). Send is on the box; Stop is one tap away
       // once the keyboard closes.
-      floatingActionButton: keyboardUp
-          ? null
-          : AssistantOrbButton(
+      //
+      // NO SPIN WHEN TYPING ENDS (2026-09-24). Hiding it used to swap the
+      // button for nothing, so the Scaffold ran its stock FAB change: it
+      // shrank the mic out, and brought it back with a hard-coded 45° turn
+      // on an ease-in scale — every time typing ended the mic visibly spun
+      // and snapped into its notch. The slot now always holds the same
+      // widget and the mic is simply not built while the keyboard is up
+      // (so no halo ticks behind the keyboard either); it plays its own
+      // quiet entrance when it returns (AssistantOrbButton).
+      floatingActionButton: Visibility(
+        visible: !keyboardUp,
+        child: AssistantOrbButton(
         onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;
@@ -776,6 +860,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             await engine.endInlineConversation();
           }
         },
+      ),
       ),
       bottomNavigationBar: BottomAppBar(
         color: Neon.surface,
@@ -820,16 +905,26 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           children: [
             // Active tab in the primary accent — the standard convention;
             // white-on-gray needed a second look to find where you were.
-            // The little grow on selection is the only dock motion.
+            //
+            // ONE MOVE, NOT FOUR (2026-09-24). Selecting a tab used to
+            // grow the icon to 1.12 on an overshooting curve (the one
+            // bounce in the shell), fade the pill in linearly, swap the
+            // icon and its colour in one frame and thicken the label from
+            // w500 to w700, which made it re-centre. Now the icon grows a
+            // little (1.06) on the standard curve with its pill, the two
+            // icons cross-fade, and the label keeps one weight and only
+            // changes colour. Taps and haptics are unchanged.
             AnimatedScale(
-              scale: selected ? 1.12 : 1.0,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutBack,
+              scale: selected ? 1.06 : 1.0,
+              duration: Motion.short,
+              curve: Motion.easeMove,
+              filterQuality: FilterQuality.medium,
               // The selected tab sits in its own soft violet pill, so
               // "where am I" reads at a glance instead of needing a
               // colour comparison between two small icons.
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
+                duration: Motion.short,
+                curve: Motion.easeMove,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                 decoration: BoxDecoration(
@@ -838,8 +933,15 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(Neon.rPill),
                 ),
-                child: Icon(selected ? active : icon,
-                    size: 22, color: selected ? Neon.violet : Neon.textDim),
+                child: AnimatedSwitcher(
+                  duration: Motion.micro,
+                  switchInCurve: Motion.easeFadeIn,
+                  switchOutCurve: Motion.easeFadeOut,
+                  child: Icon(selected ? active : icon,
+                      key: ValueKey(selected),
+                      size: 22,
+                      color: selected ? Neon.violet : Neon.textDim),
+                ),
               ),
             ),
             const SizedBox(height: 3),
@@ -848,14 +950,19 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             // the way the system's own navigation labels do.
             MediaQuery.withClampedTextScaling(
               maxScaleFactor: 1.3,
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? Neon.violet : Neon.textDim,
-                  )),
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: selected ? Neon.violet : Neon.textDim),
+                duration: Motion.micro,
+                curve: Motion.easeMove,
+                builder: (_, color, __) => Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    )),
+              ),
             ),
           ],
         ),
@@ -894,7 +1001,12 @@ class _UnderSession extends StatelessWidget {
         hold: voiceSessionOnScreen(engine),
         child: Visibility.maintain(
           visible: !InlineCaptionOverlay.covering.value,
-          child: tabs!,
+          // Visibility.maintain keeps animations running on purpose;
+          // under a session that covers them nobody can see them move.
+          child: TickerMode(
+            enabled: !InlineCaptionOverlay.covering.value,
+            child: tabs!,
+          ),
         ),
       ),
       // Their own layer: the overlays above repaint often (captions, the
