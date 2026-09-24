@@ -358,6 +358,7 @@ class HariAccessibilityService : AccessibilityService() {
                         })
                 } catch (e: Throwable) {
                     pill?.visibility = View.VISIBLE
+                    Log.w(TAG, "shot refused: ${e.javaClass.simpleName}")
                     done(null)
                 }
             }, 90)
@@ -374,9 +375,19 @@ class HariAccessibilityService : AccessibilityService() {
         val h = (soft.height * (w / soft.width.toFloat())).toInt().coerceAtLeast(1)
         val small = Bitmap.createScaledBitmap(soft, w, h, true)
         if (small != soft) soft.recycle()
+        // Counts only: size and how bright it is (an all-black shot means
+        // the app blocks screenshots). What is on screen is never logged.
+        var luma = 0L
+        var n = 0
+        for (yy in 0 until h step 97) for (xx in 0 until w step 53) {
+            val c = small.getPixel(xx, yy)
+            luma += ((c shr 16 and 0xff) * 3 + (c shr 8 and 0xff) * 6 + (c and 0xff)) / 10
+            n++
+        }
         val bos = ByteArrayOutputStream()
         small.compress(Bitmap.CompressFormat.JPEG, 60, bos)
         small.recycle()
+        Log.i(TAG, "shot ${w}x$h ${bos.size() / 1024}KB luma=${if (n > 0) luma / n else -1}")
         return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
     }
 
