@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../models/news_item.dart';
@@ -87,6 +88,9 @@ class _NewsPanelState extends State<NewsPanel> {
               constraints: BoxConstraints(
                 maxHeight: media.size.height * 0.78,
               ),
+              // The list ends at the dock's top edge; below it is plain
+              // ground, so no row shows through the ring around the mic.
+              padding: EdgeInsets.only(bottom: media.padding.bottom),
               decoration: BoxDecoration(
                 color: Neon.bg,
                 borderRadius:
@@ -99,8 +103,8 @@ class _NewsPanelState extends State<NewsPanel> {
                   _header(items.length),
                   Flexible(
                     child: ListView.separated(
-                      padding: EdgeInsets.fromLTRB(
-                          16, 4, 16, 16 + media.padding.bottom),
+                      padding: const EdgeInsets.fromLTRB(
+                          16, 4, 16, Dock.orbRise + 16),
                       itemCount: items.length,
                       separatorBuilder: (_, __) => Divider(
                         height: 18,

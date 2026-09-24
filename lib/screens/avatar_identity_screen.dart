@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/app_feedback.dart';
 import '../services/avatar_message_service.dart';
@@ -108,16 +109,12 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
     final p = _profile;
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        foregroundColor: Neon.textHi,
-        elevation: 0,
-        title: const Text('Your avatar identity'),
-      ),
+      appBar: appleAppBar(context, 'Your avatar identity'),
       body: p == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                  16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
               children: [
                 Text(
                   'When you ask your assistant to send someone a message, '

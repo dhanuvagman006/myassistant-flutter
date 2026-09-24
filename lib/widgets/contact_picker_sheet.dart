@@ -21,11 +21,14 @@ class ContactPickerSheet extends StatelessWidget {
   });
 
   /// Shows the picker over whatever is on screen. Resolves with the chosen
-  /// contact, or null if the user dismissed it.
+  /// contact, or null if the user dismissed it. [onRoute] hands the sheet's
+  /// route to the caller, so it can close the sheet itself when the choice
+  /// is made another way (said out loud).
   static Future<ContactMatch?> show(
     BuildContext context, {
     required String spokenName,
     required List<ContactMatch> matches,
+    ValueChanged<Route<dynamic>>? onRoute,
   }) {
     HapticFeedback.mediumImpact();
     return showModalBottomSheet<ContactMatch>(
@@ -35,8 +38,11 @@ class ContactPickerSheet extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) =>
-          ContactPickerSheet(spokenName: spokenName, matches: matches),
+      builder: (ctx) {
+        final route = ModalRoute.of(ctx);
+        if (route != null) onRoute?.call(route);
+        return ContactPickerSheet(spokenName: spokenName, matches: matches);
+      },
     );
   }
 

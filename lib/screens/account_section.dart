@@ -9,6 +9,7 @@ import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/app_feedback.dart';
 
 /// ACCOUNT — who is signed in, and the three things anyone must be able to
 /// do with their own account: take their data, leave, and erase it.
@@ -27,29 +28,34 @@ class AccountSection extends StatefulWidget {
 class _AccountSectionState extends State<AccountSection> {
   bool _busy = false;
 
+  /// The spinner belongs on the row doing the work: on "Signed in as" it
+  /// looked like the account was signing in or out.
+  bool _exporting = false;
+
   void _snack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    AppFeedback.show(text, context: context);
   }
 
   Future<void> _export() async {
     if (_busy) return;
-    setState(() => _busy = true);
+    setState(() => _busy = _exporting = true);
     try {
       final json = await ApiService.exportMyData();
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/hari-my-data.json';
+      final path = '${dir.path}/my-assistant-data.json';
       await File(path).writeAsString(json, flush: true);
       await Share.shareXFiles(
-        [XFile(path, mimeType: 'application/json', name: 'hari-my-data.json')],
-        subject: 'My Hari data',
+        [
+          XFile(path,
+              mimeType: 'application/json', name: 'my-assistant-data.json')
+        ],
+        subject: 'My assistant data',
       );
     } catch (_) {
       _snack("Couldn't export your data — check your connection and try again.");
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _busy = _exporting = false);
     }
   }
 
@@ -57,6 +63,7 @@ class _AccountSectionState extends State<AccountSection> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
+        backgroundColor: Neon.surface,
         title: const Text('Sign out?'),
         content: const Text(
             'Your data stays on your account. Sign back in any time to pick up where you left off.'),
@@ -77,10 +84,11 @@ class _AccountSectionState extends State<AccountSection> {
     final first = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
+        backgroundColor: Neon.surface,
         title: const Text('Delete your account?'),
         content: const Text(
-            'This permanently erases everything Hari holds for you — memories, reminders, '
-            'documents, clients, call notes and messages — and disconnects Google. '
+            'This permanently erases everything your assistant holds for you — memories, reminders, '
+            'documents, clients, call notes and messages — and disconnects your linked accounts. '
             'It cannot be undone.\n\nWant a copy first? Use "Export my data".'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep my account')),
@@ -126,7 +134,7 @@ class _AccountSectionState extends State<AccountSection> {
             AppleRow(
               title: 'Signed in as',
               subtitle: who,
-              trailing: _busy
+              trailing: _busy && !_exporting
                   ? SizedBox(
                       width: 18,
                       height: 18,
@@ -135,8 +143,13 @@ class _AccountSectionState extends State<AccountSection> {
             ),
             AppleRow(
               title: 'Export my data',
-              subtitle: 'Everything Hari holds for you, as a file',
-              trailing: Icon(Icons.ios_share_rounded, size: 18, color: Neon.textDim),
+              subtitle: 'Everything your assistant holds for you, as a file',
+              trailing: _exporting
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Neon.textLo))
+                  : Icon(Icons.ios_share_rounded, size: 18, color: Neon.textDim),
               onTap: _busy ? null : _export,
             ),
             AppleRow(

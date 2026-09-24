@@ -14,6 +14,7 @@ import '../services/api_service.dart';
 import 'business_card_flow.dart';
 import '../services/document_events.dart';
 import '../widgets/document_tile.dart';
+import '../services/app_feedback.dart';
 
 /// PROFESSIONAL MODE — the case-file workspace.
 ///
@@ -91,7 +92,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
       ]),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Neon.violet,
-        foregroundColor: Colors.white,
+        foregroundColor: Neon.onAccent,
         onPressed: _addClient,
         icon: const Icon(Icons.person_add_alt_1_rounded),
         label: const Text('Add'),
@@ -366,10 +367,10 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       }
     } on DocumentUploadException catch (e) {
       _toast(e.message.isNotEmpty
-          ? "Upload failed: ${e.message}"
-          : "Upload failed (${e.statusCode}). Nothing was saved.");
+          ? "Couldn't upload that: ${e.message}"
+          : "Couldn't upload that. Nothing was saved.");
     } catch (_) {
-      _toast("Upload failed. Check your connection and try again.");
+      _toast("Couldn't upload that — check your connection and try again.");
     } finally {
       if (mounted) {
         setState(() {
@@ -463,8 +464,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
+    AppFeedback.show(msg, context: context);
   }
 
   String _day(int ms) {
@@ -662,6 +662,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         AppleRow(
           leading: IconTile(Icons.info_outline_rounded, AppleColors.gray),
           title: c.summary,
+          titleMaxLines: 6,
         ),
       if (c.phone.isNotEmpty)
         AppleRow(
@@ -677,12 +678,14 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         AppleRow(
           leading: IconTile(Icons.sell_outlined, AppleColors.gray),
           title: c.tags,
+          titleMaxLines: 3,
         ),
     ];
     if (rows.length == 1) {
       rows.add(AppleRow(
         title: 'No details yet — tap the pencil to add.',
         titleColor: Neon.textDim,
+        titleMaxLines: 2,
       ));
     }
     return GroupedCard(dividerInset: 60, children: rows);

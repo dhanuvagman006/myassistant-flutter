@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
 import '../../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
@@ -10,6 +11,7 @@ import '../../models/user_document.dart';
 import '../../services/api_service.dart';
 import '../../services/studio_service.dart';
 import 'studio_look_screen.dart';
+import '../../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  STYLE STUDIO — the front door.
@@ -71,8 +73,7 @@ class _StudioScreenState extends State<StudioScreen> {
 
   void _toast(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
+    AppFeedback.show(msg, context: context);
   }
 
   /* ---------------------------------------------------------------- */
@@ -85,7 +86,9 @@ class _StudioScreenState extends State<StudioScreen> {
       await StudioService.acceptConsent();
       await _load(silent: true);
     } catch (e) {
-      _toast('$e');
+      _toast(e is StudioException && e.message.isNotEmpty
+          ? e.message
+          : "Couldn't reach the studio — try again.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -117,7 +120,9 @@ class _StudioScreenState extends State<StudioScreen> {
       _toast(n == 1 ? '1 photo removed.' : '$n photos removed.');
       await _load(silent: true);
     } catch (e) {
-      _toast('$e');
+      _toast(e is StudioException && e.message.isNotEmpty
+          ? e.message
+          : "Couldn't reach the studio — try again.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -228,7 +233,9 @@ class _StudioScreenState extends State<StudioScreen> {
       }
       await _load(silent: true);
     } catch (e) {
-      _toast('$e');
+      _toast(e is StudioException && e.message.isNotEmpty
+          ? e.message
+          : "Couldn't reach the studio — try again.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -347,7 +354,8 @@ class _StudioScreenState extends State<StudioScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
+      padding: EdgeInsets.fromLTRB(
+          16, 4, 16, 40 + MediaQuery.paddingOf(context).bottom),
       children: [
         if (!s.anyProviderReady) _notConfiguredBanner(),
         _myPhotos(s),
@@ -370,7 +378,8 @@ class _StudioScreenState extends State<StudioScreen> {
   /* ---------------------------------------------------------------- */
 
   Widget _consentView() => ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        padding: EdgeInsets.fromLTRB(
+            20, 8, 20, 40 + MediaQuery.paddingOf(context).bottom),
         children: [
           const SizedBox(height: 10),
           Icon(Icons.auto_awesome_rounded, size: 46, color: Neon.violet),
@@ -464,8 +473,8 @@ class _StudioScreenState extends State<StudioScreen> {
             const SizedBox(width: 11),
             Expanded(
               child: Text(
-                'Image editing is not switched on for this server yet, so '
-                'looks will not render. Everything else here works.',
+                'New looks are not available right now. '
+                'Everything else here works.',
                 style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.35),
               ),
             ),
@@ -597,18 +606,20 @@ class _StudioScreenState extends State<StudioScreen> {
     'occasion': Icons.celebration_rounded,
   };
 
-  static const _colors = <String, Color>{
-    'outfit': Color(0xFF007AFF),
-    'hair': Color(0xFFAF52DE),
-    'beard': Color(0xFF5856D6),
-    'eyewear': Color(0xFF0E7490),
-    'jewellery': Color(0xFFBE185D),
-    'headshot': Color(0xFF34C759),
-    'id': Color(0xFFFF9500),
-    'restore': Color(0xFF8E8E93),
-    'backdrop': Color(0xFF4D7C0F),
-    'occasion': Color(0xFFFF375F),
-  };
+  // The app's own accent family, not literal iOS system colours: they
+  // follow the theme and the chosen accent like every other tile.
+  static Map<String, Color> get _colors => <String, Color>{
+        'outfit': AppleColors.blue,
+        'hair': AppleColors.purple,
+        'beard': AppleColors.indigo,
+        'eyewear': AppleColors.teal,
+        'jewellery': AppleColors.gray,
+        'headshot': AppleColors.green,
+        'id': AppleColors.orange,
+        'restore': AppleColors.teal,
+        'backdrop': AppleColors.green,
+        'occasion': AppleColors.gray,
+      };
 
   Widget _group(List<StudioRecipe> rows) => Material(
         color: Neon.surface,

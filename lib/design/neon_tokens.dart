@@ -112,13 +112,23 @@ class Neon {
       isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1B1D28);
   static Color get textLo =>
       isDark ? const Color(0xFFD8D2EA) : const Color(0xFF585E70);
+  // Light mode was #9BA0B0 — 2.4:1 on the page, unreadable for the
+  // timestamps, hints and footnotes it is used for. Now 4.5:1.
   static Color get textDim =>
-      isDark ? const Color(0xFF9E96B8) : const Color(0xFF9BA0B0);
+      isDark ? const Color(0xFF9E96B8) : const Color(0xFF6B7185);
 
   /// The GROUND color for things painted in [textHi] — icon-on-ink tiles,
   /// text on the primary button. Tracks the theme so "white on ink" in
   /// light mode becomes "ink on chalk" in dark mode automatically.
   static Color get onInk => bg;
+
+  /// Text and icons ON the accent (a filled button, a sent bubble, a badge).
+  /// White on the dark theme's pastel accents measured 1.3–2.8:1; those
+  /// get near-black ink. The light theme's deep accents keep white (above
+  /// 3:1 there, and the brand look).
+  static Color get onAccent => violet.computeLuminance() > 0.3
+      ? const Color(0xFF14121C)
+      : const Color(0xFFFFFFFF);
 
   // Hairlines on cards — a touch brighter on pure black, or cards lose
   // their edges entirely.

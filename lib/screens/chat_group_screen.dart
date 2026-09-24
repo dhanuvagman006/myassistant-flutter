@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
 ///  A GROUP, WITH THE ASSISTANT IN IT.
@@ -46,6 +47,9 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   final _scroll = ScrollController();
   List<_Msg> _messages = const [];
   bool _loading = true;
+
+  /// The first load failed (offline): say so instead of spinning forever.
+  bool _failed = false;
   bool _agentReplies = false;
   bool _muted = false;
   int _members = 0;
@@ -86,7 +90,16 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   Future<void> _load({bool quiet = false}) async {
     try {
       final r = await ApiService.getJson('/chat/groups/${widget.groupId}');
-      if (!mounted || r == null) return;
+      if (!mounted) return;
+      if (r == null) {
+        if (!quiet) {
+          setState(() {
+            _loading = false;
+            _failed = true;
+          });
+        }
+        return;
+      }
       final list = ((r['messages'] as List?) ?? const [])
           .whereType<Map>()
           .map((m) => _Msg(
@@ -102,13 +115,19 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
       setState(() {
         _messages = list;
         _loading = false;
+        _failed = false;
         _agentReplies = ((r['group'] as Map?)?['agentReplies'] == true);
         _muted = ((r['group'] as Map?)?['muted'] == true);
         _members = ((r['members'] as List?) ?? const []).length;
       });
       if (grew) _toBottom();
     } catch (_) {
-      if (mounted && !quiet) setState(() => _loading = false);
+      if (mounted && !quiet) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -237,8 +256,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     if (choice == 'copy') {
       await Clipboard.setData(ClipboardData(text: m.text));
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Copied')));
+        AppFeedback.copied(context);
       }
       return;
     }
@@ -306,6 +324,41 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _failed && _messages.isEmpty
+                    ? Center(
+                        // Scrolls: with the keyboard up there is little room.
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.cloud_off_rounded,
+                                  size: 34, color: Neon.textLo),
+                              const SizedBox(height: 12),
+                              Text(
+                                "Couldn't load this group. Check your "
+                                'connection.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Neon.textLo, height: 1.45),
+                              ),
+                              const SizedBox(height: 10),
+                              TextButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    _failed = false;
+                                    _loading = true;
+                                  });
+                                  _load();
+                                },
+                                icon: const Icon(Icons.refresh_rounded,
+                                    size: 18),
+                                label: const Text('Try again'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
                 : _messages.isEmpty
                     ? Center(
                         child: Padding(
@@ -433,9 +486,14 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     );
   }
 
-  Widget _composer() => Padding(
-        padding: EdgeInsets.fromLTRB(
-            12, 4, 12, 10 + MediaQuery.of(context).viewInsets.bottom),
+  // The Scaffold already lifts the body above the keyboard: adding the
+  // keyboard's height again floated the box a keyboard-height too high and
+  // overflowed the page. SafeArea keeps it off the gesture bar, as in the
+  // one-to-one chat.
+  Widget _composer() => SafeArea(
+        top: false,
+        child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
         child: Row(
           children: [
             Expanded(
@@ -443,8 +501,12 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                 controller: _c,
                 minLines: 1,
                 maxLines: 4,
+                // Single-line to the keyboard, so its Send key sends (a
+                // multi-line field makes Android type a newline instead).
+                keyboardType: TextInputType.text,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
+                onEditingComplete: () {},
                 style: TextStyle(color: Neon.textHi),
                 decoration: InputDecoration(
                   isDense: true,
@@ -465,9 +527,10 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
             IconButton.filled(
               onPressed: _send,
               style: IconButton.styleFrom(backgroundColor: Neon.violet),
-              icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white),
+              icon: Icon(Icons.arrow_upward_rounded, color: Neon.onAccent),
             ),
           ],
+        ),
         ),
       );
 }

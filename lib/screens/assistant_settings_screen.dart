@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../design/accent_controller.dart';
 import '../design/apple_kit.dart';
+import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../features/assistant/state/assistant_engine.dart';
@@ -21,6 +22,7 @@ import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
 import '../services/greeting_voice.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
@@ -118,10 +120,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       // The server explains a mismatch in a sentence the user can act on
       // — show THAT, not a generic failure.
       final why = (r?['message'] ?? "Couldn't save the voice.").toString();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(why),
-        duration: const Duration(seconds: 6),
-      ));
+      AppFeedback.show(why, context: context, tone: FeedbackTone.error);
     }
   }
 
@@ -242,21 +241,32 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    AppFeedback.show(msg, context: context);
   }
 
   @override
   Widget build(BuildContext context) {
+    // As the You TAB it wears the same large title as Hub and Chat — a
+    // small centred "Assistant" bar under a tab labelled "You" read as a
+    // different screen from the one tapped. Pushed on its own (from
+    // Diagnostics) it keeps a normal app bar with a back arrow.
+    final pushed = ModalRoute.of(context)?.canPop ?? false;
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: appleAppBar(context, 'Assistant'),
-      body: _loading
+      appBar: pushed ? appleAppBar(context, 'Settings') : null,
+      body: SafeArea(
+        top: !pushed,
+        bottom: false,
+        child: _loading
           ? Center(
               child: CircularProgressIndicator(
                   strokeWidth: 2, color: Neon.textLo))
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+              // Clears the dock and the mic on every phone.
+              padding: EdgeInsets.fromLTRB(
+                  16, pushed ? 8 : 18, 16, Dock.clearance(context)),
               children: [
+                if (!pushed) const LargeTitle('You'),
                 // Identity lives in the conversation, and the page says so.
                 // Live: renaming by voice updates this card too.
                 ValueListenableBuilder<String>(
@@ -346,7 +356,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                const GroupLabel('Voice'),
+                const GroupLabel('Assistant voice'),
                 GroupedCard(
                   dividerInset: 60,
                   children: [
@@ -390,7 +400,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 // "Live captions" was here: a switch nothing read (captions
                 // always show in the voice overlay), describing a
                 // conversation screen that no longer exists.
-                const GroupLabel('My voice'),
+                const GroupLabel('Recognise my voice'),
                 GroupedCard(
                   dividerInset: 60,
                   children: [
@@ -419,6 +429,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     if (_voiceEnrolled)
                       AppleRow(
                         title: 'Respond only to my voice',
+                        subtitle: 'Live translation still hears everyone '
+                            'until you stop it.',
                         trailing: Switch(
                           value: _voiceGateOn,
                           activeThumbColor: Colors.white,
@@ -432,15 +444,6 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       ),
                   ],
                 ),
-                if (_voiceEnrolled)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16, top: 6),
-                    child: Text(
-                      'Asking for live translation lets everyone be heard '
-                      'until you stop it.',
-                      style: TextStyle(color: Neon.textDim, fontSize: 11.5),
-                    ),
-                  ),
                 const SizedBox(height: 24),
 
                 // "Video avatar → Avatar face" was here. It appeared whenever
@@ -452,7 +455,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   children: [
                     AppleRow(
                       leading: IconTile(
-                          Icons.record_voice_over_rounded, AppleColors.green),
+                          Icons.video_camera_front_rounded, AppleColors.green),
                       title: 'Send messages as you',
                       subtitle: 'Your face and voice on messages you send '
                           '— with your consent.',
@@ -471,7 +474,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   child: Text(
                     'Permanent instructions the assistant follows before every '
                     'decision — e.g. "Always ask before sending messages", '
-                    '"Call me Dhanu". You can also just say these in '
+                    '"Call me by my first name". You can also just say these in '
                     'conversation.',
                     style: TextStyle(color: Neon.textDim, fontSize: 12.5),
                   ),
@@ -533,6 +536,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
               ],
             ),
+      ),
     );
   }
 

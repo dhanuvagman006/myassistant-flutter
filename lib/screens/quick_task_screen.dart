@@ -135,10 +135,17 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
     final busy = _stage == _Stage.sending || _stage == _Stage.sent;
     return Scaffold(
       backgroundColor: Colors.black,
+      // The Scaffold already lifts the body above the keyboard. Adding the
+      // keyboard's height again as padding squeezed the page to nothing on
+      // the owner's phone — title, close button and text box all vanished
+      // the moment the keyboard opened.
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-              24, 8, 24, 18 + MediaQuery.of(context).viewInsets.bottom),
+        child: LayoutBuilder(builder: (context, box) {
+          // The orb gives up height first, so everything fits on a short
+          // phone with the keyboard up.
+          final orb = (box.maxHeight - 240).clamp(96.0, 260.0);
+          return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
           child: Column(
             children: [
               Row(
@@ -168,7 +175,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                 onTap: busy ? null : _listen,
                 behavior: HitTestBehavior.opaque,
                 child: SizedBox(
-                  height: 260,
+                  height: orb,
                   child: Stack(
                     alignment: Alignment.center,
                     clipBehavior: Clip.none,
@@ -179,7 +186,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         top: 0,
                         bottom: 0,
                         child: VoiceOrbBackdrop(
-                          orbSize: 150,
+                          orbSize: orb < 170 ? orb * 0.8 : 150,
                           mood: _stage == _Stage.listening
                               ? OrbMood.listening
                               : OrbMood.idle,
@@ -187,7 +194,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         ),
                       ),
                       VoiceOrb(
-                        size: 150,
+                        size: orb < 170 ? orb * 0.8 : 150,
                         mood: _stage == _Stage.listening
                             ? OrbMood.listening
                             : OrbMood.idle,
@@ -233,6 +240,8 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         enabled: !busy,
                         minLines: 1,
                         maxLines: 4,
+                        // Single-line to the keyboard: its Send key sends.
+                        keyboardType: TextInputType.text,
                         textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _send(),
                         keyboardAppearance: Brightness.dark,
@@ -290,7 +299,8 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
               ),
             ],
           ),
-        ),
+          );
+        }),
       ),
     );
   }

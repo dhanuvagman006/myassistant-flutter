@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 import '../services/auth_service.dart';
 
 /// BUSINESS CARD SCANNER. Owner's pick, 2026-09-23.
@@ -23,7 +24,6 @@ class BusinessCardFlow {
   /// Camera → server → result sheet. Returns the saved person, or null if
   /// the user cancelled or the card could not be read (already explained).
   static Future<Map<String, dynamic>?> scan(BuildContext context) async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
     XFile? shot;
     try {
       shot = await ImagePicker().pickImage(
@@ -33,19 +33,23 @@ class BusinessCardFlow {
         imageQuality: 85,
       );
     } catch (_) {
-      messenger?.showSnackBar(
-          const SnackBar(content: Text("Couldn't open the camera.")));
+      if (context.mounted) {
+        AppFeedback.show("Couldn't open the camera.", context: context);
+      }
       return null;
     }
     if (shot == null) return null;
     if (!context.mounted) return null;
 
-    // Reading takes a few seconds — say so.
+    // Reading takes a few seconds — say so. Tracked, so that closing it
+    // later can never pop some OTHER route (the screen underneath, or
+    // Home itself) if it is already gone.
+    var reading = true;
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => const _ReadingDialog(),
-    );
+    ).whenComplete(() => reading = false);
     Map<String, dynamic>? person;
     String? error;
     try {
@@ -69,9 +73,14 @@ class BusinessCardFlow {
     } catch (_) {
       error = "Couldn't read that card — check your connection.";
     }
-    if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+    if (reading && context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
     if (person == null) {
-      messenger?.showSnackBar(SnackBar(content: Text(error!)));
+      // The screen that asked may be gone by now: the app-wide messenger.
+      AppFeedback.show(error!,
+          context: context.mounted ? context : null,
+          tone: FeedbackTone.error);
       return null;
     }
     if (context.mounted) {
@@ -93,6 +102,9 @@ class _ReadingDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Back still closes it, as it always has (the upload can take up to a
+    // minute on a weak signal). The flow tracks whether it is still open,
+    // so it never pops some other screen when the answer comes in.
     return AlertDialog(
       backgroundColor: Neon.surface,
       content: Row(children: [
@@ -111,9 +123,24 @@ class _ReadingDialog extends StatelessWidget {
 }
 
 /// What was read off the card, and what to do next.
-class CardResultSheet extends StatelessWidget {
+class CardResultSheet extends StatefulWidget {
   const CardResultSheet({super.key, required this.person});
   final Map<String, dynamic> person;
+
+  @override
+  State<CardResultSheet> createState() => _CardResultSheetState();
+}
+
+class _CardResultSheetState extends State<CardResultSheet> {
+  Map<String, dynamic> get person => widget.person;
+
+  /// Said right under the buttons: a toast from inside a sheet lands on
+  /// the page BEHIND it, where nobody sees it.
+  String? _problem;
+
+  void _say(String? problem) {
+    if (mounted) setState(() => _problem = problem);
+  }
 
   List<String> _list(String k) =>
       ((person[k] as List?) ?? const []).map((e) => e.toString()).toList();
@@ -123,7 +150,8 @@ class CardResultSheet extends StatelessWidget {
   String get _email => _list('emails').isEmpty ? '' : _list('emails').first;
 
   /// The phone's own "new contact" screen, filled in — the user taps Save.
-  Future<void> _addToContacts(BuildContext context) async {
+  Future<void> _addToContacts() async {
+    _say(null);
     bool ok = false;
     try {
       ok = await const MethodChannel('hari/intent').invokeMethod<bool>(
@@ -138,13 +166,11 @@ class CardResultSheet extends StatelessWidget {
           ) ??
           false;
     } catch (_) {}
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Couldn't open your contacts app.")));
-    }
+    if (!ok) _say("Couldn't open your contacts app.");
   }
 
-  Future<void> _hello(BuildContext context) async {
+  Future<void> _hello() async {
+    _say(null);
     final me = (AuthService.instance.user?.name ?? '').trim().split(' ').first;
     final first = _name.split(' ').first;
     final text = 'Hi $first, it was great meeting you today.'
@@ -158,10 +184,7 @@ class CardResultSheet extends StatelessWidget {
     try {
       ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {}
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("WhatsApp isn't installed.")));
-    }
+    if (!ok) _say("Couldn't open the chat app — is it installed?");
   }
 
   Future<void> _call() async {
@@ -196,11 +219,13 @@ class CardResultSheet extends StatelessWidget {
             Row(children: [
               Icon(Icons.check_circle_rounded, color: Neon.success, size: 20),
               const SizedBox(width: 8),
-              Text('Saved to your people',
-                  style: TextStyle(
-                      color: Neon.success,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600)),
+              Flexible(
+                child: Text('Saved to your people',
+                    style: TextStyle(
+                        color: Neon.success,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ),
             ]),
             const SizedBox(height: 12),
             Text(_name,
@@ -223,7 +248,7 @@ class CardResultSheet extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: () => _addToContacts(context),
+                onPressed: _addToContacts,
                 icon: const Icon(Icons.person_add_alt_1_rounded),
                 label: const Text('Add to phone contacts'),
               ),
@@ -232,8 +257,8 @@ class CardResultSheet extends StatelessWidget {
             Row(children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _hello(context),
-                  icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366)),
+                  onPressed: _hello,
+                  icon: Icon(Icons.chat_rounded, color: Neon.success),
                   label: const Text('Say hello'),
                 ),
               ),
@@ -248,6 +273,19 @@ class CardResultSheet extends StatelessWidget {
                 ),
               ],
             ]),
+            if (_problem != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(children: [
+                  Icon(Icons.error_outline_rounded,
+                      size: 16, color: Neon.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_problem!,
+                        style: TextStyle(color: Neon.error, fontSize: 13)),
+                  ),
+                ]),
+              ),
           ],
         ),
       ),

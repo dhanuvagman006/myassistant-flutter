@@ -50,20 +50,25 @@ class AvatarMessageService {
           const [];
       if (rows.isEmpty) return false;
 
-      for (final m in rows) {
+      for (var i = 0; i < rows.length; i++) {
+        final m = rows[i];
         final file = await _download(m);
         // Mark read even when the download failed: the words themselves
         // are in the row and have been shown/spoken by the fallback below.
         await ApiService.sendJson('/messages/read', body: {'ids': [m['id']]});
         final ctx = navigatorKey.currentContext;
         if (ctx == null || !ctx.mounted) break;
-        await showAvatarMessagePopup(
+        final later = await showAvatarMessagePopup(
           ctx,
           senderName: (m['from'] as String?) ?? 'Someone',
           text: (m['message'] as String?) ?? '',
           kind: file == null ? 'text' : (m['media'] as String? ?? 'audio'),
           mediaFile: file,
+          index: i + 1,
+          total: rows.length,
         );
+        // The rest stay unread and come up next time, not one after another.
+        if (later == true) break;
       }
       return true;
     } catch (e) {

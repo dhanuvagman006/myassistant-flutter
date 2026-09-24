@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
@@ -11,6 +12,7 @@ import '../models/user_document.dart';
 import '../services/api_service.dart';
 import 'chat_group_screen.dart';
 import 'chat_new_screen.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  CHAT — the WhatsApp-style face of the agent-message rail.
@@ -147,15 +149,16 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // The same large title as the other tabs (Hub, You).
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 10, 8),
+            padding: const EdgeInsets.fromLTRB(20, 18, 10, 8),
             child: Row(
               children: [
                 Text('Chat',
                     style: GoogleFonts.spaceGrotesk(
-                        fontSize: 27,
+                        fontSize: 32,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: -0.5,
+                        letterSpacing: -0.6,
                         color: Neon.textHi)),
                 const Spacer(),
                 // NEW GROUP, then NEW CHAT — the order they are reached
@@ -233,8 +236,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ])
                           : ListView.builder(
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 0, 12, 120),
+                              // Clears the dock and the mic on every phone.
+                              padding: EdgeInsets.fromLTRB(
+                                  12, 0, 12, Dock.clearance(context)),
                               itemCount: _groups.length + threads.length,
                               itemBuilder: (_, i) => i < _groups.length
                                   ? _groupTile(_groups[i])
@@ -281,8 +285,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Text('${g.unread}',
-                    style: const TextStyle(
-                        color: Colors.white,
+                    style: TextStyle(
+                        color: Neon.onAccent,
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700)),
               )
@@ -335,8 +339,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text('${t.unread}',
-                  style: const TextStyle(
-                      color: Colors.white,
+                  style: TextStyle(
+                      color: Neon.onAccent,
                       fontSize: 11,
                       fontWeight: FontWeight.w700)),
             ),
@@ -371,6 +375,10 @@ class ChatThreadScreen extends StatefulWidget {
 class _ChatThreadScreenState extends State<ChatThreadScreen> {
   List<_ChatItem> _items = const [];
   bool _loading = true;
+
+  /// Could not load (offline) and nothing to show: say so, don't show an
+  /// empty conversation as if there were none.
+  bool _failed = false;
   bool _muted = false;
   bool _sending = false;
   final _input = TextEditingController();
@@ -404,7 +412,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       final r = await ApiService.getJson(
           '/chat/thread/${Uri.encodeComponent(widget.phone)}');
       if (!mounted) return;
-      final items = ((r?['items'] as List?) ?? const [])
+      if (r == null) {
+        // A failed refresh keeps what is on screen.
+        setState(() {
+          _loading = false;
+          _failed = _items.isEmpty;
+        });
+        return;
+      }
+      final items = ((r['items'] as List?) ?? const [])
           .whereType<Map>()
           .map((m) => _ChatItem(
                 (m['id'] as num?)?.toInt() ?? 0,
@@ -421,12 +437,18 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         _items = items;
         // The server owns this; without reading it back the menu label
         // reset to "Mute notifications" on every reopen.
-        _muted = r?['muted'] == true;
+        _muted = r['muted'] == true;
         _loading = false;
+        _failed = false;
       });
       if (grew) _jumpToEnd();
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = _items.isEmpty;
+        });
+      }
     }
   }
 
@@ -455,13 +477,11 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             ]);
         _jumpToEnd();
       } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Couldn't send — are they on the app?")));
+        AppFeedback.show("Couldn't send — are they on the app?", context: context);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Couldn't send the message.")));
+        AppFeedback.show("Couldn't send the message.", context: context);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -519,6 +539,38 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _failed
+                    ? Center(
+                        // Scrolls: with the keyboard up there is little room.
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.cloud_off_rounded,
+                                  size: 34, color: Neon.textLo),
+                              const SizedBox(height: 12),
+                              Text(
+                                "Couldn't load this conversation. Check "
+                                'your connection.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Neon.textLo, height: 1.45),
+                              ),
+                              const SizedBox(height: 10),
+                              TextButton.icon(
+                                onPressed: () {
+                                  setState(() => _loading = true);
+                                  _load();
+                                },
+                                icon: const Icon(Icons.refresh_rounded,
+                                    size: 18),
+                                label: const Text('Try again'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
                 : ListView.builder(
                     controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
@@ -537,8 +589,13 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                       controller: _input,
                       minLines: 1,
                       maxLines: 4,
+                      // The keyboard's Send key sends, as in group chat
+                      // (a multi-line field made it type a newline).
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.send,
                       textCapitalization: TextCapitalization.sentences,
                       onSubmitted: (_) => _send(),
+                      onEditingComplete: () {},
                       decoration: InputDecoration(
                         hintText: 'Message…',
                         filled: true,
@@ -608,7 +665,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 child: Text('assistant · auto-reply',
                     style: TextStyle(
                         color: m.mine
-                            ? Colors.white.withValues(alpha: 0.7)
+                            ? Neon.onAccent.withValues(alpha: 0.7)
                             : Neon.textDim,
                         fontSize: 10.5)),
               ),
@@ -644,13 +701,13 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                       Icon(Icons.block_rounded,
                           size: 13,
                           color: m.mine
-                              ? Colors.white.withValues(alpha: 0.75)
+                              ? Neon.onAccent.withValues(alpha: 0.75)
                               : Neon.textLo),
                       const SizedBox(width: 5),
                       Text('This message was deleted',
                           style: TextStyle(
                               color: m.mine
-                                  ? Colors.white.withValues(alpha: 0.75)
+                                  ? Neon.onAccent.withValues(alpha: 0.75)
                                   : Neon.textLo,
                               fontSize: 13.5,
                               fontStyle: FontStyle.italic)),
@@ -658,7 +715,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                   )
                 : Text(m.text,
                     style: TextStyle(
-                        color: m.mine ? Colors.white : Neon.textHi,
+                        color: m.mine ? Neon.onAccent : Neon.textHi,
                         fontSize: 14,
                         height: 1.35)),
           ],
@@ -752,8 +809,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     if (choice == 'copy') {
       await Clipboard.setData(ClipboardData(text: m.text));
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Copied')));
+        AppFeedback.copied(context);
       }
       return;
     }

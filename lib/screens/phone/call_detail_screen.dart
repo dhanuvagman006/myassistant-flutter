@@ -10,6 +10,7 @@ import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
 import '../../services/api_service.dart';
 import '../../services/call_service.dart';
+import '../../services/app_feedback.dart';
 
 /// EVERYTHING THE ASSISTANT UNDERSTOOD ABOUT ONE CALL.
 /// Summary, every extracted fact, what was filed onto the agenda, and the
@@ -97,10 +98,9 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
       if (text.isNotEmpty) _followUp.text = text;
     });
     if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(r == null
+      AppFeedback.show(r == null
               ? "Couldn't draft one right now — try again."
-              : 'Nothing on this call needs a follow-up.')));
+              : 'Nothing on this call needs a follow-up.', context: context);
     }
   }
 
@@ -120,8 +120,7 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
     if (how == 'copy') {
       await Clipboard.setData(ClipboardData(text: text));
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Copied — paste it anywhere.')));
+        AppFeedback.copied(context, 'Copied — paste it anywhere.');
       }
       return;
     }
@@ -142,10 +141,9 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
       ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {}
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(how == 'whatsapp'
-              ? "WhatsApp isn't installed — try SMS."
-              : "Couldn't open messages.")));
+      AppFeedback.show(how == 'whatsapp'
+              ? "The chat app isn't installed — try SMS."
+              : "Couldn't open messages.", context: context);
     }
   }
 
@@ -447,8 +445,8 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                 const SizedBox(height: 10),
                 Row(children: [
                   Expanded(
-                    child: _sendButton(Icons.chat_rounded, 'WhatsApp',
-                        const Color(0xFF25D366), () => _sendVia('whatsapp')),
+                    child: _sendButton(Icons.chat_rounded, 'Chat app',
+                        Neon.success, () => _sendVia('whatsapp')),
                   ),
                   const SizedBox(width: 8),
                   Expanded(

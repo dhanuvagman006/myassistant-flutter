@@ -9,6 +9,7 @@ import '../../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../../services/api_service.dart';
 import '../../services/studio_service.dart';
+import '../../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ONE LOOK — pick the details, make it, see it full screen.
@@ -78,7 +79,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
 
   void _toast(String m) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+    AppFeedback.show(m, context: context);
   }
 
   /* ---------------------------------------------------------------- */
@@ -668,11 +669,9 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 3),
                   Text(
-                    [
-                      if (out.specSize.isNotEmpty) out.specSize,
-                      '${out.width}×${out.height}',
-                      '${(out.ms / 1000).toStringAsFixed(1)}s',
-                    ].join(' · '),
+                    out.specSize.isNotEmpty
+                        ? out.specSize
+                        : 'Open it from Hub, My documents',
                     style: TextStyle(color: Neon.textLo, fontSize: 12),
                   ),
                 ],

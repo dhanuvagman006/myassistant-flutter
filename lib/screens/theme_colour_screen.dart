@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../design/apple_kit.dart';
 import '../design/accent_controller.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
@@ -25,10 +26,10 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
       valueListenable: AccentController.seed,
       builder: (_, seed, __) => Scaffold(
         backgroundColor: Neon.bg,
-        appBar:
-            AppBar(backgroundColor: Neon.bg, title: const Text('Theme colour')),
+        appBar: appleAppBar(context, 'Theme colour'),
         body: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
+          padding: EdgeInsets.fromLTRB(
+              20, 12, 20, 40 + MediaQuery.paddingOf(context).bottom),
           children: [
             Text(
               'Your colour paints the orb, the mic, every icon tile and '

@@ -15,14 +15,20 @@ import '../design/neon_tokens.dart';
 /// Deliberately plain (no gradients, no glass): a rounded card, the
 /// video, the sender's name, an AI-generated tag — honesty is part of the
 /// design — and mute/close controls.
-Future<void> showAvatarMessagePopup(
+///
+/// Several unread messages come one after another; [index] of [total] says
+/// where the user is, and resolves true when they chose to see the rest
+/// later (so the popups stop coming back one by one).
+Future<bool?> showAvatarMessagePopup(
   BuildContext context, {
   required String senderName,
   required String text,
   required String kind,
   File? mediaFile,
+  int index = 1,
+  int total = 1,
 }) {
-  return showDialog<void>(
+  return showDialog<bool>(
     context: context,
     barrierDismissible: true,
     barrierColor: Colors.black.withValues(alpha: 0.55),
@@ -31,6 +37,8 @@ Future<void> showAvatarMessagePopup(
       text: text,
       kind: kind,
       mediaFile: mediaFile,
+      index: index,
+      total: total,
     ),
   );
 }
@@ -41,12 +49,16 @@ class _AvatarMessageDialog extends StatefulWidget {
     required this.text,
     required this.kind,
     required this.mediaFile,
+    this.index = 1,
+    this.total = 1,
   });
 
   final String senderName;
   final String text;
   final String kind;
   final File? mediaFile;
+  final int index;
+  final int total;
 
   @override
   State<_AvatarMessageDialog> createState() => _AvatarMessageDialogState();
@@ -100,7 +112,7 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
       } else if (_audio != null && widget.mediaFile != null) {
         await _audio!.play(DeviceFileSource(widget.mediaFile!.path));
       }
-      setState(() {});
+      if (mounted) setState(() {});
     } catch (_) {}
   }
 
@@ -146,7 +158,10 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
                               fontSize: 16,
                               fontWeight: FontWeight.w700)),
                       const SizedBox(height: 2),
-                      Text('AI-generated message',
+                      Text(
+                          widget.total > 1
+                              ? 'AI-generated message · ${widget.index} of ${widget.total}'
+                              : 'AI-generated message',
                           style:
                               TextStyle(color: Neon.textDim, fontSize: 11.5)),
                     ],
@@ -160,6 +175,7 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
                   onPressed: _toggleMute,
                 ),
                 IconButton(
+                  tooltip: 'Close',
                   icon: const Icon(Icons.close_rounded),
                   color: Neon.textLo,
                   onPressed: () => Navigator.of(context).pop(),
@@ -168,7 +184,14 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
             ),
             const SizedBox(height: 10),
 
-            // Body.
+            // Body — scrolls: a long text-only message used to run past
+            // the bottom of the dialog.
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 60),
@@ -229,6 +252,22 @@ class _AvatarMessageDialogState extends State<_AvatarMessageDialog> {
                 ]),
               ),
             ],
+                  ],
+                ),
+              ),
+            ),
+            if (widget.index < widget.total)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: Text(
+                        'Show the other ${widget.total - widget.index} later'),
+                  ),
+                ),
+              ),
             const SizedBox(height: 16),
           ],
         ),

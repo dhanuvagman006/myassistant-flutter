@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MCP SERVERS — advanced settings.
@@ -65,8 +66,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
 
   void _toast(String m) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(m)));
+    AppFeedback.show(m, context: context);
   }
 
   @override
@@ -76,7 +76,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
       appBar: appleAppBar(context, 'MCP servers'),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Neon.violet,
-        foregroundColor: Colors.white,
+        foregroundColor: Neon.onAccent,
         onPressed: _addServer,
         icon: const Icon(Icons.add),
         label: const Text('Add server'),
@@ -86,7 +86,8 @@ class _McpServersScreenState extends State<McpServersScreen> {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                padding: EdgeInsets.fromLTRB(
+                    16, 8, 16, 96 + MediaQuery.paddingOf(context).bottom),
                 children: [
                   Text(
                     'Connect external tools — files, issue trackers, calendars — '
@@ -295,7 +296,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
                       fontSize: 18,
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: 14),
-              _field(name, 'Name', 'GitHub'),
+              _field(name, 'Name', 'e.g. My tools'),
               const SizedBox(height: 10),
               SegmentedButton<String>(
                 segments: const [

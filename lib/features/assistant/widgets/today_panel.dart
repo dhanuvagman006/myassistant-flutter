@@ -13,6 +13,7 @@ import '../../../services/assistant_identity.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/call_service.dart';
 import '../state/assistant_engine.dart';
+import '../../../services/app_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  TODAY PANEL — the home screen's command center.
@@ -154,14 +155,38 @@ class _TodaySheet extends StatelessWidget {
   }
 }
 
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({required this.child});
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
 /// The whole day as a scrollable feed — shared by the (legacy) sheet and
 /// the Home dashboard tab, so both always show the same live data.
 class TodayBriefBody extends StatelessWidget {
   final bool showHeader;
   final EdgeInsets padding;
+
+  /// Scrolls as the first item of the feed (Home's greeting and quote).
+  final Widget? leading;
   const TodayBriefBody({
     super.key,
     this.showHeader = false,
+    this.leading,
     // 120 at the bottom, not 28: the floating mic and the dock sit OVER
     // this list, and the last card was being cut in half by them.
     this.padding = const EdgeInsets.fromLTRB(20, 10, 20, 120),
@@ -178,6 +203,12 @@ class TodayBriefBody extends StatelessWidget {
                 shrinkWrap: true,
                 padding: padding,
                 children: [
+                  // Kept alive: scrolled away and back, it must not replay
+                  // its entrance animation.
+                  if (leading != null) ...[
+                    _KeepAlive(child: leading!),
+                    const SizedBox(height: 14),
+                  ],
                   if (showHeader) _header(b),
                   const SizedBox(height: 16),
                   // Staggered entrance, top to bottom — the page settles
@@ -472,29 +503,14 @@ class TodayBriefBody extends StatelessWidget {
   }
 
   /// Offers Undo for a moment; [commit] runs only if it was not taken.
+  /// The toast closes on its own after 4 s (with nowhere to show it, the
+  /// change simply commits).
   static void _withUndo(BuildContext context, String message,
       {required VoidCallback undo, required Future<void> Function() commit}) {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (messenger == null) {
-      commit(); // nowhere to show Undo — behave as before
-      return;
-    }
-    messenger.hideCurrentSnackBar();
-    messenger
-        .showSnackBar(SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () {
-              HapticFeedback.selectionClick();
-              undo();
-            },
-          ),
-        ))
-        .closed
-        .then((reason) {
+    AppFeedback.showUndo(context, message, onUndo: () {
+      HapticFeedback.selectionClick();
+      undo();
+    }).then((reason) {
       if (reason != SnackBarClosedReason.action) commit();
     });
   }
@@ -915,8 +931,7 @@ class _ReminderComposerState extends State<_ReminderComposer> {
     } catch (_) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Couldn't save that reminder — check connection.")));
+        AppFeedback.show("Couldn't save that reminder — check connection.", context: context);
       }
     }
   }

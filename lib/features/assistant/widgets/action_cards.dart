@@ -20,6 +20,7 @@ import '../../../services/api_service.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
 import 'package:video_player/video_player.dart';
+import '../../../services/app_feedback.dart';
 
 /// Shared glass card chrome for the dark assistant screen.
 class _Glass extends StatelessWidget {
@@ -442,9 +443,7 @@ class _DocumentCardState extends State<DocumentCard> {
       await shareDocumentFile(document);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't prepare that to send.")),
-        );
+        AppFeedback.show("Couldn't prepare that to send.", context: context);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -644,28 +643,25 @@ class ScriptCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () => Share.share(content, subject: title),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child:
-                        Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
-                  ),
+                // 44 dp targets (were ~27 dp), with names for screen readers.
+                IconButton(
+                  tooltip: 'Share',
+                  constraints:
+                      const BoxConstraints(minWidth: 44, minHeight: 44),
+                  padding: EdgeInsets.zero,
+                  onPressed: () => Share.share(content, subject: title),
+                  icon: Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
                 ),
-                if (onClose != null) ...[
-                  const SizedBox(width: 6),
-                  InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: onClose,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(Icons.close_rounded,
-                          color: Neon.textLo,
-                          size: 19),
-                    ),
+                if (onClose != null)
+                  IconButton(
+                    tooltip: 'Close',
+                    constraints:
+                        const BoxConstraints(minWidth: 44, minHeight: 44),
+                    padding: EdgeInsets.zero,
+                    onPressed: onClose,
+                    icon: Icon(Icons.close_rounded,
+                        color: Neon.textLo, size: 19),
                   ),
-                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -719,9 +715,7 @@ class _TextReaderPage extends StatelessWidget {
             tooltip: 'Copy',
             onPressed: () {
               Clipboard.setData(ClipboardData(text: content));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Copied')),
-              );
+              AppFeedback.copied(context);
             },
           ),
           IconButton(
@@ -814,9 +808,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
       );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't prepare that to share.")),
-        );
+        AppFeedback.show("Couldn't prepare that to share.", context: context);
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -935,28 +927,25 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       child: CircularProgressIndicator(
                           color: Neon.cyan, strokeWidth: 2),
                     )
-                  : InkWell(
-                      borderRadius: BorderRadius.circular(10),
-                      onTap: _share,
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(Icons.share_rounded,
-                            color: Neon.cyan, size: 20),
-                      ),
+                  : IconButton(
+                      tooltip: 'Share',
+                      constraints:
+                          const BoxConstraints(minWidth: 44, minHeight: 44),
+                      padding: EdgeInsets.zero,
+                      onPressed: _share,
+                      icon: Icon(Icons.share_rounded,
+                          color: Neon.cyan, size: 20),
                     ),
-              if (widget.onClose != null) ...[
-                const SizedBox(width: 6),
-                InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: widget.onClose,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.close_rounded,
-                        color: Neon.textLo,
-                        size: 20),
-                  ),
+              if (widget.onClose != null)
+                IconButton(
+                  tooltip: 'Close',
+                  constraints:
+                      const BoxConstraints(minWidth: 44, minHeight: 44),
+                  padding: EdgeInsets.zero,
+                  onPressed: widget.onClose,
+                  icon: Icon(Icons.close_rounded,
+                      color: Neon.textLo, size: 20),
                 ),
-              ],
             ],
           ),
         ],
@@ -1029,9 +1018,7 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
       await shareDocumentFile(_current);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't prepare that to send.")),
-        );
+        AppFeedback.show("Couldn't prepare that to send.", context: context);
       }
     } finally {
       if (mounted) setState(() => _sharing = false);

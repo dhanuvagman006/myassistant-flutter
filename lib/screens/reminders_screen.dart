@@ -8,6 +8,7 @@ import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../models/reminder.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 import '../services/brief_service.dart';
 import '../services/notification_service.dart';
 
@@ -60,19 +61,20 @@ class _RemindersScreenState extends State<RemindersScreen> {
     unawaited(ReminderNotifications.instance.sync());
   }
 
+  /// The change is shown at once and SENT when the Undo toast closes — it
+  /// now closes on its own after 4 s (an action toast used to stay until
+  /// swiped, holding the change back and every later toast behind it).
   void _snack(String text, {VoidCallback? undo, Future<void> Function()? commit}) {
-    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
-    final bar = messenger.showSnackBar(SnackBar(
-      content: Text(text),
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 4),
-      action: undo == null ? null : SnackBarAction(label: 'Undo', onPressed: undo),
-    ));
-    if (commit != null) {
-      bar.closed.then((r) {
-        if (r != SnackBarClosedReason.action) commit().then((_) => _afterChange());
-      });
+    if (undo == null) {
+      AppFeedback.show(text, context: context, tone: FeedbackTone.success);
+      if (commit != null) commit().then((_) => _afterChange());
+      return;
     }
+    AppFeedback.showUndo(context, text, onUndo: undo).then((r) {
+      if (r != SnackBarClosedReason.action && commit != null) {
+        commit().then((_) => _afterChange());
+      }
+    });
   }
 
   Reminder _with(Reminder r, {required bool done}) => Reminder(
@@ -126,7 +128,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _create,
         backgroundColor: Neon.violet,
-        foregroundColor: Colors.white,
+        foregroundColor: Neon.onAccent,
         icon: const Icon(Icons.add_rounded),
         label: const Text('New reminder'),
       ),

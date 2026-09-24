@@ -38,7 +38,7 @@ class _StocksScreenState extends State<StocksScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: appleAppBar(context, 'Market & Stocks Hub'),
+      appBar: appleAppBar(context, 'Markets'),
       body: SafeArea(child: _body()),
     );
   }
@@ -85,7 +85,7 @@ class _StocksScreenState extends State<StocksScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'For information only — not investment advice. Hari is not a '
+                    'For information only — not investment advice. This app is not a '
                     'SEBI-registered adviser, and prices may be delayed. Do your own '
                     'research or consult a registered adviser before you invest.',
                     style: TextStyle(color: Neon.textLo, fontSize: 12.5, height: 1.45),

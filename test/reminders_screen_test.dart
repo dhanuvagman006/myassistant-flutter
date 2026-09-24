@@ -59,5 +59,15 @@ void main() {
     await tester.pump();
     expect(find.text('Done — nice.'), findsOneWidget);
     expect(find.text('Undo'), findsOneWidget);
+
+    // It closes on its own (an action toast used to stay until swiped,
+    // holding the change and every later toast behind it).
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Undo'), findsNothing);
+    expect(find.text('Done — nice.'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
   });
 }

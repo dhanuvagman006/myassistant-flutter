@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/automation_runner.dart';
+import '../services/app_feedback.dart';
 
 /// "DO IT FOR ME" — the one-time permission, asked for honestly.
 ///
@@ -76,8 +77,7 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
     setState(() => _triedOnce = true);
     final ok = await _device.openSettings();
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Open Settings → Accessibility → Installed apps.')));
+      AppFeedback.show('Open Settings → Accessibility → Installed apps.', context: context);
     }
   }
 
@@ -124,7 +124,8 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
       backgroundColor: Neon.bg,
       appBar: appleAppBar(context, 'Do it for me'),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+            16, 8, 16, 32 + MediaQuery.paddingOf(context).bottom),
         children: [
           Container(
             padding: const EdgeInsets.all(16),

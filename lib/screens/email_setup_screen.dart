@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
@@ -59,7 +60,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
       } else if (goog?['connected'] == true) {
         _connected = true;
         _method = 'google';
-        _connectedAddress = 'your Gmail';
+        _connectedAddress = 'your mailbox';
       } else {
         _connected = false;
         _method = '';
@@ -79,12 +80,12 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         _connected = true;
         _justLinked = true;
         _method = 'google';
-        _connectedAddress = 'your Gmail';
+        _connectedAddress = 'your mailbox';
       });
     } on AuthException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
-      setState(() => _error = 'Google linking failed — try again.');
+      setState(() => _error = "Couldn't link your account — try again.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -139,7 +140,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         title: Text('Disconnect mail?', style: TextStyle(color: Neon.textHi)),
         content: Text(
           isGoogle
-              ? 'This unlinks your Google account — mail AND calendar '
+              ? 'This unlinks your account — mail AND calendar '
                   'features stop until you link it again.'
               : 'Your saved credentials are deleted from the server.',
           style: TextStyle(color: Neon.textLo),
@@ -150,8 +151,8 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
               child: const Text('Keep it')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: const Text('Disconnect',
-                  style: TextStyle(color: Color(0xFFFF8585)))),
+              child: Text('Disconnect',
+                  style: TextStyle(color: Neon.error))),
         ],
       ),
     );
@@ -181,7 +182,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(backgroundColor: Neon.bg, title: const Text('Email')),
+      appBar: appleAppBar(context, 'Email'),
       body: !_loaded
           ? Center(
               child: CircularProgressIndicator(
@@ -196,7 +197,8 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
 
   Widget _connectView() {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 32),
+      padding: EdgeInsets.fromLTRB(
+          24, 18, 24, 32 + MediaQuery.paddingOf(context).bottom),
       children: [
         Reveal(
           child: Center(
@@ -281,7 +283,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         const SizedBox(height: 10),
         Reveal(
           delayMs: 160,
-          child: Text('Works with Gmail — nothing to type.',
+          child: Text('One tap — nothing to type.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Neon.textDim, fontSize: 12)),
         ),
@@ -289,8 +291,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
           const SizedBox(height: 14),
           Text(_error,
               textAlign: TextAlign.center,
-              style:
-                  const TextStyle(color: Color(0xFFFF8585), fontSize: 12.5)),
+              style: TextStyle(color: Neon.error, fontSize: 12.5)),
         ],
         const SizedBox(height: 26),
         Reveal(
@@ -328,7 +329,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
               hint: 'App password from your mail provider', obscure: true),
           const SizedBox(height: 8),
           Text(
-            'Outlook, Yahoo, Zoho and company mailboxes: create an app '
+            'Other mail services and company mailboxes: create an app '
             'password in the provider\'s security settings and paste it '
             'here once.',
             style: TextStyle(color: Neon.textDim, fontSize: 12, height: 1.5),
@@ -345,14 +346,14 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                   borderRadius: BorderRadius.circular(Neon.rPill),
                 ),
                 child: _busy
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.black))
-                    : const Text('Connect mailbox',
+                            strokeWidth: 2, color: Neon.onAccent))
+                    : Text('Connect mailbox',
                         style: TextStyle(
-                            color: Colors.black,
+                            color: Neon.onAccent,
                             fontWeight: FontWeight.w800,
                             fontSize: 14.5)),
               ),
@@ -400,7 +401,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         const SizedBox(height: 4),
         Text(
             _method == 'google'
-                ? 'Gmail is linked. Ask me to write a mail — it lands here.'
+                ? 'Your mailbox is linked. Ask me to write a mail — it lands here.'
                 : '$_connectedAddress is linked. Ask me to write a mail — it lands here.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Neon.textLo, fontSize: 13.5)),
@@ -411,7 +412,7 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
         const EmailSentList(),
         const SizedBox(height: 22),
         Center(
-          child: Text('Tap the mic and say who to write to',
+          child: Text('Go back, tap the mic and say who to write to',
               style: TextStyle(color: Neon.textDim, fontSize: 12.5)),
         ),
         const SizedBox(height: 30),
@@ -426,9 +427,9 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
                 borderRadius: BorderRadius.circular(Neon.rPill),
                 border: Border.all(color: Neon.line),
               ),
-              child: const Text('Disconnect',
+              child: Text('Disconnect',
                   style: TextStyle(
-                      color: Color(0xFFFF8585),
+                      color: Neon.error,
                       fontWeight: FontWeight.w700,
                       fontSize: 13.5)),
             ),

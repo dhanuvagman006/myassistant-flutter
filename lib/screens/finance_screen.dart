@@ -55,16 +55,33 @@ class _FinanceScreenState extends State<FinanceScreen> {
     return Scaffold(
       backgroundColor: Neon.bg,
       appBar: appleAppBar(context, 'Finance', actions: [
-        TextButton.icon(
-          onPressed: _planWithHari,
-          icon: Icon(Icons.auto_awesome_rounded,
-              size: 16, color: AppleColors.blue),
-          label: Text('Plan with ${AssistantIdentity.name}',
-              style: TextStyle(
-                  color: AppleColors.blue,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600)),
-        ),
+        // Large text or a long assistant name used to push this past the
+        // app bar's edge: capped in width, the label shortens instead, and
+        // at very large text only the icon (with its tooltip) remains.
+        if (MediaQuery.textScalerOf(context).scale(10) > 13)
+          IconButton(
+            tooltip: 'Plan with ${AssistantIdentity.name}',
+            onPressed: _planWithHari,
+            icon: Icon(Icons.auto_awesome_rounded,
+                size: 20, color: AppleColors.blue),
+          )
+        else
+          ConstrainedBox(
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width * 0.42),
+            child: TextButton.icon(
+              onPressed: _planWithHari,
+              icon: Icon(Icons.auto_awesome_rounded,
+                  size: 16, color: AppleColors.blue),
+              label: Text('Plan with ${AssistantIdentity.name}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: AppleColors.blue,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ),
       ]),
       floatingActionButton: FloatingActionButton(
         backgroundColor: Neon.textHi,
@@ -247,6 +264,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   final _outstanding = TextEditingController();
   bool _saving = false;
 
+  /// Said inside the dialog: a toast would land behind it, unseen.
+  String? _problem;
+
   @override
   void dispose() {
     for (final c in [_name, _amount, _rate, _day, _outstanding]) {
@@ -257,8 +277,14 @@ class _AddItemDialogState extends State<_AddItemDialog> {
 
   Future<void> _save() async {
     final amount = double.tryParse(_amount.text.trim());
-    if (_name.text.trim().isEmpty || amount == null || amount <= 0) return;
-    setState(() => _saving = true);
+    if (_name.text.trim().isEmpty || amount == null || amount <= 0) {
+      setState(() => _problem = 'Add a name and an amount above zero.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _problem = null;
+    });
     final ok = await ApiService.addFinanceItem({
       'kind': _kind,
       'name': _name.text.trim(),
@@ -274,10 +300,10 @@ class _AddItemDialogState extends State<_AddItemDialog> {
     if (ok) {
       Navigator.of(context).pop(true);
     } else {
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't save — check the values.")),
-      );
+      setState(() {
+        _saving = false;
+        _problem = "Couldn't save — check the values and your connection.";
+      });
     }
   }
 
@@ -350,6 +376,12 @@ class _AddItemDialogState extends State<_AddItemDialog> {
             if (isEmi) _field(_rate, 'Interest rate (% per year)'),
             _field(_day, 'Day of month it hits (1-31)'),
             if (isEmi) _field(_outstanding, 'Outstanding principal (₹)'),
+            if (_problem != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(_problem!,
+                    style: TextStyle(color: Neon.error, fontSize: 13)),
+              ),
           ],
         ),
       ),
@@ -361,7 +393,7 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-              backgroundColor: Neon.violet, foregroundColor: Colors.white),
+              backgroundColor: Neon.violet, foregroundColor: Neon.onAccent),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Saving…' : 'Save'),
         ),

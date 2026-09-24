@@ -373,14 +373,23 @@ class AssistantEngine extends ChangeNotifier {
     if (_liveSvc.typingMute == on) return;
     _liveSvc.typingMute = on;
     AppLog.add('live', on ? 'typing: mic paused' : 'typing done: mic back');
+    // The voice screen says so: "Listening…" while the mic is paused was
+    // the screen contradicting what was happening (2026-09-24, s5.png).
+    notifyListeners();
   }
+
+  /// The microphone is paused because the user is typing.
+  bool get micPausedForTyping => _liveSvc.typingMute;
 
   Future<void> sendTypedMessage(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
     if (liveActive) {
       // Their own words belong on screen: the server transcribes SPEECH,
-      // so nothing else would ever show what they typed.
+      // so nothing else would ever show what they typed. A typed message
+      // is its own turn — glued onto the previous caption it read as
+      // "uninstall instagramyes do it".
+      _capLastWasUser = false;
       _captionFrom('you', t);
       _liveSvc.sendText(t);
       _conversationEnded = isFarewell(t);
@@ -1550,6 +1559,13 @@ class AssistantEngine extends ChangeNotifier {
     // dropped at _drainSpeech, with no control anywhere on screen to
     // undo it, until the app was killed.
     if (speakerMuted) setSpeakerMuted(false);
+    // Typing pauses the mic; the pause never outlives the conversation (a
+    // field left focused kept the NEXT session silently deaf).
+    _liveSvc.typingMute = false;
+    // Web results belong to the conversation they answered — with no ✕
+    // they used to sit over every tab until the next question.
+    searchQuery = null;
+    searchResults = const [];
     translatorActive = false; // interpreter never outlives the screen
     _clearCaption();
     activityLabel.value = null;
@@ -2441,7 +2457,8 @@ class AssistantEngine extends ChangeNotifier {
               // offers it rather than leaving the user to guess.
               if (reason == 'needs_alarm_permission') {
                 AppFeedback.toast(
-                    'This version cannot set alarms — update the app to enable it.');
+                    'This version cannot set alarms — update the app to enable it.',
+                    spoken: true);
                 _tellModel(
                     '[SYSTEM] ERROR: this build of the app is not permitted to set '
                     'alarms or timers, so NOTHING was set. Tell them in one line '
@@ -2449,7 +2466,7 @@ class AssistantEngine extends ChangeNotifier {
                     'the installer on screen. Do NOT tell them to hunt through '
                     'settings — there is no permission switch for this one.');
               } else if (reason == 'no_clock_app') {
-                AppFeedback.toast('No clock app on this phone.');
+                AppFeedback.toast('No clock app on this phone.', spoken: true);
                 _tellModel(
                     '[SYSTEM] ERROR: this phone has no clock app that can handle '
                     '"$action", so NOTHING was set. Say that plainly.');
@@ -2549,7 +2566,8 @@ class AssistantEngine extends ChangeNotifier {
                         .invokeMethod<bool>('autoInstall', {'pkg': pkg, 'name': want})
                         .catchError((_) => false);
                     if (auto == true) {
-                      AppFeedback.toast('Installing $want…');
+                      AppFeedback.toast('Installing $want…',
+                          tone: FeedbackTone.progress, spoken: true);
                       _tellModel(
                           '[SYSTEM] "$want" is not installed. Its page in the app '
                           'store is open and you are pressing Install for them now; '
@@ -2558,7 +2576,8 @@ class AssistantEngine extends ChangeNotifier {
                           'never claim it is already installed.');
                       return;
                     }
-                    AppFeedback.toast("$want isn't installed — tap Install");
+                    AppFeedback.toast("$want isn't installed — tap Install",
+                        spoken: true);
                     _tellModel(
                         '[SYSTEM] "$want" is not installed, so its page in the app '
                         'store is now open. Say in ONE short sentence that they '
@@ -2574,7 +2593,8 @@ class AssistantEngine extends ChangeNotifier {
                 }).catchError((_) {});
                 return;
               }
-              AppFeedback.toast('$want isn\'t installed on this phone.');
+              AppFeedback.toast('$want isn\'t installed on this phone.',
+                  spoken: true);
               _reportDeviceFailure('open_named_app',
                   target: want, reason: 'no app by that name is installed');
               _tellModel(
@@ -2715,7 +2735,8 @@ class AssistantEngine extends ChangeNotifier {
             // The tool has already spoken by the time this runs, so the
             // only honest move left is to correct it out loud.
             AppLog.add('update', 'no context to show the update sheet');
-            AppFeedback.toast('Open the app first, then ask me to update.');
+            AppFeedback.toast('Open the app first, then ask me to update.',
+                spoken: liveActive);
             if (liveActive) {
               _liveSvc.sendText(
                   '[SYSTEM] ERROR: the update screen could NOT be opened on '
@@ -3159,7 +3180,8 @@ class AssistantEngine extends ChangeNotifier {
         // Visible proof on WHATEVER screen the user is on — the scan from
         // the Home tab used to end with a voice line and nothing else,
         // which read as "nothing was saved".
-        AppFeedback.toast(toast);
+        AppFeedback.toast(toast,
+            tone: FeedbackTone.success, spoken: liveActive);
         if (liveActive) {
           // Prime the live model: it confirms the save itself AND knows to
           // use get_last_document for follow-ups ("what does it say?").
@@ -3180,10 +3202,11 @@ class AssistantEngine extends ChangeNotifier {
         final why = e.message.isNotEmpty
             ? e.message
             : 'the server refused the upload (${e.statusCode})';
-        AppFeedback.toast("Couldn't save the scan — $why.");
+        AppFeedback.toast("Couldn't save the scan — $why.", spoken: true);
         await _sayFromCamera("I couldn't save that — $why. Nothing was saved.");
       } catch (_) {
-        AppFeedback.toast("Couldn't save the scan — check your connection.");
+        AppFeedback.toast("Couldn't save the scan — check your connection.",
+            spoken: true);
         await _sayFromCamera(
             "I couldn't save that — please check your connection and try again. Nothing was saved.");
       }
@@ -3259,7 +3282,9 @@ class AssistantEngine extends ChangeNotifier {
     if (!await CallService.instance.ensurePermission()) {
       AppFeedback.toast(
           'Contacts permission is off — the call to "$name" was NOT placed. '
-          'Enable Contacts in Settings.');
+          'Enable Contacts in Settings.',
+          tone: FeedbackTone.error,
+          spoken: true);
       if (liveActive) {
         _liveSvc.sendText(
             '[SYSTEM] ERROR: Contacts permission is turned off on this '
@@ -3325,7 +3350,8 @@ class AssistantEngine extends ChangeNotifier {
     if (matches.isEmpty) {
       // Tell whichever brain is running, so the assistant says it instead
       // of the user waiting on a call that can never come.
-      AppFeedback.toast('No contact named "$name" found — no call placed.');
+      AppFeedback.toast('No contact named "$name" found — no call placed.',
+          spoken: true);
       if (liveActive) {
         _liveSvc.sendText(
             '[SYSTEM] ERROR: No contact named "$name" was found on the '
@@ -3466,7 +3492,7 @@ class AssistantEngine extends ChangeNotifier {
     if (report == null && !ok) {
       report =
           '[SYSTEM] ERROR: the phone could not perform "$action" — tell me plainly.';
-      AppFeedback.toast("Couldn't do that on this phone.");
+      AppFeedback.toast("Couldn't do that on this phone.", spoken: true);
       _reportDeviceFailure('phone_control', target: action,
           reason: 'the phone refused or could not do it');
     }
@@ -3638,7 +3664,8 @@ class AssistantEngine extends ChangeNotifier {
       final fail =
           await CallService.instance.whatsappCall(contact.phone, video: video);
       if (fail == null) {
-        AppFeedback.toast('WhatsApp ${video ? 'video ' : ''}call to $who…');
+        AppFeedback.toast('WhatsApp ${video ? 'video ' : ''}call to $who…',
+            tone: FeedbackTone.progress);
         await _reportCallResult(who, 'connected');
         if (liveActive) {
           _liveSvc.sendText('[SYSTEM] WhatsApp is placing the '
@@ -3647,7 +3674,7 @@ class AssistantEngine extends ChangeNotifier {
         return;
       }
       final why = CallService.whatsappFailure(fail, who);
-      AppFeedback.toast(why);
+      AppFeedback.toast(why, tone: FeedbackTone.error, spoken: true);
       await _reportCallResult(who, 'failed', reason: fail);
       if (liveActive) {
         _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
@@ -3673,7 +3700,8 @@ class AssistantEngine extends ChangeNotifier {
           .callViaApp(contact.phone, app, video: video);
       if (res.reason == null) {
         final shown = res.app ?? app;
-        AppFeedback.toast('$shown ${video ? 'video ' : ''}call to $who…');
+        AppFeedback.toast('$shown ${video ? 'video ' : ''}call to $who…',
+            tone: FeedbackTone.progress);
         await _reportCallResult(who, 'connected');
         if (liveActive) {
           _liveSvc.sendText('[SYSTEM] $shown is placing the '
@@ -3683,7 +3711,7 @@ class AssistantEngine extends ChangeNotifier {
       }
       final why = CallService.appCallFailure(res.reason!, who, app,
           available: res.available);
-      AppFeedback.toast(why);
+      AppFeedback.toast(why, tone: FeedbackTone.error, spoken: true);
       await _reportCallResult(who, 'failed', reason: res.reason ?? 'failed');
       if (liveActive) {
         _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
@@ -3702,7 +3730,8 @@ class AssistantEngine extends ChangeNotifier {
       ok = false;
     }
     if (!ok) {
-      AppFeedback.toast('The phone could not start the call to $who.');
+      AppFeedback.toast('The phone could not start the call to $who.',
+          tone: FeedbackTone.error, spoken: liveActive);
       await _reportCallResult(who, 'failed',
           reason: 'the phone could not start the call');
       if (liveActive) {
@@ -3944,7 +3973,8 @@ class AssistantEngine extends ChangeNotifier {
       // never open a browser as a consolation prize.
       final action =
           RegExp(r'action=([^;]+);').firstMatch(url)?.group(1) ?? 'that';
-      AppFeedback.toast("This phone has no app that can do that.");
+      AppFeedback.toast("This phone has no app that can do that.",
+          tone: FeedbackTone.error, spoken: true);
       // NOTHING OPENED, SO NOBODY LEFT. The flag is set optimistically
       // before the launch is attempted; left true on a dead end it made
       // the NEXT ordinary interruption — a notification, a permission
@@ -3976,7 +4006,8 @@ class AssistantEngine extends ChangeNotifier {
     }
     if (!ok) {
       AppFeedback.toast(
-          'Could not open the app for that — nothing was ordered or booked.');
+          'Could not open the app for that — nothing was ordered or booked.',
+          spoken: true);
       _leftForExternalApp = false; // the app never went anywhere
       // The server recorded this as done the moment it dispatched it. Tell
       // it the truth so the log stops claiming a success, and so the next
@@ -4171,6 +4202,14 @@ class AssistantEngine extends ChangeNotifier {
   void dismissGeneratedImage() {
     generatedImage = null;
     generatedImagePrompt = '';
+    notifyListeners();
+  }
+
+  /// User closed the web results.
+  void dismissSearchResults() {
+    if (searchResults.isEmpty && searchQuery == null) return;
+    searchQuery = null;
+    searchResults = const [];
     notifyListeners();
   }
 

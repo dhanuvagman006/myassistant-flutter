@@ -1,7 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../design/dock_metrics.dart';
+import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/widgets/action_cards.dart';
+import '../services/app_feedback.dart';
+import 'inline_voice.dart' show InlineCaptionOverlay, voiceSessionOnScreen;
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  THE CARDS A TURN PRODUCES, ON HOME.
@@ -33,11 +39,15 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
   void initState() {
     super.initState();
     _engine.addListener(_onChange);
+    AppFeedback.changes.addListener(_onChange);
+    InlineCaptionOverlay.typeBarReach.addListener(_onChange);
   }
 
   @override
   void dispose() {
     _engine.removeListener(_onChange);
+    AppFeedback.changes.removeListener(_onChange);
+    InlineCaptionOverlay.typeBarReach.removeListener(_onChange);
     super.dispose();
   }
 
@@ -47,20 +57,38 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final child = _card();
     // Nothing to show is the common case: stay out of the way entirely so
     // the dock and the tab underneath keep every pixel and every tap.
+    final m = MediaQuery.of(context);
+    // WHERE THE CARD SITS. It used to add the dock twice (padding.bottom,
+    // then a SafeArea on top of it), so it floated a whole dock-height too
+    // high and a tall card ran off the top of a small phone. Now: just
+    // above the mic — or, during a voice session, just above the session's
+    // text box, so the two never overlap. A toast showing: above the toast.
+    final reach = InlineCaptionOverlay.typeBarReach.value;
+    final base = voiceSessionOnScreen(_engine)
+        ? (reach > 0 ? reach + 10 : Dock.clearance(context, gap: 12) + 80)
+        : Dock.clearance(context, gap: 14);
+    final bottom = AppFeedback.clearOfToast(base);
+    // Clear of the status bar and the activity pill under it — and of the
+    // keyboard, which this screen area ends at when it is up (the body's
+    // own MediaQuery no longer reports it, so ask the window).
+    final view = View.of(context);
+    final kb = view.viewInsets.bottom / view.devicePixelRatio;
+    final room = math.max(
+        0.0, m.size.height - kb - bottom - m.viewPadding.top - 64);
+    final child = _card(room);
     if (child == null) return const SizedBox.shrink();
-
-    final bottom = MediaQuery.of(context).padding.bottom + 84; // above the dock
-    return Positioned(
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
       left: 0,
       right: 0,
       bottom: bottom,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: room),
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
             child: child,
@@ -73,7 +101,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
   /// Only ever ONE card. When a turn produces several things the most
   /// urgent wins — a decision the user has to make outranks a result they
   /// only need to read.
-  Widget? _card() {
+  Widget? _card(double room) {
     final e = _engine;
 
     if (e.pendingConfirmation != null) {
@@ -94,7 +122,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
       final h = MediaQuery.of(context).size.height;
       return ConstrainedBox(
         key: const ValueKey('script'),
-        constraints: BoxConstraints(maxHeight: h * 0.55),
+        constraints: BoxConstraints(maxHeight: math.min(h * 0.55, room)),
         child: ScriptCard(
           title: e.presentedTitle ?? 'For you',
           content: e.presentedText!,
@@ -103,18 +131,65 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
       );
     }
 
+    // WEB RESULTS: a labelled stack with its own ✕, capped in height and
+    // scrollable — three bare cards with no way to close them used to sit
+    // over the orb and the captions until the next question.
     if (e.searchResults.isNotEmpty) {
       final results = e.searchResults.take(3).toList(growable: false);
-      return Column(
+      final h = MediaQuery.of(context).size.height;
+      return ConstrainedBox(
         key: const ValueKey('search'),
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final r in results)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: SearchResultCard(result: r),
+        constraints: BoxConstraints(maxHeight: math.min(h * 0.45, room)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const SizedBox(width: 6),
+                Icon(Icons.public_rounded, size: 15, color: Neon.textLo),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Sources',
+                    style: TextStyle(
+                        color: Neon.textLo,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close sources',
+                  constraints:
+                      const BoxConstraints(minWidth: 44, minHeight: 44),
+                  padding: EdgeInsets.zero,
+                  onPressed: e.dismissSearchResults,
+                  icon: Icon(Icons.close_rounded,
+                      size: 18, color: Neon.textHi),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Neon.surfaceHigh,
+                  ),
+                ),
+              ],
             ),
-        ],
+            const SizedBox(height: 4),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final r in results)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: SearchResultCard(result: r),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -123,7 +198,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
       final h = MediaQuery.of(context).size.height;
       return ConstrainedBox(
         key: ValueKey('image-${e.generatedImage!.id}'),
-        constraints: BoxConstraints(maxHeight: h * 0.46),
+        constraints: BoxConstraints(maxHeight: math.min(h * 0.46, room)),
         child: GeneratedImageCard(
           document: e.generatedImage!,
           prompt: '',

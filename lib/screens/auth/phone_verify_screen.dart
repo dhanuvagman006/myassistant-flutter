@@ -223,7 +223,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                           onPressed: null,
                           style: FilledButton.styleFrom(
                             backgroundColor: Neon.violet,
-                            foregroundColor: Colors.white,
+                            foregroundColor: Neon.onAccent,
                             minimumSize: const Size.fromHeight(50),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),

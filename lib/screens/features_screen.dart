@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 
@@ -17,7 +18,7 @@ class FeaturesScreen extends StatelessWidget {
     ('Call notes', 'Recorded calls analysed — ask about any call, any fact'),
     ('Meetings & reminders', 'From calls and documents, straight onto your calendar'),
     ('Document understanding', 'Share a timetable, sheet or deck — it reads them all'),
-    ('Documents you can send', 'Ask for a PDF, PowerPoint, Word file or Excel sheet — it writes the real file'),
+    ('Documents you can send', 'Ask for a PDF, a slide deck, a document or a spreadsheet — it writes the real file'),
     ('Email', 'Reads and sends your mail when you ask'),
     ('Daily brief', 'Agenda, promises, weather and news in one glance'),
     ('Phone control', 'Open apps, call contacts, set timers — by voice'),
@@ -32,21 +33,22 @@ class FeaturesScreen extends StatelessWidget {
 
   static const _planned = <(String, String)>[
     ('Hands-free wake word', 'Just say the name — no tap needed'),
-    ('iPhone version', 'The same assistant on iOS'),
-    ('Play Store release', 'Install and update from Google Play'),
+    ('More phones', 'The same assistant on other kinds of phone'),
+    ('App store release', 'Install and update from the app store'),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Neon.bg,
-      appBar: AppBar(backgroundColor: Neon.bg, title: const Text('Features')),
+      appBar: appleAppBar(context, 'Features'),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+        padding: EdgeInsets.fromLTRB(
+            20, 8, 20, 32 + MediaQuery.paddingOf(context).bottom),
         children: [
           _section('LIVE NOW', Neon.lime, Icons.check_circle_rounded, _live, 0),
           const SizedBox(height: 22),
-          _section('IN PROGRESS', const Color(0xFFFFB020),
+          _section('IN PROGRESS', Neon.warning,
               Icons.build_circle_rounded, _building, 120),
           const SizedBox(height: 22),
           _section('COMING SOON', Neon.violet, Icons.schedule_rounded,
