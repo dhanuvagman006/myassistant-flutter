@@ -73,7 +73,10 @@ echo "→ changelog: $CL_LINES lines, longest $CL_LONGEST chars — fits"
 # embedded versionCode. Publish 24 while the file still says 23 and every
 # installed app downloads ~200 MB, installs it, restarts still saying 23,
 # and starts over — a loop nothing breaks. Cheap to check, so check.
-AAPT="$(ls "$HOME"/Android/Sdk/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"
+# Windows keeps the SDK under %LOCALAPPDATA% and names it aapt2.exe; with
+# pipefail a failed `ls` used to end the script right here, silently.
+AAPT="$( { ls "$HOME"/Android/Sdk/build-tools/*/aapt2 \
+  "${LOCALAPPDATA:-/nonexistent}"/Android/Sdk/build-tools/*/aapt2.exe 2>/dev/null || true; } | sort -V | tail -1)"
 if [ -n "$AAPT" ]; then
   EMBEDDED="$("$AAPT" dump badging "$APK" 2>/dev/null |
     sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)"
