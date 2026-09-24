@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../design/neon_tokens.dart';
 
@@ -37,6 +39,8 @@ class VoiceOrb extends StatefulWidget {
     required this.size,
     this.mood = OrbMood.idle,
     this.level = 0,
+    this.levelListenable,
+    this.active = true,
   });
 
   /// The sphere's diameter. The backdrop is drawn by [VoiceOrbBackdrop].
@@ -46,75 +50,165 @@ class VoiceOrb extends StatefulWidget {
   /// 0..1 — mic loudness while listening, voice loudness while speaking.
   final double level;
 
+  /// The same loudness as a live value, read on every frame instead of
+  /// [level]: the orb then follows the voice without the screen around it
+  /// rebuilding for every mic reading.
+  final ValueListenable<double>? levelListenable;
+
+  /// False while the screen the orb lives on is hidden. The voice
+  /// session's overlay stays built between sessions (so opening it is one
+  /// cheap frame, not a whole screen built from nothing), and a hidden orb
+  /// must not tick.
+  final bool active;
+
   @override
   State<VoiceOrb> createState() => _VoiceOrbState();
 }
 
+/// What the sphere's painter reads on every frame. A ticker changes it
+/// and the painter repaints from it directly — no widget is rebuilt and
+/// nothing is laid out for a frame of the orb.
+class _SphereMotion extends ChangeNotifier {
+  /// 0..1 round one slow six-second breath (and the inner light's orbit).
+  double phase = 0;
+
+  /// The voice, chased (see [_VoiceOrbState._onTick]).
+  double glow = 0;
+
+  /// The extra swell the voice gives the sphere; 0 at rest.
+  double swell = 0;
+
+  void changed() => notifyListeners();
+}
+
 class _VoiceOrbState extends State<VoiceOrb>
     with SingleTickerProviderStateMixin {
-  /// One slow breath, always running. TickerMode stops it off-screen.
-  late final AnimationController _t = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 6),
-  )..repeat();
+  /// One slow breath — ONLY while something is happening.
+  ///
+  /// It used to run forever. The voice overlay is built (invisible) behind
+  /// Home the whole time, so this one animation kept the idle Home drawing
+  /// 60 frames a second — measured on his phone, 2026-09-24. It now moves
+  /// while the orb listens, thinks or speaks, lets the glow settle when it
+  /// stops, and holds still at rest (hidden, connecting, or paused while
+  /// he types). Paused, not reset: it resumes from the same breath.
+  ///
+  /// PAINT-ONLY FRAMES. It used to rebuild its widgets every frame, and
+  /// on the voice screen that re-ran the screen's layout up to the page —
+  /// every frame of the session. The ticker now updates [_motion] and only
+  /// the sphere's own layer is repainted.
+  late final Ticker _ticker = createTicker(_onTick);
+  Duration _lastTick = Duration.zero;
+  final _SphereMotion _motion = _SphereMotion();
 
-  /// The level jumps frame to frame; following it directly makes the orb
-  /// judder. Chase it instead — fast to swell, slow to settle, the way a
-  /// physical thing with mass would move.
-  double _smooth = 0;
+  bool get _moving => widget.active && widget.mood != OrbMood.idle;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(VoiceOrb old) {
+    super.didUpdateWidget(old);
+    _sync();
+  }
+
+  /// Runs while it moves, or while the glow is still settling.
+  void _sync() {
+    if (!widget.active) {
+      // Hidden: hold still where it is (its screen is fading away) and
+      // start the next session from rest.
+      if (_ticker.isActive) _ticker.stop();
+      _motion
+        ..glow = 0
+        ..swell = 0;
+      return;
+    }
+    final run = _moving || _motion.glow > 0 || _motion.swell > 0;
+    if (run && !_ticker.isActive) {
+      _lastTick = Duration.zero;
+      _ticker.start();
+    } else if (!run && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
+
+  void _onTick(Duration elapsed) {
+    final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.1);
+    _lastTick = elapsed;
+    final m = _motion;
+    final moving = _moving;
+    // The level jumps frame to frame; following it directly makes the orb
+    // judder. Chase it instead — fast to swell, slow to settle, the way a
+    // physical thing with mass would move. At rest it settles to nothing.
+    final heard = widget.levelListenable?.value ?? widget.level;
+    final target = moving ? heard.clamp(0.0, 1.0) : 0.0;
+    // The rates were tuned per mic reading, about 30 a second; now they
+    // are applied per frame, scaled to the same pace.
+    final rate = target > m.glow ? 0.35 : 0.08;
+    m.glow += (target - m.glow) * (1 - math.pow(1 - rate, dt * 30));
+    if (target == 0 && m.glow < 0.002) m.glow = 0;
+    // Up to 7% more size when a voice is behind it.
+    m.swell = widget.mood == OrbMood.idle ? 0.0 : m.glow * 0.07;
+    if (moving) m.phase = (m.phase + dt / 6) % 1.0;
+    m.changed();
+    if (!moving && m.glow == 0 && m.swell == 0) _ticker.stop();
+  }
 
   @override
   void dispose() {
-    _t.dispose();
+    _ticker.dispose();
+    _motion.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final target = widget.level.clamp(0.0, 1.0);
-    _smooth += (target - _smooth) * (target > _smooth ? 0.35 : 0.08);
     final d = widget.size;
-
-    return AnimatedBuilder(
-      animation: _t,
-      builder: (_, __) {
-        // A 2% breath at rest; up to 7% more when a voice is behind it.
-        final breath = 1 + 0.02 * math.sin(_t.value * 2 * math.pi);
-        final swell = widget.mood == OrbMood.idle ? 0.0 : _smooth * 0.07;
-        return SizedBox(
-          width: d * 1.6, // room for the glow
-          height: d * 1.6,
-          child: Center(
-            child: Transform.scale(
-              scale: breath + swell,
-              child: CustomPaint(
-                size: Size(d, d),
-                painter: _SpherePainter(t: _t.value, glow: _smooth),
-                child: SizedBox(
-                  width: d,
-                  height: d,
-                  // The glyph is a child rather than a painted path so it
-                  // stays crisp at every density and matches the mic the
-                  // rest of the app already uses.
-                  child: Icon(Icons.mic_rounded,
-                      color: Colors.white, size: d * 0.36),
-                ),
-              ),
-            ),
+    // Its own layer: the sphere repaints every frame while it moves, and
+    // without a boundary each of those frames re-recorded the whole voice
+    // screen around it — captions, text box and all.
+    return RepaintBoundary(
+      child: SizedBox(
+        width: d * 1.6, // room for the glow
+        height: d * 1.6,
+        child: CustomPaint(
+          painter: _SpherePainter(
+            motion: _motion,
+            diameter: d,
+            violet: Neon.violet,
+            pink: Neon.pink,
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
 
 /// The sphere: lit from the upper left, shaded at the bottom, with a
-/// specular highlight, a soft teal glow around it, and the small sparkle
-/// the reference puts at its upper right.
+/// specular highlight, a soft teal glow around it, the small sparkle the
+/// reference puts at its upper right — and the microphone in it.
 class _SpherePainter extends CustomPainter {
-  _SpherePainter({required this.t, required this.glow});
-  final double t;
-  final double glow;
+  _SpherePainter({
+    required this.motion,
+    required this.diameter,
+    required this.violet,
+    required this.pink,
+  }) : super(repaint: motion);
+
+  final _SphereMotion motion;
+  final double diameter;
+
+  /// The accent pair, carried so a still orb repaints when it changes —
+  /// it no longer repaints every frame and would otherwise keep the old
+  /// colour.
+  final Color violet, pink;
+
+  /// The mic glyph, laid out once per painter. It is text in the icon
+  /// font, exactly as the Icon widget draws it, so it stays as crisp at
+  /// every density — painted here so it breathes with the sphere.
+  TextPainter? _glyph;
 
   /// THE REFERENCE'S LIGHTING, THE APP'S COLOUR.
   ///
@@ -139,14 +233,26 @@ class _SpherePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
-    final r = size.shortestSide / 2;
+    // The sphere is [diameter] across — less only when the box it was
+    // given is smaller still.
+    final r = math.min(diameter, size.shortestSide) / 2;
+    final t = motion.phase;
+    final glow = motion.glow;
+
+    // A 2% breath while it moves; up to 7% more when a voice is behind
+    // it. Round the centre, glyph included.
+    final scale = 1 + 0.02 * math.sin(t * 2 * math.pi) + motion.swell;
+    canvas.save();
+    canvas.translate(c.dx, c.dy);
+    canvas.scale(scale);
+    canvas.translate(-c.dx, -c.dy);
 
     // The light it throws, in the accent's own hue.
     canvas.drawCircle(
       c,
       r * 0.96,
       Paint()
-        ..color = Neon.violet.withValues(alpha: 0.22 + glow * 0.16)
+        ..color = violet.withValues(alpha: 0.22 + glow * 0.16)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16),
     );
 
@@ -163,10 +269,10 @@ class _SpherePainter extends CustomPainter {
             // The same four stops the reference has, re-hued: lit, body,
             // and a shaded underside pulled toward the gradient partner
             // so the ball carries the brand's violet-into-magenta.
-            _ramp(Neon.violet, 0.86),
-            _ramp(Neon.violet, 0.70),
-            _ramp(Neon.violet, 0.54, Neon.pink, 0.25),
-            _ramp(Neon.violet, 0.33, Neon.pink, 0.40),
+            _ramp(violet, 0.86),
+            _ramp(violet, 0.70),
+            _ramp(violet, 0.54, pink, 0.25),
+            _ramp(violet, 0.33, pink, 0.40),
           ],
           stops: const [0.0, 0.34, 0.72, 1.0],
         ).createShader(Rect.fromCircle(center: c, radius: r)),
@@ -181,8 +287,8 @@ class _SpherePainter extends CustomPainter {
           center: const Alignment(0.25, 0.85),
           radius: 0.8,
           colors: [
-            _ramp(Neon.violet, 0.20, Neon.pink, 0.3).withValues(alpha: 0.55),
-            _ramp(Neon.violet, 0.20, Neon.pink, 0.3).withValues(alpha: 0.0),
+            _ramp(violet, 0.20, pink, 0.3).withValues(alpha: 0.55),
+            _ramp(violet, 0.20, pink, 0.3).withValues(alpha: 0.0),
           ],
           stops: const [0.0, 1.0],
         ).createShader(Rect.fromCircle(center: c, radius: r)),
@@ -200,9 +306,9 @@ class _SpherePainter extends CustomPainter {
       r * 0.75,
       Paint()
         ..shader = RadialGradient(colors: [
-          Color.lerp(Neon.pink, Colors.white, 0.25)!
+          Color.lerp(pink, Colors.white, 0.25)!
               .withValues(alpha: 0.28 + glow * 0.30),
-          Neon.pink.withValues(alpha: 0),
+          pink.withValues(alpha: 0),
         ]).createShader(Rect.fromCircle(center: inner, radius: r * 0.75)),
     );
     canvas.restore();
@@ -228,6 +334,25 @@ class _SpherePainter extends CustomPainter {
         Paint()..color = Colors.white.withValues(alpha: 0.85));
     canvas.drawCircle(c + Offset(r * 0.30, -r * 0.26), r * 0.022,
         Paint()..color = Colors.white.withValues(alpha: 0.60));
+
+    // THE MICROPHONE, on top of it all.
+    final glyph = _glyph ??= TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.mic_rounded.codePoint),
+        style: TextStyle(
+          inherit: false,
+          color: Colors.white,
+          fontSize: diameter * 0.36,
+          fontFamily: Icons.mic_rounded.fontFamily,
+          package: Icons.mic_rounded.fontPackage,
+          height: 1.0,
+          leadingDistribution: TextLeadingDistribution.even,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    glyph.paint(canvas, c - Offset(glyph.width / 2, glyph.height / 2));
+    canvas.restore();
   }
 
   /// A four-point star with concave sides — the "sparkle" shape.
@@ -251,8 +376,14 @@ class _SpherePainter extends CustomPainter {
     canvas.drawPath(p, Paint()..color = color);
   }
 
+  // Frames repaint through [motion]; a new painter only when what it
+  // draws with changed.
   @override
-  bool shouldRepaint(_SpherePainter old) => old.t != t || old.glow != glow;
+  bool shouldRepaint(_SpherePainter old) =>
+      old.motion != motion ||
+      old.diameter != diameter ||
+      old.violet != violet ||
+      old.pink != pink;
 }
 
 /// The space behind the orb. Same two brand hues as before, rebuilt to
@@ -274,77 +405,167 @@ class VoiceOrbBackdrop extends StatefulWidget {
     required this.orbSize,
     this.mood = OrbMood.idle,
     this.level = 0,
+    this.levelListenable,
+    this.active = true,
   });
 
   final double orbSize;
   final OrbMood mood;
   final double level;
 
+  /// The loudness as a live value, read on every frame instead of [level]
+  /// (see [VoiceOrb.levelListenable]).
+  final ValueListenable<double>? levelListenable;
+
+  /// False while its screen is hidden: it holds still and costs nothing.
+  /// Turning true again (a new session) blooms it in afresh.
+  final bool active;
+
   @override
   State<VoiceOrbBackdrop> createState() => _VoiceOrbBackdropState();
 }
 
-class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
-    with SingleTickerProviderStateMixin {
-  /// Drives the repaints. Time is the ticker's total elapsed time, not the
-  /// controller's 0..1 value, so nothing jumps when the value wraps.
-  late final AnimationController _t = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 1),
-  )..repeat();
-  double _last = 0;
+/// Everything the backdrop's painter reads on every frame — changed by
+/// the ticker, repainted from directly (see [_SphereMotion]).
+class _BackdropScene extends ChangeNotifier {
+  /// Scene time. Integrated from the ticks rather than read off the
+  /// ticker, so a pause and a restart carry on from the same picture
+  /// instead of jumping back to zero.
+  double sec = 0;
 
   /// Integrated, not derived from the clock: the pulses speed up with the
   /// voice, and a speed change must never make them jump backwards.
-  double _pulse = 0;
+  double pulse = 0;
 
   // Everything the mood changes is eased in and out, never switched.
-  double _level = 0, _pulseAmt = 0, _think = 0;
+  double level = 0, pulseAmt = 0, think = 0;
+
+  /// 0..1 — the bloom-in (see [_VoiceOrbBackdropState._bloomDelay]).
+  double appear = 0;
+
+  void changed() => notifyListeners();
+}
+
+class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
+    with SingleTickerProviderStateMixin {
+  /// Drives the repaints — ONLY while something moves (see [_sync]).
+  ///
+  /// It used to be a controller repeating forever. It now runs while the
+  /// orb listens, thinks or speaks, and while the scene is still easing
+  /// (the bloom-in, or the pulses fading out as it comes to rest); then
+  /// it stops, and a resting session draws no frames at all. Each frame
+  /// is paint-only: the ticker changes [_scene], the painter repaints from
+  /// it, and no widget is rebuilt (see [_VoiceOrbState._ticker]).
+  late final Ticker _ticker = createTicker(_onTick);
+  Duration _lastTick = Duration.zero;
+  final _BackdropScene _scene = _BackdropScene();
+
+  /// THE LIGHTER FIRST FRAME (2026-09-24: opening the voice screen cost
+  /// one 67 ms frame). This is the most expensive thing on that screen —
+  /// an offscreen layer, forty-odd motes and two liquid rings — and it
+  /// used to be built and drawn in full on the very frame the screen
+  /// appeared. It now draws nothing for its first [_bloomDelay] seconds
+  /// and then fades in over [_bloomFade], through the layer it already
+  /// paints into, so the fade itself costs nothing extra: the ground, the
+  /// orb and the words arrive first, the aurora blooms in after them.
+  static const _bloomDelay = 0.12, _bloomFade = 0.35;
+  double _shownFor = 0;
+  double get _appear =>
+      ((_shownFor - _bloomDelay) / _bloomFade).clamp(0.0, 1.0);
+
+  bool get _moving => widget.active && widget.mood != OrbMood.idle;
+
+  /// At rest and fully faded in: nothing left to move.
+  bool get _settled =>
+      _appear >= 1 &&
+      _scene.pulseAmt < 0.01 &&
+      _scene.think < 0.01 &&
+      _scene.level < 0.01;
 
   @override
-  void dispose() {
-    _t.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _sync();
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _t,
-        builder: (_, __) {
-          final now = (_t.lastElapsedDuration?.inMicroseconds ?? 0) / 1e6;
-          final dt = (now - _last).clamp(0.0, 0.1);
-          _last = now;
-          double ease(double v, double to, double rate) =>
-              v + (to - v) * (1 - math.exp(-dt * rate));
+  void didUpdateWidget(VoiceOrbBackdrop old) {
+    super.didUpdateWidget(old);
+    // A new session: bloom in again. The screen was fully faded out while
+    // inactive, so starting from nothing is never seen as a blink.
+    if (widget.active && !old.active) {
+      _shownFor = 0;
+      _scene.appear = 0;
+    }
+    _sync();
+  }
 
-          final target = widget.level.clamp(0.0, 1.0);
-          _level = ease(_level, target, target > _level ? 18 : 4);
-          final mood = widget.mood;
-          _pulseAmt = ease(
-              _pulseAmt,
-              switch (mood) {
-                OrbMood.idle => 0.35,
-                OrbMood.thinking => 0.0,
-                _ => 1.0,
-              },
-              3);
-          _think = ease(_think, mood == OrbMood.thinking ? 1 : 0, 4);
-          // Pulses per second: a slow heartbeat at rest, quicker as the
-          // voice gets louder.
-          _pulse += dt * (0.30 + _level * 0.55);
+  void _sync() {
+    final run = widget.active && (_moving || !_settled);
+    if (run && !_ticker.isActive) {
+      _lastTick = Duration.zero;
+      _ticker.start();
+    } else if (!run && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
 
-          return CustomPaint(
-            painter: _BackdropPainter(
-              sec: now,
-              pulse: _pulse,
-              orbRadius: widget.orbSize / 2,
-              level: _level,
-              pulseAmt: _pulseAmt,
-              think: _think,
-            ),
-            child: const SizedBox.expand(),
-          );
-        },
+  void _onTick(Duration elapsed) {
+    final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.1);
+    _lastTick = elapsed;
+    double ease(double v, double to, double rate) =>
+        v + (to - v) * (1 - math.exp(-dt * rate));
+
+    final sc = _scene;
+    final moving = _moving;
+    // At rest the scene settles: no pulses, no voice in the ring — the
+    // way the orb itself rests while he types.
+    final heard = widget.levelListenable?.value ?? widget.level;
+    final target = moving ? heard.clamp(0.0, 1.0) : 0.0;
+    sc.level = ease(sc.level, target, target > sc.level ? 18 : 4);
+    sc.pulseAmt = ease(
+        sc.pulseAmt,
+        moving && widget.mood != OrbMood.thinking ? 1.0 : 0.0,
+        3);
+    sc.think = ease(sc.think, widget.mood == OrbMood.thinking ? 1 : 0, 4);
+    sc.sec += dt;
+    _shownFor += dt;
+    sc.appear = _appear;
+    // Pulses per second: a slow heartbeat when quiet, quicker as the
+    // voice gets louder.
+    sc.pulse += dt * (0.30 + sc.level * 0.55);
+
+    if (!moving && _settled) {
+      // Come to rest exactly, then stop asking for frames.
+      sc
+        ..level = 0
+        ..pulseAmt = 0
+        ..think = 0;
+      _ticker.stop();
+    }
+    sc.changed();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _scene.dispose();
+    super.dispose();
+  }
+
+  // Its own layer, so the scene's frames never re-record the screen
+  // around it.
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(
+        child: CustomPaint(
+          painter: _BackdropPainter(
+            scene: _scene,
+            orbRadius: widget.orbSize / 2,
+            violet: Neon.violet,
+            pink: Neon.pink,
+          ),
+          child: const SizedBox.expand(),
+        ),
       );
 }
 
@@ -369,15 +590,17 @@ final List<_Mote> _motes = () {
 
 class _BackdropPainter extends CustomPainter {
   _BackdropPainter({
-    required this.sec,
-    required this.pulse,
+    required this.scene,
     required this.orbRadius,
-    required this.level,
-    required this.pulseAmt,
-    required this.think,
-  });
+    required this.violet,
+    required this.pink,
+  }) : super(repaint: scene);
 
-  final double sec, pulse, orbRadius, level, pulseAmt, think;
+  final _BackdropScene scene;
+  final double orbRadius;
+
+  /// The accent pair (see [_SpherePainter.violet]).
+  final Color violet, pink;
 
   /// Where the reference's rings sit, as multiples of the sphere's radius
   /// — fewer than before; they are depth now, not the subject.
@@ -385,10 +608,15 @@ class _BackdropPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final sec = scene.sec, pulse = scene.pulse, level = scene.level;
+    final pulseAmt = scene.pulseAmt, think = scene.think;
+    // The bloom-in, applied through the one offscreen layer this already
+    // paints into, so fading costs nothing. Not faded in yet: draw
+    // nothing at all, not even the layer.
+    final appear = scene.appear;
+    if (appear <= 0) return;
     final c = size.center(Offset.zero);
     final r = orbRadius;
-    final violet = Neon.violet;
-    final pink = Neon.pink;
     final bounds = Offset.zero & size;
 
     // Left-to-right sweep for the tunnel: accent, ink, partner.
@@ -413,7 +641,8 @@ class _BackdropPainter extends CustomPainter {
     // it melts into the overlay instead of ending at the box's edge. ONE
     // offscreen layer per frame — per-element layers are how a pretty orb
     // becomes a stuttering one on a mid-range phone.
-    canvas.saveLayer(bounds, Paint());
+    canvas.saveLayer(
+        bounds, Paint()..color = Colors.black.withValues(alpha: appear));
 
     // 1. AURORA — squashed into ovals so it stays inside the box.
     void cloud(Offset at, double radius, Color col, double a) {
@@ -604,6 +833,13 @@ class _BackdropPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BackdropPainter old) => true; // it is an animation
+  bool shouldRepaint(_BackdropPainter old) =>
+      // Frames repaint through [scene]. A rebuild repaints only when what
+      // it draws with changed — it used to be always, which is right for
+      // a scene that never stops; this one holds still at rest.
+      old.scene != scene ||
+      old.orbRadius != orbRadius ||
+      old.violet != violet ||
+      old.pink != pink;
 }
 

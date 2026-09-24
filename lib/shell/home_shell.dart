@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,6 +108,35 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         }
       });
     }
+  }
+
+  /// Is the keyboard up? Kept here and changed only when it FLIPS.
+  ///
+  /// KEYBOARD FRAMES MUST BE CHEAP (2026-09-24: one 83 ms frame as the
+  /// keyboard came up on his phone). This screen used to read the keyboard
+  /// height straight from MediaQuery, which made the WHOLE shell — every
+  /// tab, the dock, the overlays — rebuild on every frame of the keyboard
+  /// sliding in or out, for a yes/no that changes once. It is now read
+  /// from the window when the metrics change, and the shell rebuilds only
+  /// when the answer changes.
+  bool _keyboardUp = false;
+
+  bool _windowKeyboardUp() {
+    final view = View.maybeOf(context);
+    return view != null && view.viewInsets.bottom > 0;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _keyboardUp = _windowKeyboardUp();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final up = _windowKeyboardUp();
+    if (up != _keyboardUp) setState(() => _keyboardUp = up);
   }
 
   @override
@@ -573,7 +603,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     // The keyboard hides the dock (the Scaffold stops extending the body
     // behind it), so there is nothing to fade into while it is up.
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final keyboardUp = _keyboardUp;
     final engine = AssistantEngine.instance;
     return ListenableBuilder(
       listenable: engine,
@@ -588,18 +618,24 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       backgroundColor: Neon.bg,
       extendBody: true,
       // The ambient ground sits behind every tab, so switching tabs does
-      // not switch rooms.
-      body: AmbientBackground(
+      // not switch rooms. Not drawn while the voice session covers it.
+      body: ValueListenableBuilder<bool>(
+        valueListenable: InlineCaptionOverlay.covering,
+        builder: (context, covered, page) =>
+            AmbientBackground(covered: covered, child: page!),
         child: Stack(
         children: [
-          IndexedStack(
-            index: _tab,
-            children: const [
-              HomeDashboard(),
-              HubScreen(),
-              ChatScreen(),
-              AssistantSettingsScreen(),
-            ],
+          _UnderSession(
+            engine: engine,
+            child: IndexedStack(
+              index: _tab,
+              children: const [
+                HomeDashboard(),
+                HubScreen(),
+                ChatScreen(),
+                AssistantSettingsScreen(),
+              ],
+            ),
           ),
           // CONTENT MUST NOT END MID-LETTER. Every tab is a scrolling
           // list under a floating mic and a notched dock, so whatever is
@@ -672,7 +708,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             // confirmation cards, which sit at padding.bottom + 84. The
             // top is empty, is never overdrawn by the dock or the cards,
             // and is where a status banner belongs anyway.
-            top: 10 + MediaQuery.of(context).viewPadding.top,
+            // viewPadding only: it does not move with the keyboard, so a
+            // keyboard frame does not rebuild the shell for it.
+            top: 10 + MediaQuery.viewPaddingOf(context).top,
             // During a voice session the top-right corner holds the Sound
             // button: the pill drops below that row instead of covering it.
             child: ListenableBuilder(
@@ -683,9 +721,12 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                     top: voiceSessionOnScreen(engine) ? 56 : 0),
                 child: child,
               ),
-              child: const Align(
-                alignment: Alignment.center,
-                child: AssistantActivityPill(),
+              // Its own layer: its dots move for as long as a tool runs.
+              child: const RepaintBoundary(
+                child: Align(
+                  alignment: Alignment.center,
+                  child: AssistantActivityPill(),
+                ),
               ),
             ),
           ),
@@ -702,7 +743,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
       // Hidden while the keyboard is up: docked, it floated over the text
       // box (seen 2026-09-24). Send is on the box; Stop is one tap away
       // once the keyboard closes.
-      floatingActionButton: MediaQuery.of(context).viewInsets.bottom > 0
+      floatingActionButton: keyboardUp
           ? null
           : AssistantOrbButton(
         onTap: () async {
@@ -820,5 +861,91 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+}
+
+/// THE TABS, WHILE THE VOICE SESSION COVERS THEM.
+///
+/// The session is an opaque layer over the whole page, yet everything
+/// under it kept working as if it could be seen (2026-09-24, measuring the
+/// voice screen and the keyboard on his phone):
+///
+///  * PAINT. The four tabs — Home's blurred glass cards among them — were
+///    drawn again on every frame the orb moved. Once the session has faded
+///    all the way in ([InlineCaptionOverlay.covering]) they are not
+///    painted at all; they are back on the frame it starts to leave.
+///  * LAYOUT. The keyboard shrinks the page a little on every frame it
+///    slides, and all four tabs were laid out again each time, for a
+///    keyboard that only the session's text box uses. While the session
+///    is on screen they keep the size they had.
+///
+/// Nothing is rebuilt or thrown away: state, scroll positions and the
+/// half-typed Chat message are exactly where they were.
+class _UnderSession extends StatelessWidget {
+  const _UnderSession({required this.engine, required this.child});
+  final AssistantEngine engine;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([engine, InlineCaptionOverlay.covering]),
+      builder: (context, tabs) => _HoldLayout(
+        hold: voiceSessionOnScreen(engine),
+        child: Visibility.maintain(
+          visible: !InlineCaptionOverlay.covering.value,
+          child: tabs!,
+        ),
+      ),
+      // Their own layer: the overlays above repaint often (captions, the
+      // activity pill, cards), and the tabs have no reason to repaint
+      // with them.
+      child: RepaintBoundary(child: child),
+    );
+  }
+}
+
+/// Lays its child out with the constraints it had before [hold] turned
+/// on, for as long as it stays on — so a parent that changes size every
+/// frame (the keyboard) does not lay the child out every frame. The child
+/// is still painted from the top-left and may reach past the bottom edge;
+/// that part is under the keyboard and the session, where nobody sees it.
+class _HoldLayout extends SingleChildRenderObjectWidget {
+  const _HoldLayout({required this.hold, required super.child});
+  final bool hold;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderHoldLayout(hold);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderHoldLayout ro) =>
+      ro.hold = hold;
+}
+
+class _RenderHoldLayout extends RenderProxyBox {
+  _RenderHoldLayout(this._hold);
+
+  bool _hold;
+  BoxConstraints? _held;
+
+  set hold(bool v) {
+    if (v == _hold) return;
+    _hold = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    final kid = child;
+    // Held only at the same width: a rotation mid-session re-lays out.
+    final keep = _hold && _held != null && _held!.maxWidth == constraints.maxWidth;
+    if (!keep) _held = constraints;
+    if (kid == null) {
+      size = constraints.smallest;
+      return;
+    }
+    kid.layout(_held!, parentUsesSize: true);
+    size = constraints.constrain(kid.size);
   }
 }
