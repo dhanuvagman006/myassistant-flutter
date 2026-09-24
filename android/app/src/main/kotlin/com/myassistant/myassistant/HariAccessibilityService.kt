@@ -847,13 +847,13 @@ class HariAccessibilityService : AccessibilityService() {
     private fun tapAt(x: Float, y: Float): Boolean {
         if (Build.VERSION.SDK_INT < 24) return false
         val path = Path().apply { moveTo(x, y) }
-        return dispatch(GestureDescription.StrokeDescription(path, 0, 60))
+        return dispatch(GestureDescription.StrokeDescription(path, 0, 90), x, y)
     }
 
     private fun pressAt(x: Float, y: Float): Boolean {
         if (Build.VERSION.SDK_INT < 24) return false
         val path = Path().apply { moveTo(x, y) }
-        return dispatch(GestureDescription.StrokeDescription(path, 0, 700))
+        return dispatch(GestureDescription.StrokeDescription(path, 0, 700), x, y)
     }
 
     /** A finger across the screen: "left" moves content left (next page). */
@@ -885,20 +885,53 @@ class HariAccessibilityService : AccessibilityService() {
         return dispatch(GestureDescription.StrokeDescription(path, 0, 320))
     }
 
-    private fun dispatch(stroke: GestureDescription.StrokeDescription): Boolean {
+    /** Is (x, y) on our own bar? Then it must step aside for the tap. */
+    private fun onPill(x: Float, y: Float): Boolean {
+        val v = pill ?: return false
+        if (v.visibility != View.VISIBLE || v.width == 0) return false
+        val at = IntArray(2)
+        v.getLocationOnScreen(at)
+        return x >= at[0] && x <= at[0] + v.width && y >= at[1] && y <= at[1] + v.height
+    }
+
+    /**
+     * A gesture, confirmed. Returns true only when Android reports it
+     * COMPLETED — the old version reported success the moment it was
+     * handed over, so a tap the system cancelled still counted as done and
+     * the planner kept tapping a button that never received it (seen
+     * 2026-09-24). The bar is left alone unless the finger lands on it:
+     * changing its window during a gesture can cancel the gesture.
+     */
+    private fun dispatch(stroke: GestureDescription.StrokeDescription, x: Float = -1f, y: Float = -1f): Boolean {
         if (Build.VERSION.SDK_INT < 24) return false
-        // The pill must not catch our own finger.
-        setPillTouchable(false)
-        val ok = dispatchGesture(
-            GestureDescription.Builder().addStroke(stroke).build(),
-            object : GestureResultCallback() {
-                override fun onCompleted(g: GestureDescription?) { setPillTouchable(true) }
-                override fun onCancelled(g: GestureDescription?) { setPillTouchable(true) }
-            },
-            null
-        )
-        if (!ok) setPillTouchable(true)
-        return ok
+        val onMain = Looper.myLooper() == Looper.getMainLooper()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var completed = false
+        val go = Runnable {
+            val hide = x >= 0 && onPill(x, y)
+            if (hide) pill?.visibility = View.INVISIBLE
+            val restore = { if (hide) pill?.visibility = View.VISIBLE }
+            val sent = try {
+                dispatchGesture(
+                    GestureDescription.Builder().addStroke(stroke).build(),
+                    object : GestureResultCallback() {
+                        override fun onCompleted(g: GestureDescription?) {
+                            completed = true; restore(); latch.countDown()
+                        }
+                        override fun onCancelled(g: GestureDescription?) {
+                            restore(); latch.countDown()
+                        }
+                    },
+                    null
+                )
+            } catch (e: Throwable) { false }
+            if (!sent) { restore(); latch.countDown() }
+        }
+        if (onMain) { main.post(go); return true } // cannot wait on the UI thread
+        main.post(go)
+        latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+        Log.i(TAG, "gesture ${if (completed) "completed" else "not completed"}")
+        return completed
     }
 
     /* ---------------------------------------------------------------- *
