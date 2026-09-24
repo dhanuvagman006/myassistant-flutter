@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:myassistant/features/assistant/state/assistant_engine.dart';
+import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/services/live_service.dart';
 import 'package:myassistant/services/location_service.dart';
 
@@ -143,7 +146,7 @@ void main() {
     expect(r.markers, ['audio_pause']);
   });
 
-  test('never pauses while the model has the turn', () {
+  test('never pauses while the model has the turn', () async {
     r.utterance();
     r.sent.clear();
     // Thinking: no reply yet, well inside the grace after activity_end.
@@ -164,10 +167,44 @@ void main() {
     expect(r.sent.length, before);
     r.server({'type': 'turn_complete'});
     r.svc.playing = false;
+    // The loudspeaker's own tail (250 ms of wall-clock time) stays shut out.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
 
     // Her turn is over and the tail was already heard: it pauses now.
     r.feed(quiet, 4);
     expect(r.markers, ['audio_pause']);
+  });
+
+  test("the loudspeaker's tail never goes up as the owner talking",
+      () async {
+    r.svc.playing = true;
+    r.feed(speech, 3); // her own voice in the microphone
+    r.svc.playing = false;
+    r.sent.clear();
+    r.feed(speech); // the last of her word, still sounding
+    expect(r.sent, isEmpty, reason: 'shut for the speaker tail');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    r.feed(quiet);
+    expect(r.audio, hasLength(1), reason: 'open again once it has drained');
+  });
+
+  test("the speaker-tail line the server's CI checks is still there", () {
+    // The backend's fulfillment test ("barge-in is GONE") reads this file
+    // and looks for this exact line; a harmless rewrite of it turned the
+    // server's whole test run red.
+    final src = File('lib/services/live_service.dart').readAsStringSync();
+    expect(src, contains('_micOpenAt = DateTime.now().add(_speakerTail)'));
+    expect(src, contains('if (playing || remoteSpeaking || typingMute) {'));
+  });
+
+  test('modelTurn: her turn, until turn_complete', () {
+    expect(r.svc.modelTurn, isFalse);
+    r.utterance();
+    expect(r.svc.modelTurn, isTrue, reason: 'an answer is expected');
+    r.server({'type': 'turn_complete'});
+    expect(r.svc.modelTurn, isFalse);
+    r.svc.playing = true;
+    expect(r.svc.modelTurn, isTrue);
   });
 
   test('a typed request keeps the uplink up until the answer comes', () {
@@ -216,8 +253,13 @@ void main() {
     await Future<void>.delayed(Duration.zero); // the score lands
     expect(r.markers, ['activity_start']);
     expect(r.svc.uplinkPaused, isFalse);
-    expect(r.audio.single.length, 8 * speech.length,
+    // The two quiet frames the pause kept back lead in, then the speech.
+    final up = r.audio.single;
+    expect(up.length, 2 * quiet.length + 8 * speech.length,
         reason: 'the whole held utterance goes up at once');
+    expect(up.sublist(0, quiet.length), quiet, reason: 'at full volume');
+    expect(up.sublist(2 * quiet.length),
+        [for (var i = 0; i < 8; i++) ...speech]);
 
     r.feed(speech, 2); // accepted: live
     r.feed(quiet, 4);
@@ -226,6 +268,53 @@ void main() {
     r.sent.clear();
     r.feed(quiet, 11);
     expect(r.markers, ['audio_pause']);
+  });
+
+  test('speaker gate: the soft start of a word survives the pause',
+      () async {
+    r.svc.speakerGateEnabled = true;
+    var scored = -1;
+    r.svc.speakerScorer = (pcm) async {
+      scored = pcm.length;
+      return 0.9;
+    };
+    // An earlier sentence, so the microphone's own loudness is known (a
+    // cold detector counts any first sound as loud).
+    r.feed(speech, 8);
+    await Future<void>.delayed(Duration.zero);
+    r.feed(quiet, 4);
+    r.server({'type': 'turn_complete'});
+    r.feed(quiet, 30);
+    expect(r.svc.uplinkPaused, isTrue);
+    r.sent.clear();
+
+    final soft = tone(400, hz: 3000); // an "s": under the speech bar
+    r.feed(soft);
+    expect(r.sent, isEmpty, reason: 'paused: nothing goes up yet');
+    r.feed(speech, 8);
+    await Future<void>.delayed(Duration.zero);
+    expect(r.markers, ['activity_start']);
+    expect(scored, 8 * speech.length,
+        reason: 'the voiceprint scores the voice, never the quiet');
+    final up = r.audio.single;
+    // ~450 ms of lead-in (the last three quiet frames and the "s"), then
+    // the held speech.
+    expect(up.length, 4 * quiet.length + 8 * speech.length);
+    expect(up.sublist(3 * quiet.length, 4 * quiet.length), soft,
+        reason: 'the onset reaches the model whole, at full volume');
+  });
+
+  test('speaker gate: quiet that already went up live is not replayed',
+      () async {
+    r.svc.speakerGateEnabled = true;
+    r.svc.speakerScorer = (pcm) async => 0.9;
+    r.feed(quiet, 5); // inside the tail: streamed live, not paused
+    expect(r.svc.uplinkPaused, isFalse);
+    r.sent.clear();
+    r.feed(speech, 8);
+    await Future<void>.delayed(Duration.zero);
+    expect(r.audio.single.length, 8 * speech.length,
+        reason: 'no quiet frame goes up twice');
   });
 
   test('speaker gate: someone else is dropped, and the room pauses again',
@@ -283,6 +372,36 @@ void main() {
       expect(r.closes, 0);
       r.feed(quiet, 30);
       expect(r.closes, 1);
+    });
+
+    test('a call the assistant placed keeps the session open', () {
+      final t0 = DateTime(2026, 9, 24, 10);
+      bool running(String? status, Duration ago) =>
+          AssistantEngine.callStillRunning(
+              status == null
+                  ? null
+                  : CallStatusInfo(status: status, contactName: 'the clinic'),
+              t0,
+              t0.add(ago));
+      // The server reports only changes: a long "speaking with them" is
+      // minutes without a frame, and its outcome comes back through the
+      // session — closing it would lose what the business said.
+      for (final s in ['dialing', 'ringing', 'in_progress', 'summarizing']) {
+        expect(running(s, const Duration(minutes: 2)), isTrue, reason: s);
+      }
+      for (final s in [
+        'completed',
+        'failed',
+        'no_answer',
+        'ended',
+        'timeout',
+        'cancelled',
+      ]) {
+        expect(running(s, Duration.zero), isFalse, reason: s);
+      }
+      expect(running(null, Duration.zero), isFalse);
+      expect(running('in_progress', const Duration(minutes: 5)), isFalse,
+          reason: "past the server's own 180 s limit it is over");
     });
 
     test('the engine can decline (a card waiting on a tap)', () {
@@ -371,6 +490,14 @@ void main() {
       ]) {
         expect(LocationService.needsHere(no), isFalse, reason: no);
       }
+    });
+
+    test('only tools the server offers with location off trigger the ask',
+        () {
+      // find_places_nearby, get_current_location and start_navigation are
+      // hidden from the model while location is denied: they could never
+      // start while there was anything to ask.
+      expect(LocationService.locationTools, {'book_ride'});
     });
   });
 }

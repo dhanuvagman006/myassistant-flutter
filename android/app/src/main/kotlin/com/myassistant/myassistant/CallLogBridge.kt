@@ -33,6 +33,12 @@ import java.util.concurrent.Executors
  * incoming-call guard would switch itself off and the server would stop
  * offering calls at all. So the checks that used Permission.phone ask
  * this channel for the exact permission instead ("permissions").
+ *
+ * The same fold made Permission.phone.request() ask for call history
+ * too, so the setup screen's "Phone" row would have shown the call-log
+ * dialog at onboarding. The phone itself (READ_PHONE_STATE + CALL_PHONE,
+ * one dialog) is asked here as well ("requestPhone"); call history is
+ * asked only the first time the owner asks about his calls.
  */
 object CallLogBridge {
 
@@ -40,6 +46,11 @@ object CallLogBridge {
 
     /** Ours alone; permission_handler ignores codes it did not send. */
     const val REQUEST_CODE = 7306
+    const val REQUEST_CODE_PHONE = 7307
+
+    /** Placing calls and hearing the phone ring — never call history. */
+    private val PHONE_PERMISSIONS = arrayOf(
+        Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE)
 
     // Call-log types newer than the minimum SDK, as their fixed values.
     private const val TYPE_REJECTED = 5 // CallLog.Calls.REJECTED_TYPE (API 24)
@@ -53,6 +64,7 @@ object CallLogBridge {
     private val main = Handler(Looper.getMainLooper())
     private var activityRef: WeakReference<Activity>? = null
     private var pending: MethodChannel.Result? = null
+    private var pendingPhone: MethodChannel.Result? = null
 
     fun register(messenger: BinaryMessenger, activity: Activity) {
         activityRef = WeakReference(activity)
@@ -68,6 +80,9 @@ object CallLogBridge {
                 // The system dialog, asked only when the owner wanted their
                 // calls. "granted" | "denied" | "blocked" (don't ask again).
                 "requestCallLog" -> request(result)
+                // The setup screen's "Phone" row: the phone permissions
+                // alone, so onboarding never shows the call-history dialog.
+                "requestPhone" -> requestPhone(result)
                 "recent" -> {
                     if (!granted(ctx, Manifest.permission.READ_CALL_LOG)) {
                         result.error("no_permission", "call history permission is off", null)
@@ -127,8 +142,49 @@ object CallLogBridge {
         }
     }
 
+    private fun requestPhone(result: MethodChannel.Result) {
+        val act = activityRef?.get()
+        if (act == null) {
+            result.success("denied")
+            return
+        }
+        val missing = PHONE_PERMISSIONS.filter { !granted(act, it) }
+        if (missing.isEmpty()) {
+            result.success("granted")
+            return
+        }
+        if (pendingPhone != null) {
+            result.success("busy")
+            return
+        }
+        pendingPhone = result
+        try {
+            // Both are in Android's phone group: one dialog.
+            act.requestPermissions(missing.toTypedArray(), REQUEST_CODE_PHONE)
+        } catch (e: Throwable) {
+            pendingPhone = null
+            Log.w(TAG, "phone permission request failed: ${e.javaClass.simpleName}")
+            result.success("denied")
+        }
+    }
+
     /** MainActivity forwards every permission result; ours is ours. */
     fun onPermissionResult(activity: Activity, requestCode: Int, grantResults: IntArray): Boolean {
+        if (requestCode == REQUEST_CODE_PHONE) {
+            val r = pendingPhone ?: return true
+            pendingPhone = null
+            val status = when {
+                PHONE_PERMISSIONS.all { granted(activity, it) } -> "granted"
+                // An interrupted dialog answers with nothing: not a refusal.
+                grantResults.isEmpty() -> "denied"
+                Build.VERSION.SDK_INT >= 23 && PHONE_PERMISSIONS.any {
+                    !granted(activity, it) && !activity.shouldShowRequestPermissionRationale(it)
+                } -> "blocked"
+                else -> "denied"
+            }
+            r.success(status)
+            return true
+        }
         if (requestCode != REQUEST_CODE) return false
         val r = pending ?: return true
         pending = null

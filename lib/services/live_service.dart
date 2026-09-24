@@ -212,7 +212,9 @@ class LiveService {
   // utterance is HELD back (buffered, not streamed) until a speaker-ID
   // score against the enrolled voiceprint accepts it; someone else's
   // speech is dropped without a byte reaching the model. Silence between
-  // utterances still streams (Google's detector needs to hear pauses).
+  // utterances still streams (Google's detector needs to hear pauses)
+  // until the uplink pauses; after that the last moment of it is kept
+  // as the lead-in and sent ahead of an accepted utterance.
   // Cost: the model hears an accepted turn ~1 s later than live — only
   // when the gate is on. With the gate OFF this path is untouched: every
   // frame streams unconditionally exactly as before.
@@ -239,6 +241,10 @@ class LiveService {
 
   _GateState _gateState = _GateState.idle;
   BytesBuilder? _gateBuf;
+
+  /// Quiet that the paused uplink kept back just before the utterance
+  /// (see [_gateFeed]); sent ahead of the held speech on accept.
+  Uint8List? _gateLead;
   int _gateSpeechMs = 0;
   int _gateQuietRunMs = 0;
   int _gateUtterId = 0; // invalidates in-flight scores on reset
@@ -540,14 +546,19 @@ class LiveService {
         // The loudspeaker keeps sounding for a moment past the
         // playhead. Sending that tail up would hand Google the end of
         // her own sentence as if it were the user starting to talk.
-        _micOpenAt = now.add(_speakerTail);
+        //
+        // WALL CLOCK, like [holdMic]: the loudspeaker drains in real
+        // time, whatever clock the tests drive the rest with. The line
+        // is spelled exactly like this on purpose — the server's CI
+        // (fulfillment-test "barge-in is GONE") looks for it.
+        _micOpenAt = DateTime.now().add(_speakerTail);
         return;
       }
       // A tool at work is the assistant busy, not the room quiet.
       if (_toolRunning(now)) _lastLifeAt = now;
       _checkQuiet(now);
       if (!_active) return;
-      if (now.isBefore(_micOpenAt)) return;
+      if (DateTime.now().isBefore(_micOpenAt)) return;
       if (l == null) return;
 
       if (l > _peakLevel) {
@@ -642,19 +653,20 @@ class LiveService {
   /// A frame from a room nobody is (known to be) talking in: it streams
   /// until the tail after the last speech is long enough and the model's
   /// turn is over, then the uplink pauses — once, with one marker — and
-  /// stays paused until speech resumes it.
-  void _quietFrame(Uint8List frame, int ms, bool loud, DateTime now) {
+  /// stays paused until speech resumes it. True when [frame] went up.
+  bool _quietFrame(Uint8List frame, int ms, bool loud, DateTime now) {
     if (_uplinkPaused) {
       // Translator mode never pauses: the room itself is the input.
-      if (!translatorBypass) return;
+      if (!translatorBypass) return false;
     } else if (!loud && _mayPause(now)) {
       _uplinkPaused = true;
       uplinkPauses++;
       _send({'type': 'audio_pause'});
-      return;
+      return false;
     }
     _upAudio(frame);
     _quietSentMs += ms;
+    return true;
   }
 
   bool _mayPause(DateTime now) =>
@@ -671,6 +683,11 @@ class LiveService {
       remoteSpeaking ||
       _toolRunning(now) ||
       now.isBefore(_replyUntil);
+
+  /// True while the assistant has the turn (see [_modelTurn]). The engine
+  /// waits for this to clear before rebuilding a session, so her answer
+  /// is never cut off mid-word.
+  bool get modelTurn => _active && _modelTurn(_now());
 
   bool _toolRunning(DateTime now) =>
       _toolsInFlight > 0 && now.difference(_toolStartedAt) < _toolCap;
@@ -958,11 +975,31 @@ class LiveService {
       case _GateState.idle:
         if (!loud) {
           // Live, at full volume — until the tail is long enough, then
-          // paused like any other quiet (see _quietFrame).
-          _quietFrame(Uint8List.fromList(chunk), ms, false, now);
+          // paused like any other quiet (see _quietFrame). A frame the
+          // pause keeps back is held as the lead-in instead: it may be
+          // the soft start of a word ("s", "f", "h" sit under the speech
+          // bar). One that went up live needs no replay.
+          if (_quietFrame(Uint8List.fromList(chunk), ms, false, now)) {
+            _preRoll.clear();
+          } else {
+            _preRoll.add(chunk, ms);
+          }
           return;
         }
         _gateState = _GateState.holding;
+        // THE START OF THE WORD, WHEN THE UPLINK WAS PAUSED.
+        //
+        // Before silence was trimmed, the quiet between utterances went up
+        // live, so the soft onset just ahead of the first loud frame had
+        // already reached Google. Paused, it would be lost and the model
+        // would hear "ome" for "home". It is kept apart from the held
+        // speech — the voiceprint scores the voice, and the room's quiet
+        // would only dilute it — and goes up ahead of it on accept.
+        final lead = BytesBuilder(copy: false);
+        for (final c in _preRoll.drain()) {
+          lead.add(c);
+        }
+        _gateLead = lead.isEmpty ? null : lead.takeBytes();
         _gateBuf = BytesBuilder(copy: true);
         _gateSpeechMs = 0;
         _gateQuietRunMs = 0;
@@ -1041,8 +1078,14 @@ class LiveService {
         noteActivity();
         _quietSentMs = 0;
         _send({'type': 'activity_start'});
-        final full = _gateBuf?.toBytes() ?? snapshot;
-        _upAudio(full);
+        final held = _gateBuf?.toBytes() ?? snapshot;
+        final lead = _gateLead;
+        _gateLead = null;
+        // The lead-in first, then the held speech, as one piece: the
+        // model hears the utterance from its very first sound.
+        _upAudio(lead == null
+            ? held
+            : ((BytesBuilder(copy: false)..add(lead))..add(held)).takeBytes());
         if (over) {
           _send({'type': 'activity_end'});
           _expectReply(); // the answer to the audio just flushed
@@ -1057,6 +1100,7 @@ class LiveService {
         } else {
           _gateState = _GateState.rejected;
           _gateBuf = null;
+          _gateLead = null; // someone else's lead-in dies with the rest
         }
       }
     }).catchError((_) {
@@ -1076,6 +1120,7 @@ class LiveService {
   void _gateReset() {
     _gateState = _GateState.idle;
     _gateBuf = null;
+    _gateLead = null;
     _gateSpeechMs = 0;
     _gateQuietRunMs = 0;
     _gateDeciding = false;

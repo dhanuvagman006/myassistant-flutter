@@ -108,6 +108,19 @@ class CallHistory {
     }
   }
 
+  /// The phone itself — placing calls and hearing it ring (READ_PHONE_STATE
+  /// and CALL_PHONE, one dialog), NEVER call history. The setup screen asks
+  /// this instead of permission_handler's Permission.phone, which since
+  /// READ_CALL_LOG joined the manifest also shows the call-history dialog.
+  /// Same answers as [requestCallLog].
+  static Future<String> requestPhone() async {
+    try {
+      return await _ch.invokeMethod<String>('requestPhone') ?? 'denied';
+    } catch (_) {
+      return 'unavailable';
+    }
+  }
+
   /// Newest first. Throws [PlatformException] with code `no_permission`
   /// when call history is off.
   static Future<List<CallEntry>> recent({

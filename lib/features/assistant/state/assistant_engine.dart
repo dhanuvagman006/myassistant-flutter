@@ -38,6 +38,7 @@ import '../../../models/news_item.dart';
 import '../../../models/schedule_item.dart';
 import '../../../services/api_service.dart';
 import '../../../services/document_events.dart';
+import '../../../services/device_capabilities.dart';
 import '../../../services/device_control_service.dart';
 import '../../../services/sms_service.dart';
 import '../widgets/action_cards.dart' show shareDocumentFile;
@@ -503,7 +504,30 @@ class AssistantEngine extends ChangeNotifier {
   ContactMatch? foundContact;
   List<ContactMatch> ambiguousContacts = const [];
   PendingConfirmation? pendingConfirmation;
-  CallStatusInfo? callStatus;
+
+  /// The call card. Stamped on every change, so a call the server stopped
+  /// reporting on cannot hold a session open forever ([callStillRunning]).
+  CallStatusInfo? get callStatus => _callStatus;
+  set callStatus(CallStatusInfo? v) {
+    _callStatus = v;
+    _callStatusAt = DateTime.now();
+  }
+
+  CallStatusInfo? _callStatus;
+  DateTime _callStatusAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// The server gives a call to a business or a meeting contact 180 s to
+  /// finish, and reports only CHANGES of state — a long "Speaking with
+  /// them" sends nothing for minutes. Past this with no word, it is over.
+  static const _callStatusCap = Duration(minutes: 4);
+
+  /// Is a call the assistant placed still under way? Ringing, speaking
+  /// with them, getting the answer — anything short of an end state, and
+  /// heard of within [_callStatusCap].
+  static bool callStillRunning(
+          CallStatusInfo? s, DateTime changedAt, DateTime now) =>
+      s != null && !s.done && now.difference(changedAt) < _callStatusCap;
+
   String? readyAudioUrl; // cloned-voice preview from audio_ready
   bool usedClonedVoice = false;
 
@@ -4390,16 +4414,25 @@ class AssistantEngine extends ChangeNotifier {
     });
   }
 
+  /// Something outside the conversation is still going: a card waiting on
+  /// the owner's TAP (a confirmation, a contact pick, the camera), a phone
+  /// call, or a call the assistant placed to a business or a meeting
+  /// contact. That last one can run for minutes without a word on the
+  /// socket, and its outcome comes back through THIS session — closed, the
+  /// owner would never hear what they said.
+  bool get _sessionWaiting =>
+      pendingConfirmation != null ||
+      ambiguousContacts.isNotEmpty ||
+      _deviceFlowActive ||
+      PhoneStateGuard.instance.inCall ||
+      callStillRunning(_callStatus, _callStatusAt, DateTime.now());
+
   /// LiveService heard a minute with nobody talking and nothing from the
-  /// assistant. A session waiting on the owner's TAP (a confirmation, a
-  /// contact pick, the camera) or on a phone call is not quiet — the
-  /// minute starts over instead.
+  /// assistant. A session that is waiting on something ([_sessionWaiting])
+  /// is not quiet — the minute starts over instead.
   void _onQuietMinute() {
     if (!liveActive) return;
-    if (pendingConfirmation != null ||
-        ambiguousContacts.isNotEmpty ||
-        _deviceFlowActive ||
-        PhoneStateGuard.instance.inCall) {
+    if (_sessionWaiting) {
       _liveSvc.noteActivity();
       return;
     }
@@ -4463,14 +4496,68 @@ class AssistantEngine extends ChangeNotifier {
       if (wasOn) return; // allowed, just no fix yet — nothing to ask
       final ok = await LocationService.instance
           .askOnce(explain: (line) => AppFeedback.toast(line));
-      if (ok) {
-        _pushLiveLocation();
+      if (!ok) return;
+      _pushLiveLocation();
+      // THE SERVER STILL THINKS LOCATION IS OFF. It chose this session's
+      // tools and wrote "location permission is NOT granted" into its
+      // prompt from what the phone reported when the session opened, so
+      // "ask me again" would have met the same refusal. The chat session
+      // is simply told again (it rebuilds its tools every turn); a live
+      // session fixes both at setup, so it is rebuilt.
+      final told = DeviceCapabilities.report(_api.reportCapabilities);
+      if (liveActive) {
+        unawaited(told);
+        await _rebuildLiveForLocation();
+      } else {
+        await told;
         AppFeedback.toast('Location is on — ask me again.');
       }
     } catch (_) {
     } finally {
       _askingLocation = false;
     }
+  }
+
+  /// Location was allowed in the middle of a live session: start it again
+  /// so the new one is set up with location on — the tools that need it
+  /// offered, the prompt no longer saying it is off. Only once her answer
+  /// has finished and nothing is waiting on the owner; "ask me again" is
+  /// promised only when the new session is actually up.
+  Future<void> _rebuildLiveForLocation() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    while (liveActive &&
+        (_liveSvc.modelTurn || _sessionWaiting) &&
+        DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    if (!liveActive) {
+      // Closed meanwhile: the next session opens with location on.
+      AppFeedback.toast('Location is on.');
+      return;
+    }
+    if (_liveSvc.modelTurn || _sessionWaiting) {
+      // Never cut a task in half for this.
+      AppFeedback.toast('Location is on — it applies from the next '
+          'conversation.');
+      return;
+    }
+    AppLog.add('live', 'rebuilding session — location is on now');
+    try {
+      // The same conversation carrying on: no goodbye chime, no second
+      // hello (the cooldown counts from now).
+      _lastGreetedAt = DateTime.now();
+      await leaveConversation(chime: false);
+      // leaveConversation clears inlineVoice; the owner has not asked to
+      // stop talking, so put it back before starting again.
+      inlineVoice = true;
+      await beginInlineConversation();
+    } catch (e) {
+      AppLog.add('live', 'location rebuild failed: $e');
+      inlineVoice = false;
+      notifyListeners();
+    }
+    // A failed start already said so ("tap again"); one toast at a time.
+    if (liveActive) AppFeedback.toast('Location is on — ask me again.');
   }
 
   // ---------------- CALL HISTORY ----------------

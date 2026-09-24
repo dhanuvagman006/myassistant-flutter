@@ -143,11 +143,16 @@ class LocationService {
 
   static bool needsHere(String text) => _needsHere.hasMatch(text);
 
-  /// Server tools that work from the phone's position.
+  /// Server tools whose start means "this request needs the owner's
+  /// position" (the engine then asks once, see [askOnce]).
+  ///
+  /// Only tools the server still OFFERS with location off belong here.
+  /// find_places_nearby, get_current_location and start_navigation carry
+  /// requiresPermission "location": with location denied the server hides
+  /// them from the model, so their start can never arrive while there is
+  /// anything to ask — and with it allowed there is nothing to ask. Those
+  /// requests are caught by their words instead ([needsHere]).
   static const locationTools = {
-    'find_places_nearby',
-    'get_current_location',
-    'start_navigation',
     'book_ride',
   };
 }
