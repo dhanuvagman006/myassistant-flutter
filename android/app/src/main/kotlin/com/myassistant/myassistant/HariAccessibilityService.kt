@@ -2,6 +2,7 @@ package com.myassistant.myassistant
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.InputMethod
 import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipDescription
@@ -1301,13 +1302,26 @@ class HariAccessibilityService : AccessibilityService() {
     /* ---- THE KEYBOARD ------------------------------------------------ */
 
     /**
-     * A finger under the keyboard types a letter instead of pressing what
-     * the planner saw there. Back closes only the keyboard (the page stays),
-     * then the point is free. False: the keyboard is still over it.
+     * What closing the keyboard for a point did:
+     *   CLEAR   — the keyboard was not over the point; nothing moved, so the
+     *             element judged before is still under the point.
+     *   CLOSED  — the keyboard WAS over the point and Back closed it. The
+     *             page can slide into the space it held (adjustResize /
+     *             adjustPan), so what is under the point may have changed:
+     *             nothing is pressed there before it is read and judged
+     *             again (tap_xy: not at all).
+     *   COVERED — the keyboard is still over the point (give up).
      */
-    private fun clearKeyboardAt(x: Float, y: Float): Boolean {
-        val kb = imeBounds() ?: return true
-        if (!kb.contains(x.toInt(), y.toInt())) return true
+    private enum class KbClear { CLEAR, CLOSED, COVERED }
+
+    /**
+     * A finger under the keyboard types a letter instead of pressing what
+     * the planner saw there. Back closes only the keyboard, not the page;
+     * then the point is free — but see CLOSED above.
+     */
+    private fun clearKeyboardAt(x: Float, y: Float): KbClear {
+        val kb = imeBounds() ?: return KbClear.CLEAR
+        if (!kb.contains(x.toInt(), y.toInt())) return KbClear.CLEAR
         performGlobalAction(GLOBAL_ACTION_BACK)
         repeat(8) {
             Thread.sleep(80)
@@ -1315,10 +1329,59 @@ class HariAccessibilityService : AccessibilityService() {
             if (now == null || !now.contains(x.toInt(), y.toInt())) {
                 // Let the page finish moving back into place.
                 Thread.sleep(120)
-                return true
+                return KbClear.CLOSED
             }
         }
-        return false
+        return KbClear.COVERED
+    }
+
+    /** The smallest visible node covering the point, read from a fresh tree. */
+    private fun nodeUnderNow(x: Float, y: Float): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        return visibleNodes(root).filter {
+            val r = Rect(); it.getBoundsInScreen(r); r.contains(x.toInt(), y.toInt())
+        }.minByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
+    }
+
+    /**
+     * AFTER THE KEYBOARD CLOSED the page slides (adjustResize / adjustPan):
+     * a bar anchored to the bottom — a chat's Send, a cart's Pay — drops
+     * into the space the keyboard held. Whatever sits under the point NOW
+     * is judged, on a fresh tree, exactly like a tap on it would be, before
+     * any finger lands there. Null: nothing there crosses a line.
+     */
+    private fun judgePointNow(x: Float, y: Float, fg: String): String? {
+        val u = nodeUnderNow(x, y) ?: return null
+        var t: AccessibilityNodeInfo? = u
+        while (t != null && !t.isClickable) t = t.parent
+        return judgeTap(u, t, fg)
+    }
+
+    /** A long press is refused on money and on deleting words. */
+    private fun pressVeto(words: List<String>): String? = when {
+        words.any { PAY.containsMatchIn(it) || MONEY.containsMatchIn(it) } -> "payment"
+        words.any { DESTRUCTIVE.containsMatchIn(it) } -> "destructive"
+        else -> null
+    }
+
+    /** The same, for whatever sits under the point now (fresh tree). */
+    private fun pressVetoAt(x: Float, y: Float): String? {
+        val u = nodeUnderNow(x, y) ?: return null
+        var t: AccessibilityNodeInfo? = u
+        while (t != null && !t.isLongClickable && !t.isClickable) t = t.parent
+        return pressVeto(tapWords(t ?: u))
+    }
+
+    /**
+     * [n] read again after the keyboard closed, with its new place in
+     * [r]. False: it is gone or hidden — the planner looks again rather
+     * than a finger landing on its old spot.
+     */
+    private fun movedTo(n: AccessibilityNodeInfo, r: Rect): Boolean {
+        val alive = try { n.refresh() } catch (_: Throwable) { false }
+        if (!alive || !n.isVisibleToUser) return false
+        n.getBoundsInScreen(r)
+        return !r.isEmpty
     }
 
     /* ---- TYPING THAT APPS REACT TO ----------------------------------- */
@@ -1358,19 +1421,89 @@ class HariAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * PASTE, THE WAY A FINGER DOES. Some apps ignore text that is set
-     * straight into a field: Instagram's search showed no results for set
-     * text while real typing worked (2026-09-24). A paste goes through the
-     * field's own editing, so the app sees it as typed. The field is
-     * cleared (or selected), the text pasted from the clipboard, and the
-     * owner's clipboard put back as it was. (Android 10+ lets an app read
-     * the clipboard only while it is on screen; when the owner's clip
-     * could not be read, our text is cleared from the clipboard instead of
-     * being left there.)
+     * TYPED THE WAY THE KEYBOARD TYPES (Android 13+). Some apps ignore
+     * text that is set straight into a field: Instagram's search showed no
+     * results for set text while real typing worked (2026-09-24). Set text
+     * swaps the field's whole text; a keyboard edits it in place, through
+     * the field's own input connection, and that is what the app listens
+     * to. This service has its own input method (flagInputMethodEditor in
+     * hari_automation.xml) on that same connection: the field is selected,
+     * emptied and the text committed, exactly as a keyboard would. The
+     * owner's clipboard is never touched (the paste below needs it, and on
+     * Android 10+ it cannot be read back from the background).
+     *
+     * Only into [n], and only while [n] holds the input focus — never into
+     * whatever field happens to be focused. Never text with a line break:
+     * in a chat a committed Enter can send. False: not possible here (older
+     * Android, no connection, focus elsewhere); the caller falls back.
      */
-    private fun paste(n: AccessibilityNodeInfo, text: String): Boolean {
-        val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
-        val saved = try { cm.primaryClip } catch (_: Throwable) { null }
+    private fun retype(n: AccessibilityNodeInfo, text: String): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        if (text.isEmpty() || text.contains('\n') || text.contains('\r')) return false
+        val im = try { inputMethod } catch (_: Throwable) { null } ?: return false
+        val pkg = n.packageName?.toString() ?: return false
+        // The connection starts a moment after the field takes the focus.
+        var found: InputMethod.AccessibilityInputConnection? = null
+        val until = SystemClock.uptimeMillis() + 400
+        while (found == null) {
+            if (stopRequested) return false
+            val focus = try { findFocus(AccessibilityNodeInfo.FOCUS_INPUT) } catch (_: Throwable) { null }
+            if (focus == n && im.currentInputStarted && im.currentInputEditorInfo?.packageName == pkg) {
+                found = im.currentInputConnection
+            }
+            if (found == null) {
+                if (SystemClock.uptimeMillis() >= until) return false
+                Thread.sleep(40)
+            }
+        }
+        val ic = found ?: return false
+        try {
+            ic.performContextMenuAction(android.R.id.selectAll)
+            // Emptied first, then typed: an app that skips a query equal
+            // to the last one still sees the text arrive.
+            ic.commitText("", 1, null)
+            ic.commitText(text, 1, null)
+            // A read on the same connection comes back only after the
+            // edits above are done — so the field is checked after them.
+            ic.getSurroundingText(text.length + 64, 64, 0)
+        } catch (e: Throwable) {
+            Log.w(TAG, "retype failed: ${e.javaClass.simpleName}")
+            return false
+        }
+        val end = SystemClock.uptimeMillis() + 400
+        while (true) {
+            try { n.refresh() } catch (_: Throwable) {}
+            if (holds(n, text)) return true
+            if (SystemClock.uptimeMillis() >= end) return false
+            Thread.sleep(40)
+        }
+    }
+
+    /**
+     * PASTE, THE WAY A FINGER DOES — the fallback where the keyboard's way
+     * above is not possible (Android 12 and older). A paste also goes
+     * through the field's own editing, so the app sees it as typed. The
+     * field is cleared (or selected), the text pasted from the clipboard,
+     * and the owner's clipboard put back exactly as it was.
+     *
+     * Android 10+ (API 29) lets a background service neither read nor
+     * reliably restore the primary clip. When the owner's clip cannot be
+     * read we do NOT touch the clipboard: overwriting it would wipe whatever
+     * they copied (and leave our text — sometimes owner details — behind,
+     * including in the keyboard's clipboard history). We skip the paste and
+     * report UNAVAILABLE so the planner submits or taps a suggestion instead
+     * (rule 3b); by then ACTION_SET_TEXT has already put the text in the
+     * field.
+     */
+    private enum class PasteResult { OK, FAILED, UNAVAILABLE }
+
+    private fun paste(n: AccessibilityNodeInfo, text: String): PasteResult {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager ?: return PasteResult.UNAVAILABLE
+        // Only use the clipboard when the owner's clip can be read back, so
+        // it is always restored. A null clip means either the background
+        // restriction hid it or it is empty; either way, overwriting what we
+        // cannot put back is not allowed.
+        val saved = try { cm.primaryClip } catch (_: Throwable) { null } ?: return PasteResult.UNAVAILABLE
         var pasted = false
         try {
             val clip = ClipData.newPlainText("", text)
@@ -1400,12 +1533,10 @@ class HariAccessibilityService : AccessibilityService() {
         } catch (e: Throwable) {
             Log.w(TAG, "paste failed: ${e.javaClass.simpleName}")
         } finally {
-            try {
-                if (saved != null) cm.setPrimaryClip(saved)
-                else if (Build.VERSION.SDK_INT >= 28) cm.clearPrimaryClip()
-            } catch (_: Throwable) {}
+            // Always put the owner's clip back exactly as it was.
+            try { cm.setPrimaryClip(saved) } catch (_: Throwable) {}
         }
-        return pasted
+        return if (pasted) PasteResult.OK else PasteResult.FAILED
     }
 
     /* ---- SCROLLING --------------------------------------------------- */
@@ -1652,8 +1783,22 @@ class HariAccessibilityService : AccessibilityService() {
                 val ok = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 val done = if (ok) mapOf("ok" to true, "how" to "click") else {
                     val r = Rect(); n.getBoundsInScreen(r)
-                    if (!clearKeyboardAt(r.exactCenterX(), r.exactCenterY())) return fail("under_keyboard")
-                    if (tapAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
+                    when (clearKeyboardAt(r.exactCenterX(), r.exactCenterY())) {
+                        KbClear.COVERED -> return fail("under_keyboard")
+                        // The page slid when the keyboard closed: the finger
+                        // must land on THIS element at its new place, not on
+                        // whatever dropped into its old spot. It is judged
+                        // again, and so is whatever now sits on top at its
+                        // new centre (a bar that slid over it).
+                        KbClear.CLOSED -> {
+                            if (!movedTo(n, r)) return fail("keyboard_closed")
+                            judgeTap(n, target, fg)?.let { return blocked(it) }
+                            judgePointNow(r.exactCenterX(), r.exactCenterY(), fg)?.let { return blocked(it) }
+                        }
+                        KbClear.CLEAR -> {}
+                    }
+                    if (r.isEmpty) fail("tap_failed")
+                    else if (tapAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
                     else fail("tap_failed")
                 }
                 if (how0 == "remapped") done + ("remapped" to true) else done
@@ -1686,7 +1831,20 @@ class HariAccessibilityService : AccessibilityService() {
                 }
                 // Under the keyboard the finger would type a letter: Back
                 // closes the keyboard first.
-                if (!clearKeyboardAt(x, y)) return fail("under_keyboard")
+                when (clearKeyboardAt(x, y)) {
+                    KbClear.COVERED -> return fail("under_keyboard")
+                    // The keyboard closed and the page slid (adjustResize /
+                    // adjustPan): a bottom-anchored Send, Pay or cart bar can
+                    // drop into the space the keyboard held. The point was
+                    // aimed at the picture, where the KEYBOARD was drawn —
+                    // whatever is under it now, the planner never saw. So no
+                    // finger lands: "keyboard_closed", and the next look
+                    // shows the page as it is. (Before, the tap landed
+                    // unchecked, and a chat's Send that slid into place went
+                    // without the owner's tap.)
+                    KbClear.CLOSED -> return fail("keyboard_closed")
+                    KbClear.CLEAR -> {}
+                }
                 if (tapAt(x, y)) mapOf("ok" to true, "how" to "point") else fail("tap_failed")
             }
             "type" -> {
@@ -1739,11 +1897,29 @@ class HariAccessibilityService : AccessibilityService() {
                 // TYPING THAT APPS REACT TO (2026-09-24). A field that
                 // refused the text, or a search box whose app did not answer
                 // it within ~600 ms (no results, no suggestions), gets the
-                // text PASTED — what Instagram's search needed.
-                val needPaste = text.isNotEmpty() && (!verified || (searchLike(n) && !appReacted(600)))
-                if (needPaste && paste(n, text)) {
-                    how = if (how == "tap_type") "tap_paste" else "paste"
-                    verified = holds(n, text)
+                // text again the way a keyboard types it — what Instagram's
+                // search needed. Through the keyboard's connection first (no
+                // clipboard); else pasted, only when the owner's clipboard
+                // can be put back exactly as it was.
+                val retypeNeeded = text.isNotEmpty() && (!verified || (searchLike(n) && !appReacted(600)))
+                if (retypeNeeded) {
+                    if (retype(n, text)) {
+                        how = if (how == "tap_type") "tap_retype" else "retype"
+                        verified = true
+                    } else when (paste(n, text)) {
+                        PasteResult.OK -> {
+                            how = if (how == "tap_type") "tap_paste" else "paste"
+                            verified = holds(n, text)
+                        }
+                        // Neither way could be used without destroying the
+                        // owner's clip, so nothing more was done. The text
+                        // set by ACTION_SET_TEXT stays; the planner is told
+                        // (it sees "paste_unavailable") so it submits or taps
+                        // a suggestion (rule 3b) instead of waiting for
+                        // suggestions that set text did not bring.
+                        PasteResult.UNAVAILABLE -> if (verified) how = "paste_unavailable"
+                        PasteResult.FAILED -> {}
+                    }
                 }
                 typingPkg = ""
                 var submitted = false
@@ -1763,7 +1939,10 @@ class HariAccessibilityService : AccessibilityService() {
                     mapOf("ok" to true, "verified" to true, "submitted" to false, "submit_refused" to true)
                 } else mapOf("ok" to true, "verified" to true, "submitted" to submitted)
                 // How it was typed, when not the plain way (the planner's
-                // history shows it): pasted, or a search bar tapped first.
+                // history shows it): typed again the keyboard's way, pasted,
+                // set but not answered (paste_unavailable), or a search bar
+                // tapped first. It rides in "how" — the one field the loop
+                // and the server pass on to the planner.
                 if (how != "set_text") done = done + ("how" to how)
                 if (how0 == "remapped") done + ("remapped" to true) else done
             }
@@ -1782,15 +1961,26 @@ class HariAccessibilityService : AccessibilityService() {
                 val n = picked ?: return fail(how0)
                 var target: AccessibilityNodeInfo? = n
                 while (target != null && !target.isLongClickable && !target.isClickable) target = target.parent
-                val words = tapWords(target ?: n)
-                if (words.any { PAY.containsMatchIn(it) || MONEY.containsMatchIn(it) }) return blocked("payment")
-                if (words.any { DESTRUCTIVE.containsMatchIn(it) }) return blocked("destructive")
+                pressVeto(tapWords(target ?: n))?.let { return blocked(it) }
                 val done = if (target?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true) {
                     mapOf("ok" to true, "how" to "long_click")
                 } else {
                     val r = Rect(); n.getBoundsInScreen(r)
-                    if (!clearKeyboardAt(r.exactCenterX(), r.exactCenterY())) return fail("under_keyboard")
-                    if (pressAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
+                    when (clearKeyboardAt(r.exactCenterX(), r.exactCenterY())) {
+                        KbClear.COVERED -> return fail("under_keyboard")
+                        // The page slid when the keyboard closed: press THIS
+                        // element at its new place, judged again — and so is
+                        // whatever now sits on top at its new centre — not
+                        // whatever dropped into its old spot.
+                        KbClear.CLOSED -> {
+                            if (!movedTo(n, r)) return fail("keyboard_closed")
+                            pressVeto(tapWords(target ?: n))?.let { return blocked(it) }
+                            pressVetoAt(r.exactCenterX(), r.exactCenterY())?.let { return blocked(it) }
+                        }
+                        KbClear.CLEAR -> {}
+                    }
+                    if (r.isEmpty) fail("long_press_failed")
+                    else if (pressAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
                     else fail("long_press_failed")
                 }
                 if (how0 == "remapped") done + ("remapped" to true) else done

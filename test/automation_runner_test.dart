@@ -489,6 +489,43 @@ void main() {
         {'ok': true, 'submitted': false, 'submit_refused': true, 'changed': true});
   });
 
+  // The phone never overwrites a clipboard it cannot put back. When a search
+  // box ignored set text and the text could not be typed again another way,
+  // the phone says so in "how" — the one field the server passes on to the
+  // planner — so it submits or taps a suggestion (rule 3b).
+  test('set text the app did not answer, with no clean way to retype, reaches the planner', () async {
+    const ig = 'com.instagram.android';
+    final dev = FakeDevice(screens: [
+      screen(ig, ['Search']),
+      screen(ig, ['Search', 'ravi']),
+    ])
+      ..onAct = (_) => {'ok': true, 'verified': true, 'submitted': false, 'how': 'paste_unavailable'};
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'type', 'id': 0, 'text': 'ravi'}},
+      {'status': 'failed', 'report': 'Could not find it.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy(pkg: ig));
+    expect(api.steps[1].last,
+        {'ok': true, 'how': 'paste_unavailable', 'submitted': false, 'changed': true});
+  });
+
+  // A point under the keyboard: Back closes it, the page slides, and the
+  // phone presses nothing there (the planner aimed at the keyboard's
+  // picture). The failure goes back as it is, so the planner looks again.
+  test('a point under the keyboard comes back as keyboard_closed, not a tap', () async {
+    final dev = FakeDevice(screens: [
+      screen('com.whatsapp', ['Message']),
+      screen('com.whatsapp', ['Message', 'Send']),
+    ])
+      ..onAct = (_) => {'ok': false, 'error': 'keyboard_closed'};
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap_xy', 'x': 900, 'y': 950, 'label': 'Enter'}},
+      {'status': 'failed', 'report': 'Stopped.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy(pkg: 'com.whatsapp'));
+    expect(api.steps[1].last, {'ok': false, 'error': 'keyboard_closed', 'changed': true});
+  });
+
   test('while an app installs, a task does not start — and leaves the install bar alone', () async {
     final dev = FakeDevice(screens: [screen(sw, ['Search'])])..beginResult = false;
     final api = FakeApi([]);
