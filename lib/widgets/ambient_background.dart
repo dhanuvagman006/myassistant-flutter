@@ -19,9 +19,42 @@ import '../design/neon_tokens.dart';
 /// Deliberately restrained: no visible edges, no second hue competing
 /// with content. You should feel the colour without being able to point
 /// at where it begins.
+///
+/// It never moves, and it is drawn as ONE picture on its own layer
+/// (2026-09-24, smoothness pass): anything changing on the page above it
+/// used to re-record these gradients too.
 class AmbientBackground extends StatelessWidget {
   final Widget child;
-  const AmbientBackground({super.key, required this.child});
+
+  /// True while something opaque covers the whole page — the voice
+  /// session. The light is not drawn then: nobody can see it, and it cost
+  /// four full-screen gradients on every frame of the orb.
+  final bool covered;
+
+  const AmbientBackground(
+      {super.key, required this.child, this.covered = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: Visibility.maintain(
+            visible: !covered,
+            child: const IgnorePointer(
+              child: RepaintBoundary(child: _Light()),
+            ),
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
+/// The three layers themselves (see [AmbientBackground]).
+class _Light extends StatelessWidget {
+  const _Light();
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +105,6 @@ class AmbientBackground extends StatelessWidget {
           top: h * 0.34,
           child: _pool(partner, dark ? 0.10 : 0.05, w * 1.05),
         ),
-        child,
       ],
     );
   }

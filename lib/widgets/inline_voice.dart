@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../design/dock_metrics.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
@@ -59,17 +60,17 @@ class AssistantOrbButton extends StatefulWidget {
 }
 
 class _AssistantOrbButtonState extends State<AssistantOrbButton>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   final engine = AssistantEngine.instance;
   late final AnimationController _halo =
       AnimationController(vsync: this, duration: const Duration(seconds: 2));
 
-  /// Slow breathing on the RESTING orb — the assistant's presence, not a
-  /// decoration. ±2% over 4 s; TickerMode pauses it when offstage.
-  late final AnimationController _breath = AnimationController(
-      vsync: this, duration: const Duration(seconds: 4), lowerBound: 0.98,
-      upperBound: 1.02)
-    ..repeat(reverse: true);
+  // NO BREATHING AT REST (2026-09-24). The resting mic used to breathe
+  // ±2% forever. Its own layer kept that cheap to paint, but a ticker that
+  // never stops still makes the phone draw a whole frame 60 times a
+  // second — the idle Home was measured doing exactly that. The mic now
+  // moves when something happens: the halo while a session runs, and a
+  // dip under the finger.
 
   bool get _active =>
       engine.liveActive ||
@@ -97,7 +98,6 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   void dispose() {
     engine.removeListener(_sync);
     _halo.dispose();
-    _breath.dispose();
     super.dispose();
   }
 
@@ -111,10 +111,13 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
       child: GestureDetector(
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
-      // Its own layer: the resting orb breathes forever, and without a
-      // boundary every frame of that repainted the dock and the Home
-      // screen behind it — on a screen otherwise sitting idle.
+      // Its own layer: the halo animates for a whole session, and without
+      // a boundary every frame of that repainted the dock and the screen
+      // behind it.
       child: RepaintBoundary(
+      // The press is the acknowledgement: it dips under the finger (a
+      // Listener, so the tap and the hold above still get the gesture).
+      child: PressScale(
       child: SizedBox(
         width: 76,
         height: 76,
@@ -148,40 +151,38 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                       child: Icon(Icons.stop_rounded,
                           color: Neon.textHi, size: 30),
                     )
-                  : ScaleTransition(
+                  : Container(
                       key: const ValueKey('idle'),
-                      scale: _breath,
-                      child: Container(
-                        width: 64,
-                        height: 64,
-                        // THE MIC IS THE APP. A plain white puck was the
-                        // single biggest piece of "this looks unfinished"
-                        // on every screen — it now wears the brand
-                        // gradient and throws its own light.
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: Neon.gBrand,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Neon.violet.withValues(alpha: 0.55),
-                              blurRadius: 26,
-                              spreadRadius: 1,
-                              offset: const Offset(0, 8),
-                            ),
-                            BoxShadow(
-                              color: Neon.pink.withValues(alpha: 0.30),
-                              blurRadius: 18,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.mic_rounded,
-                            color: Colors.white, size: 30),
+                      width: 64,
+                      height: 64,
+                      // THE MIC IS THE APP. A plain white puck was the
+                      // single biggest piece of "this looks unfinished"
+                      // on every screen — it now wears the brand
+                      // gradient and throws its own light.
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: Neon.gBrand,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Neon.violet.withValues(alpha: 0.55),
+                            blurRadius: 26,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 8),
+                          ),
+                          BoxShadow(
+                            color: Neon.pink.withValues(alpha: 0.30),
+                            blurRadius: 18,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
+                      child: const Icon(Icons.mic_rounded,
+                          color: Colors.white, size: 30),
                     ),
             ),
           ],
         ),
+      ),
       ),
       ),
     ),
@@ -232,9 +233,23 @@ class InlineCaptionOverlay extends StatefulWidget {
   /// the real value instead of guessing a fixed height.
   static final ValueNotifier<double> typeBarReach = ValueNotifier<double>(0);
 
+  /// True while the session covers the page completely: faded all the way
+  /// in, and not yet fading out. The session's ground is opaque, so the
+  /// page under it cannot be seen — HomeShell stops PAINTING it then (the
+  /// tabs, their blurred glass cards, the ambient light), which the phone
+  /// used to redraw on every frame of the orb for nothing. It turns false
+  /// on the very frame the session starts to leave, so the page is back
+  /// before any of it shows through.
+  static final ValueNotifier<bool> covering = ValueNotifier<bool>(false);
+
   @override
   State<InlineCaptionOverlay> createState() => _InlineCaptionOverlayState();
 }
+
+/// The sphere's diameter on the voice screen, and the square its glow
+/// needs round it.
+const double _orbSize = 168;
+const double _orbBox = _orbSize * 1.6;
 
 class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     with SingleTickerProviderStateMixin {
@@ -304,6 +319,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     super.initState();
     engine.caption.addListener(_onCaption);
     engine.addListener(_onEngine);
+    // Built mid-session (a theme flip rebuilds the whole app): it starts
+    // fully in, with no fade to end, so it says so itself.
+    if (_active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _active) InlineCaptionOverlay.covering.value = true;
+      });
+    }
   }
 
   @override
@@ -311,7 +333,14 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
     _pacer?.cancel();
+    // Never leave the page behind it unpainted.
+    InlineCaptionOverlay.covering.value = false;
     super.dispose();
+  }
+
+  /// The fade has finished: fully in covers the page, fully out does not.
+  void _onFadeEnd() {
+    if (mounted) InlineCaptionOverlay.covering.value = _active;
   }
 
   void _onCaption() {
@@ -342,8 +371,12 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
 
   void _onEngine() {
     if (!mounted) return;
-    // Session over → the words leave with it.
-    if (!_active && _text.isNotEmpty) _text = '';
+    // Session over → the words leave with it, and the page underneath is
+    // painted again before the fade-out starts to show it.
+    if (!_active) {
+      if (_text.isNotEmpty) _text = '';
+      InlineCaptionOverlay.covering.value = false;
+    }
     setState(() {});
   }
 
@@ -425,12 +458,19 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     // has to accept taps — and an AnimatedOpacity at 0 still hit-tests,
     // which would have made every card on Home unclickable the moment a
     // session ended. It ignores pointers exactly while it is invisible.
-    return IgnorePointer(
+    //
+    // ITS OWN LAYER. The captions change several times a second while a
+    // reply is spoken; without a boundary each change re-recorded the
+    // whole page underneath as well.
+    return RepaintBoundary(
+      child: IgnorePointer(
       ignoring: !show,
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 280),
+        // In step with the app's page transitions (200–250 ms).
+        duration: const Duration(milliseconds: 240),
         curve: Curves.easeOut,
         opacity: show ? 1 : 0,
+        onEnd: _onFadeEnd,
         // ROOM FOR THE KEYBOARD. Above an open keyboard a phone has ~300
         // points left, and the 330-point orb plus the dock's 120 did not
         // fit: the column overflowed — painted, but outside its own
@@ -454,6 +494,16 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               : Dock.clearance(context, gap: 12);
           // The height actually available to this screen's content.
           final avail = lifted || !typing ? box.maxHeight : box.maxHeight - kb;
+          // The orb's slot: smaller while typing, so everything fits above
+          // the keyboard; on a short phone it gives up height to the words.
+          final orbSlot = typing
+              ? math.min(190.0, avail * 0.42)
+              : math.min(330.0, avail * 0.38);
+          // How much smaller the orb is DRAWN to sit in it: while typing,
+          // the whole glow fits the slot; at rest, the sphere does (as it
+          // always has — only a very short screen ever shrinks it).
+          final orbScale =
+              math.min(1.0, orbSlot / (typing ? _orbBox : _orbSize));
           return Container(
           // FULLY OPAQUE. At 0.82, and still at 0.94, the page ghosted
           // through: Home's headings and calendar sat faintly behind the
@@ -488,37 +538,69 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // backdrop is pulled out to the screen edges.
               // double.infinity, or the Stack shrinks to the orb and the
               // backdrop's edges showed as a box around it.
+              //
+              // THE ORB SHRINKS BY SCALE, NOT BY LAYOUT (2026-09-24: one
+              // 83 ms frame as the keyboard came up, with the orb resizing
+              // while the keyboard moved). The slot still gives up height
+              // while typing, but the sphere inside it is laid out ONCE, at
+              // full size, in a box that never changes — and only DRAWN
+              // smaller, through a transform eased over 220 ms. A keyboard
+              // frame therefore never lays the orb out again. The backdrop
+              // is a bare canvas that fills the slot and draws its rings to
+              // the same scale.
+              //
+              // THE VOICE IS READ BY THE PAINTERS, not passed down by a
+              // rebuild: this screen used to rebuild the orb for every mic
+              // reading, and in a screen measured by a LayoutBuilder every
+              // such rebuild re-ran the layout up to the page. The orb and
+              // its backdrop read the live level on their own frames.
               SizedBox(
                 width: double.infinity,
-                // Smaller while typing, so everything fits above the
-                // keyboard; on a short phone it gives up height to the words.
-                height: typing
-                    ? math.min(190.0, avail * 0.42)
-                    : math.min(330.0, avail * 0.38),
-                child: ValueListenableBuilder<double>(
-                  valueListenable: engine.micLevelListenable,
-                  builder: (_, rawLevel, __) {
+                height: orbSlot,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(end: orbScale),
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  builder: (_, scale, __) {
                     final mood = _mood(micPaused);
                     // The level still arrives while paused (it is measured
                     // before the mute) — the orb must not react to it.
-                    final level = micPaused ? 0.0 : rawLevel;
+                    final level = micPaused ? null : engine.micLevelListenable;
                     return Stack(
                       alignment: Alignment.center,
                       clipBehavior: Clip.none,
                       children: [
-                        if (show)
-                          Positioned(
-                            left: -28,
-                            right: -28,
-                            top: 0,
-                            bottom: 0,
-                            child: VoiceOrbBackdrop(
-                              orbSize: 168,
+                        // Built even while hidden (and still then), so the
+                        // frame the screen opens on does not build it from
+                        // nothing.
+                        Positioned(
+                          left: -28,
+                          right: -28,
+                          top: 0,
+                          bottom: 0,
+                          child: VoiceOrbBackdrop(
+                            orbSize: _orbSize * scale,
+                            mood: mood,
+                            levelListenable: level,
+                            active: show,
+                          ),
+                        ),
+                        OverflowBox(
+                          minWidth: _orbBox,
+                          maxWidth: _orbBox,
+                          minHeight: _orbBox,
+                          maxHeight: _orbBox,
+                          child: Transform.scale(
+                            key: const ValueKey('orb-scale'),
+                            scale: scale,
+                            child: VoiceOrb(
+                              size: _orbSize,
                               mood: mood,
-                              level: level,
+                              levelListenable: level,
+                              active: show,
                             ),
                           ),
-                        VoiceOrb(size: 168, mood: mood, level: level),
+                        ),
                       ],
                     );
                   },
@@ -662,6 +744,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           ),
           );
         }),
+      ),
       ),
     );
   }
@@ -1170,6 +1253,11 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
   String? _text;
   Timer? _hide;
 
+  /// What the card shows — kept through its fade-out. The words used to be
+  /// swapped for nothing the moment it was dismissed, so the fade had
+  /// nothing to fade and the card blinked out instead.
+  String? _shown;
+
   /// THIS session's last answer, from its captions. A live reply is shown
   /// as captions and never written to the transcript, so reading the
   /// transcript re-showed an OLDER answer (or a relayed message) after
@@ -1270,20 +1358,29 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
   @override
   Widget build(BuildContext context) {
     final t = _cardShowing ? null : _text;
+    if (t != null) _shown = t;
+    final shown = _shown;
     // Above the dock and the mic, and above the toast while one is up.
     final bottom =
         AppFeedback.clearOfToast(Dock.clearance(context, gap: 12));
     return IgnorePointer(
       ignoring: t == null,
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 300),
+        duration: const Duration(milliseconds: 240),
         opacity: t == null ? 0 : 1,
+        // Faded all the way out: now the words can go.
+        onEnd: () {
+          final gone = _cardShowing || _text == null;
+          if (mounted && gone && _shown != null) {
+            setState(() => _shown = null);
+          }
+        },
         child: Align(
           alignment: Alignment.bottomCenter,
           child: AnimatedPadding(
             duration: const Duration(milliseconds: 200),
             padding: EdgeInsets.only(left: 16, right: 16, bottom: bottom),
-            child: t == null
+            child: shown == null
                 ? const SizedBox.shrink()
                 : Container(
                     padding: const EdgeInsets.fromLTRB(14, 4, 2, 4),
@@ -1306,7 +1403,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             child: Text(
-                              t,
+                              shown,
                               maxLines: 4,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(

@@ -72,8 +72,8 @@ class AppTheme {
       highlightColor: Neon.violet.withValues(alpha: 0.06),
       hoverColor: Neon.violet.withValues(alpha: 0.04),
       pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
-        TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
+        TargetPlatform.android: AppPageTransitions(),
+        TargetPlatform.iOS: AppPageTransitions(),
       }),
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -249,4 +249,36 @@ class AppTheme {
   /// Light-first product: "dark" returns the same Daylight theme so no
   /// device setting can drop the app back into the retired neon design.
   static ThemeData dark() => light();
+}
+
+/// EVERY PAGE MOVES AT THE SAME PACE (2026-09-24, "need more smoothness
+/// while using the app").
+///
+/// The same fade-and-rise every screen already used, but on the app's own
+/// clock: 240 ms in and 200 ms back, where the stock route took 300 ms
+/// both ways — slower than the voice screen, the cards and the toasts
+/// around it, so opening a page felt like waiting for it. Every
+/// MaterialPageRoute in the app reads its timing from here.
+class AppPageTransitions extends PageTransitionsBuilder {
+  const AppPageTransitions();
+
+  static const Duration forward = Duration(milliseconds: 240);
+  static const Duration back = Duration(milliseconds: 200);
+
+  @override
+  Duration get transitionDuration => forward;
+
+  @override
+  Duration get reverseTransitionDuration => back;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) =>
+      const FadeUpwardsPageTransitionsBuilder().buildTransitions<T>(
+          route, context, animation, secondaryAnimation, child);
 }

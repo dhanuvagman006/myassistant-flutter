@@ -26,15 +26,29 @@ class CallLed extends StatefulWidget {
 
 class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
   final _engine = AssistantEngine.instance;
+
+  /// Breathes ONLY while a call is on. It was started once and never
+  /// stopped, so after the first call of the day it kept the idle Home
+  /// drawing 60 frames a second behind an empty light (2026-09-24).
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1100),
-  )..repeat(reverse: true);
+  );
 
   @override
   void initState() {
     super.initState();
     _engine.addListener(_onChange);
+    _syncPulse();
+  }
+
+  void _syncPulse() {
+    final on = _engine.callStatus != null;
+    if (on && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (!on && _pulse.isAnimating) {
+      _pulse.stop();
+    }
   }
 
   @override
@@ -45,7 +59,9 @@ class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
   }
 
   void _onChange() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _syncPulse();
+    setState(() {});
   }
 
   @override
@@ -78,7 +94,10 @@ class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
                 // The light itself: a steady dot with a breathing halo, so
                 // it reads as "live" from the corner of the eye without
                 // animating anything the user has to look at.
-                AnimatedBuilder(
+                // Its own layer, so the breathing does not repaint the
+                // Home header around it.
+                RepaintBoundary(
+                  child: AnimatedBuilder(
                   animation: _pulse,
                   builder: (_, __) => Container(
                     width: 9,
@@ -95,6 +114,7 @@ class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
                       ],
                     ),
                   ),
+                ),
                 ),
                 const SizedBox(width: 9),
                 Flexible(
