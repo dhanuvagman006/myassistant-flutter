@@ -4,9 +4,10 @@ import 'package:flutter/services.dart';
 
 import 'api_service.dart';
 
-/// "DO IT FOR ME" — runs a task inside another app, one checked step at a
-/// time: look at the screen, ask the server for ONE next action, do it,
-/// wait for the screen to settle, check it changed, repeat. It stops at a
+/// "DO IT FOR ME" — uses the phone for the owner (any app, several apps,
+/// ordinary settings), one checked step at a time: look at the screen, ask
+/// the server for ONE next action, do it, wait for the screen to settle,
+/// check it changed, repeat. It stops at a
 /// done, a hand-over (payment, a password, a message to send — always the
 /// owner's), a question, or Stop on the bar the service draws.
 ///
@@ -21,6 +22,9 @@ class AutomationDirective {
   final String pkg;
   final String startUrl;
   final bool web;
+  /// The whole phone: any app except money apps, the installer and
+  /// permission pop-ups (the phone enforces those).
+  final bool anyApp;
   final List<String> allowed;
   final int maxSteps;
   final bool resume;
@@ -33,6 +37,7 @@ class AutomationDirective {
     this.pkg = '',
     this.startUrl = '',
     this.web = false,
+    this.anyApp = false,
     this.allowed = const [],
     this.maxSteps = 25,
     this.resume = false,
@@ -49,6 +54,7 @@ class AutomationDirective {
       pkg: e['pkg'] as String? ?? '',
       startUrl: e['start_url'] as String? ?? '',
       web: e['web'] == true,
+      anyApp: e['any'] == true,
       allowed: ((e['allowed'] as List?) ?? const [])
           .map((x) => x.toString())
           .where((x) => x.isNotEmpty)
@@ -89,7 +95,7 @@ abstract class AutomationDevice {
   Future<({bool connected, bool enabled})> status();
   Future<Map<String, String>?> resolveApp(String name);
   Future<Map<String, dynamic>> launch({String pkg = '', String url = ''});
-  Future<bool> begin(List<String> allowed, String status);
+  Future<bool> begin(List<String> allowed, String status, {bool any = false});
   Future<void> allow(String pkg);
   Future<void> say(String text);
   Future<Map<String, dynamic>?> snapshot();
@@ -145,8 +151,8 @@ class ChannelAutomationDevice implements AutomationDevice {
   }
 
   @override
-  Future<bool> begin(List<String> allowed, String status) async =>
-      (await _ch.invokeMethod('begin', {'allowed': allowed, 'status': status})
+  Future<bool> begin(List<String> allowed, String status, {bool any = false}) async =>
+      (await _ch.invokeMethod('begin', {'allowed': allowed, 'status': status, 'any': any})
           .catchError((_) => false)) ==
       true;
 
@@ -244,6 +250,20 @@ class AutomationRunner {
         return short.isEmpty ? '${where}tapping' : '${where}tapping “$short”';
       case 'scroll':
         return '${where}looking further down';
+      case 'swipe':
+        return '${where}swiping';
+      case 'long_press':
+        return short.isEmpty ? '${where}pressing' : '${where}pressing “$short”';
+      case 'open_app':
+        return 'opening ${action['name'] ?? 'an app'}';
+      case 'home':
+        return 'going to the home screen';
+      case 'notifications':
+        return 'opening notifications';
+      case 'quick_settings':
+        return 'opening quick settings';
+      case 'recents':
+        return 'opening recent apps';
       case 'back':
         return '${where}going back';
       default:
@@ -294,10 +314,12 @@ class AutomationRunner {
             'I need your one-time permission to use other apps for you.');
       }
 
-      final app = d.web ? 'Browser' : d.app;
+      final app = d.web ? 'Browser' : (d.appName.isEmpty ? '' : d.app);
       final allowed = <String>{...d.allowed};
       var pkg = d.pkg;
-      if (!d.web && pkg.isEmpty) {
+      // No app to start in: the task starts from the home screen.
+      final fromHome = !d.web && pkg.isEmpty && d.appName.isEmpty;
+      if (!d.web && pkg.isEmpty && !fromHome) {
         final hit = await device.resolveApp(d.appName.isNotEmpty ? d.appName : d.app);
         if (hit == null || (hit['pkg'] ?? '').isEmpty) {
           final o = await _finish(d.runId, 'not_installed',
@@ -309,8 +331,10 @@ class AutomationRunner {
         allowed.add(pkg);
       }
 
-      await device.begin(allowed.toList(), statusLine(app, null));
-      final opened = await device.launch(pkg: pkg, url: d.resume ? '' : d.startUrl);
+      await device.begin(allowed.toList(), statusLine(app, null), any: d.anyApp);
+      final opened = fromHome
+          ? await device.act({'type': 'home'})
+          : await device.launch(pkg: pkg, url: d.resume ? '' : d.startUrl);
       if (opened['ok'] != true) {
         final o = await _finish(d.runId,
             opened['error'] == 'not_installed' ? 'not_installed' : 'error',
@@ -333,11 +357,15 @@ class AutomationRunner {
         }
 
         var snap = await device.snapshot();
-        // Patience before calling it "left the app": a splash screen or a
-        // slow first draw is not the owner switching apps.
+        // Patience before handing over: a splash screen or a slow first
+        // draw is not a payment app or the owner switching away.
+        bool usable(Map<String, dynamic>? m) =>
+            m != null && (m['allowed'] == true || (!d.anyApp && allowed.contains(m['pkg'])));
         for (var tries = 0; tries < 3; tries++) {
           final fg = (snap?['pkg'] as String?) ?? '';
-          if (snap != null && allowed.contains(fg)) break;
+          if (usable(snap)) break;
+          // The owner came back to the assistant: they have the phone.
+          if (fg == ownPackage) break;
           // A web task runs in whichever browser took the link.
           if (d.web && firstLook && fg.isNotEmpty && fg != ownPackage) {
             await device.allow(fg);
@@ -355,9 +383,17 @@ class AutomationRunner {
           finalText = o.report;
           return o;
         }
-        if (!allowed.contains(snap['pkg'])) {
-          final o = await _finish(d.runId, 'left_app',
-              fallback: 'Another screen took over, so I stopped there.');
+        if (snap['pkg'] == ownPackage) {
+          final o = await _finish(d.runId, 'returned',
+              fallback: 'You came back to me, so I stopped there.');
+          return o;
+        }
+        if (!usable(snap)) {
+          final block = (snap['block'] as String?) ?? '';
+          final o = block.isNotEmpty && block != 'left_app'
+              ? await _finish(d.runId, 'blocked', kind: block)
+              : await _finish(d.runId, 'left_app',
+                  fallback: 'Another screen took over, so I stopped there.');
           finalText = o.report;
           return o;
         }

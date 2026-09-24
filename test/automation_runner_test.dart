@@ -17,6 +17,7 @@ class FakeDevice implements AutomationDevice {
   bool stop = false;
   Map<String, String>? resolved;
   List<String> allowed = [];
+  bool any = false;
   String finalText = '';
   int _i = 0;
 
@@ -36,8 +37,9 @@ class FakeDevice implements AutomationDevice {
   }
 
   @override
-  Future<bool> begin(List<String> allowed, String status) async {
+  Future<bool> begin(List<String> allowed, String status, {bool any = false}) async {
     this.allowed = allowed;
+    this.any = any;
     log.add('begin:${allowed.join(",")}');
     return true;
   }
@@ -56,7 +58,13 @@ class FakeDevice implements AutomationDevice {
     if (screens.isEmpty) return null;
     final s = screens[_i < screens.length ? _i : screens.length - 1];
     _i++;
-    return s;
+    // Like the service: allowed unless the screen says otherwise.
+    return {
+      ...s,
+      'allowed': s.containsKey('allowed')
+          ? s['allowed']
+          : (any || allowed.contains(s['pkg'])),
+    };
   }
 
   @override
@@ -176,6 +184,44 @@ void main() {
     expect(out.status, 'stopped');
     expect(api.steps, isEmpty);
     expect(api.finishes, ['stopped']);
+  });
+
+  test('a money app in front hands over as payment, never acts in it', () async {
+    final dev = FakeDevice(screens: [
+      {...screen('com.phonepe.app', ['Enter UPI PIN']), 'allowed': false, 'block': 'payment'}
+    ]);
+    final api = FakeApi([]);
+    final out = await AutomationRunner(device: dev, api: api)
+        .run(const AutomationDirective(runId: 12, goal: 'x', anyApp: true));
+    expect(out.status, 'handoff');
+    expect(api.finishes, ['blocked:payment']);
+    expect(dev.acts.where((a) => a['type'] != 'home'), isEmpty);
+  });
+
+  test('the owner coming back to the assistant ends the run', () async {
+    final dev = FakeDevice(screens: [screen('com.myassistant.myassistant', ['Home'])]);
+    final api = FakeApi([]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(api.finishes, ['returned']);
+    expect(api.steps, isEmpty);
+  });
+
+  test('a task with no app starts from the home screen and may open any app', () async {
+    final dev = FakeDevice(screens: [
+      screen('com.sec.android.app.launcher', ['Phone', 'Settings']),
+      screen('com.android.settings', ['Connections', 'Bluetooth']),
+    ]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'open_app', 'name': 'Settings'}},
+      {'status': 'done', 'report': 'Bluetooth is on.'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(
+        const AutomationDirective(runId: 13, goal: 'turn on bluetooth', anyApp: true));
+    expect(out.status, 'done');
+    expect(dev.acts.first, {'type': 'home'});
+    expect(dev.acts[1], {'type': 'open_app', 'name': 'Settings'});
+    expect(dev.log.where((l) => l.startsWith('launch')), isEmpty);
+    expect(dev.log.where((l) => l.startsWith('say:')).first, 'say:opening Settings');
   });
 
   test('another app in front (after patience) stops the run, never acts in it', () async {

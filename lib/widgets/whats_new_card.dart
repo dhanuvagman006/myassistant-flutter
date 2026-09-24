@@ -15,11 +15,11 @@ class WhatsNewCard extends StatefulWidget {
   /// Bump with every release that has something worth telling.
   static const release = '0.2.98';
   static const items = <(IconData, String)>[
-    (Icons.touch_app_rounded, 'Do it for me: say "order veg biryani from a 4-star place" — I open Swiggy, pick the restaurant and fill your cart, then hand you the payment. One-time switch: You → Do it for me.'),
+    (Icons.touch_app_rounded, 'Do it for me: say "order veg biryani from a 4-star place" — I open your food app, pick the restaurant and fill your cart, then hand you the payment. One-time switch: You → Do it for me.'),
+    (Icons.phone_android_rounded, 'Any app, any setting: "turn on Bluetooth", "install an app", "find my last order" — I use your phone the way you would.'),
     (Icons.edit_note_rounded, 'Forms too: "fill this form with my details" — your name, phone, email and address go in and it is submitted.'),
     (Icons.shield_rounded, 'I never pay, move money, type passwords or OTPs, or send messages for you — I stop and tell you what is left. A bar with Stop shows while I work.'),
     (Icons.groups_rounded, 'Record a meeting (Hub → Meetings, or say "record this meeting"): get minutes, decisions and action items — share them as a PDF.'),
-    (Icons.contact_mail_rounded, 'Scan a visiting card: the person is saved, one tap adds them to your contacts, another says hello on WhatsApp.'),
   ];
 
   static String _key() => 'whats_new_seen_$release';

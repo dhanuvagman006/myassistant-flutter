@@ -26,8 +26,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * THE ASSISTANT'S HANDS — reads the screen of another app and taps or
- * types in it, only while a task the owner asked for is running.
+ * THE ASSISTANT'S HANDS — uses the phone the way the owner would: opens
+ * any app, moves between apps, reads the screen, taps, types, scrolls,
+ * swipes, and uses Home / Back / notifications / quick settings — only
+ * while a task the owner asked for is running.
  *
  * WHAT IT DOES WHEN NO TASK IS RUNNING: nothing. Events only move a
  * timestamp (so a step can tell when the screen has settled); no screen is
@@ -39,8 +41,10 @@ import android.widget.TextView
  *     money
  *   • typing into password, PIN, OTP, card, bank or ID fields
  *   • tapping Send in a messaging app
- *   • acting in any app outside the run's allowed list — payment apps and
- *     system settings are never on it
+ *   • deleting or erasing anything
+ *   • security settings (screen lock, accessibility, device admin, unknown
+ *     apps, developer options, accounts, reset)
+ *   • acting in payment apps, the package installer or permission pop-ups
  * A refused step comes back as {blocked: kind} and the run hands the phone
  * to the owner.
  */
@@ -57,7 +61,7 @@ class HariAccessibilityService : AccessibilityService() {
         // conservative: a false stop costs the owner one tap, a false go
         // could cost money.
         private val PAY = Regex(
-            "^\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,.]*\\s*(?:pay\\b|proceed to pay|proceed to buy|" +
+            "^\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,.]*\\s*(?:pay\\b|buy\\b|proceed to pay|proceed to buy|" +
                 "make (?:a |the )?payment|place (?:your |the )?order|confirm (?:and|&) pay|" +
                 "confirm (?:the |your )?(?:order|payment|purchase|booking|ride|pickup|trip)|" +
                 "complete (?:the |your )?(?:payment|purchase|order|booking)|buy now|" +
@@ -79,6 +83,8 @@ class HariAccessibilityService : AccessibilityService() {
                 "account\\s*(?:number|no\\b)|\\bifsc\\b|aadhaa?r|\\bpan\\b|security\\s*(?:code|question)|secret)",
             RegexOption.IGNORE_CASE
         )
+        /** A button that is only a price — a paid app's "₹99.00". */
+        private val PRICE_ONLY = Regex("^\\s*(?:₹|rs\\.?|inr|\\$|€|£)\\s*[\\d,.]+\\s*$", RegexOption.IGNORE_CASE)
         private val CARD_NUMBER = Regex("\\b(?:\\d[ -]?){13,19}\\b")
         private val SEND = Regex("^\\s*(?:send|send message|reply|post|share)\\s*$", RegexOption.IGNORE_CASE)
         private val MESSAGING = setOf(
@@ -86,14 +92,43 @@ class HariAccessibilityService : AccessibilityService() {
             "com.google.android.apps.messaging", "com.samsung.android.messaging",
             "com.google.android.gm", "com.instagram.android", "com.facebook.orca",
         )
-        /** Never acted in, even if a run asks. */
-        val NEVER = setOf(
+        /** Money apps: never acted in, never opened by the assistant. */
+        private val MONEY_APPS = setOf(
             "com.google.android.apps.nbu.paisa.user", "com.phonepe.app", "net.one97.paytm",
-            "in.org.npci.upiapp", "com.dreamplug.androidapp",
-            "com.android.settings", "com.samsung.android.settings",
+            "in.org.npci.upiapp", "com.dreamplug.androidapp", "com.mobikwik_new",
+            "com.freecharge.android", "com.sbi.upi", "com.sbi.SBIFreedomPlus",
+            "com.csam.icici.bank.imobile", "com.snapwork.hdfc", "com.axis.mobile",
+            "com.msf.kbank.mobile",
+        )
+        /** Permission pop-ups: granting access is the owner's decision. */
+        private val PERMISSION_APPS = setOf(
             "com.android.permissioncontroller", "com.google.android.permissioncontroller",
+        )
+        private val INSTALLERS = setOf(
             "com.android.packageinstaller", "com.google.android.packageinstaller",
-            "com.android.systemui",
+        )
+        /** Never acted in, even if a run asks. */
+        val NEVER = MONEY_APPS + PERMISSION_APPS + INSTALLERS
+        private val SETTINGS_APPS = setOf(
+            "com.android.settings", "com.samsung.android.settings",
+            "com.samsung.android.biometrics.app.setting", "com.samsung.android.lool",
+        )
+        /** Deleting is final — the owner's own tap. */
+        private val DESTRUCTIVE = Regex(
+            "^\\s*(?:delete|delete all|delete permanently|delete for everyone|erase|erase all|" +
+                "clear (?:data|storage|all data|cache and data)|format|wipe|factory (?:data )?reset|" +
+                "reset (?:phone|device|all|settings)|empty (?:trash|bin)|uninstall|remove account)\\b",
+            RegexOption.IGNORE_CASE
+        )
+        /** Settings that guard the phone itself. Checked only in Settings. */
+        private val SECURITY_SETTING = Regex(
+            "(?:accessibility|device admin|admin apps|install unknown|unknown apps|unknown sources|" +
+                "developer options|usb debugging|wireless debugging|screen lock|lock screen|" +
+                "biometric|fingerprint|face recognition|password|passkey|security|privacy|" +
+                "play protect|encryption|credential|\\baccounts?\\b|backup|\\breset\\b|factory|" +
+                "special (?:app )?access|app permissions|permission manager|default apps|" +
+                "sim (?:card )?lock|find my (?:mobile|device)|secure folder)",
+            RegexOption.IGNORE_CASE
         )
     }
 
@@ -113,6 +148,9 @@ class HariAccessibilityService : AccessibilityService() {
     private var allowed: Set<String> = emptySet()
     @Volatile
     private var running = false
+    /** Whole-phone runs: any app except NEVER (and never this app). */
+    @Volatile
+    private var anyApp = false
 
     /** Elements of the last snapshot, by the id the planner saw. */
     @Volatile
@@ -155,11 +193,25 @@ class HariAccessibilityService : AccessibilityService() {
      * RUN LIFECYCLE
      * ---------------------------------------------------------------- */
 
-    fun begin(allowedPkgs: List<String>, status: String) {
+    fun begin(allowedPkgs: List<String>, status: String, any: Boolean = false) {
         allowed = allowedPkgs.filter { it.isNotBlank() && it !in NEVER }.toSet()
+        anyApp = any
         stopRequested = false
         running = true
         showPill(status)
+    }
+
+    /** May the run read and act in [pkg]? Never this app itself. */
+    fun isAllowed(pkg: String): Boolean =
+        pkg.isNotEmpty() && pkg != packageName && pkg !in NEVER && (anyApp || pkg in allowed)
+
+    /** Why a package is off limits, for the hand-over message. */
+    fun blockKind(pkg: String): String = when {
+        pkg == packageName -> "returned"
+        pkg in MONEY_APPS -> "payment"
+        pkg in PERMISSION_APPS -> "permission"
+        pkg in INSTALLERS -> "blocked_app"
+        else -> "left_app"
     }
 
     fun allow(pkg: String) {
@@ -173,6 +225,7 @@ class HariAccessibilityService : AccessibilityService() {
      */
     fun end(finalText: String = "") {
         running = false
+        anyApp = false
         allowed = emptySet()
         byId = emptyList()
         if (finalText.isBlank()) { hidePill(); return }
@@ -200,7 +253,8 @@ class HariAccessibilityService : AccessibilityService() {
         val keep = ArrayList<AccessibilityNodeInfo>()
         // Nothing is read outside a run, or from an app the run may not
         // touch — the package name alone is enough to hand over.
-        if (root != null && running && pkg in allowed) {
+        val ok = running && isAllowed(pkg)
+        if (root != null && ok) {
             val dm = resources.displayMetrics
             val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
             walk(root, false, -1, out, keep, screenArea)
@@ -208,6 +262,8 @@ class HariAccessibilityService : AccessibilityService() {
         byId = keep
         return mapOf(
             "pkg" to pkg,
+            "allowed" to ok,
+            "block" to if (ok) "" else blockKind(pkg),
             "keyboard" to keyboardOpen(),
             "stop" to stopRequested,
             "nodes" to out,
@@ -339,9 +395,13 @@ class HariAccessibilityService : AccessibilityService() {
         if (stopRequested) return mapOf("ok" to false, "error" to "stopped", "stop" to true)
         if (!running) return fail("not_running")
         val fg = foreground()
-        if (fg !in allowed) return fail("not_allowed:$fg")
-
         val type = a["type"] as? String ?: return fail("no_type")
+        // Moving around the phone (Home, Back, opening an app, the shade)
+        // is fine from anywhere; touching a screen needs it to be allowed.
+        val global = type in setOf("home", "back", "recents", "notifications",
+            "quick_settings", "open_app", "wait", "screenshot")
+        if (!global && !isAllowed(fg)) return fail("not_allowed:$fg")
+
         val id = (a["id"] as? Number)?.toInt()
         val node = id?.let { byId.getOrNull(it) }
 
@@ -355,11 +415,16 @@ class HariAccessibilityService : AccessibilityService() {
                 for (judged in listOfNotNull(n, target)) {
                     val words = tapWords(judged)
                     val merged = StringBuilder().also { collectText(judged, it, 0) }.toString()
-                    if (words.any { PAY.containsMatchIn(it) } || PAY.containsMatchIn(merged)) {
+                    if (words.any { PAY.containsMatchIn(it) || PRICE_ONLY.matches(it) } ||
+                        PAY.containsMatchIn(merged)) {
                         return blocked("payment")
                     }
                     if (words.any { MONEY.containsMatchIn(it) }) return blocked("money")
                     if (fg in MESSAGING && words.any { SEND.matches(it) }) return blocked("message_send")
+                    if (words.any { DESTRUCTIVE.containsMatchIn(it) }) return blocked("destructive")
+                    if (fg in SETTINGS_APPS && (words + merged).any { SECURITY_SETTING.containsMatchIn(it) }) {
+                        return blocked("security")
+                    }
                 }
                 val ok = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 if (ok) mapOf("ok" to true, "how" to "click") else {
@@ -402,7 +467,41 @@ class HariAccessibilityService : AccessibilityService() {
                 else if (swipe(forward)) mapOf("ok" to true, "how" to "gesture")
                 else fail("scroll_failed")
             }
+            "long_press" -> {
+                val n = node ?: return fail("no_such_element")
+                var target: AccessibilityNodeInfo? = n
+                while (target != null && !target.isLongClickable && !target.isClickable) target = target.parent
+                val words = tapWords(target ?: n)
+                if (words.any { PAY.containsMatchIn(it) || MONEY.containsMatchIn(it) }) return blocked("payment")
+                if (words.any { DESTRUCTIVE.containsMatchIn(it) }) return blocked("destructive")
+                if (target?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true) {
+                    mapOf("ok" to true, "how" to "long_click")
+                } else {
+                    val r = Rect(); n.getBoundsInScreen(r)
+                    if (pressAt(r.exactCenterX(), r.exactCenterY())) mapOf("ok" to true, "how" to "gesture")
+                    else fail("long_press_failed")
+                }
+            }
+            "swipe" -> if (swipeDir((a["direction"] as? String) ?: "up")) mapOf("ok" to true) else fail("swipe_failed")
+            "open_app" -> {
+                val name = (a["name"] as? String).orEmpty()
+                val hit = matchLauncherApp(packageManager, name) ?: return fail("app_not_found")
+                if (hit.first in MONEY_APPS) return blocked("payment")
+                if (hit.first in NEVER || hit.first == packageName) return blocked("blocked_app")
+                val launch = packageManager.getLaunchIntentForPackage(hit.first) ?: return fail("app_not_found")
+                try {
+                    startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    mapOf("ok" to true, "opened" to hit.second)
+                } catch (e: Throwable) { fail("launch_failed") }
+            }
+            "home" -> if (performGlobalAction(GLOBAL_ACTION_HOME)) mapOf("ok" to true) else fail("home_failed")
             "back" -> if (performGlobalAction(GLOBAL_ACTION_BACK)) mapOf("ok" to true) else fail("back_failed")
+            "recents" -> if (performGlobalAction(GLOBAL_ACTION_RECENTS)) mapOf("ok" to true) else fail("recents_failed")
+            "notifications" -> if (performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)) mapOf("ok" to true) else fail("shade_failed")
+            "quick_settings" -> if (performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)) mapOf("ok" to true) else fail("shade_failed")
+            "screenshot" -> if (Build.VERSION.SDK_INT >= 28 && performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)) {
+                mapOf("ok" to true)
+            } else fail("screenshot_failed")
             "wait" -> mapOf("ok" to true)
             else -> fail("unknown_action")
         }
@@ -423,6 +522,160 @@ class HariAccessibilityService : AccessibilityService() {
     }
 
     /* ---------------------------------------------------------------- *
+     * "INSTALL SWIGGY" — press Install, wait, open it
+     * ---------------------------------------------------------------- */
+
+    /**
+     * Finishes what openStore started: on the Play Store page for the app
+     * the owner named, presses Install, waits for the download and opens
+     * the app. Only in the Play Store, only a FREE app (a price or "Buy"
+     * stops it), and when the Store opened on a search instead of the
+     * app's own page, only a result whose name matches. Returns false when
+     * it cannot start (another task running).
+     */
+    @Volatile
+    private var installing = false
+
+    private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+    private fun visibleNodes(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+        val out = ArrayList<AccessibilityNodeInfo>()
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        while (stack.isNotEmpty() && out.size < 500) {
+            val n = stack.removeLast()
+            if (!n.isVisibleToUser) continue
+            out.add(n)
+            for (i in n.childCount - 1 downTo 0) n.getChild(i)?.let { stack.add(it) }
+        }
+        return out
+    }
+
+    private fun clickUp(n: AccessibilityNodeInfo): Boolean {
+        var t: AccessibilityNodeInfo? = n
+        while (t != null && !t.isClickable) t = t.parent
+        return t?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    fun autoInstall(pkg: String, name: String): Boolean {
+        if (installing || running) return false
+        installing = true
+        stopRequested = false
+        val store = "com.android.vending"
+        val label = name.trim().ifEmpty { pkg }
+        val want = norm(name)
+        val started = SystemClock.uptimeMillis()
+        var pressedAt = 0L
+        var presses = 0
+        var openedListing = pkg.isNotEmpty()
+        showPill("Installing $label…")
+
+        fun done(text: String) {
+            installing = false
+            end(text)
+        }
+
+        fun openApp(launch: Intent) {
+            try {
+                startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                done("$label is installed — opened it for you.")
+            } catch (e: Throwable) {
+                done("$label is installed — tap its icon to open it.")
+            }
+        }
+
+        val tick = object : Runnable {
+            override fun run() {
+                if (!installing) return
+                val now = SystemClock.uptimeMillis()
+                if (stopRequested) {
+                    done(if (presses > 0) "Stopped. The download may still finish on its own." else "Stopped.")
+                    return
+                }
+                // Arrived — open it (InstallWatch saw the package land).
+                InstallWatch.takeReady(this@HariAccessibilityService)?.let { openApp(it); return }
+                if (pkg.isNotEmpty() && presses > 0) {
+                    packageManager.getLaunchIntentForPackage(pkg)?.let { openApp(it); return }
+                }
+
+                val root = rootInActiveWindow
+                if (root?.packageName?.toString() == store) {
+                    val nodes = visibleNodes(root)
+                    val said = { n: AccessibilityNodeInfo ->
+                        (n.text?.toString()?.trim().takeUnless { it.isNullOrEmpty() }
+                            ?: n.contentDescription?.toString()?.trim()).orEmpty()
+                    }
+                    val install = nodes.firstOrNull { said(it).equals("install", ignoreCase = true) }
+                    val open = nodes.firstOrNull { said(it).equals("open", ignoreCase = true) }
+                    // A price instead of Install: buying is the owner's step.
+                    if (presses == 0 && install == null &&
+                        nodes.any { PRICE_ONLY.matches(said(it)) || said(it).startsWith("Buy", true) }) {
+                        done("$label is a paid app — buying it is your step, so I've left it open for you.")
+                        return
+                    }
+                    if (nodes.any { said(it).matches(Regex("(?i)^sign in$")) }) {
+                        done("The app store wants you to sign in first — then say install $label again.")
+                        return
+                    }
+                    // "Complete account setup" and similar: skip, never add
+                    // a payment method.
+                    nodes.firstOrNull { said(it).equals("skip", ignoreCase = true) }?.let {
+                        clickUp(it)
+                        main.postDelayed(this, 900)
+                        return
+                    }
+                    if (!openedListing) {
+                        // Search results: open the app whose name matches,
+                        // never the top ad's Install button.
+                        val title = nodes.firstOrNull {
+                            val t = it.text?.toString().orEmpty()
+                            want.length >= 3 && t.isNotEmpty() && norm(t).startsWith(want)
+                        }
+                        if (title != null && clickUp(title)) {
+                            openedListing = true
+                            status("Opening $label's page…")
+                        }
+                    } else if (install != null && install.isEnabled) {
+                        if (presses == 0 || now - pressedAt > 7000) {
+                            if (presses >= 2) {
+                                done("The download didn't start — tap Install yourself.")
+                                return
+                            }
+                            if (clickUp(install)) {
+                                presses++
+                                pressedAt = now
+                                status("Downloading $label…")
+                            }
+                        }
+                    } else if (install == null && presses > 0) {
+                        // Downloading: show Play Store's own progress.
+                        nodes.map { said(it) }.firstOrNull { Regex("\\d+\\s*%").containsMatchIn(it) }
+                            ?.let { status("Downloading $label… ${Regex("\\d+\\s*%").find(it)!!.value}") }
+                    } else if (open != null && presses == 0) {
+                        // Already on the phone.
+                        clickUp(open)
+                        done("$label was already installed — opened it.")
+                        return
+                    }
+                }
+
+                val waited = now - started
+                if (presses == 0 && waited > 30_000) {
+                    done("I couldn't find the Install button — please tap it yourself.")
+                    return
+                }
+                if (waited > 12 * 60_000) {
+                    done("$label is still downloading — it'll be on your home screen when done.")
+                    return
+                }
+                main.postDelayed(this, if (presses == 0) 700 else 1500)
+            }
+        }
+        main.postDelayed(tick, 1200)
+        return true
+    }
+
+    /* ---------------------------------------------------------------- *
      * GESTURES — only when a plain click was refused
      * ---------------------------------------------------------------- */
 
@@ -430,6 +683,29 @@ class HariAccessibilityService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < 24) return false
         val path = Path().apply { moveTo(x, y) }
         return dispatch(GestureDescription.StrokeDescription(path, 0, 60))
+    }
+
+    private fun pressAt(x: Float, y: Float): Boolean {
+        if (Build.VERSION.SDK_INT < 24) return false
+        val path = Path().apply { moveTo(x, y) }
+        return dispatch(GestureDescription.StrokeDescription(path, 0, 700))
+    }
+
+    /** A finger across the screen: "left" moves content left (next page). */
+    private fun swipeDir(direction: String): Boolean {
+        if (Build.VERSION.SDK_INT < 24) return false
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels.toFloat()
+        val h = dm.heightPixels.toFloat()
+        val path = Path().apply {
+            when (direction) {
+                "left" -> { moveTo(w * 0.85f, h * 0.5f); lineTo(w * 0.15f, h * 0.5f) }
+                "right" -> { moveTo(w * 0.15f, h * 0.5f); lineTo(w * 0.85f, h * 0.5f) }
+                "down" -> { moveTo(w * 0.5f, h * 0.30f); lineTo(w * 0.5f, h * 0.72f) }
+                else -> { moveTo(w * 0.5f, h * 0.72f); lineTo(w * 0.5f, h * 0.30f) }
+            }
+        }
+        return dispatch(GestureDescription.StrokeDescription(path, 0, 300))
     }
 
     private fun swipe(forward: Boolean): Boolean {

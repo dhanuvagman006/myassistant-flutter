@@ -2498,9 +2498,24 @@ class AssistantEngine extends ChangeNotifier {
               if (e['store_if_missing'] == true) {
                 const MethodChannel('hari/intent')
                     .invokeMethod<bool>('openStore', {'query': want, 'pkg': pkg})
-                    .then((ok) {
+                    .then((ok) async {
                   if (ok == true) {
                     _leftForExternalApp = true;
+                    // "DO IT FOR ME" ON: press Install for them, then open
+                    // the app when it lands (HariAccessibilityService).
+                    // Free apps only; a price stops it.
+                    final auto = await const MethodChannel('hari/automation')
+                        .invokeMethod<bool>('autoInstall', {'pkg': pkg, 'name': want})
+                        .catchError((_) => false);
+                    if (auto == true) {
+                      AppFeedback.toast('Installing $want…');
+                      _tellModel(
+                          '[SYSTEM] "$want" is not installed. Its Play Store page '
+                          'is open and you are pressing Install for them now; it '
+                          'opens by itself as soon as it is installed. Say that in '
+                          'ONE short sentence.');
+                      return;
+                    }
                     AppFeedback.toast("$want isn't installed — tap Install");
                     _tellModel(
                         '[SYSTEM] "$want" is not installed, so its Play Store '

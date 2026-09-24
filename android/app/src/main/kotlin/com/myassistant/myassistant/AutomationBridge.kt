@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -97,12 +98,17 @@ object AutomationBridge {
                 "begin" -> {
                     if (svc == null) { result.success(false); return@setMethodCallHandler }
                     svc.begin(call.argument<List<String>>("allowed") ?: emptyList(),
-                        call.argument<String>("status") ?: "Working on it…")
+                        call.argument<String>("status") ?: "Working on it…",
+                        call.argument<Boolean>("any") == true)
                     result.success(true)
                 }
                 "allow" -> { svc?.allow(call.argument<String>("pkg") ?: ""); result.success(svc != null) }
                 "say" -> { svc?.status(call.argument<String>("text") ?: ""); result.success(true) }
                 "end" -> { svc?.end(call.argument<String>("final") ?: ""); result.success(true) }
+                // "Install Swiggy": press Install on the Store page just
+                // opened, then open the app when it lands.
+                "autoInstall" -> result.success(svc?.autoInstall(
+                    call.argument<String>("pkg") ?: "", call.argument<String>("name") ?: "") ?: false)
                 "foreground" -> result.success(svc?.foreground() ?: "")
                 "stopRequested" -> result.success(svc?.stopRequested ?: false)
                 "snapshot" -> {
@@ -140,33 +146,8 @@ object AutomationBridge {
         }
     }
 
-    /** An installed app by spoken name — exact > prefix > contains. */
-    private fun resolveApp(activity: Activity, name: String): Map<String, String>? {
-        val want = name.lowercase().replace(Regex("[^a-z0-9]"), "")
-        if (want.isEmpty()) return null
-        val pm = activity.packageManager
-        val apps = pm.queryIntentActivities(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-        var best: Pair<String, String>? = null
-        var bestScore = -1
-        for (ri in apps) {
-            val label = ri.loadLabel(pm).toString()
-            val norm = label.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (norm.isEmpty()) continue
-            val score = when {
-                norm == want -> 1000
-                norm.startsWith(want) -> 700 - label.length
-                want.startsWith(norm) -> 600 - label.length
-                norm.contains(want) -> 400 - label.length
-                else -> -1
-            }
-            if (score > bestScore) {
-                bestScore = score
-                best = ri.activityInfo.packageName to label
-            }
-        }
-        return best?.takeIf { bestScore >= 0 }?.let { mapOf("pkg" to it.first, "label" to it.second) }
-    }
+    private fun resolveApp(activity: Activity, name: String): Map<String, String>? =
+        matchLauncherApp(activity.packageManager, name)?.let { mapOf("pkg" to it.first, "label" to it.second) }
 
     /**
      * Opens the task's starting point. A link for an app opens INSIDE that
@@ -197,4 +178,31 @@ object AutomationBridge {
             mapOf("ok" to false, "error" to "launch_failed")
         }
     }
+}
+
+/** An installed app by spoken name — exact > prefix > contains. (pkg, label) */
+fun matchLauncherApp(pm: PackageManager, name: String): Pair<String, String>? {
+    val want = name.lowercase().replace(Regex("[^a-z0-9]"), "")
+    if (want.isEmpty()) return null
+    val apps = pm.queryIntentActivities(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+    var best: Pair<String, String>? = null
+    var bestScore = -1
+    for (ri in apps) {
+        val label = ri.loadLabel(pm).toString()
+        val norm = label.lowercase().replace(Regex("[^a-z0-9]"), "")
+        if (norm.isEmpty()) continue
+        val score = when {
+            norm == want -> 1000
+            norm.startsWith(want) -> 700 - label.length
+            want.startsWith(norm) -> 600 - label.length
+            norm.contains(want) -> 400 - label.length
+            else -> -1
+        }
+        if (score > bestScore) {
+            bestScore = score
+            best = ri.activityInfo.packageName to label
+        }
+    }
+    return best?.takeIf { bestScore >= 0 }
 }

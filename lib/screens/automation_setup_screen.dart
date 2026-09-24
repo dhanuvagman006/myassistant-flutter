@@ -148,10 +148,11 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
               ]),
               const SizedBox(height: 12),
               Text(
-                'Ask me to "order veg biryani from a 4-star place" or "fill this '
-                'form with my details" and I open the app and do the steps for '
-                'you — search, choose, add to cart, fill in. A small bar with a '
-                'Stop button shows the whole time I am working.',
+                'Ask me to "order veg biryani from a 4-star place", "turn on '
+                'Bluetooth" or "fill this form with my details" and I use your '
+                'phone for you — open any app, search, choose, add to cart, fill '
+                'in, change a setting. A small bar with a Stop button shows the '
+                'whole time I am working.',
                 style: TextStyle(color: Neon.textHi, fontSize: 14, height: 1.45),
               ),
               if (goal != null && goal.isNotEmpty) ...[
@@ -176,6 +177,8 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
                 _never(Icons.money_off_rounded, 'Send or move money'),
                 _never(Icons.password_rounded, 'Type passwords, PINs, OTPs or card numbers'),
                 _never(Icons.send_rounded, 'Send a message or post for you'),
+                _never(Icons.delete_forever_rounded,
+                    'Delete anything, or change security settings'),
                 const SizedBox(height: 6),
                 Text(
                   'At any of those steps I stop, hand the phone back to you and '
@@ -190,9 +193,9 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
-              'Only the screen of the app I am working in, only during a task '
-              'you asked for. It is read to decide the next tap and is not '
-              'kept. When no task is running, I read nothing.',
+              'Only the screens I am working on, only during a task you asked '
+              'for. They are read to decide the next tap and are not kept. When '
+              'no task is running, I read nothing.',
               style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
             ),
           ),
@@ -228,7 +231,7 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
               AppleRow(
                 leading: IconTile(Icons.check_circle_rounded, AppleColors.green),
                 title: 'Ready',
-                subtitle: 'Just ask — "add milk and bread to my Blinkit cart"',
+                subtitle: 'Just ask — "add milk and bread to my cart"',
               ),
               AppleRow(
                 leading: IconTile(Icons.toggle_off_rounded, AppleColors.orange),
@@ -278,7 +281,7 @@ class _AutomationSectionState extends State<AutomationSection> {
               leading: IconTile(Icons.touch_app_rounded, AppleColors.purple),
               title: 'Use other apps for me',
               subtitle: _on
-                  ? 'On — orders, carts and forms, up to payment'
+                  ? 'On — any app, forms and settings, up to payment'
                   : 'Off — tap to set up (one time)',
               trailing: Icon(Icons.chevron_right_rounded, color: Neon.textDim),
               onTap: () async {
