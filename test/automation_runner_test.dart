@@ -1,7 +1,12 @@
 // "Do it for me": the phone's loop — look, act, verify, report — against a
 // fake phone and a fake server. The rules pinned here: every action is
 // followed by a fresh look, whether the screen changed is reported back,
-// and payment / Stop / another app taking over end the run with a report.
+// every step carries the phone's action count (seq), a refused tap is a
+// failed step (the second one hands over), Stop answers at once even while
+// the server thinks, the owner's turn reads nothing until Continue, and
+// payment / Stop / another app taking over end the run with a report.
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/services/automation_runner.dart';
@@ -19,6 +24,11 @@ class FakeDevice implements AutomationDevice {
   Map<String, String>? resolved;
   List<String> allowed = [];
   bool any = false;
+  bool mayInstall = false;
+  String installApp = '';
+  bool beginResult = true;
+  /// The owner's answer on the bar; the test completes it.
+  Completer<String>? owner;
   String finalText = '';
   int _i = 0;
 
@@ -38,11 +48,20 @@ class FakeDevice implements AutomationDevice {
   }
 
   @override
-  Future<bool> begin(List<String> allowed, String status, {bool any = false}) async {
+  Future<bool> begin(List<String> allowed, String status,
+      {bool any = false, bool mayInstall = false, String installApp = ''}) async {
     this.allowed = allowed;
     this.any = any;
+    this.mayInstall = mayInstall;
+    this.installApp = installApp;
     log.add('begin:${allowed.join(",")}');
-    return true;
+    return beginResult;
+  }
+
+  @override
+  Future<String> awaitOwner(String text) async {
+    log.add('owner:$text');
+    return (owner ??= Completer<String>()).future;
   }
 
   @override
@@ -90,24 +109,44 @@ class FakeDevice implements AutomationDevice {
 }
 
 class FakeApi implements AutomationApi {
-  FakeApi(this.replies);
+  FakeApi(this.replies, {this.delay = Duration.zero});
   final List<Map<String, dynamic>?> replies;
-  final steps = <({Map<String, dynamic> screen, Map<String, dynamic>? last})>[];
+  /// How long the "server" thinks about each step.
+  final Duration delay;
+  final steps = <({Map<String, dynamic> screen, Map<String, dynamic>? last, int? seq})>[];
   final finishes = <String>[];
+  final log = <String>[];
+  int ownerDones = 0;
 
   @override
   Future<Map<String, dynamic>?> step(
-      int runId, Map<String, dynamic> screen, Map<String, dynamic>? last) async {
-    steps.add((screen: screen, last: last == null ? null : Map.of(last)));
+      int runId, Map<String, dynamic> screen, Map<String, dynamic>? last,
+      {int? seq}) async {
+    steps.add((screen: screen, last: last == null ? null : Map.of(last), seq: seq));
+    log.add('step:${seq ?? '-'}');
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
     return replies.isEmpty ? null : replies.removeAt(0);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> ownerDone(int runId) async {
+    ownerDones++;
+    log.add('owner_done');
+    return {'ok': true};
   }
 
   @override
   Future<Map<String, dynamic>?> finish(int runId, String reason,
       {String kind = '', String detail = ''}) async {
     finishes.add(kind.isEmpty ? reason : '$reason:$kind');
+    log.add('finish:$reason');
     return {
-      'status': reason == 'stopped' ? 'stopped' : (reason == 'blocked' || reason == 'left_app' ? 'handoff' : 'failed'),
+      'status': switch (reason) {
+        'stopped' => 'stopped',
+        'blocked' || 'left_app' => 'handoff',
+        'blocked_by_app' => 'blocked',
+        _ => 'failed',
+      },
       'report': 'server report for $reason',
       'handoff_kind': kind,
     };
@@ -166,16 +205,274 @@ void main() {
     expect(dev.log.where((l) => l.startsWith('say:')).first, 'say:Swiggy · typing “veg biryani”');
   });
 
-  test('the phone refusing a payment tap ends the run as a hand-over', () async {
-    final dev = FakeDevice(screens: [screen(sw, ['Pay ₹312'])])
-      ..onAct = (_) => {'ok': false, 'error': 'blocked', 'blocked': 'payment'};
+  test('a tap the phone refuses is a failed step: the loop goes on, the second refusal hands over', () async {
+    final dev = FakeDevice(screens: [screen(sw, ['Pay ₹312', 'Menu'])])
+      ..onAct = (a) => a['id'] == 0
+          ? {'ok': false, 'error': 'blocked', 'blocked': 'payment'}
+          : {'ok': true};
     final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 0}},
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 1}},
       {'status': 'continue', 'action': {'type': 'tap', 'id': 0}},
     ]);
     final out = await AutomationRunner(device: dev, api: api).run(swiggy());
     expect(out.status, 'handoff');
-    expect(api.finishes, ['blocked:payment']);
+    expect(api.finishes, ['blocked:payment'], reason: 'only after the second refusal');
+    expect(api.steps.length, 3);
+    // The server hears about the refusal as the last step's result…
+    expect(api.steps[1].last,
+        {'ok': false, 'error': 'blocked:payment', 'blocked': 'payment', 'changed': false});
+    // …and a refused tap still counts as an action tried.
+    expect(api.steps.map((s) => s.seq), [0, 1, 2]);
     expect(dev.log.last, 'end');
+  });
+
+  test('every step carries the action count; a retry after a lost reply carries the same one', () async {
+    final dev = FakeDevice(screens: [
+      screen(sw, ['Search']),
+      screen(sw, ['Search', 'Biryani']),
+      screen(sw, ['Biryani']),
+    ]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'wait'}},
+      null, // the reply to seq 1 is lost…
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 1}}, // …the retry gets it
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.status, 'done');
+    expect(api.steps.map((s) => s.seq), [0, 1, 1, 2]);
+    expect(api.steps[2].last, api.steps[1].last, reason: 'the retry is the same request');
+  });
+
+  test('a resumed run carries on the server\'s count, or sends none when it has none', () async {
+    final resumed = AutomationDirective.fromEvent({
+      'type': 'automate', 'run_id': 4, 'goal': 'g', 'pkg': sw, 'allowed': [sw],
+      'resume': true, 'seq': 6, 'may_install': true, 'install_app': 'Swiggy',
+    })!;
+    expect(resumed.startSeq, 6);
+    expect(resumed.mayInstall, isTrue);
+    expect(resumed.installApp, 'Swiggy');
+    final dev = FakeDevice(screens: [screen(sw, ['Search'])]);
+    final api = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(resumed);
+    expect(api.steps.single.seq, 6);
+    expect(dev.mayInstall, isTrue, reason: 'may_install reaches the phone');
+    expect(dev.installApp, 'Swiggy', reason: 'so Install is pressed only on its own page');
+
+    final api2 = FakeApi([
+      {'status': 'done', 'report': 'ok'},
+    ]);
+    await AutomationRunner(device: FakeDevice(screens: [screen(sw, ['Search'])]), api: api2)
+        .run(const AutomationDirective(runId: 4, goal: 'g', pkg: sw, allowed: [sw], resume: true));
+    expect(api2.steps.single.seq, isNull, reason: 'no count beats a 0 that trims real steps');
+  });
+
+  test('Stop while the server thinks answers at once, not after the reply', () async {
+    final dev = FakeDevice(screens: [screen(sw, ['Search'])]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'tap', 'id': 0}},
+    ], delay: const Duration(seconds: 5));
+    final clock = Stopwatch()..start();
+    Timer(const Duration(milliseconds: 100), () => dev.stop = true);
+    final out = await AutomationRunner(
+            device: dev, api: api, stopPoll: const Duration(milliseconds: 50))
+        .run(swiggy());
+    clock.stop();
+    expect(out.status, 'stopped');
+    expect(clock.elapsedMilliseconds, lessThan(500));
+    expect(api.finishes, ['stopped']);
+    expect(dev.acts, isEmpty, reason: 'the late reply is never acted on');
+  });
+
+  test("the owner's turn: Continue carries on in place, nothing is read while waiting", () async {
+    final dev = FakeDevice(screens: [
+      screen(sw, ['Enter OTP']),
+      screen(sw, ['Veg Biryani', 'ADD']),
+    ]);
+    final api = FakeApi([
+      {'status': 'owner_step', 'kind': 'credential',
+        'report': 'Swiggy needs you to sign in or enter the OTP. Do that, then tap Continue on the bar.'},
+      {'status': 'done', 'report': 'Added.'},
+    ]);
+    final run = AutomationRunner(device: dev, api: api).run(swiggy());
+    while (!dev.log.any((l) => l.startsWith('owner:'))) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    final looks = dev.log.where((l) => l == 'look').length;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(dev.log.where((l) => l == 'look').length, looks, reason: 'no look while the owner types');
+    expect(api.ownerDones, 0);
+    dev.owner!.complete('continue');
+    final out = await run;
+    expect(out.status, 'done');
+    expect(api.ownerDones, 1);
+    expect(api.log, ['step:0', 'owner_done', 'step:0'], reason: 'no action was tried meanwhile');
+    expect(api.steps[1].last, isNull);
+    expect(dev.log.where((l) => l.startsWith('launch')).length, 1, reason: 'no relaunch');
+    expect(dev.log.firstWhere((l) => l.startsWith('owner:')), contains('tap Continue'));
+  });
+
+  test("a permission pop-up is the owner's turn: sent unread, Continue carries on", () async {
+    const perm = 'com.google.android.permissioncontroller';
+    final dev = FakeDevice(screens: [
+      // The phone never reads a permission pop-up: package only.
+      {'pkg': perm, 'allowed': false, 'block': 'permission', 'keyboard': false, 'nodes': [],
+        'access': {'tree': 'empty', 'locked': false, 'shot': 'none'}},
+      {'pkg': perm, 'allowed': false, 'block': 'permission', 'keyboard': false, 'nodes': [],
+        'access': {'tree': 'empty', 'locked': false, 'shot': 'none'}},
+      {'pkg': perm, 'allowed': false, 'block': 'permission', 'keyboard': false, 'nodes': [],
+        'access': {'tree': 'empty', 'locked': false, 'shot': 'none'}},
+      {'pkg': perm, 'allowed': false, 'block': 'permission', 'keyboard': false, 'nodes': [],
+        'access': {'tree': 'empty', 'locked': false, 'shot': 'none'}},
+      screen(sw, ['Detect my location']),
+    ])
+      ..owner = (Completer<String>()..complete('continue'));
+    final api = FakeApi([
+      {'status': 'owner_step', 'kind': 'permission',
+        'report': 'Swiggy is asking for a permission. Answer it, then tap Continue on the bar.'},
+      {'status': 'done', 'report': 'Done.'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.status, 'done');
+    expect(api.finishes, isEmpty, reason: 'not ended as a hand-over');
+    expect(api.steps.first.screen['pkg'], perm);
+    expect(api.steps.first.screen['nodes'], isEmpty);
+    expect(api.steps.first.screen.containsKey('shot'), isFalse);
+    expect(api.log, ['step:0', 'owner_done', 'step:0']);
+    expect(dev.log.where((l) => l.startsWith('owner:')).single, contains('tap Continue'));
+    expect(dev.acts, isEmpty, reason: 'nothing is tapped on the pop-up');
+  });
+
+  test('a permission pop-up on a run without a step count hands over as before', () async {
+    final dev = FakeDevice(screens: [
+      {'pkg': 'com.android.permissioncontroller', 'allowed': false, 'block': 'permission',
+        'nodes': [], 'access': {'tree': 'empty', 'locked': false, 'shot': 'none'}},
+    ]);
+    final api = FakeApi([]);
+    final out = await AutomationRunner(device: dev, api: api).run(const AutomationDirective(
+        runId: 4, goal: 'g', pkg: sw, allowed: [sw], resume: true));
+    expect(out.status, 'handoff');
+    expect(api.finishes, ['blocked:permission']);
+    expect(api.steps, isEmpty);
+  });
+
+  test("Stop on the owner's turn stops the run", () async {
+    final dev = FakeDevice(screens: [screen(sw, ['Sign in'])])
+      ..owner = (Completer<String>()..complete('stop'));
+    final api = FakeApi([
+      {'status': 'owner_step', 'kind': 'credential', 'report': 'Your turn.'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.status, 'stopped');
+    expect(api.finishes, ['stopped']);
+    expect(api.ownerDones, 0);
+  });
+
+  test('blocked and unconfirmed endings come back as they are', () async {
+    for (final s in ['blocked', 'unconfirmed']) {
+      final dev = FakeDevice(screens: [screen(sw, [])]);
+      final api = FakeApi([
+        {'status': s, 'report': 'report for $s', 'handoff_kind': s == 'blocked' ? 'secure_screen' : ''},
+      ]);
+      final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+      expect(out.status, s);
+      expect(dev.finalText, 'report for $s');
+    }
+    expect(AssistantEngine.automationTitles['blocked'], "Can't do this one here");
+    expect(AssistantEngine.automationTitles['unconfirmed'], 'Please check');
+  });
+
+  test('what the phone could see goes with the screen; a black picture is not sent', () async {
+    final dev = FakeDevice(screens: [
+      {
+        ...screen(sw, []),
+        'access': {'shot': 'black', 'tree': 'empty', 'locked': false},
+        'look_ms': 40, 'shot_ms': 520,
+      },
+    ]);
+    final api = FakeApi([
+      {'status': 'blocked', 'report': 'Swiggy hides its screen from assistants for security.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy());
+    final sent = api.steps.single.screen;
+    expect(sent['access'], {'shot': 'black', 'tree': 'empty', 'locked': false});
+    expect(sent.containsKey('shot'), isFalse);
+    expect(sent.containsKey('look_ms'), isFalse, reason: 'timings stay on the phone');
+  });
+
+  test('a black first look (a dark splash?) that the server answers with a wait is looked at again', () async {
+    Map<String, dynamic> black() => {
+          ...screen(sw, []),
+          'access': {'shot': 'black', 'tree': 'empty', 'locked': false},
+        };
+    final dev = FakeDevice(screens: [black(), black()]);
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'wait'}, 'expect': 'the screen to load'},
+      {'status': 'blocked', 'handoff_kind': 'secure_screen',
+        'report': 'Swiggy hides its screen from assistants for security.'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.status, 'blocked');
+    expect(api.steps.length, 2, reason: 'the second look is what confirms it');
+    expect(api.steps[1].screen['access'], containsPair('shot', 'black'));
+    expect(api.steps[1].last, {'ok': true, 'changed': false});
+    expect(api.steps.map((s) => s.seq), [0, 1]);
+  });
+
+  test('an app that gives no window at all is "blocks assistants", not "another screen took over"', () async {
+    final dev = FakeDevice(screens: [
+      {'pkg': '', 'allowed': false, 'block': 'no_root', 'nodes': [],
+        'access': {'tree': 'no_root', 'locked': false, 'shot': 'none'}},
+    ]);
+    final api = FakeApi([]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(api.finishes, ['blocked_by_app:no_access']);
+    expect(out.status, 'blocked');
+    expect(dev.log.where((l) => l == 'look').length, 4, reason: 'the same patience first');
+  });
+
+  test('a locked phone goes to the server as it is, unread', () async {
+    final dev = FakeDevice(screens: [
+      {'pkg': 'com.android.systemui', 'allowed': false, 'block': 'locked', 'nodes': [],
+        'access': {'tree': 'empty', 'locked': true, 'shot': 'none'}},
+    ]);
+    final api = FakeApi([
+      {'status': 'failed', 'report': 'Your phone locked partway, so I stopped. Unlock it and ask me again.'},
+    ]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.report, contains('locked partway'));
+    expect(api.steps.single.screen['access'], containsPair('locked', true));
+    expect(api.steps.single.screen['nodes'], isEmpty);
+    expect(dev.log.where((l) => l == 'look').length, 1, reason: 'nothing to wait for');
+  });
+
+  test('how the typing went goes back to the server', () async {
+    final dev = FakeDevice(screens: [
+      screen('com.whatsapp', ['Message']),
+      screen('com.whatsapp', ['Message', 'hi']),
+    ])
+      ..onAct = (_) => {'ok': true, 'verified': true, 'submitted': false, 'submit_refused': true};
+    final api = FakeApi([
+      {'status': 'continue', 'action': {'type': 'type', 'id': 0, 'text': 'hi', 'submit': true}},
+      {'status': 'handoff', 'report': 'The message is written — tap Send when you are happy with it.'},
+    ]);
+    await AutomationRunner(device: dev, api: api).run(swiggy(pkg: 'com.whatsapp'));
+    expect(api.steps[1].last,
+        {'ok': true, 'submitted': false, 'submit_refused': true, 'changed': true});
+  });
+
+  test('while an app installs, a task does not start — and leaves the install bar alone', () async {
+    final dev = FakeDevice(screens: [screen(sw, ['Search'])])..beginResult = false;
+    final api = FakeApi([]);
+    final out = await AutomationRunner(device: dev, api: api).run(swiggy());
+    expect(out.status, 'failed');
+    expect(api.finishes, ['error']);
+    expect(api.steps, isEmpty);
+    expect(dev.log.where((l) => l.startsWith('launch')), isEmpty);
+    expect(dev.log, isNot(contains('end')), reason: 'the bar is the install\'s');
   });
 
   test('Stop on the bar ends the run before the next step', () async {

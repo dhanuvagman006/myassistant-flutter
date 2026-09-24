@@ -9,12 +9,12 @@ void main() {
         "Hello Ma'am!");
   });
 
-  test('an unknown gender is never guessed — "<name> ji" instead', () {
+  test('Sir unless the profile says female — never "<name> ji"', () {
     expect(AssistantEngine.orbGreeting(name: 'Ravi Kumar', gender: null),
-        'Hello Ravi ji!');
+        'Hello Sir!');
     expect(AssistantEngine.orbGreeting(name: 'Ravi', gender: 'other'),
-        'Hello Ravi ji!');
-    expect(AssistantEngine.orbGreeting(), 'Hello!');
+        'Hello Sir!');
+    expect(AssistantEngine.orbGreeting(), 'Hello Sir!');
   });
 
   test('never the bare first name', () {

@@ -201,6 +201,20 @@ class _AutomationSetupScreenState extends State<AutomationSetupScreen>
               style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
             ),
           ),
+          const SizedBox(height: 20),
+          // Owner, 2026-09-24: be told plainly when an app can't be done —
+          // said here once, before it happens. No app names.
+          const GroupLabel("Some apps don't allow it"),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              "Some apps don't allow assistants on some screens — banking and "
+              'payment apps often hide them, and a few stop working while one '
+              'is on. When that happens I tell you plainly and leave the app '
+              'open for you.',
+              style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
+            ),
+          ),
           const SizedBox(height: 24),
           if (!_on) ...[
             const GroupLabel('Switch it on'),

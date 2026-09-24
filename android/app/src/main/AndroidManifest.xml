@@ -52,6 +52,9 @@
 <!-- Self-hosted APK update: lets the app hand the downloaded APK to the
      system installer. Remove for Play Store builds. -->
 <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+<!-- "Uninstall <app>": opens Android's own uninstall confirmation, which
+     the owner taps. Without it Android 9+ ignores the request. -->
+<uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES"/>
     <!-- SETTING AN ALARM OR A TIMER NEEDS PERMISSION, not just visibility.
          Android names it outright and we never declared it:
 

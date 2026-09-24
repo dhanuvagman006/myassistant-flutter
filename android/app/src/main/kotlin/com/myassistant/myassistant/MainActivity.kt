@@ -40,6 +40,13 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
+    @Deprecated("Activity results for the uninstall confirmation")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (AppRemover.onResult(this, requestCode, resultCode, data)) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onResume() {
         super.onResume()
         // Back here after installing the app they asked to open: open it.
@@ -282,6 +289,10 @@ class MainActivity : FlutterFragmentActivity() {
                     // don't have it". market:// opens the Store app
                     // itself; the https form is the fallback when no
                     // Store is installed.
+                    // "UNINSTALL INSTAGRAM": Android's own confirmation,
+                    // which only the owner taps (AppRemover).
+                    "uninstallApp" -> AppRemover.start(this,
+                        call.argument<String>("name") ?: "", call.argument<String>("pkg") ?: "", result)
                     "openStore" -> {
                         val q = call.argument<String>("query") ?: ""
                         val pkg = call.argument<String>("pkg") ?: ""

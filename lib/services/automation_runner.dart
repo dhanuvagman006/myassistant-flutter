@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../core/log.dart';
 import 'api_service.dart';
 
 /// "DO IT FOR ME" — uses the phone for the owner (any app, several apps,
@@ -28,6 +29,18 @@ class AutomationDirective {
   final List<String> allowed;
   final int maxSteps;
   final bool resume;
+  /// The owner's words asked to install or download an app: only then may
+  /// the hands press Install / Update in the app store.
+  final bool mayInstall;
+  /// The app they asked to install, when the server names it: then
+  /// Install is pressed only on that app's own page, never on another
+  /// app's (an ad in the results). Empty: [mayInstall] alone decides.
+  final String installApp;
+  /// A resumed run carries on the server's step count. Null when the
+  /// server did not send one — then no count is sent at all for that run
+  /// (the server's old behaviour), rather than a 0 that would make it
+  /// throw away the steps already done.
+  final int? startSeq;
 
   const AutomationDirective({
     required this.runId,
@@ -41,6 +54,9 @@ class AutomationDirective {
     this.allowed = const [],
     this.maxSteps = 25,
     this.resume = false,
+    this.mayInstall = false,
+    this.installApp = '',
+    this.startSeq,
   });
 
   static AutomationDirective? fromEvent(Map<String, dynamic> e) {
@@ -61,12 +77,17 @@ class AutomationDirective {
           .toList(),
       maxSteps: (e['max_steps'] as num?)?.toInt() ?? 25,
       resume: e['resume'] == true,
+      mayInstall: e['may_install'] == true,
+      installApp: e['install_app'] as String? ?? '',
+      startSeq: (e['seq'] as num?)?.toInt(),
     );
   }
 }
 
 class AutomationOutcome {
-  /// done | handoff | waiting | failed | stopped | no_permission | busy
+  /// done | handoff | waiting | failed | stopped | blocked (the app itself
+  /// keeps assistants out) | unconfirmed (claimed done, not seen on
+  /// screen) | no_permission | busy
   final String status;
   final String report;
   final String question;
@@ -95,23 +116,33 @@ abstract class AutomationDevice {
   Future<({bool connected, bool enabled})> status();
   Future<Map<String, String>?> resolveApp(String name);
   Future<Map<String, dynamic>> launch({String pkg = '', String url = ''});
-  Future<bool> begin(List<String> allowed, String status, {bool any = false});
+  /// False when the phone refuses to start (an app is installing).
+  Future<bool> begin(List<String> allowed, String status,
+      {bool any = false, bool mayInstall = false, String installApp = ''});
   Future<void> allow(String pkg);
   Future<void> say(String text);
   Future<Map<String, dynamic>?> snapshot();
   Future<Map<String, dynamic>> act(Map<String, dynamic> action);
   Future<void> settle({int quietMs = 450, int maxMs = 4000});
   Future<bool> stopRequested();
+  /// The owner's turn: the bar shows [text] and Continue. Resolves to
+  /// "continue", "stop" or "timeout". Reads nothing on the screen.
+  Future<String> awaitOwner(String text);
   Future<void> end({String finalText = ''});
   Future<void> bringBack();
 }
 
 /// The server's side.
 abstract class AutomationApi {
+  /// [seq]: how many actions the phone has received and attempted in this
+  /// run so far. A retry of the same request carries the same number.
   Future<Map<String, dynamic>?> step(
-      int runId, Map<String, dynamic> screen, Map<String, dynamic>? last);
+      int runId, Map<String, dynamic> screen, Map<String, dynamic>? last,
+      {int? seq});
   Future<Map<String, dynamic>?> finish(int runId, String reason,
       {String kind = '', String detail = ''});
+  /// The owner tapped Continue after their own step (sign-in, OTP…).
+  Future<Map<String, dynamic>?> ownerDone(int runId);
 }
 
 class ChannelAutomationDevice implements AutomationDevice {
@@ -151,9 +182,15 @@ class ChannelAutomationDevice implements AutomationDevice {
   }
 
   @override
-  Future<bool> begin(List<String> allowed, String status, {bool any = false}) async =>
-      (await _ch.invokeMethod('begin', {'allowed': allowed, 'status': status, 'any': any})
-          .catchError((_) => false)) ==
+  Future<bool> begin(List<String> allowed, String status,
+          {bool any = false, bool mayInstall = false, String installApp = ''}) async =>
+      (await _ch.invokeMethod('begin', {
+        'allowed': allowed,
+        'status': status,
+        'any': any,
+        'may_install': mayInstall,
+        'install_app': installApp,
+      }).catchError((_) => false)) ==
       true;
 
   @override
@@ -193,6 +230,21 @@ class ChannelAutomationDevice implements AutomationDevice {
   Future<bool> stopRequested() async =>
       (await _ch.invokeMethod('stopRequested').catchError((_) => false)) == true;
 
+  /// Polls the bar's two buttons four times a second — a channel call, not
+  /// a look at the screen. Ten minutes without an answer is "timeout".
+  @override
+  Future<String> awaitOwner(String text) async {
+    final shown = await _ch.invokeMethod('ownerWait', {'text': text}).catchError((_) => false);
+    if (shown != true) return 'stop';
+    final until = DateTime.now().add(const Duration(minutes: 10));
+    while (DateTime.now().isBefore(until)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final a = await _ch.invokeMethod('ownerAnswer').catchError((_) => 'stop');
+      if (a == 'continue' || a == 'stop') return a as String;
+    }
+    return 'timeout';
+  }
+
   @override
   Future<void> end({String finalText = ''}) =>
       _ch.invokeMethod('end', {'final': finalText}).catchError((_) => null);
@@ -210,16 +262,24 @@ class ChannelAutomationDevice implements AutomationDevice {
 class HttpAutomationApi implements AutomationApi {
   @override
   Future<Map<String, dynamic>?> step(
-          int runId, Map<String, dynamic> screen, Map<String, dynamic>? last) =>
-      // A step is one model call; give it room, the phone is waiting anyway.
-      ApiService.postJson('/automation/$runId/step', {'screen': screen, 'last': last},
-          timeout: const Duration(seconds: 40));
+          int runId, Map<String, dynamic> screen, Map<String, dynamic>? last,
+          {int? seq}) =>
+      // A step is one model call. The server answers within ~26 s (its
+      // planner has a hard 12 s limit); 30 s here, and the loop retries
+      // once with the same seq, so a lost reply is never a second step.
+      ApiService.postJson('/automation/$runId/step',
+          {if (seq != null) 'seq': seq, 'screen': screen, 'last': last},
+          timeout: const Duration(seconds: 30));
 
   @override
   Future<Map<String, dynamic>?> finish(int runId, String reason,
           {String kind = '', String detail = ''}) =>
       ApiService.postJson('/automation/$runId/finish',
           {'reason': reason, 'kind': kind, 'detail': detail});
+
+  @override
+  Future<Map<String, dynamic>?> ownerDone(int runId) =>
+      ApiService.postJson('/automation/$runId/owner_done', const <String, dynamic>{});
 }
 
 class AutomationRunner {
@@ -228,6 +288,7 @@ class AutomationRunner {
     AutomationApi? api,
     this.ownPackage = 'com.myassistant.myassistant',
     this.startPoll = const Duration(milliseconds: 300),
+    this.stopPoll = const Duration(milliseconds: 250),
   })  : device = device ?? ChannelAutomationDevice(),
         api = api ?? HttpAutomationApi();
 
@@ -240,6 +301,9 @@ class AutomationRunner {
   /// How often to look while waiting for the opened app to come to the
   /// front (20 looks at most).
   final Duration startPoll;
+
+  /// How often Stop is checked while the server thinks about a step.
+  final Duration stopPoll;
 
   bool _busy = false;
   bool get busy => _busy;
@@ -309,9 +373,45 @@ class AutomationRunner {
       {String kind = '', String detail = '', String fallback = ''}) async {
     final m = await api.finish(runId, reason, kind: kind, detail: detail);
     return AutomationOutcome.fromServer(m,
-        fallback: reason == 'stopped' ? 'stopped' : (reason == 'blocked' ? 'handoff' : 'failed'),
+        fallback: switch (reason) {
+          'stopped' => 'stopped',
+          'blocked' => 'handoff',
+          'blocked_by_app' => 'blocked',
+          _ => 'failed',
+        },
         fallbackReport: fallback);
   }
+
+  /// INSTANT STOP. The step call is raced against the bar's Stop, checked
+  /// every [stopPoll]: pressing Stop while the server thinks (up to half a
+  /// minute) answers at once instead of after the reply. The late reply
+  /// is ignored — the server's step count keeps it from counting twice.
+  Future<({Map<String, dynamic>? resp, bool stopped})> _stepOrStop(int runId,
+      Map<String, dynamic> screen, Map<String, dynamic>? last, int? seq) async {
+    var settled = false;
+    Future<bool> watchStop() async {
+      while (!settled) {
+        await Future<void>.delayed(stopPoll);
+        if (settled) return false;
+        if (await device.stopRequested()) return true;
+      }
+      return false;
+    }
+
+    try {
+      return await Future.any<({Map<String, dynamic>? resp, bool stopped})>([
+        api
+            .step(runId, screen, last, seq: seq)
+            .then((r) => (resp: r, stopped: false)),
+        watchStop().then((s) => (resp: null, stopped: s)),
+      ]);
+    } finally {
+      settled = true;
+    }
+  }
+
+  static bool _locked(Map<String, dynamic>? m) =>
+      m?['access'] is Map && (m!['access'] as Map)['locked'] == true;
 
   Future<AutomationOutcome> run(AutomationDirective d) async {
     if (_busy) {
@@ -320,6 +420,9 @@ class AutomationRunner {
     }
     _busy = true;
     var finalText = '';
+    // The bar belongs to someone else (an install) when begin() refused:
+    // it must not be touched on the way out.
+    var leaveBar = false;
     try {
       final st = await device.status();
       if (!st.connected) {
@@ -346,7 +449,15 @@ class AutomationRunner {
         allowed.add(pkg);
       }
 
-      await device.begin(allowed.toList(), statusLine(app, null), any: d.anyApp);
+      final began = await device.begin(allowed.toList(), statusLine(app, null),
+          any: d.anyApp, mayInstall: d.mayInstall, installApp: d.installApp);
+      if (!began) {
+        // An app is installing: the two would end each other.
+        leaveBar = true;
+        return await _finish(d.runId, 'error',
+            detail: 'install_running',
+            fallback: "I'm still installing an app — ask me again once that's done.");
+      }
       final opened = fromHome
           ? await device.act({'type': 'home'})
           : await device.launch(pkg: pkg, url: d.resume ? '' : d.startUrl);
@@ -368,6 +479,13 @@ class AutomationRunner {
       // own screen is a slow start, not the owner coming back (seen
       // 2026-09-24: a run "stopped" 1.3 s in, before the app had opened).
       var seenOther = false;
+      // THE STEP COUNT the server keeps in step with: every action received
+      // and tried counts (a wait, a refused tap). A retried request carries
+      // the same number, so a lost reply is never recorded twice.
+      int? seq = d.resume ? d.startSeq : 0;
+      // The phone's own guard refusing a tap is a failed step, not the end:
+      // the server picks another. The second refusal hands over.
+      var phoneVetoes = 0;
       for (var i = 0; i < d.maxSteps + 2; i++) {
         if (await device.stopRequested()) {
           final o = await _finish(d.runId, 'stopped', fallback: 'Stopped, as you asked.');
@@ -375,6 +493,7 @@ class AutomationRunner {
           return o;
         }
 
+        final lookClock = Stopwatch()..start();
         var snap = await device.snapshot();
         for (var w = 0; w < 20 && !seenOther && snap?['pkg'] == ownPackage; w++) {
           await Future<void>.delayed(startPoll);
@@ -397,6 +516,8 @@ class AutomationRunner {
           if (usable(snap)) break;
           // The owner came back to the assistant: they have the phone.
           if (fg == ownPackage) break;
+          // The phone locked: nothing to wait for; the server says so.
+          if (_locked(snap)) break;
           // A web task runs in whichever browser took the link.
           if (d.web && firstLook && fg.isNotEmpty && fg != ownPackage) {
             await device.allow(fg);
@@ -407,6 +528,7 @@ class AutomationRunner {
           await device.settle(quietMs: 500, maxMs: 2500);
           snap = await device.snapshot();
         }
+        lookClock.stop();
         firstLook = false;
         if (snap == null) {
           final o = await _finish(d.runId, 'error',
@@ -419,12 +541,32 @@ class AutomationRunner {
               fallback: 'You came back to me, so I stopped there.');
           return o;
         }
-        if (!usable(snap)) {
-          final block = (snap['block'] as String?) ?? '';
-          final o = block.isNotEmpty && block != 'left_app'
-              ? await _finish(d.runId, 'blocked', kind: block)
-              : await _finish(d.runId, 'left_app',
-                  fallback: 'Another screen took over, so I stopped there.');
+        final block = (snap['block'] as String?) ?? '';
+        // A PERMISSION POP-UP IS THE OWNER'S TURN, not the end of the run.
+        // The phone never reads or touches it, so it goes to the server as
+        // it is — the package alone, no elements, no picture — and a phone
+        // that keeps count (seq) gets owner_step back: "allow it or not,
+        // then tap Continue". Ending the run here made that answer
+        // impossible. (Without a count, the old hand-over stays.)
+        final ownerTurn = block == 'permission' && seq != null;
+        // A locked phone goes to the server as it is (nothing was read):
+        // it ends the run with one plain sentence.
+        if (!usable(snap) && !_locked(snap) && !ownerTurn) {
+          final AutomationOutcome o;
+          if (block == 'no_root') {
+            // The app gave the service no window at all, three looks in a
+            // row: the app keeping assistants out — not "another screen
+            // took over", which is what this used to be called.
+            o = await _finish(d.runId, 'blocked_by_app',
+                kind: 'no_access',
+                fallback: "${d.app.isEmpty ? 'This app' : d.app} doesn't let assistants "
+                    'read its screen, so I stopped rather than tap blind.');
+          } else if (block.isNotEmpty && block != 'left_app') {
+            o = await _finish(d.runId, 'blocked', kind: block);
+          } else {
+            o = await _finish(d.runId, 'left_app',
+                fallback: 'Another screen took over, so I stopped there.');
+          }
           finalText = o.report;
           return o;
         }
@@ -437,17 +579,29 @@ class AutomationRunner {
         // VERIFY: did the last action change anything on screen?
         final now = signature(snap);
         if (last != null) last['changed'] = before == null || now != before;
-        final screen = {
+        final access = snap['access'];
+        final screen = <String, dynamic>{
           'pkg': snap['pkg'],
           'keyboard': snap['keyboard'] == true,
           'nodes': snap['nodes'] ?? const [],
           if (snap['shot'] is String) 'shot': snap['shot'],
+          // What the phone could see: shot ok/black/failed…, tree
+          // ok/empty/no_root, locked. A black picture is never sent.
+          if (access is Map) 'access': Map<String, dynamic>.from(access),
         };
-        var resp = await api.step(d.runId, screen, last);
-        if (resp == null) {
+        final postClock = Stopwatch()..start();
+        var call = await _stepOrStop(d.runId, screen, last, seq);
+        if (!call.stopped && call.resp == null) {
           await Future<void>.delayed(const Duration(milliseconds: 1500));
-          resp = await api.step(d.runId, screen, last);
+          call = await _stepOrStop(d.runId, screen, last, seq);
         }
+        postClock.stop();
+        if (call.stopped) {
+          final o = await _finish(d.runId, 'stopped', fallback: 'Stopped, as you asked.');
+          finalText = 'Stopped.';
+          return o;
+        }
+        final resp = call.resp;
         if (resp == null) {
           final o = await _finish(d.runId, 'error',
               detail: 'network',
@@ -460,24 +614,90 @@ class AutomationRunner {
         if (status == 'continue') {
           final action = Map<String, dynamic>.from(resp['action'] as Map? ?? const {});
           await device.say(statusLine(app, action));
+          final actClock = Stopwatch()..start();
           final r = await device.act(action);
-          if (r['blocked'] != null) {
-            final o = await _finish(d.runId, 'blocked', kind: '${r['blocked']}');
-            finalText = o.report;
-            return o;
-          }
+          actClock.stop();
           if (r['stop'] == true) {
             final o = await _finish(d.runId, 'stopped', fallback: 'Stopped, as you asked.');
             finalText = 'Stopped.';
             return o;
           }
+          // Received and tried: it counts, whether it worked or was refused.
+          if (seq != null) seq++;
+          if (r['blocked'] != null) {
+            final kind = '${r['blocked']}';
+            phoneVetoes++;
+            _logStep(d.runId, seq, snap, lookClock, postClock, act: actClock, note: 'refused');
+            if (phoneVetoes >= 2) {
+              // 'refused' tells the server this was the phone's own
+              // second refusal, not a never-act app coming to the front —
+              // so the report names the step it stopped before.
+              final o = await _finish(d.runId, 'blocked', kind: kind, detail: 'refused');
+              finalText = o.report;
+              return o;
+            }
+            last = {'ok': false, 'error': 'blocked:$kind', 'blocked': kind};
+            before = now;
+            continue;
+          }
+          final settleClock = Stopwatch()..start();
           await device.settle(
               quietMs: 450, maxMs: action['type'] == 'type' ? 2500 : 4000);
+          settleClock.stop();
+          _logStep(d.runId, seq, snap, lookClock, postClock,
+              act: actClock, settle: settleClock);
           last = {
             'ok': r['ok'] == true,
             if (r['error'] != null) 'error': '${r['error']}',
+            // How it went on the phone: a plain click or a finger, and
+            // whether Enter was pressed or refused (then the planner taps
+            // the screen's own search button instead).
+            if (r['how'] != null) 'how': '${r['how']}',
+            if (r['submitted'] is bool) 'submitted': r['submitted'],
+            if (r['submit_refused'] == true) 'submit_refused': true,
           };
           before = now;
+          continue;
+        }
+
+        _logStep(d.runId, seq, snap, lookClock, postClock, note: status);
+        if (status == 'owner_step') {
+          // THE OWNER'S TURN (sign-in, OTP, CAPTCHA, a permission): the bar
+          // says what to do and Stop becomes Continue. Nothing is read or
+          // touched meanwhile — they may be typing an OTP. On Continue the
+          // same run carries on from where they left it: no relaunch, the
+          // step count unchanged.
+          final report = (resp['report'] as String? ?? '').trim();
+          final answer = await device.awaitOwner(
+              report.isNotEmpty ? report : 'Your turn — tap Continue when done.');
+          if (answer == 'timeout') {
+            final o = await _finish(d.runId, 'error',
+                detail: 'owner_no_answer',
+                fallback: "I waited a while for you to tap Continue, so I closed this task — "
+                    "ask me again when you're ready.");
+            finalText = o.report;
+            return o;
+          }
+          if (answer != 'continue') {
+            final o = await _finish(d.runId, 'stopped', fallback: 'Stopped, as you asked.');
+            finalText = 'Stopped.';
+            return o;
+          }
+          var ok = await api.ownerDone(d.runId);
+          if (ok == null) {
+            await Future<void>.delayed(const Duration(milliseconds: 1500));
+            ok = await api.ownerDone(d.runId);
+          }
+          if (ok == null) {
+            final o = await _finish(d.runId, 'error',
+                detail: 'network',
+                fallback: 'I lost the connection partway, so I stopped. Everything done so far is still on screen.');
+            finalText = 'Connection lost — stopped.';
+            return o;
+          }
+          // Nothing was attempted since: nothing to report on the next look.
+          last = null;
+          before = null;
           continue;
         }
 
@@ -491,8 +711,25 @@ class AutomationRunner {
       finalText = o.report;
       return o;
     } finally {
-      await device.end(finalText: finalText);
+      if (!leaveBar) await device.end(finalText: finalText);
       _busy = false;
     }
+  }
+
+  /// WHERE THE TIME GOES, per step — counts and times only, never what was
+  /// on the screen: the whole look, the tree walk and picture inside it,
+  /// the server's answer, the action and the settle.
+  static void _logStep(int runId, int? seq, Map<String, dynamic> snap,
+      Stopwatch look, Stopwatch post,
+      {Stopwatch? act, Stopwatch? settle, String note = ''}) {
+    final nodes = (snap['nodes'] as List?)?.length ?? 0;
+    final shot = snap['access'] is Map ? '${(snap['access'] as Map)['shot'] ?? ''}' : '';
+    AppLog.add(
+        'auto',
+        'step run=$runId seq=${seq ?? '-'} look_ms=${look.elapsedMilliseconds} '
+            'tree_ms=${snap['look_ms'] ?? '-'} shot_ms=${snap['shot_ms'] ?? '-'} '
+            'shot=$shot shot_kb=${snap['shot_kb'] ?? 0} nodes=$nodes '
+            'post_ms=${post.elapsedMilliseconds} act_ms=${act?.elapsedMilliseconds ?? '-'} '
+            'settle_ms=${settle?.elapsedMilliseconds ?? '-'}${note.isEmpty ? '' : ' $note'}');
   }
 }

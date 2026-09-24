@@ -2,6 +2,7 @@ package com.myassistant.myassistant
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -43,14 +44,26 @@ import java.util.concurrent.Executors
  * server says (the server's guard.js checks the same things first):
  *   • tapping anything that pays, places/confirms a paid order or moves
  *     money
- *   • typing into password, PIN, OTP, card, bank or ID fields
- *   • tapping Send in a messaging app
- *   • deleting or erasing anything
+ *   • typing into password, PIN, OTP, card, bank or ID fields — including
+ *     the unlabeled one-digit boxes of an OTP screen
+ *   • tapping Send (in any app), posting (also a post's or a reply's last
+ *     "Share" / "Reply" while it is being written), or pressing the
+ *     keyboard's Enter where Enter could send (chats, the notification
+ *     shade, any field that is not a search)
+ *   • typing in the notification shade (its inline Reply sends)
+ *   • deleting or erasing anything, disabling or force-stopping an app
  *   • security settings (screen lock, accessibility, device admin, unknown
  *     apps, developer options, accounts, reset)
- *   • acting in payment apps, the package installer or permission pop-ups
- * A refused step comes back as {blocked: kind} and the run hands the phone
- * to the owner.
+ *   • pressing Install / Update in the app store unless the owner asked for
+ *     an install (and, when the server names the app, another app's button)
+ *   • acting in payment apps, any package installer or permission pop-ups
+ *     (a permission pop-up is the owner's turn: the run waits for Continue)
+ * A refused step comes back as {blocked: kind}. The run carries on (the
+ * server picks another step); a second refusal hands the phone over.
+ *
+ * A run the Dart task loop stops calling in to (the app was swiped away)
+ * ends itself after a minute, so the bar never holds the screen on for
+ * good.
  */
 class HariAccessibilityService : AccessibilityService() {
 
@@ -60,12 +73,55 @@ class HariAccessibilityService : AccessibilityService() {
 
         private const val TAG = "hari/auto"
         private const val MAX_NODES = 300
+        /** A run whose task loop has not called in this long is orphaned. */
+        private const val DART_SILENT_MS = 60_000L
+        private const val DEAD_MAN_TICK_MS = 5_000L
+        /**
+         * Stop pressed and no word from the task loop since, this long:
+         * the loop is gone, and the bar ends the run itself. A live loop
+         * answers within one settle (6 s at most).
+         */
+        private const val STOP_FALLBACK_MS = 8_000L
 
         // Mirrors src/automation/guard.js on the server. Kept deliberately
         // conservative: a false stop costs the owner one tap, a false go
         // could cost money.
+        //
+        // FALSE STOPS TAKEN OUT (2026-09-24). Ordinary runs were ending with
+        // "it's ready for payment" or "that's a security setting" on things
+        // that are neither: a "BUY 1 GET 1" offer card, "Buy again", a price
+        // label with nothing tappable around it, "Clear all filters",
+        // Instagram's Reply and Share while no compose box is open (they
+        // only open one), and Settings rows whose small print says
+        // "backup" or "security" (System, Apps, Device care). Those pass
+        // now. What must stop still stops: "Proceed to Pay" (also after
+        // the bar's price: "₹312 · TOTAL · Proceed to Pay"), "Buy now",
+        // "Buy more storage", a price button in any app, the store's
+        // "Subscribe", "Share" on a post being written, "Delete", the
+        // Security and Lock screen rows, password fields.
+        /**
+         * What a checkout bar shows BEFORE its pay words: the price, the
+         * item count, "TOTAL", the bill link. A bar's texts are joined with
+         * " · " (collectText), so Swiggy's bar reads "₹312 · TOTAL ·
+         * Proceed to Pay" — and the pay words were missed because they were
+         * not first. A card that starts with its NAME is still judged from
+         * its first word, so "Paradise · Pay with HDFC, get 10% off" (an
+         * offer banner) stays tappable.
+         */
+        private const val BAR_LEAD =
+            "(?:(?:₹|rs\\.?|inr)\\s*[\\d,.]+(?:\\s*(?:total|items?|plus taxes|\\+\\s*taxes))?|" +
+                "\\d+\\s*items?(?:\\s*added)?|(?:grand |bill |item |sub ?)?total(?:\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,.]+)?|" +
+                "to pay(?:\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,.]+)?|amount payable|" +
+                "(?:incl\\.?|including|plus|\\+)\\s*(?:of\\s*)?(?:all\\s*)?taxes|" +
+                "view (?:detailed |full )?bill|(?:view )?price details)"
         private val PAY = Regex(
-            "^\\s*(?:₹|rs\\.?|inr)?\\s*[\\d,.]*\\s*(?:pay\\b|buy\\b|proceed to pay|proceed to buy|" +
+            "^\\s*(?:$BAR_LEAD\\s*[·•|]\\s*)*" +
+                "(?:₹|rs\\.?|inr)?\\s*[\\d,.]*\\s*(?:pay\\b|" +
+                // "Buy more storage" is a purchase, not an offer card.
+                "buy(?! (?:\\d+ get|again|it again|\\d+ at))\\b|" +
+                // A trial and a one-tap buy start a charge too.
+                "(?:1|one)[- ]tap buy|start (?:your |a |the )?(?:free )?trial|" +
+                "subscribe (?:for|at) (?:₹|rs|inr|\\$|\\d)|proceed to pay|proceed to buy|" +
                 "make (?:a |the )?payment|place (?:your |the )?order|confirm (?:and|&) pay|" +
                 "confirm (?:the |your )?(?:order|payment|purchase|booking|ride|pickup|trip)|" +
                 "complete (?:the |your )?(?:payment|purchase|order|booking)|buy now|" +
@@ -87,22 +143,127 @@ class HariAccessibilityService : AccessibilityService() {
                 "account\\s*(?:number|no\\b)|\\bifsc\\b|aadhaa?r|\\bpan\\b|security\\s*(?:code|question)|secret)",
             RegexOption.IGNORE_CASE
         )
-        /** A button that is only a price — a paid app's "₹99.00". */
+        /**
+         * A button that is only a price — a paid app's "₹99.00", a game's
+         * in-app "₹89.00": tapping it buys, in any app. Judged on what the
+         * tap really presses (judgeTap): a price that is only text on a
+         * menu row — nothing tappable around it, or inside a dish card
+         * that says more than the price — is not a buy button. In the app
+         * stores every price counts.
+         */
         private val PRICE_ONLY = Regex("^\\s*(?:₹|rs\\.?|inr|\\$|€|£)\\s*[\\d,.]+\\s*$", RegexOption.IGNORE_CASE)
+        /**
+         * The app store's billing sheet (in-app purchases and
+         * subscriptions of every app are drawn there): these charge. Store
+         * only — elsewhere "Subscribe" follows a channel for free. (The
+         * server's STORE_PAY.)
+         */
+        private val STORE_PAY = Regex(
+            "^\\s*(?:subscribe|(?:1|one)[- ]tap buy|buy with\\b|purchase(?! history)|confirm purchase|" +
+                "start (?:your |a )?(?:free )?trial)\\b",
+            RegexOption.IGNORE_CASE
+        )
         private val CARD_NUMBER = Regex("\\b(?:\\d[ -]?){13,19}\\b")
-        private val SEND = Regex("^\\s*(?:send|send message|reply|post|share)\\s*$", RegexOption.IGNORE_CASE)
+        /**
+         * SEND, IN ANY APP. The chat-app list alone let a "Send" through in
+         * every app not on it — a newer messenger, the share sheet, and the
+         * notification shade's inline reply.
+         */
+        private val SEND_BUTTON = Regex("^\\s*(?:send|send message|send now|send reply)\\s*$", RegexOption.IGNORE_CASE)
+        /** In a chat app a little more counts as sending. */
+        private val SEND = Regex("^\\s*(?:send|send message|share now)\\s*$", RegexOption.IGNORE_CASE)
+        /**
+         * "Share" and "Reply" under a post in the feed only OPEN a box. On
+         * a COMPOSE screen the same words are the last tap: Instagram's new
+         * post, reel or story goes out with "Share" ("Your story" for a
+         * story), and X posts a reply with "Reply". (The server's
+         * COMPOSE_SUBMIT / COMPOSE_FIELD / COMPOSE_TEXT.)
+         */
+        private val COMPOSE_SUBMIT = Regex(
+            "^\\s*(?:share|reply|your story|share to (?:your )?story|close friends)\\s*$",
+            RegexOption.IGNORE_CASE
+        )
+        /** A box for a caption, a reply or a comment. */
+        private val COMPOSE_FIELD = Regex(
+            "caption|reply|comment|what'?s happening|what'?s on your mind|what do you want to talk about|" +
+                "start a post|post your|add a (?:note|thought)|tweet|thread|write (?:a|something|your)",
+            RegexOption.IGNORE_CASE
+        )
+        /** A compose screen's heading. (Not "Your story" alone: the feed's story tray says that too.) */
+        private val COMPOSE_TEXT = Regex(
+            "^\\s*(?:new (?:post|reel|story|thread|tweet)|write a caption|add a caption|post your reply|" +
+                "replying to\\b|close friends\\s*$)",
+            RegexOption.IGNORE_CASE
+        )
+        private val SEARCH_FIELD = Regex("search", RegexOption.IGNORE_CASE)
+        /** Social apps: what they publish is public (the server's SOCIAL_PKGS). */
+        private val SOCIAL_APPS = setOf(
+            "com.instagram.android", "com.twitter.android", "com.facebook.katana", "com.linkedin.android",
+            "com.snapchat.android",
+        )
+        /** Posting in public, in any app (the server's PUBLISH_ACTION). */
+        private val PUBLISH = Regex("^\\s*(?:post|publish|tweet|share now|go live|upload)\\s*$", RegexOption.IGNORE_CASE)
+        /** "Clear all filters" narrows a list; it deletes nothing. */
+        private val SAFE_CLEAR = Regex("^\\s*(?:clear|reset) (?:all )?filters?\\s*$", RegexOption.IGNORE_CASE)
+        /**
+         * An OTP screen. Its one-digit boxes usually carry no label at all,
+         * so the field alone can't tell — the words on the screen do.
+         * "Get OTP" / "Send OTP" on a sign-in sheet are not this; "Enter
+         * OTP", "code sent to +91…" are. (The server's OTP_SCREEN.)
+         */
+        private const val OTP_ALTS =
+            "otp|one[- ]time (?:password|passcode|pin|code)|verification code|\\d[- ]digit code"
+        private val OTP_SCREEN = Regex(
+            "\\b(?:enter|verify|type|resend|re-send|didn'?t (?:get|receive))\\b.{0,20}\\b(?:$OTP_ALTS)" +
+                "|\\b(?:$OTP_ALTS|code)\\b.{0,20}\\b(?:sent to|has been sent|we sent|we've sent|sent on)\\b" +
+                "|\\bsent (?:you )?(?:an? )?(?:otp|code|verification code)\\b" +
+                "|^\\s*(?:$OTP_ALTS)\\s*$",
+            RegexOption.IGNORE_CASE
+        )
+        private val OTP_DIGITS = Regex("^\\s*\\d{4,8}\\s*$")
+        /**
+         * Fields where the keyboard's Enter only searches. Anywhere else
+         * (a chat box, a comment, the shade's reply) Enter can SEND, so it
+         * is left for the owner's own tap on the screen's button.
+         */
+        private val SUBMITTABLE = Regex(
+            "search|find|query|where to|destination|drop|pick ?up|location|pin ?code|url|address bar|" +
+                "web address|go to|\\bq\\b",
+            RegexOption.IGNORE_CASE
+        )
+        /** Installing is the owner's word: the store's Install / Update. */
+        private val INSTALL_BUTTON = Regex(
+            "^\\s*(?:install|update|update all|get|enable|install on (?:this|more) devices?)\\s*$",
+            RegexOption.IGNORE_CASE
+        )
+        /** A result card's "Ad" / "Sponsored" part: someone else's app. */
+        private val AD_PART = Regex("^(?:ad|ads|sponsored|promoted|suggested for you)$", RegexOption.IGNORE_CASE)
+        /** The parts of a card's merged label ("Instagram · Meta · 4.3"). */
+        private val PARTS = Regex("\\s*[·•|]\\s*")
+        /** Settings' "Disable" for an app: as final as uninstalling it. */
+        private val DISABLE_APP = Regex("^\\s*disable(?: app)?\\s*$", RegexOption.IGNORE_CASE)
+        /** The app stores: a price or "Subscribe" there buys (the server's STORE_PKGS). */
+        private val STORES = setOf("com.android.vending", "com.sec.android.app.samsungapps")
+        /** The notification shade and lock screen: typing there replies. */
+        private const val SYSTEMUI = "com.android.systemui"
+        // The two lists below are the server's MESSAGING_PKGS and
+        // PAYMENT_PKGS (src/automation/guard.js), entry for entry. The phone
+        // was missing six chat apps and two money apps; change both sides
+        // together.
         private val MESSAGING = setOf(
             "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger",
             "com.google.android.apps.messaging", "com.samsung.android.messaging",
             "com.google.android.gm", "com.instagram.android", "com.facebook.orca",
+            "com.snapchat.android", "com.linkedin.android", "com.twitter.android",
+            "com.facebook.katana", "com.microsoft.teams", "com.Slack",
         )
         /** Money apps: never acted in, never opened by the assistant. */
         private val MONEY_APPS = setOf(
             "com.google.android.apps.nbu.paisa.user", "com.phonepe.app", "net.one97.paytm",
-            "in.org.npci.upiapp", "com.dreamplug.androidapp", "com.mobikwik_new",
-            "com.freecharge.android", "com.sbi.upi", "com.sbi.SBIFreedomPlus",
-            "com.csam.icici.bank.imobile", "com.snapwork.hdfc", "com.axis.mobile",
-            "com.msf.kbank.mobile",
+            "in.org.npci.upiapp", "com.dreamplug.androidapp", "in.amazon.mShop.android.shopping.pay",
+            "com.mobikwik_new", "com.freecharge.android", "com.whatsapp.payments",
+            "com.sbi.upi", "com.sbi.SBIFreedomPlus", "com.csam.icici.bank.imobile",
+            "com.snapwork.hdfc", "com.axis.mobile", "com.msf.kbank.mobile",
         )
         /** Permission pop-ups: granting access is the owner's decision. */
         private val PERMISSION_APPS = setOf(
@@ -113,6 +274,17 @@ class HariAccessibilityService : AccessibilityService() {
         )
         /** Never acted in, even if a run asks. */
         val NEVER = MONEY_APPS + PERMISSION_APPS + INSTALLERS
+
+        /**
+         * NEVER, plus every phone maker's own installer and permission
+         * screen (Xiaomi's com.miui.packageinstaller and the like — the
+         * server's isSystemPkg): the install, uninstall and allow
+         * confirmations are the owner's tap, whoever draws them.
+         */
+        fun never(pkg: String): Boolean = pkg in NEVER || pkg.endsWith(".packageinstaller") || permissionPkg(pkg)
+
+        /** A permission pop-up, whoever draws it (the server's isPermissionPkg). */
+        fun permissionPkg(pkg: String): Boolean = pkg in PERMISSION_APPS || pkg.endsWith(".permissioncontroller")
         private val SETTINGS_APPS = setOf(
             "com.android.settings", "com.samsung.android.settings",
             // Settings search runs in its own package — same rules.
@@ -134,10 +306,15 @@ class HariAccessibilityService : AccessibilityService() {
                 "reset (?:phone|device|all|settings)|empty (?:trash|bin)|uninstall|remove account|" +
                 // Recent apps: closing everything is the owner's call (a
                 // run once did it to "restart" an app — and closed us).
-                "close all|clear all|end all|force stop)\\b",
+                "close all|clear all(?! filters)|end all|force stop)\\b",
             RegexOption.IGNORE_CASE
         )
-        /** Settings that guard the phone itself. Checked only in Settings. */
+        /**
+         * Settings that guard the phone itself. Checked only in Settings,
+         * and only against a row's TITLE ("Security and privacy", "Lock
+         * screen") — never its small print, which lists "backup" under
+         * System and "security" under Device care.
+         */
         private val SECURITY_SETTING = Regex(
             "(?:accessibility|device admin|admin apps|install unknown|unknown apps|unknown sources|" +
                 "developer options|usb debugging|wireless debugging|screen lock|lock screen|" +
@@ -168,19 +345,59 @@ class HariAccessibilityService : AccessibilityService() {
     /** Whole-phone runs: any app except NEVER (and never this app). */
     @Volatile
     private var anyApp = false
+    /**
+     * The owner's words asked to install or download an app (the server's
+     * may_install). Only then may a run press Install / Update in the app
+     * store.
+     */
+    @Volatile
+    private var mayInstall = false
+    /**
+     * The app the owner asked to install, reduced to a-z0-9 (the
+     * directive's install_app). When the server names it, only that
+     * app's Install / Update is pressed — on its result card or its own
+     * page, never an ad's. Empty: may_install alone decides, as before.
+     */
+    @Volatile
+    private var installWant = ""
+
+    /**
+     * When the Dart task loop last called in (uptime ms). Every channel
+     * call counts — a step's look, act and settle, and the Stop check it
+     * makes four times a second while the server thinks.
+     */
+    @Volatile
+    private var lastHeardAt = 0L
 
     /** Elements of the last snapshot, by the id the planner saw. */
     @Volatile
     private var byId: List<AccessibilityNodeInfo> = emptyList()
 
+    /**
+     * How the last look's picture came out: ok | black | failed |
+     * rate_limited | unsupported | none. A tap on a point of the picture
+     * (tap_xy) needs a real picture — without one it is a tap in the dark,
+     * and dark (secure) screens are exactly the sign-in and payment sheets.
+     */
+    @Volatile
+    var lastShot = "none"
+        private set
+
+    /** The owner's turn (sign-in, OTP…): "" while waiting, "continue" after. */
+    @Volatile
+    private var ownerReply = ""
+
     private var pill: View? = null
     private var pillText: TextView? = null
     private var pillStop: TextView? = null
+    /** A second button, shown only on the owner's turn: Stop beside Continue. */
+    private var pillExtra: TextView? = null
     private var pillParams: WindowManager.LayoutParams? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        LauncherLabels.watch(applicationContext)
         Log.i(TAG, "connected")
     }
 
@@ -202,6 +419,7 @@ class HariAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        main.removeCallbacks(deadMan)
         hidePill()
         super.onDestroy()
     }
@@ -210,29 +428,73 @@ class HariAccessibilityService : AccessibilityService() {
      * RUN LIFECYCLE
      * ---------------------------------------------------------------- */
 
-    fun begin(allowedPkgs: List<String>, status: String, any: Boolean = false) {
-        allowed = allowedPkgs.filter { it.isNotBlank() && it !in NEVER }.toSet()
+    /**
+     * A run starts. Refused (false) while an app is installing: the
+     * install's own ending calls end(), which would quietly end this run
+     * too — its next step would come back "not_running".
+     */
+    fun begin(allowedPkgs: List<String>, status: String, any: Boolean = false,
+              mayInstall: Boolean = false, installApp: String = ""): Boolean {
+        if (installing) return false
+        allowed = allowedPkgs.filter { it.isNotBlank() && !never(it) }.toSet()
         anyApp = any
+        this.mayInstall = mayInstall
+        installWant = if (mayInstall) norm(installApp) else ""
         stopRequested = false
+        ownerReply = ""
+        lastShot = "none"
         running = true
+        heard()
+        main.removeCallbacks(deadMan)
+        main.postDelayed(deadMan, DEAD_MAN_TICK_MS)
         showPill(status)
+        return true
+    }
+
+    /** The Dart task loop called in: it is alive. */
+    fun heard() {
+        lastHeardAt = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * NO ORPHANED RUN. The task loop lives in the app's Flutter engine,
+     * which goes with the app's screen: swipe the app away mid-run and the
+     * loop is gone while this service — and its bar, holding the screen on
+     * — lives on. Nothing would ever call end(): the phone would never
+     * lock again, and Stop would only ever say "Stopping…". So a run the
+     * loop has not called in for [DART_SILENT_MS] ends here. A live loop
+     * is never that quiet: it checks Stop four times a second while the
+     * server thinks, and polls the bar the same way on the owner's turn.
+     */
+    private val deadMan = object : Runnable {
+        override fun run() {
+            if (!running) return
+            val quiet = SystemClock.uptimeMillis() - lastHeardAt
+            if (quiet >= DART_SILENT_MS) {
+                // Counts and times only.
+                Log.i(TAG, "task loop silent ${quiet / 1000}s — ending the run")
+                end()
+                return
+            }
+            main.postDelayed(this, DEAD_MAN_TICK_MS)
+        }
     }
 
     /** May the run read and act in [pkg]? Never this app itself. */
     fun isAllowed(pkg: String): Boolean =
-        pkg.isNotEmpty() && pkg != packageName && pkg !in NEVER && (anyApp || pkg in allowed)
+        pkg.isNotEmpty() && pkg != packageName && !never(pkg) && (anyApp || pkg in allowed)
 
     /** Why a package is off limits, for the hand-over message. */
     fun blockKind(pkg: String): String = when {
         pkg == packageName -> "returned"
         pkg in MONEY_APPS -> "payment"
-        pkg in PERMISSION_APPS -> "permission"
-        pkg in INSTALLERS -> "blocked_app"
+        permissionPkg(pkg) -> "permission"
+        never(pkg) -> "blocked_app"
         else -> "left_app"
     }
 
     fun allow(pkg: String) {
-        if (pkg.isNotBlank() && pkg !in NEVER) allowed = allowed + pkg
+        if (pkg.isNotBlank() && !never(pkg)) allowed = allowed + pkg
     }
 
     /**
@@ -242,9 +504,15 @@ class HariAccessibilityService : AccessibilityService() {
      */
     fun end(finalText: String = "") {
         running = false
+        main.removeCallbacks(deadMan)
         anyApp = false
+        mayInstall = false
+        installWant = ""
         allowed = emptySet()
         byId = emptyList()
+        ownerReply = ""
+        // The screen may sleep again as soon as nothing is being done.
+        keepScreenOn(installing)
         if (finalText.isBlank()) { hidePill(); return }
         main.post {
             pillText?.apply { text = finalText; maxLines = 3; maxWidth = dp(270) }
@@ -253,26 +521,80 @@ class HariAccessibilityService : AccessibilityService() {
                 setTextColor(Color.parseColor("#B9F6CA"))
                 setOnClickListener { hidePill() }
             }
+            pillExtra?.visibility = View.GONE
         }
         main.postDelayed({ if (!running) hidePill() }, 9000)
     }
 
     fun foreground(): String = rootInActiveWindow?.packageName?.toString() ?: ""
 
+    /** The lock screen is up (the owner pressed power, or it timed out). */
+    private fun phoneLocked(): Boolean = try {
+        (getSystemService(KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
+    } catch (_: Throwable) { false }
+
+    /* ---------------------------------------------------------------- *
+     * THE OWNER'S TURN — sign-in, an OTP, a CAPTCHA, a permission
+     * ---------------------------------------------------------------- */
+
+    /**
+     * The server says the next step is the owner's own (owner_step). The
+     * bar shows what to do and its Stop becomes Continue; NOTHING on the
+     * screen is read or touched until they tap it — they may be typing an
+     * OTP. Stop stays on the bar beside it. The Dart loop polls
+     * [ownerAnswer]; no screen is read while it does.
+     */
+    fun ownerWait(text: String) {
+        ownerReply = ""
+        main.post {
+            pillText?.apply { this.text = text; maxLines = 4; maxWidth = dp(230) }
+            pillStop?.apply {
+                this.text = "Continue"
+                setTextColor(Color.parseColor("#B9F6CA"))
+                contentDescription = "Continue the task"
+                setOnClickListener {
+                    ownerReply = "continue"
+                    workingLook("Carrying on…")
+                }
+            }
+            pillExtra?.visibility = View.VISIBLE
+        }
+    }
+
+    /** "continue", "stop", or "" while the owner is still on their step. */
+    fun ownerAnswer(): String = when {
+        stopRequested -> "stop"
+        !running -> "stop"
+        else -> ownerReply
+    }
+
     /* ---------------------------------------------------------------- *
      * READING THE SCREEN
      * ---------------------------------------------------------------- */
 
+    /**
+     * One look. Besides the elements it says what the phone could see
+     * ("access"): tree = ok | empty | no_root (the app gave the service no
+     * window at all), and locked. The picture's own status (ok, black…) is
+     * added by the bridge after captureScreen. With those the server can
+     * say "this app hides its screen from assistants" in one look instead
+     * of guessing for 20 seconds.
+     */
     fun snapshot(): Map<String, Any?> {
+        val t0 = SystemClock.uptimeMillis()
         val root = rootInActiveWindow
         // Fresh, not the cached copy from the app's splash screen.
         try { root?.refresh() } catch (_: Throwable) {}
         val pkg = root?.packageName?.toString() ?: ""
         val out = ArrayList<Map<String, Any?>>()
         val keep = ArrayList<AccessibilityNodeInfo>()
+        // A locked phone is not read at all: the lock screen shows the
+        // owner's notifications. The server ends the run with a plain
+        // "your phone locked partway".
+        val locked = phoneLocked()
         // Nothing is read outside a run, or from an app the run may not
         // touch — the package name alone is enough to hand over.
-        val ok = running && isAllowed(pkg)
+        val ok = running && isAllowed(pkg) && !locked
         if (root != null && ok) {
             val dm = resources.displayMetrics
             val screenArea = dm.widthPixels.toLong() * dm.heightPixels.toLong()
@@ -293,17 +615,33 @@ class HariAccessibilityService : AccessibilityService() {
                 } catch (_: Throwable) {}
             }
         }
-        // Counts only — what was on screen never goes to the log.
-        Log.i(TAG, "look $pkg ok=$ok nodes=${out.size} kids=${root?.childCount ?: -1} " +
-            "vis=${root?.isVisibleToUser} windows=${try { windows.size } catch (_: Throwable) { -1 }}")
+        val tree = when {
+            root == null -> "no_root"
+            out.isEmpty() -> "empty"
+            else -> "ok"
+        }
+        val lookMs = SystemClock.uptimeMillis() - t0
+        // Counts and times only — what was on screen never goes to the log.
+        Log.i(TAG, "look $pkg ok=$ok nodes=${out.size} tree=$tree locked=$locked ms=$lookMs " +
+            "kids=${root?.childCount ?: -1} vis=${root?.isVisibleToUser} " +
+            "windows=${try { windows.size } catch (_: Throwable) { -1 }}")
         byId = keep
         return mapOf(
             "pkg" to pkg,
             "allowed" to ok,
-            "block" to if (ok) "" else blockKind(pkg),
+            // A missing root is the app keeping the service out, not
+            // "another screen took over" (what blockKind("") used to say).
+            "block" to when {
+                ok -> ""
+                locked -> "locked"
+                root == null -> "no_root"
+                else -> blockKind(pkg)
+            },
             "keyboard" to keyboardOpen(),
             "stop" to stopRequested,
             "nodes" to out,
+            "access" to mapOf("tree" to tree, "locked" to locked),
+            "look_ms" to lookMs,
         )
     }
 
@@ -326,46 +664,129 @@ class HariAccessibilityService : AccessibilityService() {
     private val shotWorker = Executors.newSingleThreadExecutor()
 
     /**
-     * THE SCREEN AS THE OWNER SEES IT — a small JPEG (540 px wide), base64,
-     * or null. Android 11+ lets an accessibility service take it with the
-     * permission already granted; apps that forbid screenshots (banking,
-     * FLAG_SECURE) just come back null. Our own bar is hidden for the shot
-     * so it never covers what the planner needs to read. Only called
-     * during a run, for an app the run may touch.
+     * One look's picture. [jpeg] is set only when [status] is "ok".
+     * status: ok | black | failed | rate_limited | unsupported (none is the
+     * bridge's, for a look taken without a picture).
      */
-    fun captureScreen(done: (String?) -> Unit) {
-        if (Build.VERSION.SDK_INT < 30) { done(null); return }
-        main.post {
-            pill?.visibility = View.INVISIBLE
-            main.postDelayed({
-                try {
-                    takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor,
-                        object : TakeScreenshotCallback {
-                            override fun onSuccess(shot: ScreenshotResult) {
-                                pill?.visibility = View.VISIBLE
-                                shotWorker.execute {
-                                    done(try { encode(shot) } catch (e: Throwable) {
-                                        Log.w(TAG, "shot encode failed: ${e.javaClass.simpleName}")
-                                        null
-                                    })
-                                }
-                            }
-                            override fun onFailure(errorCode: Int) {
-                                pill?.visibility = View.VISIBLE
-                                Log.i(TAG, "shot unavailable ($errorCode)")
-                                done(null)
-                            }
-                        })
-                } catch (e: Throwable) {
-                    pill?.visibility = View.VISIBLE
-                    Log.w(TAG, "shot refused: ${e.javaClass.simpleName}")
-                    done(null)
-                }
-            }, 90)
+    class Shot(val jpeg: String?, val status: String, val ms: Long, val kb: Int)
+
+    private class Encoded(val jpeg: String, val kb: Int, val black: Boolean)
+
+    /**
+     * THE SCREEN AS THE OWNER SEES IT — a small JPEG (540 px wide), base64.
+     * Android 11+ lets an accessibility service take it with the permission
+     * already granted. Our own bar is made see-through for the shot so it
+     * never covers what the planner needs to read (see-through, not
+     * hidden: a hidden bar would drop its keep-the-screen-on flag for that
+     * moment). Only called during a run, for an app the run may touch.
+     *
+     * A SECURE APP IS A BLACK PICTURE, NOT AN ERROR. Apps that forbid
+     * screenshots (banking, payment sheets — FLAG_SECURE) are left out of
+     * the display picture: it succeeds, and their area is pure black. That
+     * black image used to go to the planner as if it were the screen, and
+     * the owner heard "I got stuck on the same step" 20 seconds later. Now a
+     * black picture is judged here (brightness), confirmed on Android 14+
+     * by asking for that one window's picture (which Android refuses for a
+     * secure window), and never uploaded: status "black".
+     * "Too soon after the last one" is retried once, 350 ms later.
+     */
+    fun captureScreen(done: (Shot) -> Unit) {
+        val t0 = SystemClock.uptimeMillis()
+        fun finish(jpeg: String?, status: String, kb: Int = 0) {
+            lastShot = status
+            val ms = SystemClock.uptimeMillis() - t0
+            // Counts and times only.
+            Log.i(TAG, "shot $status ${kb}KB ms=$ms")
+            done(Shot(if (status == "ok") jpeg else null, status, ms, kb))
         }
+        if (Build.VERSION.SDK_INT < 30) { finish(null, "unsupported"); return }
+        fun attempt(first: Boolean) {
+            main.post {
+                pill?.alpha = 0f
+                main.postDelayed({
+                    try {
+                        takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor,
+                            object : TakeScreenshotCallback {
+                                override fun onSuccess(shot: ScreenshotResult) {
+                                    pill?.alpha = 1f
+                                    shotWorker.execute {
+                                        val enc = try { encode(shot) } catch (e: Throwable) {
+                                            Log.w(TAG, "shot encode failed: ${e.javaClass.simpleName}")
+                                            null
+                                        }
+                                        when {
+                                            enc == null -> finish(null, "failed")
+                                            !enc.black -> finish(enc.jpeg, "ok", enc.kb)
+                                            Build.VERSION.SDK_INT >= 34 ->
+                                                confirmBlack { secure ->
+                                                    if (secure) finish(null, "black", enc.kb)
+                                                    else finish(enc.jpeg, "ok", enc.kb)
+                                                }
+                                            else -> finish(null, "black", enc.kb)
+                                        }
+                                    }
+                                }
+                                override fun onFailure(errorCode: Int) {
+                                    pill?.alpha = 1f
+                                    if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                                        if (first) main.postDelayed({ attempt(false) }, 350)
+                                        else finish(null, "rate_limited")
+                                    } else {
+                                        Log.i(TAG, "shot unavailable ($errorCode)")
+                                        finish(null, "failed")
+                                    }
+                                }
+                            })
+                    } catch (e: Throwable) {
+                        pill?.alpha = 1f
+                        Log.w(TAG, "shot refused: ${e.javaClass.simpleName}")
+                        finish(null, "failed")
+                    }
+                }, 90)
+            }
+        }
+        attempt(true)
     }
 
-    private fun encode(shot: ScreenshotResult): String? {
+    /** A look taken without a picture (not allowed, or asked without). */
+    fun noPicture() {
+        lastShot = "none"
+    }
+
+    /**
+     * Android 14+: is the black picture a SECURE window, or just a dark
+     * screen? The active window's own picture answers it — Android refuses
+     * that one with ERROR_TAKE_SCREENSHOT_SECURE_WINDOW for a secure window.
+     * Anything unclear counts as secure: a near-black picture is no use to
+     * the planner either way.
+     */
+    @android.annotation.TargetApi(34)
+    private fun confirmBlack(done: (Boolean) -> Unit) {
+        val windowId = try { rootInActiveWindow?.windowId ?: -1 } catch (_: Throwable) { -1 }
+        if (windowId < 0) { done(true); return }
+        // Android refuses two pictures less than ~333 ms apart.
+        main.postDelayed({
+            try {
+                takeScreenshotOfWindow(windowId, mainExecutor, object : TakeScreenshotCallback {
+                    override fun onSuccess(shot: ScreenshotResult) {
+                        try { shot.hardwareBuffer.close() } catch (_: Throwable) {}
+                        done(false)
+                    }
+                    override fun onFailure(errorCode: Int) {
+                        if (errorCode != ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
+                            Log.i(TAG, "window shot unavailable ($errorCode)")
+                        }
+                        done(true)
+                    }
+                })
+            } catch (e: Throwable) {
+                Log.w(TAG, "window shot refused: ${e.javaClass.simpleName}")
+                done(true)
+            }
+        }, 350)
+    }
+
+    private fun encode(shot: ScreenshotResult): Encoded? {
         val buffer = shot.hardwareBuffer
         val hw = Bitmap.wrapHardwareBuffer(buffer, shot.colorSpace) ?: run { buffer.close(); return null }
         val soft = hw.copy(Bitmap.Config.ARGB_8888, false)
@@ -375,20 +796,37 @@ class HariAccessibilityService : AccessibilityService() {
         val h = (soft.height * (w / soft.width.toFloat())).toInt().coerceAtLeast(1)
         val small = Bitmap.createScaledBitmap(soft, w, h, true)
         if (small != soft) soft.recycle()
-        // Counts only: size and how bright it is (an all-black shot means
-        // the app blocks screenshots). What is on screen is never logged.
+        // BLACK = a secure window. Only the band between the status bar
+        // and the navigation bar is judged (those still draw over a secure
+        // app), on a 6-px grid; "black" means 99% of it is pure black.
+        // Counts only — what is on screen is never logged.
+        val px = IntArray(w * h)
+        small.getPixels(px, 0, w, 0, 0, w, h)
         var luma = 0L
+        var dark = 0
         var n = 0
-        for (yy in 0 until h step 97) for (xx in 0 until w step 53) {
-            val c = small.getPixel(xx, yy)
-            luma += ((c shr 16 and 0xff) * 3 + (c shr 8 and 0xff) * 6 + (c and 0xff)) / 10
-            n++
+        var y = h * 6 / 100
+        val yEnd = h * 92 / 100
+        while (y < yEnd) {
+            var x = 0
+            while (x < w) {
+                val c = px[y * w + x]
+                val l = ((c shr 16 and 0xff) * 3 + (c shr 8 and 0xff) * 6 + (c and 0xff)) / 10
+                luma += l
+                if (l <= 8) dark++
+                n++
+                x += 6
+            }
+            y += 6
         }
+        val black = n > 0 && dark * 100L >= n * 99L
         val bos = ByteArrayOutputStream()
         small.compress(Bitmap.CompressFormat.JPEG, 60, bos)
         small.recycle()
-        Log.i(TAG, "shot ${w}x$h ${bos.size() / 1024}KB luma=${if (n > 0) luma / n else -1}")
-        return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+        val kb = bos.size() / 1024
+        Log.i(TAG, "shot ${w}x$h ${kb}KB luma=${if (n > 0) luma / n else -1} " +
+            "dark=${if (n > 0) dark * 100 / n else -1}%")
+        return Encoded(Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP), kb, black)
     }
 
     private fun keyboardOpen(): Boolean = try {
@@ -527,33 +965,157 @@ class HariAccessibilityService : AccessibilityService() {
         ).joinToString(" ")
     }
 
-    /** The kind of line a tap on these elements would cross, or null. */
-    private fun judgeTap(nodes: List<AccessibilityNodeInfo>, fg: String): String? {
-        for (judged in nodes) {
+    /**
+     * A Settings row's title: its own words, or the first part of the
+     * card's merged words ("System · Languages, gestures, time, backup" is
+     * judged as "System").
+     */
+    private fun rowTitle(n: AccessibilityNodeInfo): String = ownLabel(n).ifEmpty {
+        StringBuilder().also { collectText(n, it, 0) }.toString().substringBefore(" · ").trim()
+    }
+
+    private fun securityRow(fg: String, title: String): Boolean =
+        fg in SETTINGS_APPS && SECURITY_SETTING.containsMatchIn(title)
+
+    /**
+     * The kind of line a tap on [n] would cross, or null. [target] is what
+     * the click would really press: n itself, the button around it, or
+     * null when nothing above it is tappable. (The server's checkAction
+     * for a tap, on the same words.)
+     */
+    private fun judgeTap(n: AccessibilityNodeInfo, target: AccessibilityNodeInfo?, fg: String): String? {
+        // A BARE PRICE ON WHAT THE TAP PRESSES is a buy button, in any
+        // app (a game's "₹89.00"): the element when it is tappable, else
+        // the button around it — and when that says nothing itself, the
+        // price tapped inside it. "₹99" on a dish card that says more, or
+        // with nothing tappable around it, is a label.
+        if (target != null) {
+            val says = ownLabel(target).ifEmpty { cardLabel(target) }.ifEmpty { ownLabel(n) }
+            if (PRICE_ONLY.matches(says)) return "payment"
+        }
+        for (judged in listOfNotNull(n, target).distinct()) {
             val words = tapWords(judged)
             val merged = StringBuilder().also { collectText(judged, it, 0) }.toString()
             if (PAY.containsMatchIn(merged)) return "payment"
-            judgeWords(words, fg)?.let { return it }
+            judgeWords(words, fg, button = n)?.let { return it }
             if (judged.isCheckable && CONSENT.containsMatchIn(merged)) return "consent"
-            if (fg in SETTINGS_APPS && SECURITY_SETTING.containsMatchIn(merged)) return "security"
+            if (securityRow(fg, rowTitle(judged))) return "security"
         }
         return null
     }
 
-    private fun judgeWords(words: List<String>, fg: String): String? {
+    /**
+     * [prices]: a bare price counts in any app (the planner's own words
+     * for a point it taps). [button]: the element tapped, for the install
+     * check (null for a point).
+     */
+    private fun judgeWords(words: List<String>, fg: String, prices: Boolean = false,
+                           button: AccessibilityNodeInfo? = null): String? {
         val w = words.filter { it.isNotBlank() }
-        if (w.any { PAY.containsMatchIn(it) || PRICE_ONLY.matches(it) }) return "payment"
+        val store = fg in STORES
+        if (w.any { PAY.containsMatchIn(it) } ||
+            ((store || prices) && w.any { PRICE_ONLY.matches(it) }) ||
+            (store && w.any { STORE_PAY.containsMatchIn(it) })) return "payment"
         if (w.any { MONEY.containsMatchIn(it) }) return "money"
+        if (store && w.any { INSTALL_BUTTON.matches(it) } && !installAsked(button)) return "install"
+        if (w.any { PUBLISH.matches(it) }) return "publish"
+        // On a compose screen a social app's "Share" / "Reply" publishes
+        // (in a chat app it sends); from the feed it only opens a box.
+        if (fg in MESSAGING && w.any { COMPOSE_SUBMIT.matches(it) } && composeScreen()) {
+            return if (fg in SOCIAL_APPS) "publish" else "message_send"
+        }
+        if (w.any { SEND_BUTTON.matches(it) }) return "message_send"
         if (fg in MESSAGING && w.any { SEND.matches(it) }) return "message_send"
-        if (w.any { DESTRUCTIVE.containsMatchIn(it) }) return "destructive"
+        if (w.any { DESTRUCTIVE.containsMatchIn(it) && !SAFE_CLEAR.matches(it) }) return "destructive"
+        if (fg in SETTINGS_APPS && w.any { DISABLE_APP.matches(it) }) return "destructive"
         if (w.any { CONSENT.containsMatchIn(it) }) return "consent"
-        if (fg in SETTINGS_APPS && w.any { SECURITY_SETTING.containsMatchIn(it) }) return "security"
         return null
     }
+
+    /**
+     * A tappable card's merged words — what the snapshot sends as its
+     * label (walk's isCard: tappable, not a field, under 2/5 of the
+     * screen). A bigger container has none: it would swallow the screen.
+     */
+    private fun cardLabel(n: AccessibilityNodeInfo): String {
+        if (!n.isClickable || n.isEditable) return ""
+        val r = Rect()
+        n.getBoundsInScreen(r)
+        val dm = resources.displayMetrics
+        val area = r.width().toLong() * r.height().toLong()
+        if (area >= dm.widthPixels.toLong() * dm.heightPixels.toLong() * 2 / 5) return ""
+        return StringBuilder().also { collectText(n, it, 0) }.toString().trim()
+    }
+
+    /**
+     * A compose screen in a social or messaging app (the server's
+     * composeScreen): a caption, reply or comment box, a box that holds
+     * text (not a search box), or a "New post" heading.
+     */
+    private fun composeScreen(): Boolean = byId.any { n ->
+        if (n.isEditable) {
+            val f = fieldWords(n)
+            !SEARCH_FIELD.containsMatchIn(f) &&
+                (!n.text?.toString().isNullOrBlank() || COMPOSE_FIELD.containsMatchIn(f))
+        } else {
+            val t = ownLabel(n)
+            t.isNotEmpty() && t.length <= 40 && COMPOSE_TEXT.containsMatchIn(t)
+        }
+    }
+
+    /**
+     * May Install / Update be pressed here (the server's installAsked)?
+     * Only when the owner asked to install an app — and, when the server
+     * named it (install_app), only that app's button: a result card that
+     * names it and is not an ad, or its own page, whose heading starts
+     * with its name. "Download my invoice" names no app; an ad beside it
+     * is someone else's. Without a name (an older server) may_install
+     * alone decides, as before.
+     */
+    private fun installAsked(button: AccessibilityNodeInfo?): Boolean {
+        if (!mayInstall) return false
+        val want = installWant
+        if (want.isEmpty()) return true
+        if (want.length < 2) return false
+        // The smallest card around the button, when it sits in one.
+        var p = button?.parent
+        var depth = 0
+        while (p != null && depth < 12) {
+            val parts = cardLabel(p).split(PARTS).filter { it.isNotBlank() }
+            if (parts.size > 1) {
+                return parts.none { AD_PART.matches(it.trim()) } && parts.any { norm(it).startsWith(want) }
+            }
+            p = p.parent
+            depth++
+        }
+        // The app's own page: a short heading that starts with its name
+        // ("Zomato: Food Delivery & Dining").
+        return byId.any {
+            val t = ownLabel(it)
+            t.isNotEmpty() && t.length <= 60 && norm(t).startsWith(want)
+        }
+    }
+
+    /** Words of the screen just read that say "enter the OTP". */
+    private fun otpScreen(): Boolean = byId.any {
+        val t = ownLabel(it)
+        t.isNotEmpty() && t.length <= 120 && OTP_SCREEN.containsMatchIn(t)
+    }
+
+    /**
+     * May the keyboard's Enter be pressed in this field? Only where Enter
+     * searches. In a chat, a comment box or the shade's reply it SENDS —
+     * that tap stays the owner's.
+     */
+    private fun maySubmit(n: AccessibilityNodeInfo, fg: String): Boolean =
+        fg !in MESSAGING && fg != SYSTEMUI &&
+            SUBMITTABLE.containsMatchIn(fieldWords(n) + " " + (n.className ?: ""))
 
     fun act(a: Map<String, Any?>): Map<String, Any?> {
         if (stopRequested) return mapOf("ok" to false, "error" to "stopped", "stop" to true)
         if (!running) return fail("not_running")
+        // Nothing is done on a locked phone; the next look reports it.
+        if (phoneLocked()) return fail("locked")
         val fg = foreground()
         val type = a["type"] as? String ?: return fail("no_type")
         // Moving around the phone (Home, Back, opening an app, the shade)
@@ -572,7 +1134,7 @@ class HariAccessibilityService : AccessibilityService() {
                 while (target != null && !target.isClickable) target = target.parent
                 // Judged on what the click would ACTUALLY press: "₹312"
                 // is harmless text, its parent "Proceed to Pay" is not.
-                judgeTap(listOfNotNull(n, target), fg)?.let { return blocked(it) }
+                judgeTap(n, target, fg)?.let { return blocked(it) }
                 val ok = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 if (ok) mapOf("ok" to true, "how" to "click") else {
                     val r = Rect(); n.getBoundsInScreen(r)
@@ -584,25 +1146,44 @@ class HariAccessibilityService : AccessibilityService() {
             // Judged twice: the planner's own words for it, and whatever
             // element sits under the point.
             "tap_xy" -> {
+                // A point needs a picture: with a black (secure), missing
+                // or failed picture the planner is aiming at nothing.
+                if (lastShot != "ok") return fail("no_picture")
                 val (sw, sh) = screenSize()
                 val x = ((a["x"] as? Number)?.toFloat() ?: return fail("no_point")) * sw / 1000f
                 val y = ((a["y"] as? Number)?.toFloat() ?: return fail("no_point")) * sh / 1000f
-                judgeWords(listOf((a["label"] as? String).orEmpty()), fg)?.let { return blocked(it) }
+                val said = (a["label"] as? String).orEmpty()
+                // "Send button", "the Pay icon" are "Send" and "Pay".
+                val bare = said.replace(Regex("^\\s*(?:the|a|an)\\s+", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("\\s+(?:button|icon|arrow|key|tab|option|link)s?\\s*$", RegexOption.IGNORE_CASE), "")
+                    .trim()
+                // Its words are what the finger presses: a bare price counts.
+                judgeWords(listOf(said, bare), fg, prices = true)?.let { return blocked(it) }
+                if (securityRow(fg, said)) return blocked("security")
                 val under = byId.filter {
                     val r = Rect(); it.getBoundsInScreen(r); r.contains(x.toInt(), y.toInt())
                 }.minByOrNull { val r = Rect(); it.getBoundsInScreen(r); r.width().toLong() * r.height() }
                 if (under != null) {
                     var t: AccessibilityNodeInfo? = under
                     while (t != null && !t.isClickable) t = t.parent
-                    judgeTap(listOfNotNull(under, t), fg)?.let { return blocked(it) }
+                    judgeTap(under, t, fg)?.let { return blocked(it) }
                 }
                 if (tapAt(x, y)) mapOf("ok" to true, "how" to "point") else fail("tap_failed")
             }
             "type" -> {
+                // The notification shade's inline Reply sends what is typed
+                // there — no typing in it at all.
+                if (fg == SYSTEMUI) return blocked("message_send")
                 val n = node ?: return fail("no_such_element")
                 val text = (a["text"] as? String).orEmpty()
                 if (n.isPassword || CREDENTIAL.containsMatchIn(fieldWords(n)) ||
                     CARD_NUMBER.containsMatchIn(text)) return blocked("credential")
+                // OTP boxes usually carry no label: a code-shaped number, or
+                // any unlabeled field, on a screen that asks for the OTP is
+                // the owner's to type.
+                if ((OTP_DIGITS.matches(text) || fieldWords(n).isBlank()) && otpScreen()) {
+                    return blocked("credential")
+                }
                 if (!n.isEditable) return fail("not_a_field")
                 n.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                 val args = Bundle().apply {
@@ -614,12 +1195,21 @@ class HariAccessibilityService : AccessibilityService() {
                 val now = n.text?.toString().orEmpty()
                 val verified = set && (now == text || now.contains(text) || text.isEmpty())
                 var submitted = false
-                if (verified && a["submit"] == true && Build.VERSION.SDK_INT >= 30) {
-                    submitted = n.performAction(
-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                var submitRefused = false
+                if (verified && a["submit"] == true) {
+                    // Enter only where it searches; elsewhere it can send.
+                    // The text stays typed and the planner is told, so it
+                    // taps the screen's own search button instead.
+                    if (!maySubmit(n, fg)) submitRefused = true
+                    else if (Build.VERSION.SDK_INT >= 30) {
+                        submitted = n.performAction(
+                            AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                    }
                 }
                 if (!verified) fail("text_not_set")
-                else mapOf("ok" to true, "verified" to true, "submitted" to submitted)
+                else if (submitRefused) {
+                    mapOf("ok" to true, "verified" to true, "submitted" to false, "submit_refused" to true)
+                } else mapOf("ok" to true, "verified" to true, "submitted" to submitted)
             }
             "scroll" -> {
                 val forward = (a["direction"] as? String) != "up"
@@ -652,7 +1242,7 @@ class HariAccessibilityService : AccessibilityService() {
                 val name = (a["name"] as? String).orEmpty()
                 val hit = matchLauncherApp(packageManager, name) ?: return fail("app_not_found")
                 if (hit.first in MONEY_APPS) return blocked("payment")
-                if (hit.first in NEVER || hit.first == packageName) return blocked("blocked_app")
+                if (never(hit.first) || hit.first == packageName) return blocked("blocked_app")
                 val launch = packageManager.getLaunchIntentForPackage(hit.first) ?: return fail("app_not_found")
                 try {
                     startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -983,12 +1573,22 @@ class HariAccessibilityService : AccessibilityService() {
                         setTypeface(typeface, android.graphics.Typeface.BOLD)
                         setPadding(dp(12), dp(4), dp(8), dp(4))
                         contentDescription = "Stop the assistant"
-                        setOnClickListener {
-                            stopRequested = true
-                            label.text = "Stopping…"
-                        }
+                        setOnClickListener { pressStop() }
                     }
                     row.addView(stop)
+                    // Shown only on the owner's turn, when the first button
+                    // reads Continue: Stop is still one tap away.
+                    val extra = TextView(this).apply {
+                        this.text = "Stop"
+                        setTextColor(Color.parseColor("#FFB4A9"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        setPadding(dp(8), dp(4), dp(8), dp(4))
+                        contentDescription = "Stop the assistant"
+                        visibility = View.GONE
+                        setOnClickListener { pressStop() }
+                    }
+                    row.addView(extra)
                     val lp = WindowManager.LayoutParams(
                         WindowManager.LayoutParams.WRAP_CONTENT,
                         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -1004,23 +1604,70 @@ class HariAccessibilityService : AccessibilityService() {
                     pill = row
                     pillText = label
                     pillStop = stop
+                    pillExtra = extra
                     pillParams = lp
                 }
                 // A new run over a finished bar: back to the working look.
-                pillText?.apply { this.text = text; maxLines = 1; maxWidth = dp(230) }
-                pillStop?.apply {
-                    this.text = "Stop"
-                    setTextColor(Color.parseColor("#FFB4A9"))
-                    setOnClickListener {
-                        stopRequested = true
-                        pillText?.text = "Stopping…"
-                    }
-                }
+                workingLook(text)
             } catch (e: Throwable) {
                 // No pill is not a reason to fail the task; Stop is also
                 // reachable by returning to the app.
                 Log.w(TAG, "pill failed: ${e.javaClass.simpleName}")
             }
+        }
+        // While a run or an install is on, the screen stays on.
+        keepScreenOn(running || installing)
+    }
+
+    /** "…working… Stop" — on the UI thread. */
+    private fun workingLook(text: String) {
+        pillText?.apply { this.text = text; maxLines = 1; maxWidth = dp(230) }
+        pillStop?.apply {
+            this.text = "Stop"
+            setTextColor(Color.parseColor("#FFB4A9"))
+            contentDescription = "Stop the assistant"
+            setOnClickListener { pressStop() }
+        }
+        pillExtra?.visibility = View.GONE
+    }
+
+    /**
+     * Stop on the bar — on the UI thread. The task loop sees it within a
+     * moment and ends the run with a report. If the loop has gone (the
+     * app was swiped away) nothing would ever answer, so after
+     * [STOP_FALLBACK_MS] without a word from it the bar ends the run
+     * itself. An install's Stop is answered by the install (not running).
+     */
+    private fun pressStop() {
+        stopRequested = true
+        pillText?.text = "Stopping…"
+        val pressedAt = SystemClock.uptimeMillis()
+        main.postDelayed({
+            if (running && lastHeardAt < pressedAt) {
+                Log.i(TAG, "Stop unanswered — ending the run")
+                end()
+            }
+        }, STOP_FALLBACK_MS)
+    }
+
+    /**
+     * THE SCREEN STAYS ON WHILE THE ASSISTANT WORKS. A slow step or an
+     * install outlasted a 15-30 s screen timeout; the phone locked mid-task
+     * and the next look read the lock screen. The bar is a visible
+     * accessibility overlay, so its FLAG_KEEP_SCREEN_ON holds the screen on
+     * without a wake lock — and lets go the moment the run ends.
+     */
+    private fun keepScreenOn(on: Boolean) {
+        main.post {
+            val v = pill ?: return@post
+            val lp = pillParams ?: return@post
+            val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            val want = if (on) lp.flags or flag else lp.flags and flag.inv()
+            if (want == lp.flags) return@post
+            lp.flags = want
+            try {
+                (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(v, lp)
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1045,6 +1692,7 @@ class HariAccessibilityService : AccessibilityService() {
             pill = null
             pillText = null
             pillStop = null
+            pillExtra = null
             pillParams = null
         }
     }

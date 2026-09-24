@@ -1653,21 +1653,13 @@ class AssistantEngine extends ChangeNotifier {
 
   bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
-  /// How the owner is addressed — the Indian way (owner, 2026-09-23:
-  /// "should say hello Sir, and give more respect"). Sir / Ma'am from the
-  /// signed-in profile; "<first name> ji" when the gender is not known —
-  /// respectful in every Indian language, and guessing sir or ma'am wrong
-  /// is worse than either. The server tells the model the same thing
+  /// How the owner is addressed (owner, 2026-09-23: "should say hello
+  /// Sir, and give more respect"; 2026-09-24: "don't call them ji, call
+  /// them Sir"). Ma'am when the profile says female, Sir otherwise — never
+  /// "<name> ji". The server tells the model the same thing
   /// (agents/owner.js), so the voice and this greeting never disagree.
   static String honorific({String? name, String? gender}) {
-    switch ((gender ?? '').trim().toLowerCase()) {
-      case 'male':
-        return 'Sir';
-      case 'female':
-        return "Ma'am";
-    }
-    final first = (name ?? '').trim().split(RegExp(r'\s+')).first;
-    return first.isEmpty ? '' : '$first ji';
+    return (gender ?? '').trim().toLowerCase() == 'female' ? "Ma'am" : 'Sir';
   }
 
   /// What the orb tap says, instantly, in the assistant's own voice.
@@ -2514,6 +2506,12 @@ class AssistantEngine extends ChangeNotifier {
         {
           final want = (e['name'] as String? ?? '').trim();
           final pkg = (e['pkg'] as String? ?? '').trim();
+          // INSTALL ONLY ON THE OWNER'S WORDS. Owner, 2026-09-24: "open X"
+          // on a phone without X installed it unasked. The server now says
+          // whether they asked to install / download it (or said yes to
+          // installing it); without that the store page opens and ONE
+          // question is asked.
+          final mayInstall = e['install'] == true;
           _leftForExternalApp = true;
           const MethodChannel('hari/intent')
               .invokeMethod<String>('launchApp', {'name': want, 'pkg': pkg})
@@ -2522,15 +2520,28 @@ class AssistantEngine extends ChangeNotifier {
               _leftForExternalApp = false;
               // NOT INSTALLED MEANS THE STORE. Owner, 2026-09-23: "open
               // swiggy" must never end at the website or at "you don't
-              // have it" — the Play Store page (the exact listing when the
+              // have it" — the app store page (the exact listing when the
               // package is known), and the phone opens the app once it is
-              // installed (InstallWatch). Only the user can press Install.
+              // installed (InstallWatch).
               if (e['store_if_missing'] == true) {
                 const MethodChannel('hari/intent')
                     .invokeMethod<bool>('openStore', {'query': want, 'pkg': pkg})
                     .then((ok) async {
                   if (ok == true) {
                     _leftForExternalApp = true;
+                    if (!mayInstall) {
+                      // Not asked to install: the page is open, the
+                      // decision is theirs — one question, nothing pressed.
+                      AppFeedback.toast("$want isn't installed");
+                      _tellModel(
+                          '[SYSTEM] "$want" is not installed; its page in the app '
+                          'store is now open and NOTHING was installed. Ask exactly '
+                          'this one question and nothing else: "It isn\'t installed '
+                          '— want me to install it?" If they say yes, call '
+                          'open_named_app for "$want" with install true. Never '
+                          'name the store.');
+                      return;
+                    }
                     // "DO IT FOR ME" ON: press Install for them, then open
                     // the app when it lands (HariAccessibilityService).
                     // Free apps only; a price stops it.
@@ -2540,24 +2551,25 @@ class AssistantEngine extends ChangeNotifier {
                     if (auto == true) {
                       AppFeedback.toast('Installing $want…');
                       _tellModel(
-                          '[SYSTEM] "$want" is not installed. Its Play Store page '
-                          'is open and you are pressing Install for them now; it '
-                          'opens by itself as soon as it is installed. Say that in '
-                          'ONE short sentence.');
+                          '[SYSTEM] "$want" is not installed. Its page in the app '
+                          'store is open and you are pressing Install for them now; '
+                          'it opens by itself as soon as it is installed. Say that '
+                          'in ONE short sentence, without naming the store, and '
+                          'never claim it is already installed.');
                       return;
                     }
                     AppFeedback.toast("$want isn't installed — tap Install");
                     _tellModel(
-                        '[SYSTEM] "$want" is not installed, so its Play Store '
-                        'page is now open. Say in ONE short sentence that they '
+                        '[SYSTEM] "$want" is not installed, so its page in the app '
+                        'store is now open. Say in ONE short sentence that they '
                         'just need to tap Install, and you will open $want for '
-                        'them as soon as it is installed.');
+                        'them as soon as it is installed. Never name the store.');
                   } else {
                     _reportDeviceFailure('open_named_app',
-                        target: want, reason: 'not installed, no Play Store');
+                        target: want, reason: 'not installed, no app store');
                     _tellModel(
-                        '[SYSTEM] ERROR: "$want" is NOT installed and the Play '
-                        'Store could not be opened. Say that plainly.');
+                        '[SYSTEM] ERROR: "$want" is NOT installed and the app '
+                        'store could not be opened. Say that plainly.');
                   }
                 }).catchError((_) {});
                 return;
@@ -2577,6 +2589,78 @@ class AssistantEngine extends ChangeNotifier {
             AppLog.add('intent', 'launchApp failed: $e');
             _reportDeviceFailure('open_named_app',
                 target: want, reason: 'the phone could not launch it');
+          });
+        }
+        _setPhase(AssistantPhase.completed);
+        break;
+
+      case 'uninstall_app':
+        // "UNINSTALL INSTAGRAM". Android's own confirmation opens and the
+        // owner's OK there is the permission — the assistant never taps
+        // it. The phone then checks whether the app is really gone, and
+        // the assistant says exactly that, one fixed sentence per outcome.
+        {
+          final want = (e['name'] as String? ?? '').trim();
+          final pkg = (e['pkg'] as String? ?? '').trim();
+          const MethodChannel('hari/intent')
+              .invokeMethod<Object?>('uninstallApp', {'name': want, 'pkg': pkg})
+              .then((r) {
+            final m = r is Map ? r : const {};
+            final status = '${m['status'] ?? 'failed'}';
+            final label = '${m['label'] ?? want}'.trim().isEmpty ? want : '${m['label']}';
+            AppLog.add('uninstall', status);
+            final String line;
+            switch (status) {
+              case 'uninstalled':
+                line = '$label is uninstalled.';
+                AppFeedback.toast(line);
+                break;
+              case 'cancelled':
+                line = "Okay, I've kept $label.";
+                break;
+              case 'no_answer':
+                line = 'The uninstall screen closed without an answer, so $label is still on your phone.';
+                break;
+              case 'not_found':
+                line = "I couldn't find an app called $want on your phone.";
+                break;
+              case 'system_app':
+                line = m['opened_info'] == true
+                    ? "$label came with your phone, so Android won't let it be uninstalled — I've opened its App info, where you can tap Disable."
+                    : "$label came with your phone, so Android won't let it be uninstalled — you can disable it in Settings, Apps.";
+                break;
+              case 'self':
+                line = "I can't uninstall myself — you can do that from Settings, Apps.";
+                break;
+              case 'busy':
+                line = 'The uninstall screen is already open — tap OK or Cancel there first.';
+                break;
+              case 'device_admin':
+                // Found before the dialog opens: Android would refuse it.
+                line = '$label is a device admin app, so Android won\'t remove it until '
+                    'that is switched off — in Settings, under Device admin apps. Then ask me again.';
+                break;
+              case 'blocked_by_policy':
+                line = "Your phone's settings don't allow uninstalling $label, so it's still on your phone.";
+                break;
+              case 'failed_after_confirm':
+                line = "Android didn't remove $label — it's still on your phone.";
+                break;
+              default:
+                line = "I couldn't open the uninstall screen for $label.";
+            }
+            // EVERY outcome but a real removal goes back as a failure, so
+            // "did you uninstall it?" is never answered from a stale "ok".
+            if (status != 'uninstalled') {
+              _reportDeviceFailure('uninstall_app', target: want, reason: status);
+            }
+            _tellModel('[SYSTEM] Uninstall "$want" finished: $status. Say exactly '
+                'this, nothing before or after it: "$line"');
+          }).catchError((err) {
+            AppLog.add('uninstall', 'channel error: $err');
+            _reportDeviceFailure('uninstall_app', target: want, reason: 'channel');
+            _tellModel('[SYSTEM] ERROR: the uninstall screen could not be opened, '
+                'so NOTHING was removed. Say that plainly in one sentence.');
           });
         }
         _setPhase(AssistantPhase.completed);
@@ -4026,16 +4110,23 @@ class AssistantEngine extends ChangeNotifier {
     if (_foreground) {
       unawaited(_speakReply(report));
     } else {
-      const titles = {
-        'done': 'Done',
-        'handoff': 'Your turn',
-        'stopped': 'Stopped',
-        'failed': "Couldn't finish",
-      };
       unawaited(ReminderNotifications.instance
-          .showNow(titles[o.status] ?? 'Task update', report));
+          .showNow(automationTitles[o.status] ?? 'Task update', report));
     }
   }
+
+  /// The notification title for how a task ended, when the owner is out
+  /// in another app.
+  static const automationTitles = {
+    'done': 'Done',
+    'handoff': 'Your turn',
+    'stopped': 'Stopped',
+    'failed': "Couldn't finish",
+    // The app itself keeps assistants out (a secure screen, no access).
+    'blocked': "Can't do this one here",
+    // Said done, but nothing on the screen showed it.
+    'unconfirmed': 'Please check',
+  };
 
   Future<void> _scanBusinessCard() async {
     _deviceFlowActive = true;
