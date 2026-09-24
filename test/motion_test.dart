@@ -9,7 +9,9 @@
 //     only fade;
 //   * tabs fade through; hidden tabs and tabs under a session cannot tick;
 //   * the spoken line takes new words in place, and a finished line shrinks
-//     into the older ones;
+//     into the older ones — as a picture: text that changes size is laid
+//     out once at its new size and drawn from the old one, never laid out
+//     at every size in between;
 //   * a press dips only under a resting finger, never on a scroll;
 //   * cards and panels grow out of the dock without crossing it;
 //   * the tilt of a result card never rebuilds the card, shares one sensor
@@ -457,13 +459,87 @@ void main() {
 
       expect(find.text(first), findsOneWidget,
           reason: 'a second, fading copy of the finished line ghosted under it');
-      double size() => tester.widget<Text>(find.text(first)).style!.fontSize!;
-      expect(size(), greaterThan(15.5),
+      final line = find.text(first);
+      double size() => tester.widget<Text>(line).style!.fontSize!;
+      // How much larger it is DRAWN than it is laid out.
+      double drawn() =>
+          tester.getRect(line).height /
+          tester.renderObject<RenderBox>(line).size.height;
+      double brightness() =>
+          tester.widget<Text>(line).style!.color!.a * _opacityProduct(tester, line);
+      // Laid out once, at the older size, from its first frame there
+      // (2026-09-24, review: a style tween re-laid it out every frame)...
+      expect(size(), 15.5,
+          reason: 'it is laid out again at a new font size on every frame of the move');
+      // ...and only drawn larger and brighter at first.
+      expect(drawn(), greaterThan(1.0),
           reason: 'it snapped from the spotlight to the older size in one frame');
+      expect(brightness(), greaterThan(0.56 + 0.005),
+          reason: 'it snapped to the older lines\' brightness in one frame');
       expect(find.text('office tonight'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 300));
       expect(size(), 15.5);
+      expect(drawn(), moreOrLessEquals(1.0, epsilon: 1e-6));
+      // At rest: plain text in the older colour, no fading layer.
+      expect(_opacityProduct(tester, line), 1.0);
+      expect(tester.widget<Text>(line).style!.color!.a, closeTo(0.56, 0.005));
       await close(tester);
+    });
+  });
+
+  group('text that changes size', () {
+    const words = 'Remind me at five';
+    Widget sized(double size, {bool reduced = false}) => MaterialApp(
+          builder: reduced ? _reduced : null,
+          home: Scaffold(
+            body: Center(
+              child: TextResize(
+                size: size,
+                child: Text(words, style: TextStyle(fontSize: size)),
+              ),
+            ),
+          ),
+        );
+    double drawn(WidgetTester tester) =>
+        tester.getRect(find.text(words)).height /
+        tester.renderObject<RenderBox>(find.text(words)).size.height;
+    Transform picture(WidgetTester tester) => tester.widget<Transform>(find
+        .ancestor(of: find.text(words), matching: find.byType(Transform))
+        .first);
+
+    testWidgets('is laid out once at its new size and drawn from the old one, as a snapshot only while it moves',
+        (tester) async {
+      await tester.pumpWidget(sized(24));
+      expect(picture(tester).filterQuality, isNull);
+
+      await tester.pumpWidget(sized(16));
+      expect(tester.widget<Text>(find.text(words)).style!.fontSize, 16,
+          reason: 'laid out at the new size at once, not at every size between');
+      expect(drawn(tester), moreOrLessEquals(24 / 16, epsilon: 1e-6),
+          reason: 'drawn at the size it was, not jumped');
+      expect(picture(tester).filterQuality, FilterQuality.medium);
+      await tester.pump(const Duration(milliseconds: 80));
+      final mid = drawn(tester);
+      expect(mid, inExclusiveRange(1.0, 24 / 16));
+
+      // Changed again half-way: it carries on from where it is drawn.
+      await tester.pumpWidget(sized(24));
+      expect(drawn(tester), moreOrLessEquals(mid * 16 / 24, epsilon: 1e-6));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(drawn(tester), moreOrLessEquals(1.0, epsilon: 1e-6));
+      expect(picture(tester).filterQuality, isNull,
+          reason: 'a snapshot left on at rest');
+      expect(SchedulerBinding.instance.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('with Remove animations on, the new size is simply there',
+        (tester) async {
+      await tester.pumpWidget(sized(24, reduced: true));
+      await tester.pumpWidget(sized(16, reduced: true));
+      expect(drawn(tester), moreOrLessEquals(1.0, epsilon: 1e-6));
+      expect(picture(tester).filterQuality, isNull);
+      expect(tester.binding.hasScheduledFrame, isFalse);
     });
   });
 

@@ -8,7 +8,9 @@
 //   * an idle Home asks for NO frames (no ticker left running);
 //   * a session's animation stops when the session does, and rests while
 //     he types;
-//   * the orb is drawn smaller for the keyboard, never laid out again;
+//   * the orb is drawn smaller for the keyboard, never laid out again,
+//     and the spoken line is laid out once at its new size, then only
+//     drawn smaller;
 //   * the animated parts repaint on their own layers, not with the words
 //     or the page;
 //   * the voice screen's heaviest layer is not drawn on its first frames;
@@ -244,6 +246,62 @@ void main() {
       final backRect = tester.getRect(find.byType(VoiceOrb));
       expect(backRect.height, moreOrLessEquals(restRect.height, epsilon: 0.5),
           reason: 'full size again once the keyboard is down');
+      _closeSession();
+      await _settle(tester);
+    });
+
+    // 2026-09-24, review: the spoken line eased from 19/24 pt to 17 pt by
+    // tweening its font size, which laid it out again at a new size on
+    // every one of these same keyboard frames.
+    testWidgets('keyboard up: the spoken line is laid out once at its new size, then only drawn smaller',
+        (tester) async {
+      _ownersPhone(tester);
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(body: InlineCaptionOverlay()),
+      ));
+      _openSession();
+      await tester.pump(const Duration(milliseconds: 400));
+      const said = 'Remind me to call Ravi at five';
+      AssistantEngine.instance.caption.value = const CaptionLine('you', said);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final line = find.text(said);
+      double fontSize() => tester.widget<Text>(line).style!.fontSize!;
+      RenderBox box() => tester.renderObject<RenderBox>(line);
+      // How much larger it is drawn than it is laid out.
+      double drawn() => tester.getRect(line).height / box().size.height;
+      expect(fontSize(), 19);
+      expect(drawn(), moreOrLessEquals(1.0, epsilon: 1e-6));
+
+      final sizes = <double>{};
+      final scales = <double>[];
+      BoxConstraints? first;
+      for (var i = 1; i <= 15; i++) {
+        tester.view.viewInsets = FakeViewPadding(bottom: 1190 * i / 15);
+        await tester.pump(const Duration(milliseconds: 16));
+        sizes.add(fontSize());
+        scales.add(drawn());
+        if (i == 1) {
+          first = box().constraints;
+        } else {
+          expect(box().constraints, first,
+              reason: 'keyboard frame $i gave the line new constraints: a relayout');
+        }
+      }
+      expect(sizes, {17.0},
+          reason: 'the line was laid out at a new font size on the keyboard frames');
+      expect(scales.first, greaterThan(1.05),
+          reason: 'it jumped to the new size instead of easing to it');
+      for (var i = 1; i < scales.length; i++) {
+        expect(scales[i], lessThanOrEqualTo(scales[i - 1] + 1e-9));
+      }
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(drawn(), moreOrLessEquals(1.0, epsilon: 1e-6));
+      final picture = tester.widget<Transform>(
+          find.ancestor(of: line, matching: find.byType(Transform)).first);
+      expect(picture.filterQuality, isNull,
+          reason: 'a snapshot left on once it came to rest');
       _closeSession();
       await _settle(tester);
     });

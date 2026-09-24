@@ -34,6 +34,9 @@ import 'package:flutter/material.dart';
 ///     (FilterQuality.medium, applied only while animating): on the phone's
 ///     renderer every new scale step of a glyph is otherwise a new glyph to
 ///     rasterise, which is a hitch on exactly the frame of a tap.
+///   * Text never changes size by tweening its font size: that lays it out
+///     again, at a new size, on every frame. It is laid out once at the new
+///     size and drawn from the old one ([TextResize]).
 /// ─────────────────────────────────────────────────────────────────────────
 abstract final class Motion {
   // ── Durations ──────────────────────────────────────────────────────────
@@ -279,6 +282,121 @@ class _Moving extends AnimatedWidget {
       child: child,
     );
   }
+}
+
+/// TEXT THAT CHANGES SIZE MOVES AS A PICTURE (2026-09-24, review of the
+/// voice screen). The spoken line grew and shrank by tweening its font
+/// size — 24 to 17 pt as the keyboard came up, 24 to 15.5 pt as a finished
+/// line joined the older ones — so every one of those frames shaped and
+/// laid the words out again, and every in-between size was a new set of
+/// glyphs for the phone to rasterise: on the very keyboard frames that
+/// phaseB-smooth had just made cheap.
+///
+/// [child] is laid out ONCE, at its new [size]. The change is shown by
+/// drawing that layout scaled from the size it was on screen a moment ago
+/// to 1, about [alignment], as a snapshot while it moves (see the rules
+/// above). At rest it is the plain child: no layer, no filter, no ticker.
+/// A change in the middle of a move carries on from where it is drawn.
+/// With "Remove animations" on, the new size is simply there.
+class TextResize extends StatefulWidget {
+  const TextResize({
+    super.key,
+    required this.size,
+    required this.child,
+    this.from,
+    this.duration = Motion.short,
+    this.curve = Motion.easeMove,
+    this.alignment = Alignment.topCenter,
+  });
+
+  /// The font size [child] is laid out at.
+  final double size;
+
+  /// The size it was on screen before it was built here (a line moving in
+  /// from a bigger style): it arrives from that. Read on the first build
+  /// only; null arrives as it is.
+  final double? from;
+
+  final Duration duration;
+  final Curve curve;
+
+  /// The point that stays put while it resizes (the top of a line, so the
+  /// lines under it do not see it move).
+  final Alignment alignment;
+
+  final Widget child;
+
+  @override
+  State<TextResize> createState() => _TextResizeState();
+}
+
+class _TextResizeState extends State<TextResize>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: widget.duration, value: 1.0);
+
+  /// The scale drawn when the move started (1: nothing to move).
+  double _start = 1.0;
+  bool _still = false; // reduced motion: no move
+  bool _begun = false;
+
+  double get _scale =>
+      _start + (1.0 - _start) * widget.curve.transform(_c.value);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = Motion.reduced(context);
+    if (_still) _rest();
+    if (_begun) return;
+    _begun = true;
+    final from = widget.from;
+    if (from != null) _moveFrom(from);
+  }
+
+  @override
+  void didUpdateWidget(TextResize old) {
+    super.didUpdateWidget(old);
+    _c.duration = widget.duration;
+    // From the size it is drawn at now, not the size it was laid out at.
+    if (widget.size != old.size) _moveFrom(old.size * _scale);
+  }
+
+  /// Move from [drawn] (the font size on screen now) to [TextResize.size].
+  void _moveFrom(double drawn) {
+    if (_still || drawn <= 0 || widget.size <= 0 || drawn == widget.size) {
+      _rest();
+      return;
+    }
+    _start = drawn / widget.size;
+    _c.forward(from: 0.0);
+  }
+
+  void _rest() {
+    _start = 1.0;
+    if (_c.isAnimating || _c.value != 1.0) _c.value = 1.0;
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        // The child is built once; only the picture's scale moves.
+        builder: (_, child) => Transform.scale(
+          scale: _scale,
+          alignment: widget.alignment,
+          // A snapshot only while it moves: at rest the scale is exactly 1
+          // and the text is drawn as it is, with no layer.
+          filterQuality: _c.isAnimating ? FilterQuality.medium : null,
+          child: child,
+        ),
+        child: widget.child,
+      );
 }
 
 /// One-shot entrance for a section of a screen: fade in while drifting up

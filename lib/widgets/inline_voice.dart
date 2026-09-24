@@ -783,6 +783,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.2,
                     ));
+                    // Was line [i] in the spotlight a moment ago?
+                    bool promoted(int i) => wasSpot == '$_turn|$i';
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -795,6 +797,14 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                         // line that was just being spoken now eases down
                         // to the older size and dims; lines that were
                         // already older stay exactly as they were.
+                        //
+                        // AS A PICTURE (2026-09-24, review): it first did
+                        // that by tweening its text style, which laid the
+                        // line out again at a new font size on every frame
+                        // of the move, while the orb was animating. It is
+                        // now laid out once, in the older style (weight,
+                        // spacing and wrap taken at once), and only DRAWN
+                        // larger and brighter at first.
                         for (final (k, l) in (typing
                                 ? const <String>[]
                                 : previous)
@@ -802,24 +812,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                           Padding(
                             key: ValueKey('$_turn|${start + k}'),
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: TweenAnimationBuilder<TextStyle>(
-                              tween: TextStyleTween(
-                                // Size and colour move; the older weight
-                                // is taken at once (weights do not blend).
-                                begin: wasSpot == '$_turn|${start + k}'
-                                    ? older.copyWith(
-                                        fontSize: spot.fontSize,
-                                        color: spot.color,
-                                        letterSpacing: spot.letterSpacing)
-                                    : older,
-                                end: older,
-                              ),
-                              duration: Motion.short,
-                              curve: Motion.easeMove,
-                              builder: (_, style, __) => Text(
-                                l,
-                                textAlign: TextAlign.center,
-                                style: style,
+                            child: TextResize(
+                              size: older.fontSize!,
+                              from: promoted(start + k) ? spot.fontSize : null,
+                              child: _DimInto(
+                                text: l,
+                                style: older,
+                                from: promoted(start + k) ? spot.color : null,
                               ),
                             ),
                           ),
@@ -873,17 +872,25 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                               if (current != null) current,
                             ],
                           ),
-                          child: AnimatedDefaultTextStyle(
+                          // The keyboard coming up eases the size down
+                          // instead of jumping it, on the orb's 220 ms —
+                          // as a picture: the line is laid out once at its
+                          // new size on the keyboard's first frame, never
+                          // again on the frames after it (2026-09-24,
+                          // review: a font-size tween re-laid it out on
+                          // every one of them).
+                          child: TextResize(
                             key: ValueKey(spotKey),
-                            // The keyboard coming up eases the size down
-                            // instead of jumping it.
+                            size: spot.fontSize!,
                             duration: const Duration(milliseconds: 220),
                             curve: Curves.easeOutCubic,
-                            style: spot,
-                            textAlign: TextAlign.center,
-                            maxLines: typing ? 3 : 6,
-                            overflow: TextOverflow.ellipsis,
-                            child: Text(current),
+                            child: Text(
+                              current,
+                              style: spot,
+                              textAlign: TextAlign.center,
+                              maxLines: typing ? 3 : 6,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                           ),
                         ),
@@ -929,6 +936,78 @@ LinearGradient _sessionGround() {
     colors: [ink(0.09, 0.45), ink(0.035, 0.40), ink(0.06, 0.40)],
     stops: const [0.0, 0.5, 1.0],
   );
+}
+
+/// An older line of the words. The one that was just being spoken DIMS
+/// into the others (2026-09-24, review): it is drawn in the spotlight's
+/// colour and faded, as a layer, down to the older lines' brightness —
+/// tweening the text's own colour would build and shape its paragraph
+/// again on every frame. Once there it is plain text in the older colour,
+/// with no layer, which looks exactly the same. Only a lighter colour of
+/// the same hue can be faded down this way (the captions are all white on
+/// the night ground); anything else, and "Remove animations", takes the
+/// older colour at once.
+class _DimInto extends StatefulWidget {
+  const _DimInto({required this.text, required this.style, this.from});
+  final String text;
+
+  /// The older lines' style: where it ends up.
+  final TextStyle style;
+
+  /// The spotlight's colour it starts from; null: it is already older.
+  final Color? from;
+
+  @override
+  State<_DimInto> createState() => _DimIntoState();
+}
+
+class _DimIntoState extends State<_DimInto>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: Motion.short, value: 1.0)
+        ..addStatusListener((s) {
+          // Arrived: back to plain text (one build, no more frames).
+          if (s == AnimationStatus.completed && mounted) setState(() {});
+        });
+  Animation<double>? _fade;
+  bool _begun = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_begun) return;
+    _begun = true;
+    final from = widget.from;
+    final to = widget.style.color;
+    if (from == null || to == null || Motion.reduced(context)) return;
+    final sameHue = from.r == to.r && from.g == to.g && from.b == to.b;
+    if (!sameHue || from.a <= to.a) return;
+    _fade = _c.drive(Tween<double>(begin: 1.0, end: to.a / from.a)
+        .chain(CurveTween(curve: Motion.easeMove)));
+    _c.forward(from: 0.0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fade = _fade;
+    if (fade == null || !_c.isAnimating) {
+      return Text(widget.text, textAlign: TextAlign.center, style: widget.style);
+    }
+    return FadeTransition(
+      opacity: fade,
+      child: Text(
+        widget.text,
+        textAlign: TextAlign.center,
+        style: widget.style.copyWith(color: widget.from),
+      ),
+    );
+  }
 }
 
 /// Mute the assistant's voice without ending the conversation — for the
