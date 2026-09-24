@@ -1018,9 +1018,13 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
     final typedOne = newV.text.length == oldV.text.length + 1 &&
         !oldV.text.contains('\n');
     if (typedOne) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _send();
-      });
+      // The text is unchanged, so nothing else asks for a frame: ask for
+      // one, or the send would wait for the next cursor blink.
+      WidgetsBinding.instance
+        ..addPostFrameCallback((_) {
+          if (mounted) _send();
+        })
+        ..ensureVisualUpdate();
       return oldV;
     }
     final flat = newV.text.replaceAll(RegExp(r'[\r\n]+'), ' ');
@@ -1179,7 +1183,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
     engine.addListener(_sync);
     engine.caption.addListener(_onCaption);
     widget.dismissOn?.addListener(_close);
-    AppFeedback.visible.addListener(_onToast);
+    AppFeedback.changes.addListener(_onToast);
   }
 
   @override
@@ -1196,7 +1200,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
     engine.removeListener(_sync);
     engine.caption.removeListener(_onCaption);
     widget.dismissOn?.removeListener(_close);
-    AppFeedback.visible.removeListener(_onToast);
+    AppFeedback.changes.removeListener(_onToast);
     _hide?.cancel();
     super.dispose();
   }
@@ -1266,9 +1270,9 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
   @override
   Widget build(BuildContext context) {
     final t = _cardShowing ? null : _text;
-    // Above the dock and the mic, and a step higher while a toast is up.
-    final bottom = Dock.clearance(context, gap: 12) +
-        (AppFeedback.visible.value ? AppFeedback.cardLift : 0);
+    // Above the dock and the mic, and above the toast while one is up.
+    final bottom =
+        AppFeedback.clearOfToast(Dock.clearance(context, gap: 12));
     return IgnorePointer(
       ignoring: t == null,
       child: AnimatedOpacity(

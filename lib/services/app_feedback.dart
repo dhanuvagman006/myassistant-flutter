@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -75,8 +76,27 @@ class AppFeedback {
   /// by the box itself (it grows to four lines). [sessionLift] until then.
   static double? sessionMargin;
 
-  /// How far a card near the dock steps up while a toast is showing.
+  /// How far a card near the dock steps up while a toast is showing, until
+  /// the toast has been measured ([reach]).
   static const double cardLift = 64;
+
+  /// How far the toast on screen reaches up from the bottom of the space
+  /// above the keyboard (dp), measured from the toast itself once it is
+  /// laid out; 0 while there is none. A two-line toast is taller than
+  /// [cardLift], and a fixed step left it over the bottom of the card.
+  static final ValueNotifier<double> reach = ValueNotifier<double>(0);
+
+  /// Fires when a toast comes, goes or is measured: what cards near the
+  /// dock listen to.
+  static final Listenable changes = Listenable.merge([visible, reach]);
+
+  /// Where a card whose bottom edge would be [base] dp up from the bottom
+  /// goes while a toast is up: just above the toast.
+  static double clearOfToast(double base) {
+    if (!visible.value) return base;
+    final r = reach.value;
+    return r > 0 ? math.max(base, r + 8) : base + cardLift;
+  }
 
   /// The short form every service has always used. Same policy as [show].
   static void toast(String message,
@@ -150,6 +170,27 @@ class AppFeedback {
     m.hideCurrentSnackBar();
   }
 
+  /// The voice session has just opened over the page (HomeShell calls
+  /// this). A toast already up was placed for the page, right where the
+  /// session's text box now sits: it is shown again at the session's
+  /// height. An Undo belonged to the page now covered: it closes, and its
+  /// change goes through, as on a tab switch.
+  static void sessionOpened() {
+    // Never re-show in the middle of a build (the engine can notify then).
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => sessionOpened());
+      return;
+    }
+    final c = _current;
+    if (c == null || !c.messenger.mounted) return;
+    if (c.msg.onUndo != null) {
+      dismiss();
+      return;
+    }
+    _present(c.msg, force: true);
+  }
+
   /// Test hook: forget everything between tests.
   @visibleForTesting
   static void resetForTest() {
@@ -161,6 +202,7 @@ class AppFeedback {
     sessionVisible = null;
     sessionMargin = null;
     visible.value = false;
+    reach.value = 0;
     observer._popups.clear();
   }
 
@@ -272,6 +314,15 @@ class AppFeedback {
         !_lastClosedByUser) {
       return null; // shown a moment ago — once is enough
     }
+    // Still on screen (a long message lives 6 s, past the window above):
+    // showing it again would only restart it — the "it repeats" effect.
+    final up = _current;
+    if (!force &&
+        up != null &&
+        up.msg.onUndo == null &&
+        up.msg.text.toLowerCase() == key) {
+      return null;
+    }
     // ONE SLOT: whatever is showing (or queued) goes, without waiting for
     // its exit animation, so a burst never piles up behind it.
     m.clearSnackBars();
@@ -314,10 +365,12 @@ class AppFeedback {
       SchedulerBinding.instance.addPostFrameCallback((_) {
         final now = _current != null;
         if (visible.value != now) visible.value = now;
+        if (!now) reach.value = 0;
       });
       return;
     }
     visible.value = v;
+    if (!v) reach.value = 0;
   }
 
   static Duration _durationFor(_Message msg) {
@@ -358,7 +411,8 @@ class AppFeedback {
       dismissDirection: DismissDirection.horizontal,
       margin: EdgeInsets.fromLTRB(16, 5, 16, bottom),
       duration: _durationFor(msg),
-      content: Row(
+      content: _MeasureToast(
+          child: Row(
         children: [
           Icon(icon, size: 18, color: tint),
           const SizedBox(width: 10),
@@ -372,7 +426,7 @@ class AppFeedback {
             ),
           ),
         ],
-      ),
+      )),
       action: msg.onUndo == null
           ? null
           : SnackBarAction(
@@ -408,6 +462,40 @@ class AppFeedback {
       return;
     }
     dismiss();
+  }
+}
+
+/// Reports how far up the toast it sits in reaches ([AppFeedback.reach]),
+/// so cards near the dock can stand just above it.
+class _MeasureToast extends StatefulWidget {
+  const _MeasureToast({required this.child});
+  final Widget child;
+
+  @override
+  State<_MeasureToast> createState() => _MeasureToastState();
+}
+
+class _MeasureToastState extends State<_MeasureToast> {
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    return widget.child;
+  }
+
+  void _measure() {
+    if (!mounted || !AppFeedback.visible.value) return;
+    // The SnackBar's own surface: its top edge is the toast's top edge
+    // (final from the first frame — the entrance only fades and clips).
+    final surface = context.findAncestorStateOfType<State<Material>>();
+    final box = surface?.context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return;
+    final view = View.of(context);
+    final bottom =
+        (view.physicalSize.height - view.viewInsets.bottom) / view.devicePixelRatio;
+    final r = bottom - box.localToGlobal(Offset.zero).dy;
+    if (r > 0 && (AppFeedback.reach.value - r).abs() > 0.5) {
+      AppFeedback.reach.value = r;
+    }
   }
 }
 

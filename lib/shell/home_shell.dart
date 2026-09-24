@@ -113,6 +113,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   void dispose() {
     HomeShell.requestedTab.removeListener(_onTabRequested);
     AssistantEngine.instance.removeListener(_onEngineForPicker);
+    AssistantEngine.instance.removeListener(_onEngineForToast);
     _tabChanges.dispose();
     // Only if it is still ours: a rebuilt shell (theme flip) has set its own.
     if (AppFeedback.sessionVisible == _sessionVisible) {
@@ -165,6 +166,16 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   final ValueNotifier<int> _tabChanges = ValueNotifier<int>(0);
 
   bool _sessionVisible() => voiceSessionOnScreen(AssistantEngine.instance);
+
+  /// A toast already up when the voice session opens was placed for the
+  /// page — right where the session's text box now sits. It moves up.
+  bool _sessionWasVisible = false;
+
+  void _onEngineForToast() {
+    final now = _sessionVisible();
+    if (now && !_sessionWasVisible) AppFeedback.sessionOpened();
+    _sessionWasVisible = now;
+  }
 
   /// SYSTEM BACK CLOSES WHAT IS OPEN, TOPMOST FIRST.
   ///
@@ -279,6 +290,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // assistant also says out loud is not repeated as a toast.
     AppFeedback.sessionVisible = _sessionVisible;
     AssistantEngine.instance.addListener(_onEngineForPicker);
+    _sessionWasVisible = _sessionVisible();
+    AssistantEngine.instance.addListener(_onEngineForToast);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkQuickTaskLaunch());
     final engine = AssistantEngine.instance;
     engine.start();

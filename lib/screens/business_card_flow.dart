@@ -102,11 +102,10 @@ class _ReadingDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Back does not close it: the upload keeps running, and the dialog is
-    // closed by the flow when the answer is in.
-    return PopScope(
-      canPop: false,
-      child: AlertDialog(
+    // Back still closes it, as it always has (the upload can take up to a
+    // minute on a weak signal). The flow tracks whether it is still open,
+    // so it never pops some other screen when the answer comes in.
+    return AlertDialog(
       backgroundColor: Neon.surface,
       content: Row(children: [
         SizedBox(
@@ -119,7 +118,6 @@ class _ReadingDialog extends StatelessWidget {
               style: TextStyle(color: Neon.textHi, fontSize: 15)),
         ),
       ]),
-      ),
     );
   }
 }

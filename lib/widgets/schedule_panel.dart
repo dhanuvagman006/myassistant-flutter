@@ -91,6 +91,9 @@ class _SchedulePanelState extends State<SchedulePanel> {
             child: Container(
               constraints:
                   BoxConstraints(maxHeight: media.size.height * 0.78),
+              // The list ends at the dock's top edge; below it is plain
+              // ground, so no row shows through the ring around the mic.
+              padding: EdgeInsets.only(bottom: media.padding.bottom),
               decoration: BoxDecoration(
                 color: Neon.bg,
                 borderRadius:
@@ -104,8 +107,8 @@ class _SchedulePanelState extends State<SchedulePanel> {
                   if (engine.scheduleFailed.isNotEmpty) _incomplete(),
                   Flexible(
                     child: ListView.separated(
-                      padding: EdgeInsets.fromLTRB(
-                          16, 4, 16, Dock.clearance(context, gap: 16)),
+                      padding: const EdgeInsets.fromLTRB(
+                          16, 4, 16, Dock.orbRise + 16),
                       itemCount: items.length,
                       separatorBuilder: (_, __) =>
                           Divider(height: 18, thickness: 1, color: Neon.line),

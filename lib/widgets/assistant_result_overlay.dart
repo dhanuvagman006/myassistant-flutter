@@ -39,14 +39,14 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
   void initState() {
     super.initState();
     _engine.addListener(_onChange);
-    AppFeedback.visible.addListener(_onChange);
+    AppFeedback.changes.addListener(_onChange);
     InlineCaptionOverlay.typeBarReach.addListener(_onChange);
   }
 
   @override
   void dispose() {
     _engine.removeListener(_onChange);
-    AppFeedback.visible.removeListener(_onChange);
+    AppFeedback.changes.removeListener(_onChange);
     InlineCaptionOverlay.typeBarReach.removeListener(_onChange);
     super.dispose();
   }
@@ -64,13 +64,12 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
     // then a SafeArea on top of it), so it floated a whole dock-height too
     // high and a tall card ran off the top of a small phone. Now: just
     // above the mic — or, during a voice session, just above the session's
-    // text box, so the two never overlap. A toast showing lifts it a step.
+    // text box, so the two never overlap. A toast showing: above the toast.
     final reach = InlineCaptionOverlay.typeBarReach.value;
     final base = voiceSessionOnScreen(_engine)
         ? (reach > 0 ? reach + 10 : Dock.clearance(context, gap: 12) + 80)
         : Dock.clearance(context, gap: 14);
-    final bottom =
-        base + (AppFeedback.visible.value ? AppFeedback.cardLift : 0);
+    final bottom = AppFeedback.clearOfToast(base);
     // Clear of the status bar and the activity pill under it — and of the
     // keyboard, which this screen area ends at when it is up (the body's
     // own MediaQuery no longer reports it, so ask the window).
