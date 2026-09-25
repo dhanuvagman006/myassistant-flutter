@@ -33,6 +33,7 @@ import '../../../screens/finance_screen.dart';
 import '../../../screens/stocks_screen.dart';
 import '../../../screens/diagnostics_screen.dart';
 import '../../../screens/mcp_servers_screen.dart';
+import '../../../screens/news_screen.dart';
 import '../../../models/user_document.dart';
 import '../../../models/news_item.dart';
 import '../../../models/schedule_item.dart';
@@ -464,12 +465,34 @@ class AssistantEngine extends ChangeNotifier {
   List<NewsItem> newsItems = const [];
   String newsTopic = '';
 
+  /// read_news_story's news_focus (build 111): the story being read comes
+  /// to the front of the deck. A new request object every time, so asking
+  /// for the same story twice still moves the deck.
+  final ValueNotifier<NewsFocusRequest?> newsFocus = ValueNotifier(null);
+
+  // The deck closed last, so "read me the second one" can bring it back.
+  List<NewsItem> _closedNews = const [];
+  String _closedNewsTopic = '';
+
   void clearNews() {
     if (newsItems.isEmpty) return;
+    _closedNews = newsItems;
+    _closedNewsTopic = newsTopic;
     newsItems = const [];
     newsTopic = '';
     notifyListeners();
   }
+
+  /// Fresh stories for the deck from its own Refresh — no turn, no voice.
+  void showNews(List<NewsItem> items, {String topic = ''}) {
+    newsItems = items;
+    newsTopic = topic;
+    notifyListeners();
+  }
+
+  /// One server event through the dispatcher, as the socket delivers it.
+  @visibleForTesting
+  void debugEvent(Map<String, dynamic> e) => _onEvent(e);
 
   final ValueNotifier<String?> activityLabel = ValueNotifier(null);
 
@@ -502,6 +525,7 @@ class AssistantEngine extends ChangeNotifier {
       'start_task' => 'Working through the steps…',
       'translator_mode' => 'Switching modes…',
       'set_morning_brief' => 'Updating your brief…',
+      'read_news_story' => 'Reading the story…',
       _ => 'Working on it…',
     };
   }
@@ -2886,6 +2910,20 @@ class AssistantEngine extends ChangeNotifier {
         newsTopic = e['topic'] as String? ?? '';
         break;
 
+      case 'news_focus':
+        // read_news_story: bring the story being read to the front. A deck
+        // closed moments ago, during this conversation, opens again for it.
+        final focusId = e['id'] as String? ?? '';
+        if (focusId.isEmpty) break;
+        if (newsItems.isEmpty &&
+            inlineVoice &&
+            _closedNews.any((n) => n.key == focusId)) {
+          newsItems = _closedNews;
+          newsTopic = _closedNewsTopic;
+        }
+        newsFocus.value = NewsFocusRequest(focusId);
+        break;
+
       case 'show_text':
         // present_text: a speech/script/draft Hari wrote — the reader
         // card shows it; the spoken line is only a pointer to the screen.
@@ -4177,6 +4215,7 @@ class AssistantEngine extends ChangeNotifier {
         'stocks' => (_) => const StocksScreen(),
         'diagnostics' => (_) => const DiagnosticsScreen(),
         'mcp' => (_) => const McpServersScreen(),
+        'news' => (_) => const NewsScreen(),
         _ => null,
       };
 
