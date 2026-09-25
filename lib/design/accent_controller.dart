@@ -19,8 +19,11 @@ class AccentController {
 
   static const _key = 'accent_seed_v1';
 
-  /// The app's own violet — what everyone gets until they choose.
-  static const defaultSeed = Color(0xFFC77DFF);
+  /// What everyone gets until they choose: Indigo. Owner, 2026-09-25:
+  /// "set indigo as default theme" (it was the app's own violet). Anyone
+  /// who already picked a colour keeps it — only an unset choice follows
+  /// this.
+  static const defaultSeed = Color(0xFF8B9CFF);
 
   /// Bumps whenever the accent changes; the app root rebuilds on it.
   static final ValueNotifier<Color> seed = ValueNotifier(defaultSeed);
