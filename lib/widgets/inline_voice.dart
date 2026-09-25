@@ -16,6 +16,7 @@ import '../services/app_feedback.dart';
 import '../services/assistant_identity.dart';
 import '../services/auth_service.dart';
 import 'overflow_fade.dart';
+import 'streaming_caption.dart';
 import 'voice_orb.dart';
 
 /// Is the full-screen voice session on screen right now? One definition
@@ -308,14 +309,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   String _text = '';
   bool _fromUser = false;
 
-  /// Counts turns (bumped where the paced release restarts), so the line
-  /// being spoken can be told apart from the same line of the last turn.
+  /// Counts turns (bumped where the paced release restarts): a new turn is
+  /// a new passage, which cross-fades in over the last one.
   int _turn = 0;
-
-  /// The spotlight line of the last build ('turn|index'): the line that
-  /// was being spoken, which shrinks into the older lines when the next
-  /// one starts.
-  String? _lastSpot;
 
   /// SPEECH-PACED REVEAL. The transcript arrives at GENERATION speed —
   /// seconds ahead of the audio — so showing it raw makes the lyrics run
@@ -325,18 +321,21 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   /// real-time and bypass pacing.
   static const double _charsPerSecond = 15;
   double _budget = 0; // characters released so far
-  DateTime _lastTick = DateTime.now();
+  static const Duration _pace = Duration(milliseconds: 200);
+  int _ticksSeen = 0;
   Timer? _pacer;
 
   void _ensurePacer() {
-    _pacer ??= Timer.periodic(const Duration(milliseconds: 200), (_) {
-      final now = DateTime.now();
-      final dt = now.difference(_lastTick).inMilliseconds / 1000.0;
-      _lastTick = now;
+    _pacer ??= Timer.periodic(_pace, (t) {
+      // Counted in the timer's own ticks, not by the wall clock: a late
+      // tick still reports every interval it covers (Timer.tick), and the
+      // pace is the same on the phone and under test.
+      final dt = (t.tick - _ticksSeen) * _pace.inMilliseconds / 1000.0;
+      _ticksSeen = t.tick;
       if (!mounted) return;
       final speaking = engine.phase == AssistantPhase.speaking;
       if (!_fromUser && speaking && _budget < _text.length) {
-        _budget = (_budget + dt * _charsPerSecond)
+        _budget = (_budget + dt * _releaseRate())
             .clamp(0, _text.length.toDouble());
         setState(() {});
       } else if (!_fromUser && !speaking && !_waitingForVoice(engine.phase)) {
@@ -351,6 +350,19 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
         }
       }
     });
+  }
+
+  /// Characters a second to release the reply at: speaking rate, until the
+  /// whole reply has arrived — then just fast enough that the last word
+  /// lands with the last of the voice (2026-09-25, streaming captions).
+  /// Whatever the pace left over used to wait for the silence and then
+  /// appear all at once: a burst of words after she had stopped talking.
+  double _releaseRate() {
+    if (!engine.replyComplete) return _charsPerSecond;
+    final left = _text.length - _budget;
+    // What is still to be heard, less a beat so the words finish first.
+    final secs = math.max(engine.speakingRemaining.inMilliseconds / 1000 - 0.2, 0.3);
+    return (left / secs).clamp(_charsPerSecond, _charsPerSecond * 3).toDouble();
   }
 
   /// The paced view of the text: everything for the user's own words,
@@ -414,7 +426,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       // old) restarts the release from zero; an extension keeps pace.
       if (fromUser != _fromUser || !t.startsWith(_visibleAnchor())) {
         _budget = 0;
-        _lastTick = DateTime.now();
+        _ticksSeen = _pacer?.tick ?? 0;
         _turn++;
       }
       _text = t;
@@ -439,38 +451,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       InlineCaptionOverlay.covering.value = false;
     }
     setState(() {});
-  }
-
-  /// The whole turn as LYRIC LINES. Sentences first, then any long
-  /// sentence is wrapped into ~60-character lines at word boundaries —
-  /// so every line is short enough to show WHOLE, nothing is ever
-  /// clipped, and a monologue scrolls upward line by line exactly like a
-  /// lyrics view. The last line is what is being spoken right now.
-  static const _maxLine = 60;
-
-  List<String> _lines() {
-    final out = <String>[];
-    for (final sentence in _visibleText().split(RegExp(r'(?<=[.!?।…])\s+'))) {
-      final t = sentence.trim();
-      if (t.isEmpty) continue;
-      if (t.length <= _maxLine) {
-        out.add(t);
-        continue;
-      }
-      var line = '';
-      for (final w in t.split(RegExp(r'\s+'))) {
-        if (line.isEmpty) {
-          line = w;
-        } else if (line.length + 1 + w.length <= _maxLine) {
-          line = '$line $w';
-        } else {
-          out.add(line);
-          line = w;
-        }
-      }
-      if (line.isNotEmpty) out.add(line);
-    }
-    return out;
   }
 
   /// What the session is doing, in words — every phase, not just four.
@@ -502,23 +482,77 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     return engine.liveActive ? OrbMood.listening : OrbMood.idle;
   }
 
+  /// This turn's words, streaming in (see StreamingCaption), in a space
+  /// that keeps the newest line in view and lets the oldest leave over the
+  /// top.
+  Widget _passage(String words, bool typing) {
+    // Her words large and bright, his own softer; smaller while typing,
+    // when there is little room.
+    final size = typing ? 17.0 : (_fromUser ? 19.0 : 22.0);
+    final style = _VoiceType.spoken(size).copyWith(
+      color: _fromUser ? Colors.white.withValues(alpha: 0.62) : Colors.white,
+    );
+    return LayoutBuilder(
+      builder: (context, area) => TopFadeWhenOverflowing(
+        // A soft top edge: when a reply is taller than its space the OLDEST
+        // words fade out up there — never a hard slice. Only then: a mask
+        // over words that fit was a full-size layer on every frame of the
+        // orb (2026-09-24, see the widget). About two lines deep: a
+        // passage of 22 pt lines leaving under a 14 dp fade still read as
+        // a line cut in half (2026-09-25).
+        height: 64,
+        child: ClipRect(
+          // Clipped to its own space: long replies once ran down over the
+          // text box while the keyboard was up (2026-09-24).
+          child: SingleChildScrollView(
+            // Taller than its space (a long reply, keyboard up): cut at the
+            // TOP. The line being spoken now — often the question the user
+            // has to answer — is the one that must stay.
+            reverse: true,
+            physics: const NeverScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              // Short replies still sit right under the orb.
+              constraints: BoxConstraints(minHeight: area.maxHeight),
+              child: Align(
+                alignment: Alignment.topLeft,
+                // Each new line of a long reply eases the passage up
+                // instead of jolting it up a line.
+                child: CaptionGlide(
+                  viewport: area.maxHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    // The keyboard coming up eases the size down as a
+                    // picture, on the orb's 220 ms: laid out once at the new
+                    // size, never again on the keyboard's frames
+                    // (2026-09-24, review).
+                    child: TextResize(
+                      size: size,
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topLeft,
+                      child: StreamingCaption(
+                        text: words,
+                        style: style,
+                        // Earlier sentences stay readable on the night
+                        // ground: 60% white for hers, 50% for his.
+                        earlierOpacity: _fromUser ? 0.8 : 0.6,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final show = _active;
     final micPaused = engine.micPausedForTyping;
-    final lines = _lines();
-    final current = lines.isNotEmpty ? lines.last : '';
-    final start = lines.length - 4 < 0 ? 0 : lines.length - 4;
-    final previous = lines.length > 1
-        ? lines.sublist(start, lines.length - 1)
-        : const <String>[];
-    // Which line was in the spotlight last time: if it is now among the
-    // older lines, it shrinks into them instead of snapping.
-    final wasSpot = _lastSpot;
-    _lastSpot = '$_turn|${lines.length - 1}';
-    // Which line is in the spotlight: speaker, turn and line number — not
-    // its words (see the spotlight below).
-    final spotKey = '$_fromUser|$_turn|${lines.length}';
+    final words = _visibleText().trim();
     // AN INVISIBLE OVERLAY MUST NEVER EAT A TAP.
     //
     // This was IgnorePointer(always) because nothing in it was
@@ -720,203 +754,48 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                     child: _ErrorCaption(engine: engine),
                   ),
                 )
-              // THE WORDS — under the orb, lyrics-style. Before any words
-              // exist, the state itself is the caption: the user must
-              // never stare at an empty black area wondering if it heard.
-              else if (lines.isEmpty)
+              // THE WORDS — under the orb, streaming in as they are said
+              // (see StreamingCaption). Before any words exist, the state
+              // itself is the caption: the user must never stare at an
+              // empty black area wondering if it heard.
+              //
+              // ONE SWITCHER FOR BOTH (2026-09-25): "Listening…", his words,
+              // "Thinking…" and her reply cross-fade into each other; a new
+              // turn is a new passage fading in over the last. Each fills
+              // the space, so a leaving passage fades out exactly where it
+              // was — its newest lines — instead of jumping to its top.
+              else
                 Expanded(
                   flex: 7,
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 250),
-                      child: Text(
-                        _status(micPaused),
-                        key: ValueKey(_status(micPaused)),
-                        textAlign: TextAlign.center,
-                        // Readable on the night ground (was 0.45).
-                        style: _VoiceType.status,
-                      ),
+                  child: AnimatedSwitcher(
+                    duration: Motion.short,
+                    reverseDuration: Motion.out,
+                    switchInCurve: Motion.easeFadeIn,
+                    switchOutCurve: Motion.easeFadeOut,
+                    layoutBuilder: (current, previous) => Stack(
+                      fit: StackFit.expand,
+                      children: [...previous, if (current != null) current],
                     ),
-                  ),
-                )
-              else
-              Expanded(
-                flex: 7,
-                // Clipped to its own space: long replies once ran down over
-                // the text box while the keyboard was up (2026-09-24).
-                child: LayoutBuilder(
-                builder: (context, area) => TopFadeWhenOverflowing(
-                // A soft top edge: when a reply is taller than its space the
-                // OLDEST words fade out up there — never a hard slice. Only
-                // then: a mask over words that fit was a full-size layer on
-                // every frame of the orb (2026-09-24, see the widget).
-                child: ClipRect(
-                // Taller than its space (a long reply, keyboard up): cut at
-                // the TOP. The line being spoken now — often the question
-                // the user has to answer — is the last one, so it must be
-                // the one that stays; top-aligned, it was the one cut off.
-                child: SingleChildScrollView(
-                reverse: true,
-                physics: const NeverScrollableScrollPhysics(),
-                child: ConstrainedBox(
-                  // Short replies still sit right under the orb.
-                  constraints: BoxConstraints(minHeight: area.maxHeight),
-                  child: Align(
-                  alignment: Alignment.topCenter,
-                  child: Padding(
-                  padding: const EdgeInsets.only(top: 14),
-                  child: AnimatedSize(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Motion.easeMove,
-                    child: Builder(builder: (context) {
-                    final ambient = DefaultTextStyle.of(context).style;
-                    final spot = ambient.merge(GoogleFonts.spaceGrotesk(
-                      color: _fromUser
-                          ? Colors.white.withValues(alpha: 0.62)
-                          : Colors.white,
-                      fontSize: typing ? 17 : (_fromUser ? 19 : 24),
-                      height: 1.3,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                    ));
-                    final older = ambient.merge(GoogleFonts.spaceGrotesk(
-                      // Older lines stay readable (was 0.38 —
-                      // under 4.5:1 on the night ground).
-                      color: Colors.white.withValues(alpha: 0.56),
-                      // 15 on the type scale (was 15.5); Space Grotesk like the
-                      // spotlight, so the shrink into place never swaps font.
-                      fontSize: NeonType.callout,
-                      height: 1.3,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.2,
-                    ));
-                    // Was line [i] in the spotlight a moment ago?
-                    bool promoted(int i) => wasSpot == '$_turn|$i';
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // While typing there is little room: the line
-                        // being spoken, nothing older.
-                        //
-                        // A FINISHED LINE SHRINKS INTO PLACE (2026-09-24).
-                        // It used to snap in one frame from the 24 pt
-                        // white spotlight to a 15.5 pt older line. The
-                        // line that was just being spoken now eases down
-                        // to the older size and dims; lines that were
-                        // already older stay exactly as they were.
-                        //
-                        // AS A PICTURE (2026-09-24, review): it first did
-                        // that by tweening its text style, which laid the
-                        // line out again at a new font size on every frame
-                        // of the move, while the orb was animating. It is
-                        // now laid out once, in the older style (weight,
-                        // spacing and wrap taken at once), and only DRAWN
-                        // larger and brighter at first.
-                        for (final (k, l) in (typing
-                                ? const <String>[]
-                                : previous)
-                            .indexed)
-                          Padding(
-                            key: ValueKey('$_turn|${start + k}'),
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: TextResize(
-                              size: older.fontSize!,
-                              from: promoted(start + k) ? spot.fontSize : null,
-                              child: _DimInto(
-                                text: l,
-                                style: older,
-                                from: promoted(start + k) ? spot.color : null,
-                              ),
-                            ),
-                          ),
-                        // The line being spoken RIGHT NOW — the spotlight.
-                        //
-                        // WORDS APPEND, THE LINE DOES NOT FLICKER
-                        // (2026-09-24). This was keyed by its whole text,
-                        // so every word the pacer released (and every
-                        // partial transcript of his own words) cross-faded
-                        // the ENTIRE line into an almost identical copy,
-                        // two or three times a second: the centred line
-                        // shifted by half a word, the two copies overlapped
-                        // offset, and the line shimmered for as long as
-                        // anyone spoke. It is now keyed by WHICH line it is
-                        // (speaker, turn, index), so words simply appear at
-                        // its end. A new line fades in under the one that
-                        // just finished; a new turn cross-fades, quickly
-                        // out, then in, from the top.
-                        // Full width, so a leaving line keeps its own
-                        // wrap while the new one fades in over it.
-                        SizedBox(
-                          width: double.infinity,
-                          child: AnimatedSwitcher(
-                          duration: Motion.short,
-                          reverseDuration: Motion.out,
-                          switchInCurve: Motion.easeFadeIn,
-                          switchOutCurve: Motion.easeFadeOut,
-                          // A line that just finished is not faded out
-                          // here: it lives on above, shrinking into the
-                          // older lines, and a second fading copy of it
-                          // would be exactly the ghosting this replaced.
-                          // Only a new turn (or speaker) fades the old
-                          // line out.
-                          transitionBuilder: (child, a) {
-                            final k = (child.key as ValueKey<String>?)?.value;
-                            final promoted = k != null &&
-                                k != spotKey &&
-                                k.startsWith('$_fromUser|$_turn|');
-                            if (promoted) return const SizedBox.shrink();
-                            return FadeTransition(opacity: a, child: child);
-                          },
-                          // The leaving line does not hold the space open
-                          // (no size wobble): only the new one is laid out.
-                          layoutBuilder: (current, previous) => Stack(
+                    child: words.isEmpty
+                        ? Align(
+                            key: ValueKey('status|${_status(micPaused)}'),
                             alignment: Alignment.topCenter,
-                            clipBehavior: Clip.none,
-                            children: [
-                              for (final p in previous)
-                                Positioned(
-                                    top: 0, left: 0, right: 0, child: p),
-                              if (current != null) current,
-                            ],
-                          ),
-                          // The keyboard coming up eases the size down
-                          // instead of jumping it, on the orb's 220 ms —
-                          // as a picture: the line is laid out once at its
-                          // new size on the keyboard's first frame, never
-                          // again on the frames after it (2026-09-24,
-                          // review: a font-size tween re-laid it out on
-                          // every one of them).
-                          child: TextResize(
-                            key: ValueKey(spotKey),
-                            size: spot.fontSize!,
-                            duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
                             child: Text(
-                              current,
-                              style: spot,
+                              _status(micPaused),
                               textAlign: TextAlign.center,
-                              maxLines: typing ? 3 : 6,
-                              overflow: TextOverflow.ellipsis,
+                              // Readable on the night ground (was 0.45).
+                              style: _VoiceType.status,
                             ),
+                          )
+                        : KeyedSubtree(
+                            key: ValueKey('turn|$_fromUser|$_turn'),
+                            child: _passage(words, typing),
                           ),
-                          ),
-                        ),
-                      ],
-                    );
-                    }),
-                  ),
-                  ),
                   ),
                 ),
-              ),
-              ),
-              ),
-              ),
-              ),
               // While captions fill the space the status line is gone, so
               // a paused mic says so right above the box it is paused for.
-              if (micPaused && lines.isNotEmpty) const _MicPausedChip(),
+              if (micPaused && words.isNotEmpty) const _MicPausedChip(),
               // TYPE INSTEAD OF TALKING. Not on the error screen, where it
               // sat under "Try again / Close" and made the screen ambiguous.
               if (engine.phase != AssistantPhase.error)
@@ -933,8 +812,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
 
 /// THE VOICE SCREEN'S TYPE (2026-09-24, the clarity pass).
 ///
-/// Space Grotesk, the display face, is kept for the one line being spoken
-/// (the spotlight) and nothing else. Its quirky y and g made the status
+/// Space Grotesk, the display face, is kept for the words being spoken
+/// ([spoken]) and nothing else. Its quirky y and g made the status
 /// line, the older lines, the typed message and the buttons at 13–15.5 sp
 /// read worse than Manrope, and look like another app beside Home and
 /// Hub. Built once: the pacer rebuilds this screen five times a second,
@@ -962,6 +841,18 @@ abstract final class _VoiceType {
       NeonType.manrope(NeonType.callout, FontWeight.w700);
   static final TextStyle mute =
       NeonType.manrope(NeonType.footnote, FontWeight.w700);
+
+  /// The words being said (2026-09-25, streaming captions). A passage
+  /// rather than one line now, so a touch lighter and smaller than the
+  /// 24 pt w700 spotlight was. One style per size, made once.
+  static final Map<double, TextStyle> _spoken = {};
+  static TextStyle spoken(double size) => _spoken[size] ??=
+      GoogleFonts.spaceGrotesk(
+        fontSize: size,
+        height: 1.34,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.3,
+      );
 }
 
 /// The session's ground: opaque, deep, tinted by the user's accent so it
@@ -977,78 +868,6 @@ LinearGradient _sessionGround() {
     colors: [ink(0.09, 0.45), ink(0.035, 0.40), ink(0.06, 0.40)],
     stops: const [0.0, 0.5, 1.0],
   );
-}
-
-/// An older line of the words. The one that was just being spoken DIMS
-/// into the others (2026-09-24, review): it is drawn in the spotlight's
-/// colour and faded, as a layer, down to the older lines' brightness —
-/// tweening the text's own colour would build and shape its paragraph
-/// again on every frame. Once there it is plain text in the older colour,
-/// with no layer, which looks exactly the same. Only a lighter colour of
-/// the same hue can be faded down this way (the captions are all white on
-/// the night ground); anything else, and "Remove animations", takes the
-/// older colour at once.
-class _DimInto extends StatefulWidget {
-  const _DimInto({required this.text, required this.style, this.from});
-  final String text;
-
-  /// The older lines' style: where it ends up.
-  final TextStyle style;
-
-  /// The spotlight's colour it starts from; null: it is already older.
-  final Color? from;
-
-  @override
-  State<_DimInto> createState() => _DimIntoState();
-}
-
-class _DimIntoState extends State<_DimInto>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: Motion.short, value: 1.0)
-        ..addStatusListener((s) {
-          // Arrived: back to plain text (one build, no more frames).
-          if (s == AnimationStatus.completed && mounted) setState(() {});
-        });
-  Animation<double>? _fade;
-  bool _begun = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_begun) return;
-    _begun = true;
-    final from = widget.from;
-    final to = widget.style.color;
-    if (from == null || to == null || Motion.reduced(context)) return;
-    final sameHue = from.r == to.r && from.g == to.g && from.b == to.b;
-    if (!sameHue || from.a <= to.a) return;
-    _fade = _c.drive(Tween<double>(begin: 1.0, end: to.a / from.a)
-        .chain(CurveTween(curve: Motion.easeMove)));
-    _c.forward(from: 0.0);
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final fade = _fade;
-    if (fade == null || !_c.isAnimating) {
-      return Text(widget.text, textAlign: TextAlign.center, style: widget.style);
-    }
-    return FadeTransition(
-      opacity: fade,
-      child: Text(
-        widget.text,
-        textAlign: TextAlign.center,
-        style: widget.style.copyWith(color: widget.from),
-      ),
-    );
-  }
 }
 
 /// Mute the assistant's voice without ending the conversation — for the

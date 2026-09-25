@@ -24,7 +24,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:myassistant/design/gyro_tilt.dart';
 import 'package:myassistant/design/motion.dart';
-import 'package:myassistant/design/neon_tokens.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/features/assistant/widgets/action_cards.dart';
@@ -446,44 +445,48 @@ void main() {
       await close(tester);
     });
 
-    testWidgets('a finished line shrinks into the older lines instead of snapping',
+    // 2026-09-25, streaming captions: a finished sentence no longer shrinks
+    // into a dim stack above a new spotlight line. It stays exactly where
+    // it is and softens, and the next sentence streams in on its own line
+    // below it, starting at the same left edge.
+    testWidgets('a finished sentence softens in place as the next one streams in below',
         (tester) async {
       await session(tester);
       final engine = AssistantEngine.instance;
-      const first = 'Please book a table for two at the Italian place near the';
+      const first = 'Please book a table for two.';
+      const next = 'At the Italian place near the office.';
       engine.caption.value = const CaptionLine('you', first);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      engine.caption.value = const CaptionLine('you', '$first office tonight');
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.text(first), findsOneWidget,
-          reason: 'a second, fading copy of the finished line ghosted under it');
+      await tester.pump(const Duration(milliseconds: 900));
       final line = find.text(first);
-      double size() => tester.widget<Text>(line).style!.fontSize!;
-      // How much larger it is DRAWN than it is laid out.
-      double drawn() =>
-          tester.getRect(line).height /
-          tester.renderObject<RenderBox>(line).size.height;
-      double brightness() =>
-          tester.widget<Text>(line).style!.color!.a * _opacityProduct(tester, line);
-      // Laid out once, at the older size, from its first frame there
-      // (2026-09-24, review: a style tween re-laid it out every frame)...
-      expect(size(), NeonType.callout,
-          reason: 'it is laid out again at a new font size on every frame of the move');
-      // ...and only drawn larger and brighter at first.
-      expect(drawn(), greaterThan(1.0),
-          reason: 'it snapped from the spotlight to the older size in one frame');
-      expect(brightness(), greaterThan(0.56 + 0.005),
-          reason: 'it snapped to the older lines\' brightness in one frame');
-      expect(find.text('office tonight'), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(size(), NeonType.callout);
-      expect(drawn(), moreOrLessEquals(1.0, epsilon: 1e-6));
-      // At rest: plain text in the older colour, no fading layer.
-      expect(_opacityProduct(tester, line), 1.0);
-      expect(tester.widget<Text>(line).style!.color!.a, closeTo(0.56, 0.005));
+      expect(line, findsOneWidget);
+      // His words: 62% white while they are the sentence being said.
+      double alpha() {
+        final t = tester.widget<Text>(line);
+        if (t.data != null) return t.style!.color!.a;
+        return ((t.textSpan! as TextSpan).children!.first as TextSpan).style!.color!.a;
+      }
+
+      expect(alpha(), closeTo(0.62, 0.005));
+      final placed = tester.getTopLeft(line);
+
+      engine.caption.value = const CaptionLine('you', '$first $next');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text(first), findsOneWidget,
+          reason: 'a second, fading copy of the finished sentence ghosted under it');
+      expect(find.text(next), findsOneWidget, reason: 'the next sentence is its own paragraph');
+      expect(tester.getTopLeft(line), placed, reason: 'the finished sentence moved');
+      expect(alpha(), lessThan(0.62 - 0.005), reason: 'it did not start to soften');
+      expect(alpha(), greaterThan(0.62 * 0.8 + 0.005), reason: 'it snapped to the softer colour');
+      expect(tester.getTopLeft(find.text(next)).dy, greaterThan(placed.dy));
+      expect(tester.getTopLeft(find.text(next)).dx, placed.dx,
+          reason: 'every sentence starts at the same left edge');
+
+      await tester.pump(const Duration(milliseconds: 900));
+      // At rest: plain text in the softer colour, nothing left fading.
+      expect(tester.widget<Text>(line).data, first);
+      expect(alpha(), closeTo(0.62 * 0.8, 0.005));
       await close(tester);
     });
   });
