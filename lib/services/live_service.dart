@@ -15,6 +15,7 @@ import 'device_capabilities.dart';
 import 'live_mic_stats.dart';
 import 'location_service.dart';
 import 'mic_preroll.dart';
+import 'playback_envelope.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
@@ -110,6 +111,27 @@ class LiveService {
   /// is exact: bytes ÷ (rate × 2) — so [playing] is derived from the clock.
   DateTime _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _playStateTimer;
+
+  /// HER VOICE'S LOUDNESS FOR THE ORB (2026-09-25): each reply chunk,
+  /// measured and filed under the moment it will be heard (see
+  /// [PlaybackEnvelope]). Its clock is a monotonic one, and
+  /// [_playheadEndUs] mirrors [_playheadEnd] on it.
+  final PlaybackEnvelope _envelope = PlaybackEnvelope();
+  static final Stopwatch _clock = Stopwatch()..start();
+  int _playheadEndUs = 0;
+
+  /// How long after the playhead a sound is actually heard: the stream
+  /// player's own buffer (4096) and the phone's audio path. A guess until
+  /// it is checked on his phone; too small and the rings move before the
+  /// word, too large and after it.
+  static const int _ringLatencyUs = 120000;
+
+  /// How loud her voice is coming out of the speaker right now, 0..1 —
+  /// what the rings round the orb move with while she speaks. Muted, she
+  /// makes no sound, so it is 0.
+  double playbackLevelNow() => speakerMuted
+      ? 0
+      : _envelope.levelAt(_clock.elapsedMicroseconds - _ringLatencyUs);
 
   static const _outRate = 24000; // Gemini native-audio output sample rate
   static const _inRate = 16000; // what we send up
@@ -497,6 +519,8 @@ class LiveService {
     _preRoll.clear();
     _gateAbort();
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+    _playheadEndUs = 0;
+    _envelope.clear();
     _uplinkPaused = false;
     _quietSentMs = 0;
     _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
@@ -933,6 +957,12 @@ class LiveService {
         // Fresh turn: pad slightly for the player's own startup latency.
         : now.add(const Duration(milliseconds: 80));
     _playheadEnd = base.add(Duration(milliseconds: ms));
+    // The same playhead on the orb's clock, and this chunk's loudness
+    // filed under it — the boosted chunk, which is what is heard.
+    final nowUs = _clock.elapsedMicroseconds;
+    final baseUs = _playheadEndUs > nowUs ? _playheadEndUs : nowUs + 80000;
+    _envelope.add(baseUs, chunk);
+    _playheadEndUs = baseUs + chunk.length * 1000000 ~/ (_outRate * 2);
     if (!playing) {
       // Close the mic gate IMMEDIATELY — waiting for the 100 ms timer left
       // a window where the reply's first syllable re-entered the mic.
@@ -1302,6 +1332,8 @@ class LiveService {
   /// re-arms the stream for the next turn while the session lives on.
   Future<void> _stopPlayback({required bool clear}) async {
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
+    _playheadEndUs = 0;
+    _envelope.clear();
     playing = false;
     if (_fsStreaming) {
       _fsStreaming = false;

@@ -95,6 +95,17 @@ class AssistantEngine extends ChangeNotifier {
   double get micLevel => micLevelListenable.value;
   set micLevel(double v) => micLevelListenable.value = v;
 
+  /// HER VOICE'S LOUDNESS, 0..1, asked by the orb's rings on each frame
+  /// while she speaks (2026-09-25: "only the speaker should move forward
+  /// and backwards" — while she talks too). Live mode: the reply audio's
+  /// own level at the moment it is heard. The fallback voice path: its
+  /// per-word pulse, which it already copies into [micLevel]. The mic's
+  /// gate is untouched, so her voice coming back in never moves them.
+  double speakerLevelNow() {
+    if (_liveSvc.playing) return _liveSvc.playbackLevelNow();
+    return phase == AssistantPhase.speaking ? micLevel : 0;
+  }
+
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
 
