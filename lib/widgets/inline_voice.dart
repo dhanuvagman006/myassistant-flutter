@@ -13,6 +13,7 @@ import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
 import '../services/app_feedback.dart';
+import '../services/assistant_identity.dart';
 import '../services/auth_service.dart';
 import 'overflow_fade.dart';
 import 'voice_orb.dart';
@@ -295,10 +296,11 @@ class InlineCaptionOverlay extends StatefulWidget {
   State<InlineCaptionOverlay> createState() => _InlineCaptionOverlayState();
 }
 
-/// The sphere's diameter on the voice screen, and the square its glow
-/// needs round it.
+/// The disc's diameter on the voice screen, and the square the disc and
+/// its rim's light are laid out in. The rings round it need
+/// [VoiceOrbBackdrop.reach] times the disc (see the slot below).
 const double _orbSize = 168;
-const double _orbBox = _orbSize * 1.6;
+const double _orbBox = _orbSize * 1.08;
 
 class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     with SingleTickerProviderStateMixin {
@@ -566,11 +568,14 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           // the keyboard; on a short phone it gives up height to the words.
           final restSlot = math.min(330.0, avail * 0.38);
           final typingSlot = math.min(190.0, avail * 0.42);
-          // How much smaller the orb is DRAWN to sit in it: while typing,
-          // the whole glow fits the slot; at rest, the sphere does (as it
-          // always has — only a very short screen ever shrinks it).
-          final restScale = math.min(1.0, restSlot / _orbSize);
-          final typingScale = math.min(1.0, typingSlot / _orbBox);
+          // How much smaller the orb is DRAWN to sit in it. The rings are
+          // whole circles now (the client's picture; 2026-09-25), never
+          // cut off at the slot's edge, so the WHOLE ring system fits the
+          // slot: at rest on his phone that is full size (168 dp disc,
+          // 311 dp of rings in a 330 dp slot); while typing, 0.61 of it.
+          const rings = _orbSize * VoiceOrbBackdrop.reach;
+          final restScale = math.min(1.0, restSlot / rings);
+          final typingScale = math.min(1.0, typingSlot / rings);
           return Container(
           // FULLY OPAQUE. At 0.82, and still at 0.94, the page ghosted
           // through: Home's headings and calendar sat faintly behind the
@@ -593,34 +598,35 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                 ),
               ),
               const Spacer(flex: 5),
-              // THE PRESENCE — the orb from the reference design: a
-              // glossy mint sphere in a tunnel of rings that runs off
-              // both edges of the screen, teal on the left and magenta
-              // on the right. See widgets/voice_orb.dart.
+              // THE PRESENCE — the client's picture (2026-09-25): a dark
+              // disc with the mic and the assistant's name, still, inside
+              // rings that push out and back with the voice like a
+              // speaker ("only the speaker should move forward and
+              // backwards"), and light-wave ribbons running out to both
+              // sides. See widgets/voice_orb.dart.
               //
-              // FULL WIDTH ON PURPOSE. The rings reach both edges in the
-              // reference; boxing them into the old 330 px square is what
-              // would make this read as a small copy of it. The padding
-              // the overlay puts on its text does not apply here, so the
-              // backdrop is pulled out to the screen edges.
-              // double.infinity, or the Stack shrinks to the orb and the
-              // backdrop's edges showed as a box around it.
+              // FULL WIDTH ON PURPOSE. The ribbons run out toward both
+              // edges; the padding the overlay puts on its text does not
+              // apply here, so the backdrop is pulled out to the screen
+              // edges. double.infinity, or the Stack shrinks to the orb
+              // and the backdrop's edges showed as a box around it.
               //
               // THE ORB SHRINKS BY SCALE, NOT BY LAYOUT (2026-09-24: one
               // 83 ms frame as the keyboard came up, with the orb resizing
               // while the keyboard moved). The slot still gives up height
-              // while typing, but the sphere inside it is laid out ONCE, at
+              // while typing, but the disc inside it is laid out ONCE, at
               // full size, in a box that never changes — and only DRAWN
               // smaller, through a transform eased over 220 ms. A keyboard
               // frame therefore never lays the orb out again. The backdrop
               // is a bare canvas that fills the slot and draws its rings to
               // the same scale.
               //
-              // THE VOICE IS READ BY THE PAINTERS, not passed down by a
+              // THE VOICE IS READ BY THE PAINTER, not passed down by a
               // rebuild: this screen used to rebuild the orb for every mic
               // reading, and in a screen measured by a LayoutBuilder every
-              // such rebuild re-ran the layout up to the page. The orb and
-              // its backdrop read the live level on their own frames.
+              // such rebuild re-ran the layout up to the page. The rings
+              // read his mic level, or her voice's, on their own frames;
+              // the disc in the middle never moves at all.
               //
               // THE WORDS MOVE WITH THE ORB (2026-09-24). The orb eased
               // smaller over 220 ms, but on the keyboard's first frame its
@@ -665,6 +671,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             orbSize: _orbSize * scale,
                             mood: mood,
                             levelListenable: level,
+                            // Her voice's loudness as it comes out of the
+                            // speaker: the rings move with what is heard.
+                            speakerLevel: engine.speakerLevelNow,
                             active: show,
                           ),
                         ),
@@ -676,11 +685,15 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                           child: Transform.scale(
                             key: const ValueKey('orb-scale'),
                             scale: scale,
-                            child: VoiceOrb(
-                              size: _orbSize,
-                              mood: mood,
-                              levelListenable: level,
-                              active: show,
+                            // The assistant's own name under the mic
+                            // ("My Assistant" until it has one); a rename
+                            // rebuilds only this.
+                            child: ValueListenableBuilder<String>(
+                              valueListenable: AssistantIdentity.notifier,
+                              builder: (_, name, __) => VoiceOrb(
+                                size: _orbSize,
+                                label: orbLabelFor(name),
+                              ),
                             ),
                           ),
                         ),

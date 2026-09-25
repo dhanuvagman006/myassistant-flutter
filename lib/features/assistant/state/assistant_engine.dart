@@ -95,6 +95,17 @@ class AssistantEngine extends ChangeNotifier {
   double get micLevel => micLevelListenable.value;
   set micLevel(double v) => micLevelListenable.value = v;
 
+  /// HER VOICE'S LOUDNESS, 0..1, asked by the orb's rings on each frame
+  /// while she speaks (2026-09-25: "only the speaker should move forward
+  /// and backwards" — while she talks too). Live mode: the reply audio's
+  /// own level at the moment it is heard. The fallback voice path: its
+  /// per-word pulse, which it already copies into [micLevel]. The mic's
+  /// gate is untouched, so her voice coming back in never moves them.
+  double speakerLevelNow() {
+    if (_liveSvc.playing) return _liveSvc.playbackLevelNow();
+    return phase == AssistantPhase.speaking ? micLevel : 0;
+  }
+
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
 
@@ -205,6 +216,11 @@ class AssistantEngine extends ChangeNotifier {
   /// The caption overlay reads this to appear the INSTANT the orb is
   /// tapped — a connecting orb on a dimmed page beats a frozen screen.
   bool get starting => _starting;
+
+  /// Holds the session on "Connecting…" for a test (the voice screen's
+  /// still, idle orb).
+  @visibleForTesting
+  set debugStarting(bool v) => _starting = v;
 
   /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
   /// clearing _conversationOpen makes the in-flight start terminate itself

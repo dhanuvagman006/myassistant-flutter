@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/log.dart';
 import '../design/neon_tokens.dart';
 import '../services/api_service.dart';
+import '../services/assistant_identity.dart';
 import '../services/voice_service.dart';
 import '../widgets/voice_orb.dart';
 
@@ -150,6 +152,9 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
           // The orb gives up height first, so everything fits on a short
           // phone with the keyboard up.
           final orb = (box.maxHeight - 240).clamp(96.0, 260.0);
+          // The disc, sized so its whole ring system fits the slot (the
+          // rings are whole circles since 2026-09-25, never cut off).
+          final disc = math.min(150.0, orb / VoiceOrbBackdrop.reach);
           return Padding(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 18),
           child: Column(
@@ -192,19 +197,19 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
                         top: 0,
                         bottom: 0,
                         child: VoiceOrbBackdrop(
-                          orbSize: orb < 170 ? orb * 0.8 : 150,
+                          orbSize: disc,
                           mood: _stage == _Stage.listening
                               ? OrbMood.listening
                               : OrbMood.idle,
                           levelListenable: _level,
                         ),
                       ),
-                      VoiceOrb(
-                        size: orb < 170 ? orb * 0.8 : 150,
-                        mood: _stage == _Stage.listening
-                            ? OrbMood.listening
-                            : OrbMood.idle,
-                        levelListenable: _level,
+                      // The same still disc as the voice screen, name and
+                      // all; only the rings round it move with his voice.
+                      ValueListenableBuilder<String>(
+                        valueListenable: AssistantIdentity.notifier,
+                        builder: (_, name, __) =>
+                            VoiceOrb(size: disc, label: orbLabelFor(name)),
                       ),
                     ],
                   ),

@@ -2,7 +2,8 @@
 // the reference WITHOUT taking over somebody's phone to look at it.
 //   flutter test test/voice_orb_render_test.dart
 // writes build/voice_orb_preview.png (listening) and
-// build/voice_orb_thinking.png
+// build/voice_orb_thinking.png. (The whole voice screen, state by state:
+// test/orb_rings_render_test.dart.)
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -37,7 +38,7 @@ Future<void> _render(WidgetTester tester, OrbMood mood, String out) async {
                       level: 0.6,
                     ),
                   ),
-                  VoiceOrb(size: 168, mood: mood, level: 0.6),
+                  const VoiceOrb(size: 168, label: 'My Assistant'),
                 ],
               ),
             ),

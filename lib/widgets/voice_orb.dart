@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -6,386 +7,316 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../design/gpu_programs.dart';
+import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/orb_rings.dart';
+import '../services/assistant_identity.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
-///  THE LISTENING ORB — built from the reference design on his phone.
+///  THE VOICE ORB — the client's reference, 2026-09-25.
 ///
-///  A glossy mint sphere with a white microphone in it, floating in a
-///  tunnel of concentric rings that runs off both edges of the screen —
-///  teal on the left, magenta on the right — with thin waveform lines
-///  crossing behind it.
+///  The client (WhatsApp, through the owner) circled the flares round the
+///  old orb: "Change outer rendering to other style". Then he sent a
+///  picture: "Make it something like this, when it's on, only the speaker
+///  should move forward and backwards". The owner: "the exact same
+///  surrounding design around the orb as this, with animation while
+///  speaking and listening, moving forward and backward".
 ///
-///  EVERY NUMBER HERE WAS MEASURED OFF THE REFERENCE, not guessed:
-///  the sphere is 35% of the screen's width; the light falls from the
-///  upper left (#64EED6 where it lands, #078778 at the shaded bottom);
-///  the rings sit at 1.02, 1.39, 1.56, 1.91 and 2.2 times the sphere's
-///  radius. Copying a design by eye is how you end up with something
-///  that is nearly it and reads as wrong.
+///  So it is two pictures now, and only one of them moves:
+///   * THE CENTRE ([VoiceOrb]) — a dark disc with a thin mint-white rim,
+///     a white microphone with a little trail of dots above it, and the
+///     assistant's name. It holds still: no ticker, painted once.
+///   * THE SPEAKER ([VoiceOrbBackdrop]) — the rings round it, brighter
+///     and thicker at the sides like speaker cones seen side-on, the
+///     light-wave ribbons running out to both sides, and the picture's
+///     teal night under them. While he talks (his mic level) or the
+///     assistant answers (her voice's level) the rings push out and spring
+///     back in with the voice; thinking is a slow breath; at rest it is
+///     still.
 ///
-///  WHAT IT STILL HAS TO DO. The old orb showed the session's state in
-///  colour — cyan listening, violet thinking, pink speaking — and that
-///  was worth keeping when the picture itself is now one fixed mint. So
-///  the SPHERE is the design and never changes, and the state lives in
-///  the movement around it: a liquid ring ripples with the voice and
-///  pulses roll outward while it listens or speaks, and comets circle it
-///  while it thinks. The caption under the orb still says the word.
+///  EVERY NUMBER WAS MEASURED OFF THE REFERENCE, not guessed: the disc's
+///  colours and rim, the mic's parts, the dots and the ring table in
+///  lib/design/orb_rings.dart. The caption under the orb still says the
+///  state in words.
 /// ─────────────────────────────────────────────────────────────────────
 
 /// How the orb is behaving, in the only terms the painting cares about.
 enum OrbMood { idle, listening, thinking, speaking }
 
+/// The words in the disc for the assistant's [name]: "My Assistant" until
+/// the owner has named it (the neutral default, the same rule the splash
+/// uses), and the name he chose after that — the "Maya" on the You tab.
+String orbLabelFor(String name) {
+  final n = name.trim();
+  return n.isEmpty || n == AssistantIdentity.fallback ? 'My Assistant' : n;
+}
+
+/// The disc's box is this much wider than the disc: room for the rim's
+/// soft light.
+const double _centreBox = 1.08;
+
+/// The size the reference's label was measured at: the disc on the voice
+/// screen (168 dp across). A smaller disc draws it proportionally smaller.
+const double _labelDisc = 168;
+
 class VoiceOrb extends StatefulWidget {
-  const VoiceOrb({
-    super.key,
-    required this.size,
-    this.mood = OrbMood.idle,
-    this.level = 0,
-    this.levelListenable,
-    this.active = true,
-  });
+  const VoiceOrb({super.key, required this.size, this.label});
 
-  /// The sphere's diameter. The backdrop is drawn by [VoiceOrbBackdrop].
+  /// The disc's diameter. The rings round it are [VoiceOrbBackdrop].
   final double size;
-  final OrbMood mood;
 
-  /// 0..1 — mic loudness while listening, voice loudness while speaking.
-  final double level;
-
-  /// The same loudness as a live value, read on every frame instead of
-  /// [level]: the orb then follows the voice without the screen around it
-  /// rebuilding for every mic reading.
-  final ValueListenable<double>? levelListenable;
-
-  /// False while the screen the orb lives on is hidden. The voice
-  /// session's overlay stays built between sessions (so opening it is one
-  /// cheap frame, not a whole screen built from nothing), and a hidden orb
-  /// must not tick.
-  final bool active;
+  /// The words under the mic (see [orbLabelFor]); none when null.
+  final String? label;
 
   @override
   State<VoiceOrb> createState() => _VoiceOrbState();
 }
 
-/// What the sphere's painter reads on every frame. A ticker changes it
-/// and the painter repaints from it directly — no widget is rebuilt and
-/// nothing is laid out for a frame of the orb.
-class _SphereMotion extends ChangeNotifier {
-  /// 0..1 round one slow six-second breath (and the inner light's orbit).
-  double phase = 0;
-
-  /// The voice, chased (see [_VoiceOrbState._onTick]).
-  double glow = 0;
-
-  /// The extra swell the voice gives the sphere; 0 at rest.
-  double swell = 0;
-
-  void changed() => notifyListeners();
-}
-
-class _VoiceOrbState extends State<VoiceOrb>
-    with SingleTickerProviderStateMixin {
-  /// One slow breath — ONLY while something is happening.
-  ///
-  /// It used to run forever. The voice overlay is built (invisible) behind
-  /// Home the whole time, so this one animation kept the idle Home drawing
-  /// 60 frames a second — measured on his phone, 2026-09-24. It now moves
-  /// while the orb listens, thinks or speaks, lets the glow settle when it
-  /// stops, and holds still at rest (hidden, connecting, or paused while
-  /// he types). Paused, not reset: it resumes from the same breath.
-  ///
-  /// PAINT-ONLY FRAMES. It used to rebuild its widgets every frame, and
-  /// on the voice screen that re-ran the screen's layout up to the page —
-  /// every frame of the session. The ticker now updates [_motion] and only
-  /// the sphere's own layer is repainted.
-  late final Ticker _ticker = createTicker(_onTick);
-  Duration _lastTick = Duration.zero;
-  final _SphereMotion _motion = _SphereMotion();
-
-  bool get _moving => widget.active && widget.mood != OrbMood.idle;
-
+class _VoiceOrbState extends State<VoiceOrb> {
   @override
   void initState() {
     super.initState();
-    _sync();
-  }
-
-  @override
-  void didUpdateWidget(VoiceOrb old) {
-    super.didUpdateWidget(old);
-    _sync();
-  }
-
-  /// Runs while it moves, or while the glow is still settling.
-  void _sync() {
-    if (!widget.active) {
-      // Hidden: hold still where it is (its screen is fading away) and
-      // start the next session from rest.
-      if (_ticker.isActive) _ticker.stop();
-      _motion
-        ..glow = 0
-        ..swell = 0;
-      return;
-    }
-    final run = _moving || _motion.glow > 0 || _motion.swell > 0;
-    if (run && !_ticker.isActive) {
-      _lastTick = Duration.zero;
-      _ticker.start();
-    } else if (!run && _ticker.isActive) {
-      _ticker.stop();
-    }
-  }
-
-  void _onTick(Duration elapsed) {
-    final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.1);
-    _lastTick = elapsed;
-    final m = _motion;
-    final moving = _moving;
-    // The level jumps frame to frame; following it directly makes the orb
-    // judder. Chase it instead — fast to swell, slow to settle, the way a
-    // physical thing with mass would move. At rest it settles to nothing.
-    final heard = widget.levelListenable?.value ?? widget.level;
-    final target = moving ? heard.clamp(0.0, 1.0) : 0.0;
-    // The rates were tuned per mic reading, about 30 a second; now they
-    // are applied per frame, scaled to the same pace.
-    final rate = target > m.glow ? 0.35 : 0.08;
-    m.glow += (target - m.glow) * (1 - math.pow(1 - rate, dt * 30));
-    if (target == 0 && m.glow < 0.002) m.glow = 0;
-    // Up to 7% more size when a voice is behind it.
-    m.swell = widget.mood == OrbMood.idle ? 0.0 : m.glow * 0.07;
-    if (moving) m.phase = (m.phase + dt / 6) % 1.0;
-    m.changed();
-    if (!moving && m.glow == 0 && m.swell == 0) _ticker.stop();
+    PaintingBinding.instance.systemFonts.addListener(_fontsChanged);
   }
 
   @override
   void dispose() {
-    _ticker.dispose();
-    _motion.dispose();
+    PaintingBinding.instance.systemFonts.removeListener(_fontsChanged);
     super.dispose();
   }
 
-  /// ONE PAINTER FOR AS LONG AS WHAT IT DRAWS IS THE SAME (2026-09-24,
-  /// GPU pass). The voice screen rebuilds the orb several times a second
-  /// (the caption pacer runs five times a second); each rebuild used to
-  /// hand it a brand-new painter, which then built its gradients and laid
-  /// out the mic glyph all over again. The painter, and everything it has
-  /// already worked out, is now kept until the size or the colours change.
-  _SpherePainter? _painter;
+  /// A font finished loading (Manrope on a slow first launch): the name
+  /// was laid out in the fallback font, so lay it out again, once.
+  void _fontsChanged() {
+    _Label.clear();
+    final p = _painter;
+    if (mounted && p != null && p.fonts != _Label.generation) {
+      setState(() => _painter = null);
+    }
+  }
+
+  /// ONE PAINTER FOR AS LONG AS WHAT IT DRAWS IS THE SAME (2026-09-24, GPU
+  /// pass). The voice screen rebuilds the orb several times a second (the
+  /// caption pacer runs five times a second); the painter, and everything
+  /// it has already worked out, is kept until the size, the name or the
+  /// colours change.
+  _CentrePainter? _painter;
 
   @override
   Widget build(BuildContext context) {
     final d = widget.size;
+    final palette = OrbPalette.current;
     var painter = _painter;
     if (painter == null ||
         painter.diameter != d ||
-        painter.violet != Neon.violet ||
-        painter.pink != Neon.pink) {
-      painter = _painter = _SpherePainter(
-        motion: _motion,
-        diameter: d,
-        violet: Neon.violet,
-        pink: Neon.pink,
-      );
+        painter.label != widget.label ||
+        painter.palette.seed != palette.seed) {
+      painter = _painter =
+          _CentrePainter(diameter: d, label: widget.label, palette: palette);
     }
-    // Its own layer: the sphere repaints every frame while it moves, and
-    // without a boundary each of those frames re-recorded the whole voice
-    // screen around it — captions, text box and all.
+    // Its own layer, and a still one: the rings round it repaint every
+    // frame of a session, this never does.
     return RepaintBoundary(
       child: SizedBox(
-        width: d * 1.6, // room for the glow
-        height: d * 1.6,
+        width: d * _centreBox,
+        height: d * _centreBox,
         child: CustomPaint(painter: painter),
       ),
     );
   }
 }
 
-/// The sphere: lit from the upper left, shaded at the bottom, with a
-/// specular highlight, a soft teal glow around it, the small sparkle the
-/// reference puts at its upper right — and the microphone in it.
-class _SpherePainter extends CustomPainter {
-  _SpherePainter({
-    required this.motion,
+/// The still centre: disc, rim, mic, dots, stars and name. Nothing in it
+/// moves, nothing in it is blurred (a blur is an offscreen pass on every
+/// frame the screen is composited, still or not).
+class _CentrePainter extends CustomPainter {
+  _CentrePainter({
     required this.diameter,
-    required this.violet,
-    required this.pink,
-  }) : super(repaint: motion);
+    required this.label,
+    required this.palette,
+  }) : fonts = _Label.generation;
 
-  final _SphereMotion motion;
   final double diameter;
+  final String? label;
+  final OrbPalette palette;
 
-  /// The accent pair, carried so a still orb repaints when it changes —
-  /// it no longer repaints every frame and would otherwise keep the old
-  /// colour.
-  final Color violet, pink;
+  /// Which set of loaded fonts the name was laid out with.
+  final int fonts;
 
-  /// THE REFERENCE'S LIGHTING, THE APP'S COLOUR.
-  ///
-  /// His correction: "the exact same design and background but in current
-  /// app's theme". So the SHAPE of the light is copied precisely — the
-  /// reference runs from L=0.85 where the light lands to L=0.26 in the
-  /// shade, over one hue — and that same ramp is rebuilt on the app's
-  /// accent instead of the mint it was drawn in.
-  ///
-  /// Read from the tokens, never hardcoded: the accent is the user's own
-  /// choice (Settings → theme colour), and a fixed violet here would be
-  /// the one thing on screen that ignored it.
-  static Color _ramp(Color base, double lightness, [Color? toward, double mix = 0]) {
-    final c = toward == null ? base : Color.lerp(base, toward, mix)!;
-    final h = HSLColor.fromColor(c);
-    return h
-        .withLightness(lightness.clamp(0.0, 1.0))
-        .withSaturation((h.saturation * 1.05).clamp(0.35, 1.0))
-        .toColor();
-  }
-
-  /// NOTHING BUILT PER FRAME (2026-09-24, GPU pass). The gradients, blurs,
-  /// clip and sparkle depend only on the box and the colours, yet every
-  /// frame of a session used to create them all again. They are made on
-  /// the first frame and kept for this painter's life (and the painter is
-  /// kept across rebuilds, see [_VoiceOrbState._painter]).
-  _SphereKit? _kit;
-
-  _SphereKit _kitFor(Size size) {
-    final k = _kit;
-    if (k != null && k.size == size) return k;
-    return _kit = _SphereKit(size, diameter, violet, pink);
-  }
+  _CentreKit? _kit;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final k = _kitFor(size);
+    var k = _kit;
+    if (k == null || k.size != size) k = _kit = _CentreKit(size, diameter, palette);
     final c = k.centre;
     final r = k.r;
-    final t = motion.phase;
-    final glow = motion.glow;
 
-    // A 2% breath while it moves; up to 7% more when a voice is behind
-    // it. Round the centre, glyph included.
-    final scale = 1 + 0.02 * math.sin(t * 2 * math.pi) + motion.swell;
-    canvas.save();
-    canvas.translate(c.dx, c.dy);
-    canvas.scale(scale);
-    canvas.translate(-c.dx, -c.dy);
+    // THE DISC, THE RIM AND ITS LIGHT — one radial gradient. The picture's
+    // disc is a deep navy that lifts to teal just inside the rim; the rim
+    // is a bright mint-white line with a soft band of light outside it.
+    canvas.drawCircle(c, r * _centreBox, k.disc);
 
-    // The light it throws, in the accent's own hue.
-    canvas.drawCircle(c, r * 0.96,
-        k.light..color = violet.withValues(alpha: 0.22 + glow * 0.16));
+    // THE MICROPHONE, as shapes (the icon font's mic has no base bar, and
+    // the picture's has one): its soft light first, then the white.
+    for (final (paint, extra) in k.micGlow) {
+      paint.strokeWidth = extra;
+      canvas.drawRRect(k.capsule, paint);
+      canvas.drawRRect(k.base, paint);
+      canvas.drawRect(k.stem, paint);
+      paint.strokeWidth = k.arcWidth + extra;
+      canvas.drawArc(k.arcRect, 0, math.pi, false, paint);
+    }
+    canvas.drawRRect(k.capsule, k.white);
+    canvas.drawRect(k.stem, k.white);
+    canvas.drawRRect(k.base, k.white);
+    canvas.drawArc(k.arcRect, 0, math.pi, false, k.arc);
 
-    // THE BODY. The focal point is up and to the left, which is where the
-    // reference puts its light; everything else follows from that.
-    canvas.drawCircle(c, r, k.body);
-
-    // The shaded underside, so it reads as a ball and not a disc.
-    canvas.drawCircle(c, r, k.shade);
-
-    // LIGHT INSIDE IT — a soft glow drifting round within the ball, a
-    // touch brighter with the voice, so the sphere itself looks alive.
-    // The gradient is made once round the origin and moved into place;
-    // its strength rides on the paint's alpha, which gives the same
-    // colour, stop for stop, as a gradient rebuilt with that alpha.
-    final orbit = t * 2 * math.pi;
-    final inner = c +
-        Offset(math.cos(orbit) * r * 0.38, math.sin(orbit) * r * 0.30 + r * 0.18);
-    canvas.save();
-    canvas.clipPath(k.clip);
-    canvas.translate(inner.dx, inner.dy);
-    canvas.drawCircle(Offset.zero, r * 0.75,
-        k.inner..color = Color.fromRGBO(0, 0, 0, 0.28 + glow * 0.30));
-    canvas.restore();
-
-    // THE HIGHLIGHT — a soft oval where the light lands, not a hard dot.
-    canvas.drawOval(k.highlightRect, k.highlight);
-
-    // THE SPARKLE at the upper right: a four-point star and two dots,
-    // exactly where the reference has them.
+    // THE TRAIL OF DOTS rising from the mic to the rim, and the sparkles.
+    for (final dot in k.dots) {
+      canvas.drawCircle(dot.$1, dot.$2 * 2.0, dot.$4);
+      canvas.drawCircle(dot.$1, dot.$2, dot.$3);
+    }
+    canvas.drawPath(k.starHalo, k.starGlow);
     canvas.drawPath(k.star, k.starPaint);
-    canvas.drawCircle(c + Offset(r * 0.68, -r * 0.40), r * 0.035, k.dotBright);
-    canvas.drawCircle(c + Offset(r * 0.30, -r * 0.26), r * 0.022, k.dotSoft);
+    canvas.drawPath(k.tinyStar, k.starPaint);
 
-    // THE MICROPHONE, on top of it all.
-    final glyph = _Glyph.of(diameter);
-    glyph.paint(canvas, c - Offset(glyph.width / 2, glyph.height / 2));
-    canvas.restore();
+    // THE NAME, laid out once (see [_Label]) at the voice screen's size
+    // and drawn to this disc's scale.
+    final text = label;
+    if (text != null && text.isNotEmpty) {
+      final l = _Label.of(text);
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      canvas.scale(diameter / _labelDisc);
+      l.painter.paint(
+          canvas, Offset(-l.painter.width / 2, _Label.baselineY - l.baseline));
+      canvas.restore();
+    }
   }
 
-  // Frames repaint through [motion]; a new painter only when what it
-  // draws with changed.
+  // A still picture: a new painter only when what it draws changed.
   @override
-  bool shouldRepaint(_SpherePainter old) =>
-      old.motion != motion ||
+  bool shouldRepaint(_CentrePainter old) =>
       old.diameter != diameter ||
-      old.violet != violet ||
-      old.pink != pink;
+      old.label != label ||
+      old.palette.seed != palette.seed ||
+      old.fonts != fonts;
 }
 
-/// What the sphere paints with, worked out once for a box and colours.
-class _SphereKit {
-  _SphereKit(this.size, double diameter, Color violet, Color pink) {
+/// What the centre paints with, worked out once for a box and a palette.
+class _CentreKit {
+  _CentreKit(this.size, double diameter, OrbPalette pal) {
     centre = size.center(Offset.zero);
-    // The sphere is [diameter] across — less only when the box it was
-    // given is smaller still.
-    r = math.min(diameter, size.shortestSide) / 2;
-    final ball = Rect.fromCircle(center: centre, radius: r);
-    light = Paint()..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16);
-    body = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.38, -0.42),
-        radius: 0.95,
-        colors: [
-          // The same four stops the reference has, re-hued: lit, body,
-          // and a shaded underside pulled toward the gradient partner
-          // so the ball carries the brand's violet-into-magenta.
-          _SpherePainter._ramp(violet, 0.86),
-          _SpherePainter._ramp(violet, 0.70),
-          _SpherePainter._ramp(violet, 0.54, pink, 0.25),
-          _SpherePainter._ramp(violet, 0.33, pink, 0.40),
-        ],
-        stops: const [0.0, 0.34, 0.72, 1.0],
-      ).createShader(ball);
-    final under = _SpherePainter._ramp(violet, 0.20, pink, 0.3);
-    shade = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(0.25, 0.85),
-        radius: 0.8,
-        colors: [
-          under.withValues(alpha: 0.55),
-          under.withValues(alpha: 0.0),
-        ],
-        stops: const [0.0, 1.0],
-      ).createShader(ball);
-    inner = Paint()
-      ..shader = RadialGradient(colors: [
-        Color.lerp(pink, Colors.white, 0.25)!,
-        pink.withValues(alpha: 0),
-      ]).createShader(Rect.fromCircle(center: Offset.zero, radius: r * 0.75));
-    clip = Path()..addOval(ball);
-    highlightRect = Rect.fromCenter(
-      center: centre + Offset(-r * 0.32, -r * 0.46),
-      width: r * 0.76,
-      height: r * 0.50,
-    );
-    highlight = Paint()
-      ..color = Colors.white.withValues(alpha: 0.42)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.16);
-    star = _starPath(centre + Offset(r * 0.44, -r * 0.50), r * 0.17);
+    r = diameter / 2;
+    final c = centre;
+
+    // The disc's colours, measured every few hundredths of its radius
+    // (OrbPalette.discStops), then the rim and its light outside.
+    final stops = <double>[];
+    final colors = <Color>[];
+    void at(double rr, Color col) {
+      stops.add(rr / _centreBox);
+      colors.add(col);
+    }
+
+    for (var i = 0; i < OrbPalette.discStops.length; i++) {
+      at(OrbPalette.discStops[i], pal.disc[i]);
+    }
+    final inner = pal.disc.last;
+    at(0.984, Color.lerp(inner, pal.rim, 0.30)!);
+    at(0.990, Color.lerp(inner, pal.rim, 0.78)!);
+    at(0.995, pal.rim);
+    at(1.001, pal.rim);
+    at(1.007, Color.lerp(pal.rimHalo, pal.rim, 0.62)!);
+    at(1.013, Color.lerp(pal.rimHalo, pal.rim, 0.25)!.withValues(alpha: 0.95));
+    at(1.020, pal.rimHalo.withValues(alpha: 0.90));
+    at(1.045, pal.rimHalo.withValues(alpha: 0.80));
+    at(1.075, pal.rimHalo.withValues(alpha: 0));
+    at(_centreBox, pal.rimHalo.withValues(alpha: 0));
+    disc = Paint()
+      ..shader = RadialGradient(colors: colors, stops: stops)
+          .createShader(Rect.fromCircle(center: c, radius: r * _centreBox));
+
+    // The mic, in the picture's proportions (R units, y down): a capsule
+    // 0.26 wide from -0.51 to -0.06, a U of radius 0.25 drawn 0.06 thick
+    // round -0.28, a stem to 0.13 and a rounded base bar 0.36 wide. (The
+    // picture's strokes measure 0.055 but carry a glow; drawn crisp they
+    // need the extra hair to read the same.)
+    capsule = RRect.fromLTRBR(c.dx - 0.13 * r, c.dy - 0.51 * r,
+        c.dx + 0.13 * r, c.dy - 0.06 * r, Radius.circular(0.13 * r));
+    arcRect =
+        Rect.fromCircle(center: c + Offset(0, -0.2775 * r), radius: 0.25 * r);
+    arcWidth = 0.062 * r;
+    stem = Rect.fromLTRB(
+        c.dx - 0.029 * r, c.dy - 0.03 * r, c.dx + 0.029 * r, c.dy + 0.13 * r);
+    base = RRect.fromLTRBR(c.dx - 0.185 * r, c.dy + 0.12 * r, c.dx + 0.185 * r,
+        c.dy + 0.172 * r, Radius.circular(0.026 * r));
+    arc = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = arcWidth
+      ..color = Colors.white;
+    // Its soft light: three widening strokes, each fainter — the
+    // picture's mic glows a little, and a blur would cost a pass.
+    micGlow = [
+      for (final (width, alpha) in [(0.11, 0.03), (0.07, 0.04), (0.035, 0.06)])
+        (
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = Colors.white.withValues(alpha: alpha),
+          width * r
+        ),
+    ];
+
+    // The trail: nine dots, measured, shrinking and dimming toward the rim.
+    const trail = [
+      (0.023, -0.573, 0.024),
+      (0.056, -0.615, 0.023),
+      (0.088, -0.658, 0.022),
+      (0.117, -0.701, 0.0206),
+      (0.142, -0.744, 0.0188),
+      (0.165, -0.786, 0.0167),
+      (0.182, -0.828, 0.0153),
+      (0.196, -0.870, 0.0139),
+      (0.204, -0.913, 0.0127),
+    ];
+    dots = [
+      for (var i = 0; i < trail.length; i++)
+        (
+          c + Offset(trail[i].$1 * r, trail[i].$2 * r),
+          trail[i].$3 * r,
+          Paint()..color = Color.lerp(pal.dotNear, pal.dotFar, i / 8)!,
+          Paint()
+            ..color = Color.lerp(pal.dotNear, pal.dotFar, i / 8)!
+                .withValues(alpha: 0.16),
+        ),
+    ];
+    starAt = c + Offset(-0.056 * r, -0.744 * r);
+    star = _starPath(starAt, 0.052 * r);
+    starHalo = _starPath(starAt, 0.075 * r);
+    tinyStar = _starPath(c + Offset(0.19 * r, -0.968 * r), 0.03 * r);
+    starPaint = Paint()..color = Color.lerp(pal.rim, Colors.white, 0.3)!;
+    starGlow = Paint()..color = pal.rim.withValues(alpha: 0.22);
   }
 
   final Size size;
-  late final Offset centre;
-  late final double r;
-  late final Paint light, body, shade, inner, highlight;
-  late final Path clip, star;
-  late final Rect highlightRect;
-  final Paint starPaint = Paint()..color = Colors.white.withValues(alpha: 0.95);
-  final Paint dotBright = Paint()..color = Colors.white.withValues(alpha: 0.85);
-  final Paint dotSoft = Paint()..color = Colors.white.withValues(alpha: 0.60);
+  late final Offset centre, starAt;
+  late final double r, arcWidth;
+  late final Paint disc, arc, starPaint, starGlow;
+  late final RRect capsule, base;
+  late final Rect arcRect, stem;
+  late final Path star, starHalo, tinyStar;
+  late final List<(Paint, double)> micGlow;
+  late final List<(Offset, double, Paint, Paint)> dots;
+  final Paint white = Paint()..color = Colors.white;
 
   /// A four-point star with concave sides — the "sparkle" shape.
   static Path _starPath(Offset c, double r) {
     final p = Path();
-    const inner = 0.30;
+    const inner = 0.28;
     for (var i = 0; i < 4; i++) {
       final a = -math.pi / 2 + i * math.pi / 2;
       final tip = c + Offset(math.cos(a) * r, math.sin(a) * r);
@@ -403,65 +334,77 @@ class _SphereKit {
   }
 }
 
-/// How many times the orb has laid out its mic glyph so far. The test
-/// that pins "once per size, never per rebuild" reads it.
+/// How many times the orb has laid out a name so far. The test that pins
+/// "once per name, never per rebuild" reads it.
 @visibleForTesting
-int get debugOrbGlyphLayouts => _Glyph._layouts;
+int get debugOrbLabelLayouts => _Label._layouts;
 
-/// THE MIC GLYPH, LAID OUT ONCE PER SIZE (2026-09-24, GPU pass).
+/// THE NAME, LAID OUT ONCE (the same rule the old mic glyph had, 2026-09-24
+/// GPU pass): the voice screen rebuilds the orb several times a second,
+/// and a name is laid out once for the app's life, at the voice screen's
+/// size — a smaller disc draws it smaller instead of laying it out again.
 ///
-/// It is text in the icon font, exactly as the Icon widget draws it, so it
-/// stays as crisp at every density — painted in the sphere so it breathes
-/// with it. It used to be laid out afresh by every new painter, and the
-/// voice screen made a new painter several times a second; now each size
-/// is laid out once for the app's life.
-///
-/// Still text, on purpose. Drawing it from a picture instead (so the
-/// renderer would not rasterise it at each new breathing scale) softened
-/// its edges by about half a pixel, and the glyph cache that saves is
-/// small and fills within the first seconds of a session.
-class _Glyph {
-  static final Map<double, TextPainter> _made = {};
+/// Manrope SemiBold at the headline size: the picture's label is a
+/// geometric sans about as wide as the mic's U is tall. Not scaled with
+/// the phone's text size — it is part of a fixed-size picture, and the
+/// caption under the orb (which is) says the same thing in words.
+class _Label {
+  _Label(this.painter, this.baseline);
+
+  final TextPainter painter;
+
+  /// From the top of the laid-out line to its baseline.
+  final double baseline;
+
+  /// Where the baseline sits below the disc's middle, at the voice
+  /// screen's size: the picture's letters span 0.474 to 0.676 of the
+  /// radius, so the baseline is at 0.62 of it.
+  static const double baselineY = 0.62 * _labelDisc / 2;
+
+  static final Map<String, _Label> _made = {};
   static int _layouts = 0;
 
-  static TextPainter of(double diameter) =>
-      _made[diameter] ??= _make(diameter);
+  /// Bumped when a font loads and every name must be laid out again.
+  static int generation = 0;
 
-  static TextPainter _make(double diameter) {
-    // Only a handful of orb sizes exist; never keep more than a few.
-    if (_made.length >= 4) _made.remove(_made.keys.first)?.dispose();
+  static _Label of(String text) => _made[text] ??= _make(text);
+
+  static void clear() {
+    if (_made.isEmpty) return;
+    for (final l in _made.values) {
+      l.painter.dispose();
+    }
+    _made.clear();
+    generation++;
+  }
+
+  static _Label _make(String text) {
+    // Only a name or two exist in a session; never keep more than a few.
+    if (_made.length >= 4) _made.remove(_made.keys.first)?.painter.dispose();
     _layouts++;
-    return TextPainter(
+    final tp = TextPainter(
       text: TextSpan(
-        text: String.fromCharCode(Icons.mic_rounded.codePoint),
-        style: TextStyle(
-          inherit: false,
-          color: Colors.white,
-          fontSize: diameter * 0.36,
-          fontFamily: Icons.mic_rounded.fontFamily,
-          package: Icons.mic_rounded.fontPackage,
-          height: 1.0,
-          leadingDistribution: TextLeadingDistribution.even,
-        ),
+        text: text,
+        style: NeonType.manrope(NeonType.headline, FontWeight.w600)
+            .copyWith(color: Colors.white),
       ),
       textDirection: TextDirection.ltr,
-    )..layout();
+      textScaler: TextScaler.noScaling,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: 1.45 * _labelDisc / 2);
+    final lines = tp.computeLineMetrics();
+    final baseline = lines.isEmpty ? tp.height * 0.8 : lines.first.baseline;
+    return _Label(tp, baseline);
   }
 }
 
-/// The space behind the orb. Same two brand hues as before, rebuilt to
-/// feel alive rather than busy:
+/// THE SPEAKER — the rings round the disc and the ribbons at its sides.
 ///
-///  * an AURORA — two soft clouds of the accent (left) and its partner
-///    (right) drifting slowly, brightening with the voice;
-///  * DUST — faint motes floating outward from the orb, the way sound
-///    carries;
-///  * the reference's ring TUNNEL, kept for depth but pulled right back;
-///  * and the part that says "I hear you": a LIQUID RING hugging the orb
-///    that ripples with the voice, and pulses that roll outward faster the
-///    louder it gets. Thinking swaps both for comets circling the orb.
-///
-/// Paint it full-width — it reaches both screen edges.
+/// Paint it full-width: the ribbons, and the teal wash under the rings,
+/// run out toward both screen edges; the rings need a slot [reach] times
+/// the disc's size, so size the slot for that and every ring is a whole
+/// circle (the wash is squashed to end at the slot's top and bottom).
 class VoiceOrbBackdrop extends StatefulWidget {
   const VoiceOrbBackdrop({
     super.key,
@@ -469,47 +412,79 @@ class VoiceOrbBackdrop extends StatefulWidget {
     this.mood = OrbMood.idle,
     this.level = 0,
     this.levelListenable,
+    this.speakerLevel,
     this.active = true,
   });
 
+  /// The whole ring system's size as a multiple of the disc's diameter.
+  static const double reach = OrbRings.reach;
+
+  /// The disc's diameter (the rings are measured from it).
   final double orbSize;
   final OrbMood mood;
+
+  /// 0..1 — the voice's loudness, when it is not read live.
   final double level;
 
-  /// The loudness as a live value, read on every frame instead of [level]
-  /// (see [VoiceOrb.levelListenable]).
+  /// His mic's loudness as a live value, read on every frame instead of
+  /// [level]: the rings then follow the voice without the screen around
+  /// them rebuilding for every mic reading.
   final ValueListenable<double>? levelListenable;
+
+  /// The assistant's voice's loudness right now, asked on every frame
+  /// while she speaks (a function: it changes every 20 ms of her audio,
+  /// and nothing should rebuild for that). Null: [levelListenable].
+  final double Function()? speakerLevel;
 
   /// False while its screen is hidden: it holds still and costs nothing.
   /// Turning true again (a new session) blooms it in afresh.
   final bool active;
 
+  /// The innermost rings' push on the last frame (0 at rest), for tests.
+  @visibleForTesting
+  static double debugPush = 0;
+
   @override
   State<VoiceOrbBackdrop> createState() => _VoiceOrbBackdropState();
 }
 
-/// Everything the backdrop's painter reads on every frame — changed by
-/// the ticker, repainted from directly (see [_SphereMotion]).
+/// Everything the backdrop's painter reads on every frame. A ticker
+/// changes it and the painter repaints from it directly — no widget is
+/// rebuilt and nothing is laid out for a frame of the rings.
 class _BackdropScene extends ChangeNotifier {
-  /// Scene time. Integrated from the ticks rather than read off the
-  /// ticker, so a pause and a restart carry on from the same picture
-  /// instead of jumping back to zero.
+  /// Scene time, integrated from the ticks (a pause carries on from the
+  /// same picture instead of jumping).
   double sec = 0;
-
-  /// Integrated, not derived from the clock: the pulses speed up with the
-  /// voice, and a speed change must never make them jump backwards.
-  double pulse = 0;
-
-  // Everything the mood changes is eased in and out, never switched.
-  double level = 0, pulseAmt = 0, think = 0;
 
   /// 0..1 — the bloom-in (see [_VoiceOrbBackdropState._bloomDelay]).
   double appear = 0;
 
+  /// Eased 0..1: thinking; the voice's loudness; a session running.
+  double think = 0, glow = 0, alive = 0;
+
+  /// Each moving tier's push (a share of its radius) and its speed.
+  final Float64List x = Float64List(5), v = Float64List(5);
+
+  /// How much wider tier [t] is drawn than at rest.
+  double scaleOf(int t) => t >= OrbRings.frame ? 1.0 : 1.0 + x[t];
+
+  /// The ribbons drift up and down a little while a session runs...
+  double get sway => alive * 0.022 * math.sin(0.47 * sec);
+
+  /// ...and swell with the voice.
+  double get stretch => 1 + 0.10 * glow;
+
   /// The GPU program's shader (see [_BackdropPainter._paintGpu]): made on
-  /// the first frame drawn with it and reused — each frame's numbers are
-  /// copied into that frame's picture, so one object serves them all.
+  /// the first frame drawn with it and reused.
   ui.FragmentShader? shader;
+
+  void reset() {
+    x.fillRange(0, 5, 0);
+    v.fillRange(0, 5, 0);
+    think = 0;
+    glow = 0;
+    alive = 0;
+  }
 
   void changed() => notifyListeners();
 
@@ -522,41 +497,42 @@ class _BackdropScene extends ChangeNotifier {
 
 class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     with SingleTickerProviderStateMixin {
-  /// Drives the repaints — ONLY while something moves (see [_sync]).
-  ///
-  /// It used to be a controller repeating forever. It now runs while the
-  /// orb listens, thinks or speaks, and while the scene is still easing
-  /// (the bloom-in, or the pulses fading out as it comes to rest); then
-  /// it stops, and a resting session draws no frames at all. Each frame
-  /// is paint-only: the ticker changes [_scene], the painter repaints from
-  /// it, and no widget is rebuilt (see [_VoiceOrbState._ticker]).
+  /// Drives the repaints — ONLY while something moves (see [_sync]): while
+  /// the orb listens, thinks or speaks, and while the rings are still
+  /// settling. Then it stops, and a resting session draws no frames at
+  /// all. Each frame is paint-only: the ticker changes [_scene], the
+  /// painter repaints its own layer from it, and no widget is rebuilt.
   late final Ticker _ticker = createTicker(_onTick);
   Duration _lastTick = Duration.zero;
   final _BackdropScene _scene = _BackdropScene();
 
   /// THE LIGHTER FIRST FRAME (2026-09-24: opening the voice screen cost
-  /// one 67 ms frame). This is the most expensive thing on that screen —
-  /// an offscreen layer, forty-odd motes and two liquid rings — and it
-  /// used to be built and drawn in full on the very frame the screen
-  /// appeared. It now draws nothing for its first [_bloomDelay] seconds
-  /// and then fades in over [_bloomFade] — one more number the GPU
-  /// program multiplies by (or, drawing with the Canvas, the alpha of the
-  /// layer it already paints into), so the fade itself costs nothing
-  /// extra: the ground, the orb and the words arrive first, the aurora
-  /// blooms in after them.
+  /// one 67 ms frame). The rings draw nothing for their first [_bloomDelay]
+  /// seconds and then fade in over [_bloomFade] — one more number the GPU
+  /// program multiplies by — so the ground, the disc and the words arrive
+  /// first and the rings bloom in after them.
   static const _bloomDelay = 0.12, _bloomFade = 0.35;
   double _shownFor = 0;
   double get _appear =>
       ((_shownFor - _bloomDelay) / _bloomFade).clamp(0.0, 1.0);
 
-  bool get _moving => widget.active && widget.mood != OrbMood.idle;
+  /// "Remove animations" is on: the rings hold still (the bloom still
+  /// fades in — the app's rule is "fade only").
+  bool _still = false;
 
-  /// At rest and fully faded in: nothing left to move.
-  bool get _settled =>
-      _appear >= 1 &&
-      _scene.pulseAmt < 0.01 &&
-      _scene.think < 0.01 &&
-      _scene.level < 0.01;
+  bool get _moving =>
+      widget.active && widget.mood != OrbMood.idle && !_still;
+
+  /// Fully faded in and every ring at rest: nothing left to move.
+  bool get _settled {
+    final sc = _scene;
+    if (_appear < 1 || sc.think >= 0.01 || sc.glow >= 0.01) return false;
+    if (sc.alive >= 0.01) return false;
+    for (var i = 0; i < 5; i++) {
+      if (sc.x[i].abs() >= 1e-4 || sc.v[i].abs() >= 1e-3) return false;
+    }
+    return true;
+  }
 
   @override
   void initState() {
@@ -564,17 +540,26 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     // Load the GPU program now, while this sits built and hidden behind
     // Home, so the first session never draws with the fallback or waits.
     GpuProgram.voiceBackdrop.load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = Motion.reduced(context);
+    if (_still) _scene.reset();
     _sync();
   }
 
   @override
   void didUpdateWidget(VoiceOrbBackdrop old) {
     super.didUpdateWidget(old);
-    // A new session: bloom in again. The screen was fully faded out while
-    // inactive, so starting from nothing is never seen as a blink.
+    // A new session: bloom in again, from rest. The screen was fully
+    // faded out while inactive, so starting from nothing is never seen.
     if (widget.active && !old.active) {
       _shownFor = 0;
-      _scene.appear = 0;
+      _scene
+        ..appear = 0
+        ..reset();
     }
     _sync();
   }
@@ -589,39 +574,78 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     }
   }
 
+  /// What the rings hear right now: his mic while listening, her voice
+  /// while she speaks.
+  double _heard() {
+    final w = widget;
+    final double l = switch (w.mood) {
+      OrbMood.speaking =>
+        w.speakerLevel?.call() ?? w.levelListenable?.value ?? w.level,
+      OrbMood.listening => w.levelListenable?.value ?? w.level,
+      _ => 0.0,
+    };
+    return l.isFinite ? l.clamp(0.0, 1.0) : 0.0;
+  }
+
+  /// Eases [v] toward [to] at [rate] per second over [dt] (a plain
+  /// function, not a closure made each frame).
+  static double _ease(double v, double to, double rate, double dt) =>
+      v + (to - v) * (1 - math.exp(-dt * rate));
+
   void _onTick(Duration elapsed) {
     final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.1);
     _lastTick = elapsed;
-    double ease(double v, double to, double rate) =>
-        v + (to - v) * (1 - math.exp(-dt * rate));
-
     final sc = _scene;
     final moving = _moving;
-    // At rest the scene settles: no pulses, no voice in the ring — the
-    // way the orb itself rests while he types.
-    final heard = widget.levelListenable?.value ?? widget.level;
-    final target = moving ? heard.clamp(0.0, 1.0) : 0.0;
-    sc.level = ease(sc.level, target, target > sc.level ? 18 : 4);
-    sc.pulseAmt = ease(
-        sc.pulseAmt,
-        moving && widget.mood != OrbMood.thinking ? 1.0 : 0.0,
-        3);
-    sc.think = ease(sc.think, widget.mood == OrbMood.thinking ? 1 : 0, 4);
+
+    // A whisper does not move a speaker: below 3% is silence, and the
+    // curve lifts quiet speech so it still shows (OrbRings.driveCurve:
+    // 0.6 since the review of 2026-09-25, so an ordinary voice moves the
+    // rings a push you can see, not a shimmer).
+    final heard = moving ? _heard() : 0.0;
+    final drive = heard <= 0.03
+        ? 0.0
+        : math.pow((heard - 0.03) / 0.97, OrbRings.driveCurve).toDouble();
+    sc.glow = _ease(sc.glow, drive, drive > sc.glow ? 30 : 8, dt);
+    sc.think =
+        _ease(sc.think, moving && widget.mood == OrbMood.thinking ? 1 : 0, 4, dt);
+    sc.alive = _ease(sc.alive, moving ? 1 : 0, 3, dt);
     sc.sec += dt;
     _shownFor += dt;
     sc.appear = _appear;
-    // Pulses per second: a slow heartbeat when quiet, quicker as the
-    // voice gets louder.
-    sc.pulse += dt * (0.30 + sc.level * 0.55);
+
+    // THE SPEAKER. Each tier is a spring chasing the voice: pushed out as
+    // far as OrbRings.push says at full voice, and — being under-damped —
+    // it overshoots a little on the way back, the push-and-return of a
+    // cone. Thinking replaces the voice with a slow breath that rolls
+    // outward. Stepped in small pieces so a long frame stays stable.
+    final steps = (dt * 240).ceil().clamp(1, 24);
+    final h = dt / steps;
+    for (var i = 0; i < 5; i++) {
+      final breath = sc.think *
+          0.018 *
+          (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.12 * i) / 2.8));
+      final target = _still ? 0.0 : drive * OrbRings.push[i] + breath;
+      final hz = OrbRings.springHz * (1 - OrbRings.springFalloff * i);
+      final k = (2 * math.pi * hz) * (2 * math.pi * hz);
+      final c = 2 * OrbRings.damping * math.sqrt(k);
+      var x = sc.x[i], v = sc.v[i];
+      for (var s = 0; s < steps; s++) {
+        v += (k * (target - x) - c * v) * h;
+        x += v * h;
+      }
+      sc.x[i] = x;
+      sc.v[i] = v;
+    }
+    if (_still) sc.reset();
 
     if (!moving && _settled) {
-      // Come to rest exactly, then stop asking for frames.
-      sc
-        ..level = 0
-        ..pulseAmt = 0
-        ..think = 0;
+      // Come to rest exactly — the picture is the reference again — then
+      // stop asking for frames.
+      sc.reset();
       _ticker.stop();
     }
+    VoiceOrbBackdrop.debugPush = sc.x[0];
     sc.changed();
   }
 
@@ -632,16 +656,15 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     super.dispose();
   }
 
-  // Its own layer, so the scene's frames never re-record the screen
-  // around it.
+  // Its own layer, so the rings' frames never re-record the screen round
+  // them.
   @override
   Widget build(BuildContext context) => RepaintBoundary(
         child: CustomPaint(
           painter: _BackdropPainter(
             scene: _scene,
             orbRadius: widget.orbSize / 2,
-            violet: Neon.violet,
-            pink: Neon.pink,
+            palette: OrbPalette.current,
             dpr: MediaQuery.maybeDevicePixelRatioOf(context) ?? 3.0,
           ),
           child: const SizedBox.expand(),
@@ -649,65 +672,27 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
       );
 }
 
-/// One mote of dust: where it starts, how fast it drifts, how it twinkles.
-class _Mote {
-  const _Mote(this.angle, this.offset, this.speed, this.size, this.twinkle);
-  final double angle, offset, speed, size, twinkle;
-}
-
-final List<_Mote> _motes = () {
-  final rnd = math.Random(7); // fixed: the same sky every time
-  return List.generate(
-      42,
-      (_) => _Mote(
-            rnd.nextDouble() * 2 * math.pi,
-            rnd.nextDouble(),
-            0.035 + rnd.nextDouble() * 0.05,
-            0.7 + rnd.nextDouble() * 1.3,
-            1.5 + rnd.nextDouble() * 2.5,
-          ));
-}();
-
 class _BackdropPainter extends CustomPainter {
   _BackdropPainter({
     required this.scene,
     required this.orbRadius,
-    required this.violet,
-    required this.pink,
+    required this.palette,
     required this.dpr,
   }) : super(repaint: scene);
 
   final _BackdropScene scene;
+
+  /// The disc's radius, R: every number in OrbRings is a multiple of it.
   final double orbRadius;
+  final OrbPalette palette;
 
-  /// The accent pair (see [_SpherePainter.violet]).
-  final Color violet, pink;
-
-  /// The screen's density: the GPU program anti-aliases over one device
-  /// pixel.
+  /// The screen's density (the GPU program's dither is per device pixel).
   final double dpr;
 
-  /// Where the reference's rings sit, as multiples of the sphere's radius
-  /// — fewer than before; they are depth now, not the subject.
-  /// (shaders/voice_backdrop.frag has the same five.)
-  static const _rings = [1.39, 1.91, 2.42, 2.9, 3.4];
-
-  static const _tau = 2 * math.pi;
-
-  /// The tunnel's left-to-right colours: accent, ink, partner. Worked out
-  /// once per painter, not per frame.
-  late final List<Color> _sweepColors = [
-    HSLColor.fromColor(violet).withLightness(0.46).toColor(),
-    HSLColor.fromColor(violet).withSaturation(0.35).withLightness(0.18).toColor(),
-    HSLColor.fromColor(pink).withLightness(0.44).toColor(),
-  ];
-
-  // The motes' colour runs from these two across the width (the accent
-  // and its partner, each 55% of the way to white).
-  late final Color _moteLeft = Color.lerp(violet, Colors.white, 0.55)!;
-  late final Color _moteRight = Color.lerp(pink, Colors.white, 0.55)!;
-  final Paint _mote = Paint();
   final Paint _gpu = Paint();
+  final Paint _mesh = Paint();
+  double _meshAlpha = -1;
+  Rect _box = Rect.zero;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -721,323 +706,349 @@ class _BackdropPainter extends CustomPainter {
     }
   }
 
-  /// THE GPU PATH (2026-09-24, GPU pass): the whole scene but the dust in
-  /// ONE rectangle, drawn by shaders/voice_backdrop.frag — no offscreen
-  /// layer, no paths, no second pass for the fade. Everything that moves
-  /// is worked out here once per frame (the positions of the clouds, the
-  /// angles of the ripples) and handed over as numbers, each angle wrapped
-  /// to one turn so the GPU never sees a clock that grows all session.
+  ui.FragmentShader? _shader;
+  int _u = 0;
+
+  /// One uniform. A method, not a closure made per frame: the GPU path
+  /// allocates nothing on a frame.
+  void _f(double v) => _shader!.setFloat(_u++, v);
+
+  void _rgb(Color c) {
+    _f(c.r);
+    _f(c.g);
+    _f(c.b);
+    _f(1);
+  }
+
+  /// THE GPU PATH: the whole picture — the teal wash under it, rings,
+  /// ribbons, sparkles — in ONE rectangle, drawn by
+  /// shaders/voice_backdrop.frag. No offscreen layer, no paths, no blur,
+  /// nothing on the Canvas beside it.
   void _paintGpu(Canvas canvas, Size size, ui.FragmentProgram program) {
     final sc = scene;
-    final sec = sc.sec, level = sc.level, think = sc.think;
     final r = orbRadius;
-    final c = size.center(Offset.zero);
-    final shader = sc.shader ??= program.fragmentShader();
-    var i = 0;
-    void f(double v) => shader.setFloat(i++, v);
-    void rgb(Color col) {
-      f(col.r);
-      f(col.g);
-      f(col.b);
-      f(1);
-    }
-
+    _shader = sc.shader ??= program.fragmentShader();
+    _u = 0;
     // uGeom, uState
-    f(size.width);
-    f(size.height);
-    f(r);
-    f(1 / dpr);
-    f(sc.appear);
-    f(level);
-    f(sc.pulseAmt);
-    f(think);
-    // uClouds: the two drifting clouds' centres (the third sits on the orb).
-    f(c.dx - r * 0.95 + math.cos(sec * 0.21) * r * 0.3);
-    f(c.dy + math.sin(sec * 0.17) * r * 0.18);
-    f(c.dx + r * 0.95 + math.cos(sec * 0.19 + 2.1) * r * 0.3);
-    f(c.dy + math.sin(sec * 0.23 + 1.3) * r * 0.18);
-    // uCloudA: their strengths, and the tunnel's breath.
-    f(0.34 + level * 0.16);
-    f(0.27 + level * 0.14);
-    f(0.16 + level * 0.20);
-    f(1 + 0.025 * math.sin(sec * 0.7) + level * 0.04);
-    // uPhase: the round-the-orb colour's turn, the pulse clock, the comets.
-    f((sec * 0.35) % _tau);
-    f(sc.pulse % 1.0);
-    f((sec * _tau * 0.55) % _tau);
-    f(0);
-    // uLiquid0/1: each strand's three ripple phases, and its amplitude.
-    final amp = r * (0.018 + level * 0.12) * (1 - think * 0.7);
-    for (var j = 0; j < 2; j++) {
-      final phase = sec * 2.1 + j * 1.9;
-      f((phase * 1.3) % _tau);
-      f((phase * 1.7) % _tau);
-      f((phase * 2.3) % _tau);
-      f(amp * (1 - j * 0.4));
+    _f(size.width);
+    _f(size.height);
+    _f(r);
+    _f(1 / dpr);
+    _f(sc.appear);
+    _f(sc.sway * r);
+    _f(sc.stretch);
+    _f(0);
+    // uPush0, uPush1
+    _f(sc.scaleOf(0));
+    _f(sc.scaleOf(1));
+    _f(sc.scaleOf(2));
+    _f(sc.scaleOf(3));
+    _f(sc.scaleOf(4));
+    _f(OrbRings.pushTopShare);
+    _f(0);
+    _f(0);
+    // The palette, in the order the program declares it.
+    final top = palette.elements, sides = palette.sides;
+    for (var i = 0; i < top.length; i++) {
+      _rgb(top[i]);
     }
-    rgb(violet);
-    rgb(pink);
-    for (final col in _sweepColors) {
-      rgb(col);
+    for (var i = 0; i < sides.length; i++) {
+      if (!OrbRings.elements[i].lens) _rgb(sides[i]);
     }
-    canvas.drawRect(Offset.zero & size, _gpu..shader = shader);
-    // The dust stays on the Canvas, faded the same way the program fades
-    // everything else.
-    _paintMotes(canvas, size, fadeHere: true);
+    _rgb(palette.ribbonNear);
+    _rgb(palette.ribbonFar);
+    _rgb(palette.ribbonAccent);
+    _rgb(palette.sparkle);
+    _rgb(palette.wash);
+    if (_box.width != size.width || _box.height != size.height) {
+      _box = Offset.zero & size;
+    }
+    canvas.drawRect(_box, _gpu..shader = _shader);
   }
 
-  /// 2. DUST drifting outward. Drawn last on the GPU path (a mote passing
-  /// over a hairline ring instead of under it is not something an eye can
-  /// catch), in the offscreen layer on the Canvas path.
-  void _paintMotes(Canvas canvas, Size size, {required bool fadeHere}) {
-    final sec = scene.sec;
-    final c = size.center(Offset.zero);
-    final r = orbRadius;
-    final maxD = size.width * 0.56;
-    final appear = scene.appear;
-    for (final m in _motes) {
-      final life = (m.offset + sec * m.speed) % 1.0;
-      final dist = r * 1.3 + life * (maxD - r * 1.3);
-      final a = m.angle + sec * 0.025;
-      final pos = c + Offset(math.cos(a) * dist, math.sin(a) * dist * 0.7);
-      final fade = math.sin(life * math.pi);
-      final tw = 0.55 + 0.45 * math.sin(sec * m.twinkle + m.offset * 6.3);
-      var alpha = 0.5 * fade * tw;
-      // Outside the layer, the top/bottom melt and the bloom-in are this
-      // mote's own to apply.
-      if (fadeHere) alpha *= _edgeFade(pos.dy / size.height) * appear;
-      if (alpha <= 0) continue;
-      _mote.color = Color.lerp(
-              _moteLeft, _moteRight, (pos.dx / size.width).clamp(0.0, 1.0))!
-          .withValues(alpha: alpha);
-      canvas.drawCircle(pos, m.size, _mote);
-    }
-  }
-
-  /// The top and bottom melt: 0 at the edges, 1 from 22% in.
-  static double _edgeFade(double v) {
-    if (v <= 0 || v >= 1) return 0;
-    if (v < 0.22) return v / 0.22;
-    if (v > 0.78) return (1 - v) / 0.22;
-    return 1;
-  }
-
-  // Worked out once per box, not once per frame (the Canvas path only).
-  Shader? _sweep;
-  Size? _sweepSize;
-
-  /// THE CANVAS PATH — the picture as it was drawn before the GPU program,
-  /// kept for the frames before the program has loaded and for any phone
-  /// that cannot load it.
+  /// THE CANVAS PATH — the same table, for the frames before the GPU
+  /// program has loaded and for any phone that cannot load it. Every
+  /// element is a triangle mesh built ONCE round the origin at radius 1
+  /// ([_OrbMeshes]); a frame only moves it into place and scales it by
+  /// its push, so the keyboard shrinking the orb or the voice pushing a
+  /// ring rebuilds nothing. Each mesh carries its colours in its corners,
+  /// and the GPU program interpolates exactly the same way, so the two
+  /// pictures match to a rounding step.
   void _paintCanvas(Canvas canvas, Size size) {
-    final sec = scene.sec, pulse = scene.pulse, level = scene.level;
-    final pulseAmt = scene.pulseAmt, think = scene.think;
-    // The bloom-in, applied through the one offscreen layer this already
-    // paints into, so fading costs nothing.
-    final appear = scene.appear;
-    final c = size.center(Offset.zero);
+    final sc = scene;
+    final meshes = _OrbMeshes.of(palette);
     final r = orbRadius;
-    final bounds = Offset.zero & size;
-
-    // Left-to-right sweep for the tunnel: accent, ink, partner.
-    if (_sweep == null || _sweepSize != size) {
-      _sweepSize = size;
-      _sweep = LinearGradient(colors: _sweepColors).createShader(bounds);
+    final cx = size.width / 2, cy = size.height / 2;
+    if (sc.appear != _meshAlpha) {
+      _meshAlpha = sc.appear;
+      _mesh.color = Color.fromRGBO(255, 255, 255, sc.appear);
     }
-    final sweep = _sweep!;
-    // Round-the-orb sweep for the rings that hug it, turning slowly.
-    final around = SweepGradient(
-      colors: [violet, pink, Color.lerp(violet, pink, 0.4)!, violet],
-      stops: const [0.0, 0.4, 0.75, 1.0],
-      transform: GradientRotation(sec * 0.35),
-    ).createShader(Rect.fromCircle(center: c, radius: r * 3));
-
-    // Everything but the vignette fades out toward the top and bottom, so
-    // it melts into the overlay instead of ending at the box's edge. ONE
-    // offscreen layer per frame — per-element layers are how a pretty orb
-    // becomes a stuttering one on a mid-range phone.
-    canvas.saveLayer(
-        bounds, Paint()..color = Colors.black.withValues(alpha: appear));
-
-    // 1. AURORA — squashed into ovals so it stays inside the box.
-    void cloud(Offset at, double radius, Color col, double a) {
+    // The picture's teal night under the rings (OrbRings.washFull),
+    // squashed to end at the box's top and bottom.
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.scale(r, r * OrbRings.washSquash(cy / r));
+    canvas.drawVertices(meshes.wash, BlendMode.dst, _mesh);
+    canvas.restore();
+    const top = OrbRings.pushTopShare;
+    for (var i = 0; i < OrbRings.elements.length; i++) {
+      final s = sc.scaleOf(OrbRings.elements[i].tier);
       canvas.save();
-      canvas.translate(at.dx, at.dy);
-      canvas.scale(1, 0.62);
-      canvas.drawCircle(
-        Offset.zero,
-        radius,
-        Paint()
-          ..shader = RadialGradient(
-            colors: [
-              col.withValues(alpha: a),
-              col.withValues(alpha: a * 0.35),
-              col.withValues(alpha: 0),
-            ],
-            stops: const [0.0, 0.45, 1.0],
-          ).createShader(Rect.fromCircle(center: Offset.zero, radius: radius)),
-      );
+      canvas.translate(cx, cy);
+      canvas.scale(r * s, r * (1 + top * (s - 1)));
+      canvas.drawVertices(meshes.elements[i], BlendMode.dst, _mesh);
       canvas.restore();
     }
-
-    cloud(
-        c +
-            Offset(-r * 0.95 + math.cos(sec * 0.21) * r * 0.3,
-                math.sin(sec * 0.17) * r * 0.18),
-        r * 2.7,
-        violet,
-        0.34 + level * 0.16);
-    cloud(
-        c +
-            Offset(r * 0.95 + math.cos(sec * 0.19 + 2.1) * r * 0.3,
-                math.sin(sec * 0.23 + 1.3) * r * 0.18),
-        r * 2.5,
-        pink,
-        0.27 + level * 0.14);
-    cloud(c, r * 1.8, Color.lerp(violet, pink, 0.45)!, 0.16 + level * 0.20);
-
-    // 2. DUST drifting outward.
-    _paintMotes(canvas, size, fadeHere: false);
-
-    // 3. The TUNNEL, breathing very slightly.
-    final breathe = 1 + 0.025 * math.sin(sec * 0.7) + level * 0.04;
-    for (var i = 0; i < _rings.length; i++) {
-      final rx = r * _rings[i] * breathe;
-      final ry = r * (1.3 + i * 0.16) * breathe;
-      canvas.drawOval(
-        Rect.fromCenter(center: c, width: rx * 2, height: ry * 2),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..shader = sweep
-          ..color = Colors.white.withValues(alpha: 0.30 * (1 - i / 5)),
-      );
-    }
-
-    // 4. PULSES rolling out from the orb.
-    if (pulseAmt > 0.01) {
-      for (var i = 0; i < 3; i++) {
-        final ph = (pulse + i / 3) % 1.0;
-        final fade = (1 - ph) * (1 - ph);
-        canvas.drawCircle(
-          c,
-          r * (1.08 + ph * 0.95),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 0.6 + 2.2 * (1 - ph)
-            ..shader = around
-            ..color = Colors.white
-                .withValues(alpha: fade * pulseAmt * (0.35 + level * 0.55)),
-        );
-      }
-    }
-
-    // 5. The LIQUID RING — hugs the orb and ripples with the voice. Two
-    // strands out of step read as liquid; one reads as a wobbly circle.
-    final calm = 1 - think * 0.7;
-    final amp = r * (0.018 + level * 0.12) * calm;
-    for (var j = 0; j < 2; j++) {
-      final path = _liquid(
-          c, r * (1.12 + j * 0.035), amp * (1 - j * 0.4), sec * 2.1 + j * 1.9);
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..shader = around
-          ..color = Colors.white.withValues(alpha: 0.10 + level * 0.10),
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = j == 0 ? 2.0 : 1.2
-          ..shader = around
-          ..color = Colors.white.withValues(alpha: j == 0 ? 0.9 : 0.5),
-      );
-    }
-
-    // 6. THINKING — two comets chasing round the orb.
-    if (think > 0.01) {
-      final rect = Rect.fromCircle(center: c, radius: r * 1.26);
-      for (var k = 0; k < 2; k++) {
-        final start = sec * 2 * math.pi * 0.55 + k * math.pi;
-        final shader = SweepGradient(
-          colors: [
-            violet.withValues(alpha: 0),
-            violet,
-            Color.lerp(pink, Colors.white, 0.3)!,
-          ],
-          stops: const [0.0, 0.3, 0.42],
-          transform: GradientRotation(start),
-        ).createShader(rect);
-        canvas.drawArc(
-          rect,
-          start,
-          math.pi * 0.84,
-          false,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.6
-            ..strokeCap = StrokeCap.round
-            ..shader = shader
-            ..color = Colors.white.withValues(alpha: think * (1 - k * 0.45)),
-        );
-      }
-    }
-
-    canvas.drawRect(
-      bounds,
-      Paint()
-        ..blendMode = BlendMode.dstIn
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.transparent,
-            Colors.white,
-            Colors.white,
-            Colors.transparent,
-          ],
-          stops: [0.0, 0.22, 0.78, 1.0],
-        ).createShader(bounds),
-    );
-    // No vignette. It was a black rectangle's worth of shading, and over
-    // the session's tinted ground its edges drew a box round the orb; the
-    // fade above already lets everything melt away top and bottom.
+    canvas.save();
+    canvas.translate(cx, cy + sc.sway * r);
+    canvas.scale(r, r * sc.stretch);
+    canvas.drawVertices(meshes.ribbons, BlendMode.dst, _mesh);
     canvas.restore();
-  }
-
-  /// A closed ring whose radius wanders with three harmonics moving at
-  /// different speeds, so the ripple never visibly repeats.
-  Path _liquid(Offset c, double base, double amp, double phase) {
-    final p = Path();
-    const n = 120;
-    for (var k = 0; k <= n; k++) {
-      final th = k / n * 2 * math.pi;
-      final d = base +
-          amp *
-              (0.55 * math.sin(3 * th + phase * 1.3) +
-                  0.30 * math.sin(5 * th - phase * 1.7) +
-                  0.15 * math.sin(8 * th + phase * 2.3));
-      final pt = c + Offset(math.cos(th) * d, math.sin(th) * d);
-      if (k == 0) {
-        p.moveTo(pt.dx, pt.dy);
-      } else {
-        p.lineTo(pt.dx, pt.dy);
-      }
-    }
-    return p..close();
   }
 
   @override
   bool shouldRepaint(_BackdropPainter old) =>
       // Frames repaint through [scene]. A rebuild repaints only when what
-      // it draws with changed — it used to be always, which is right for
-      // a scene that never stops; this one holds still at rest.
+      // it draws with changed.
       old.scene != scene ||
       old.orbRadius != orbRadius ||
-      old.violet != violet ||
-      old.pink != pink ||
+      old.palette.seed != palette.seed ||
       old.dpr != dpr;
+}
+
+/// THE CANVAS PAINTER'S MESHES, built once per palette (and kept: the
+/// palette only changes when the owner picks a new theme colour).
+///
+/// Across an element the mesh has six rows — the glow's outer edge, the
+/// bright edge, the core's two sides, the bright edge and the glow's
+/// outer edge again — with the profile's alpha in each row, so the
+/// renderer's own interpolation between the rows draws exactly the
+/// profile the GPU program works out per pixel.
+class _OrbMeshes {
+  _OrbMeshes._(OrbPalette p)
+      : wash = _wash(p.wash),
+        elements = [
+          for (var i = 0; i < OrbRings.elements.length; i++)
+            _element(OrbRings.elements[i], p.elements[i], p.sides[i]),
+        ],
+        ribbons = _ribbons(p);
+
+  final ui.Vertices wash;
+  final List<ui.Vertices> elements;
+  final ui.Vertices ribbons;
+
+  static _OrbMeshes? _last;
+  static Color? _lastSeed;
+
+  static _OrbMeshes of(OrbPalette p) {
+    final last = _last;
+    if (last != null && _lastSeed == p.seed) return last;
+    _lastSeed = p.seed;
+    return _last = _OrbMeshes._(p);
+  }
+
+  /// A colour with its alpha, for a vertex.
+  static int _argb(Color c, double a) =>
+      (((a.clamp(0.0, 1.0) * 255).round()) << 24) |
+      (((c.r * 255).round()) << 16) |
+      (((c.g * 255).round()) << 8) |
+      ((c.b * 255).round());
+
+  /// The wash: a round disc at radius 1 (the painter squashes it), full
+  /// strength to [OrbRings.washFull] — one fan from the middle — then
+  /// rows every twentieth of a radius out to [OrbRings.washGone], each
+  /// with the fade's own strength there, so the straight lines between
+  /// the rows follow the program's smoothstep to well under a colour step.
+  static ui.Vertices _wash(Color c) {
+    const n = 128, rows = 16;
+    final radii = [
+      for (var k = 0; k <= rows; k++)
+        OrbRings.washFull + (OrbRings.washGone - OrbRings.washFull) * k / rows,
+    ];
+    final pos = Float32List((1 + n * radii.length) * 2);
+    final col = Int32List(1 + n * radii.length);
+    col[0] = _argb(c, 1);
+    var vi = 1;
+    for (final rr in radii) {
+      final a = OrbRings.washAlpha(rr);
+      for (var k = 0; k < n; k++) {
+        final th = 2 * math.pi * k / n;
+        pos[vi * 2] = math.cos(th) * rr;
+        pos[vi * 2 + 1] = math.sin(th) * rr;
+        col[vi] = _argb(c, a);
+        vi++;
+      }
+    }
+    final idx = <int>[];
+    int at(int row, int k) => 1 + row * n + k % n;
+    for (var k = 0; k < n; k++) {
+      idx.addAll([0, at(0, k), at(0, k + 1)]);
+      for (var row = 0; row < rows; row++) {
+        final a = at(row, k), b = at(row, k + 1);
+        final c0 = at(row + 1, k), d = at(row + 1, k + 1);
+        idx.addAll([a, c0, b, b, c0, d]);
+      }
+    }
+    return ui.Vertices.raw(ui.VertexMode.triangles, pos,
+        colors: col, indices: Uint16List.fromList(idx));
+  }
+
+  static ui.Vertices _element(OrbElement el, Color top, Color side) {
+    // Angles to sample: all the way round for a full ring; for a lens,
+    // the two arcs where it exists (right and left), densely enough that
+    // its pointed ends stay pointed.
+    final angles = <double>[];
+    final arcs = <int>[];
+    if (el.lens) {
+      const n = 128;
+      for (final mid in [0.0, 180.0]) {
+        arcs.add(n + 1);
+        for (var k = 0; k <= n; k++) {
+          angles.add(mid - el.tip + 2 * el.tip * k / n);
+        }
+      }
+    } else {
+      const n = 256;
+      arcs.add(n + 1);
+      for (var k = 0; k <= n; k++) {
+        angles.add(360.0 * k / n);
+      }
+    }
+    final pos = Float32List(angles.length * 6 * 2);
+    final col = Int32List(angles.length * 6);
+    var vi = 0;
+    for (final deg in angles) {
+      final th = deg * math.pi / 180;
+      final cs = math.cos(th), sn = math.sin(th);
+      // Degrees from the horizontal, 0..90, as the program measures it.
+      final al = math.atan2(sn.abs(), cs.abs()) * 180 / math.pi;
+      double h = el.h, rc = el.r0, m = 1;
+      var c = top;
+      if (el.lens) {
+        final w = (1 - (al / el.tip) * (al / el.tip)).clamp(0.0, 1.0);
+        h = el.h * w;
+        rc = el.r0 + el.drift * (1 - w);
+        m = OrbRings.smoothstep(el.fade0, el.fade1, w);
+      } else {
+        final ts = (1 - (al / el.side) * (al / el.side)).clamp(0.0, 1.0);
+        c = Color.lerp(top, side, ts)!;
+      }
+      final offs = [
+        -(h + el.e + el.g), -(h + el.e), -h, h, h + el.e, h + el.e + el.g
+      ];
+      final alphas = [0.0, el.a1, el.a0, el.a0, el.a1, 0.0];
+      for (var row = 0; row < 6; row++) {
+        final rr = rc + offs[row];
+        pos[vi * 2] = cs * rr;
+        pos[vi * 2 + 1] = sn * rr;
+        col[vi] = _argb(c, alphas[row] * m);
+        vi++;
+      }
+    }
+    final idx = <int>[];
+    var start = 0;
+    for (final count in arcs) {
+      for (var k = 0; k < count - 1; k++) {
+        for (var row = 0; row < 5; row++) {
+          final a = (start + k) * 6 + row, b = a + 1;
+          final c = a + 6, d = c + 1;
+          idx.addAll([a, b, c, b, d, c]);
+        }
+      }
+      start += count;
+    }
+    return ui.Vertices.raw(ui.VertexMode.triangles, pos,
+        colors: col, indices: Uint16List.fromList(idx));
+  }
+
+  /// Each side's sheet, its strands (three rows each: nothing, the line,
+  /// nothing) and accent strands, then the sparkles as little soft discs —
+  /// in the order the program paints them.
+  static ui.Vertices _ribbons(OrbPalette p) {
+    final pos = <double>[];
+    final col = <int>[];
+    final idx = <int>[];
+    const n = OrbRings.ribbonSamples;
+
+    /// A band along the ribbon: at each sample, [rows] heights (offsets
+    /// from [y], in units of [unit]) with their share of [a].
+    void strip(int side, double Function(double u) y, double Function(double u) unit,
+        double Function(double u) a, Color Function(double u) colour,
+        List<(double, double)> rows) {
+      final base = pos.length ~/ 2;
+      final m = rows.length;
+      for (var k = 0; k <= n; k++) {
+        final xAbs = OrbRings.ribbonFrom +
+            (OrbRings.ribbonTo - OrbRings.ribbonFrom) * k / n;
+        final u = OrbRings.ribbonU(xAbs);
+        final yy = y(u), un = unit(u), al = a(u);
+        final c = colour(u);
+        for (final (dy, share) in rows) {
+          pos
+            ..add(side * xAbs)
+            ..add(yy + dy * un);
+          col.add(_argb(c, al * share));
+        }
+      }
+      for (var k = 0; k < n; k++) {
+        for (var row = 0; row < m - 1; row++) {
+          final a0 = base + k * m + row, b0 = a0 + 1;
+          final c0 = a0 + m, d0 = c0 + 1;
+          idx.addAll([a0, b0, c0, b0, d0, c0]);
+        }
+      }
+    }
+
+    Color shade(double u) =>
+        Color.lerp(p.ribbonNear, p.ribbonFar, OrbRings.ribbonShade(u))!;
+    const line = [(-1.0, 0.0), (0.0, 1.0), (1.0, 0.0)];
+    const sheet = [
+      (-1.0, 0.0),
+      (-OrbRings.sheetKnee, OrbRings.sheetKneeAlpha),
+      (0.0, 1.0),
+      (OrbRings.sheetKnee, OrbRings.sheetKneeAlpha),
+      (1.0, 0.0),
+    ];
+
+    for (final side in [1, -1]) {
+      strip(side, (u) => OrbRings.ribbonMid(u, side),
+          (u) => OrbRings.ribbonHalf(u, side), OrbRings.sheetAlpha, shade, sheet);
+      for (var j = 0; j < OrbRings.strands; j++) {
+        strip(side, (u) => OrbRings.strandY(u, side, j), (_) => OrbRings.strandHalf,
+            (u) => OrbRings.strandAlpha(u, side, j), shade, line);
+      }
+      for (var i = 0; i < OrbRings.accents; i++) {
+        strip(side, (u) => OrbRings.accentY(u, side, i), (_) => OrbRings.accentHalf,
+            OrbRings.accentAlpha, (_) => p.ribbonAccent, line);
+      }
+      for (final (x, dy, rad, a) in side > 0
+          ? OrbRings.sparklesRight
+          : OrbRings.sparklesLeft) {
+        final cx = side * x;
+        final cy = OrbRings.ribbonMid(OrbRings.ribbonU(x), side) + dy;
+        final base = pos.length ~/ 2;
+        const spokes = 24;
+        pos
+          ..add(cx)
+          ..add(cy);
+        col.add(_argb(p.sparkle, a));
+        for (var s = 0; s < spokes; s++) {
+          final t = 2 * math.pi * s / spokes;
+          for (final (f, on) in [(0.45, 1.0), (1.0, 0.0)]) {
+            pos
+              ..add(cx + math.cos(t) * rad * f)
+              ..add(cy + math.sin(t) * rad * f);
+            col.add(_argb(p.sparkle, a * on));
+          }
+        }
+        for (var s = 0; s < spokes; s++) {
+          final i0 = base + 1 + s * 2, o0 = i0 + 1;
+          final i1 = base + 1 + ((s + 1) % spokes) * 2, o1 = i1 + 1;
+          idx.addAll([base, i0, i1, i0, o0, i1, o0, o1, i1]);
+        }
+      }
+    }
+    return ui.Vertices.raw(ui.VertexMode.triangles, Float32List.fromList(pos),
+        colors: Int32List.fromList(col), indices: Uint16List.fromList(idx));
+  }
 }

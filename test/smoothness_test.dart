@@ -306,7 +306,10 @@ void main() {
       await _settle(tester);
     });
 
-    testWidgets('the orb repaints on its own layer, not with the words',
+    // 2026-09-25, the client's rings: "only the speaker should move". The
+    // disc in the middle (VoiceOrb) used to breathe and swell every frame;
+    // now it holds still and only the rings round it (the backdrop) move.
+    testWidgets('the rings repaint on their own layer; the disc and the words hold still',
         (tester) async {
       _ownersPhone(tester);
       await tester.pumpWidget(const MaterialApp(
@@ -316,19 +319,21 @@ void main() {
       await _settle(tester, 2); // faded all the way in
       expect(find.text('Listening…'), findsOneWidget);
 
-      final sphere = _layerOf(tester.renderObject(find.byType(VoiceOrb)));
+      final disc = _layerOf(tester.renderObject(find.byType(VoiceOrb)));
       final backdrop = _layerOf(tester.renderObject(find.byType(VoiceOrbBackdrop)));
       final words = _layerOf(tester.renderObject(find.text('Listening…')));
-      expect(identical(words, sphere) || identical(words, backdrop), isFalse);
-      for (final b in [sphere, backdrop, words]) {
+      expect(identical(words, disc) || identical(words, backdrop), isFalse);
+      for (final b in [disc, backdrop, words]) {
         b.debugResetMetrics();
       }
 
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
-      expect(_paints(sphere), greaterThanOrEqualTo(9), reason: 'the sphere moved');
-      expect(_paints(backdrop), greaterThanOrEqualTo(9), reason: 'the backdrop moved');
+      expect(identical(disc, backdrop), isFalse);
+      expect(_paints(disc), 0,
+          reason: 'the disc was redrawn for a frame of the rings: it must hold still');
+      expect(_paints(backdrop), greaterThanOrEqualTo(9), reason: 'the rings moved');
       expect(_paints(words), 0,
           reason: 'the layer holding the words was redrawn with the orb');
       _closeSession();
@@ -442,13 +447,15 @@ void main() {
       await _settle(tester, 3);
 
       final page = _layerOf(tester.renderObject(find.byType(IndexedStack)));
-      final sphere = _layerOf(tester.renderObject(find.byType(VoiceOrb)));
+      // The rings: the part of the orb that moves (2026-09-25; the disc
+      // holds still).
+      final rings = _layerOf(tester.renderObject(find.byType(VoiceOrbBackdrop)));
       page.debugResetMetrics();
-      sphere.debugResetMetrics();
+      rings.debugResetMetrics();
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
-      expect(_paints(sphere), greaterThanOrEqualTo(9));
+      expect(_paints(rings), greaterThanOrEqualTo(9));
       expect(_paints(page), 0, reason: 'the covered tabs were redrawn with the orb');
 
       _closeSession();
