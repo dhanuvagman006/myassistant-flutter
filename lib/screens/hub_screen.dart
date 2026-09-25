@@ -10,6 +10,7 @@ import 'finance_screen.dart';
 import 'phone/call_notes_screen.dart';
 import 'reminders_screen.dart';
 import 'meetings/meetings_screen.dart';
+import 'news_screen.dart';
 import 'email_setup_screen.dart';
 import 'features_screen.dart';
 import 'stocks_screen.dart';
@@ -49,6 +50,16 @@ class HubScreen extends StatelessWidget {
               Icons.groups_rounded,
               Neon.accentB,
               (c) => const MeetingsScreen(),
+            ),
+          ]),
+          // News as cards, by topic (2026-09-25).
+          _group(context, 'Stay informed', [
+            _Row(
+              'News',
+              "Today's stories as cards — swipe through, tap to read",
+              Icons.newspaper_rounded,
+              Neon.accentC,
+              (c) => const NewsScreen(),
             ),
           ]),
           _group(context, 'Phone', [

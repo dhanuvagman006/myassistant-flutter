@@ -37,6 +37,9 @@ import 'package:myassistant/screens/lock_screen.dart';
 import 'package:myassistant/screens/mcp_servers_screen.dart';
 import 'package:myassistant/screens/meetings/meeting_detail_screen.dart';
 import 'package:myassistant/screens/meetings/meetings_screen.dart';
+import 'package:myassistant/models/news_item.dart';
+import 'package:myassistant/screens/news_screen.dart';
+import 'package:myassistant/screens/news_story_screen.dart';
 import 'package:myassistant/screens/phone/call_notes_screen.dart';
 import 'package:myassistant/screens/quick_task_screen.dart';
 import 'package:myassistant/screens/reminders_screen.dart';
@@ -120,6 +123,50 @@ class _ShellVoiceState extends State<_ShellVoice> {
       ..inlineVoice = false
       ..phase = AssistantPhase.idle;
     AssistantEngine.instance.activityLabel.value = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const HomeShell();
+}
+
+/// Stories with the longest headlines and summaries a card has to hold.
+final _news = [
+  for (var i = 1; i <= 6; i++)
+    NewsItem(
+      id: 'n$i',
+      title: i.isOdd
+          ? 'Monsoon arrives early in Kerala as the weather office says rainfall '
+              'this year will run above normal across the whole of the south'
+          : 'Budget: new tax slabs for salaried workers',
+      url: 'https://example.com/$i',
+      source: 'timesofindia.indiatimes.example',
+      age: '2 hours ago',
+      snippet: 'A long summary that goes on for a while, so that the card has to '
+          'cut it at two lines on a phone of any size and with any text size.',
+      extra: const ['A second snippet with a few more words about the story.'],
+      image: 'https://img.example/$i.jpg',
+    ),
+];
+
+/// The voice deck over Home, as show_news leaves it.
+class _ShellNews extends StatefulWidget {
+  const _ShellNews();
+  @override
+  State<_ShellNews> createState() => _ShellNewsState();
+}
+
+class _ShellNewsState extends State<_ShellNews> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+        (_) => AssistantEngine.instance.showNews(_news, topic: 'today'));
+  }
+
+  @override
+  void dispose() {
+    AssistantEngine.instance.newsItems = const [];
     super.dispose();
   }
 
@@ -218,6 +265,10 @@ final screens = <String, Widget Function()>{
   'Connected tools': () => const McpServersScreen(),
   'Meeting detail': () => const MeetingDetailScreen(id: 1),
   'Meetings': () => const MeetingsScreen(),
+  'News (offline)': () => NewsScreen(loader: (_) async => null),
+  'News (cards)': () => NewsScreen(loader: (_) async => _news),
+  'News story': () => NewsStoryScreen(item: _news.first),
+  'News deck (voice, in the shell)': () => const _ShellNews(),
   'Call notes': () => const CallNotesScreen(),
   'Quick task': () => const QuickTaskScreen(),
   'Reminders': () => RemindersScreen(loader: () async => const []),
