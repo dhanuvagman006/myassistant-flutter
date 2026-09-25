@@ -55,6 +55,10 @@ import 'package:myassistant/screens/studio/studio_screen.dart';
 import 'package:myassistant/screens/diagnostics_screen.dart';
 import 'package:myassistant/screens/mic_probe_screen.dart';
 import 'package:myassistant/screens/avatar_identity_screen.dart';
+import 'package:myassistant/screens/focus_screen.dart';
+import 'package:myassistant/screens/momentum_screen.dart';
+import 'package:myassistant/models/momentum.dart';
+import 'package:myassistant/services/momentum_service.dart';
 import 'package:myassistant/shell/home_shell.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
@@ -224,6 +228,15 @@ final screens = <String, Widget Function()>{
   'Search': () => const SearchScreen(),
   'Stocks': () => StocksScreen(loader: () async => const {}),
   'Theme colour': () => const ThemeColourScreen(),
+  // MOMENTUM (2026-09-25): full, with long titles, and the Focus page both
+  // before a session and while one runs.
+  'Momentum (filled in)': () {
+    MomentumService.instance.debugSeed(MomentumSummary.fromJson(_momentumJson()));
+    return const MomentumScreen();
+  },
+  'Focus (choose how long)': () => const FocusScreen(),
+  'Focus (running)': () => const FocusScreen(
+      minutes: 25, label: 'Quarterly report for the board meeting', autoStart: true),
   'Sign in': () => const AuthScreen(),
   'Phone verify': () => const PhoneVerifyScreen(),
   'Welcome': () => WelcomeScreen(onDone: () {}),
@@ -260,8 +273,52 @@ final screens = <String, Widget Function()>{
       ),
 };
 
+/// A full Momentum summary for today, with titles long enough to wrap.
+Map<String, dynamic> _momentumJson() {
+  final today = MomentumService.today;
+  final d = DateTime.parse(today);
+  String day(int back) => MomentumService.dayOf(d.subtract(Duration(days: back)));
+  return {
+    'ok': true,
+    'day': today,
+    'priorities': [
+      {'id': 1, 'title': 'Finish the quarterly report for the board meeting', 'done': true, 'position': 0},
+      {'id': 2, 'title': 'Call the bank about the home loan paperwork', 'done': false, 'position': 1},
+      {'id': 3, 'title': 'Book tickets', 'done': false, 'position': 2},
+    ],
+    'habits': [
+      for (final (i, t) in ['Drink water', 'Walk 30 minutes', 'Read 10 pages', 'Meditate'].indexed)
+        {
+          'id': 10 + i, 'title': t, 'emoji': '💧', 'remindAt': i == 0 ? '09:00' : null,
+          'doneToday': i.isEven, 'streak': 12 - i, 'best': 30,
+          'last7': [true, false, true, true, true, i.isOdd, i.isEven],
+        },
+    ],
+    'focus': {'todayMin': 95, 'weekMin': 610, 'totalMin': 12450},
+    'streak': {'current': 128, 'best': 128, 'activeToday': true, 'graceUsedThisWeek': true},
+    'week': {
+      'days': [
+        for (var k = 6; k >= 0; k--)
+          {'day': day(k), 'active': k != 3, 'wins': k * 2, 'focusMin': 20 * k, 'habits': 3, 'forgiven': k == 3},
+      ],
+      'wins': 42, 'focusMin': 610, 'habitsKept': 21, 'bestDay': day(6),
+    },
+    'milestones': [
+      {'id': 'streak_100', 'label': '100-day streak', 'earned': true},
+      {'id': 'focus_100h', 'label': '100 hours of focus', 'earned': true},
+      {'id': 'wins_50', 'label': '50 wins', 'earned': false},
+    ],
+  };
+}
+
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // Home runs with its Momentum card filled in (long titles, big
+    // numbers), so the card is swept at every text size too.
+    MomentumService.transport =
+        (method, path, {body}) async => MomentumReply(200, _momentumJson());
+  });
   tearDown(() {
     HomeShell.lastTab = 0;
     AppFeedback.resetForTest();
