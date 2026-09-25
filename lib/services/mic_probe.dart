@@ -235,6 +235,12 @@ class MicProbe extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (phase != MicProbePhase.starting) return; // stopped meanwhile
     counts.modeAtStart = r.audioMode;
+    // A CALL ALREADY ON (owner, 2026-09-25: "start talk while it works"):
+    // the service lets go at once in a call, so the microphone is not
+    // opened at all. The test ends the way that stop would have ended it.
+    if (TaskVoice.isCallMode(r.audioMode)) {
+      return _finish(TaskVoiceStop.call.wire, modeEnd: r.audioMode);
+    }
     _observe(true);
     final ok = await _live.probeMic(_onFrame, onEnded: (why) => _finish(why));
     if (phase != MicProbePhase.starting) {

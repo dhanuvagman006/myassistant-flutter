@@ -874,6 +874,10 @@ class LiveService {
   StreamSubscription<Uint8List>? _probeSub;
   void Function(String why)? _probeEnded;
 
+  /// The mic test's last recorder restart, finished or still in flight.
+  /// Never throws. [_endProbe] waits for it before it looks at the recorder.
+  Future<void>? _probeRestarting;
+
   /// True while the mic test holds the recorder.
   bool get probing => _probeOn;
 
@@ -922,7 +926,12 @@ class LiveService {
     final token = ++_probeToken;
     _probeEnded = onEnded;
     try {
-      final asSession = await _restartMic(micConfig());
+      final asSession = await _probeRestart(micConfig());
+      // ENDED WHILE THE RECORDER WAS OPENING (owner, 2026-09-25: "start
+      // talk while it works"): a call already on, Stop, the screen going
+      // off. _endProbe waited for this open and lets the recorder go, so
+      // nothing may listen to it now; it would stay attached for good.
+      if (token != _probeToken) return false;
       _probeSub = asSession.listen((_) {}, onError: (Object _) {});
       await Future<void>.delayed(probeSessionHold);
       // Stopped, or a conversation took the recorder, meanwhile: whoever
@@ -932,7 +941,8 @@ class LiveService {
       // belong to the root zone (a test's fake clock never finishes it).
       unawaited(_probeSub?.cancel());
       _probeSub = null;
-      final mic = await _restartMic(micConfig(task: true));
+      final mic = await _probeRestart(micConfig(task: true));
+      // The same: _endProbe waited for this restart and stops it.
       if (token != _probeToken) return false;
       _probeSub = mic.listen(
         onFrame,
@@ -960,6 +970,14 @@ class LiveService {
     return _rec.startStream(cfg);
   }
 
+  /// The mic test's restart, remembered so [_endProbe] can wait for it.
+  Future<Stream<Uint8List>> _probeRestart(RecordConfig cfg) {
+    final restart = _restartMic(cfg);
+    // probeMic's own await sees an error; this copy only says "finished".
+    _probeRestarting = restart.then<void>((_) {}, onError: (Object _) {});
+    return restart;
+  }
+
   /// Ends the mic test and releases the recorder. Safe to call any time.
   Future<void> stopProbe() => _endProbe(null);
 
@@ -971,9 +989,21 @@ class LiveService {
     _probeSub = null;
     final ended = _probeEnded;
     _probeEnded = null;
+    final restarting = _probeRestarting;
+    _probeRestarting = null;
     // Cancelled at once, not awaited (see probeMic).
     unawaited(sub?.cancel());
-    if (debugProbeStream == null) {
+    // A RESTART STILL IN FLIGHT FINISHES FIRST (owner, 2026-09-25: "start
+    // talk while it works"). The recorder answers its calls one at a time,
+    // in order. A test ended while probeMic was opening the recorder used
+    // to ask "recording?" before that open had run, hear "no", and stop
+    // nothing; the open then went ahead, and the microphone stayed on (and
+    // music stayed paused) after the screen said Finished. Once the open
+    // has finished, the answer below is the truth.
+    if (restarting != null) await restarting;
+    // A newer mic test that began meanwhile restarts the recorder itself;
+    // stopping here would cut it off.
+    if (debugProbeStream == null && !_probeOn) {
       try {
         if (await _rec.isRecording()) await _rec.stop();
       } catch (_) {}

@@ -13,7 +13,11 @@
 //    (no audio-focus pause), and the session's own settings are unchanged;
 //  * the probe restarts the session's recorder (session settings, then the
 //    task settings), sends nothing anywhere, and lets the recorder go on
-//    every way a test ends: a call, the screen, coming back, Stop.
+//    every way a test ends: a call, the screen, coming back, Stop;
+//  * a stop that lands while the recorder is still being opened or
+//    restarted leaves it OFF, checked through the record plugin's own
+//    channel with a stand-in recorder, at every call of both restarts;
+//  * a call already on when the test starts never opens the microphone.
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -77,6 +81,76 @@ class FakeVoice implements TaskVoicePort {
   }
 
   void send(TaskVoiceEvent e) => events0.add(e);
+}
+
+/// The record plugin's Android half, as much of it as the mic test uses:
+/// one recorder that is on or off, and every call it answered, in order.
+/// Each call takes a couple of milliseconds, as a platform round trip does,
+/// and [onCall] runs the moment a call arrives, so a test can land a stop
+/// exactly while that call is in flight.
+class FakeRecorder {
+  FakeRecorder(this.messenger);
+
+  static const channel = MethodChannel('com.llfbandit.record/messages');
+
+  final TestDefaultBinaryMessenger messenger;
+  bool on = false;
+  int inFlight = 0;
+  final calls = <String>[];
+  final _seen = <String, int>{};
+  final _ids = <String>{};
+  void Function(String method, int nth)? onCall;
+
+  Future<Object?> handle(MethodCall call) async {
+    final id = (call.arguments as Map?)?['recorderId'] as String?;
+    if (id != null && _ids.add(id)) {
+      // The recorder's own event channels: its frames, and its state.
+      for (final name in ['eventsRecord', 'events']) {
+        messenger.setMockStreamHandler(
+            EventChannel('com.llfbandit.record/$name/$id'),
+            MockStreamHandler.inline(onListen: (_, __) {}));
+      }
+    }
+    final nth = _seen[call.method] = (_seen[call.method] ?? 0) + 1;
+    inFlight++;
+    onCall?.call(call.method, nth);
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    inFlight--;
+    switch (call.method) {
+      case 'hasPermission':
+        return true;
+      case 'isRecording':
+        calls.add('isRecording=$on');
+        return on;
+      case 'startStream':
+        on = true;
+        calls.add('startStream');
+        return null;
+      case 'stop':
+        on = false;
+        calls.add('stop');
+        return null;
+    }
+    return null;
+  }
+
+  void release() {
+    for (final id in _ids) {
+      for (final name in ['eventsRecord', 'events']) {
+        messenger.setMockStreamHandler(
+            EventChannel('com.llfbandit.record/$name/$id'), null);
+      }
+    }
+  }
+}
+
+/// Waits (real time) until [done], failing after two seconds.
+Future<void> until(bool Function() done) async {
+  final give = DateTime.now().add(const Duration(seconds: 2));
+  while (!done()) {
+    if (DateTime.now().isAfter(give)) fail('timed out waiting');
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+  }
 }
 
 void main() {
@@ -464,6 +538,173 @@ void main() {
       expect(probe.counts.frames, 20);
       expect(levels, 0);
       expect(socket, isEmpty);
+    });
+
+    test('a stop while the recorder is still opening leaves nothing '
+        'listening to it', () async {
+      final open = live.debugProbeStream!;
+      live.debugProbeStream = (cfg) async {
+        final s = await open(cfg);
+        if (opened.length == 1) {
+          // Android stopped the service (a call) right after promotion:
+          // the event reaches Dart while the recorder is still opening.
+          voice.send(const TaskVoiceEvent.stopped(TaskVoiceStop.call,
+              modeStart: 0, modeEnd: 3));
+          await settle();
+          await settle();
+        }
+        return s;
+      };
+      await probe.start();
+      await settle();
+      await settle();
+      expect(probe.phase, MicProbePhase.done);
+      expect(probe.counts.stopCode, 'call');
+      expect(live.probing, isFalse);
+      expect(opened, hasLength(1), reason: 'no restart once it has ended');
+      expect(mics.single.hasListener, isFalse,
+          reason: 'nothing listens to the recorder after "Finished"');
+      expect(voice.log.last, 'stop');
+      expect(socket, isEmpty);
+    });
+
+    test('a call already on at the start never opens the microphone',
+        () async {
+      for (final mode in [2, 3]) {
+        // IN_CALL, IN_COMMUNICATION: the service lets go at once anyway.
+        voice = FakeVoice()..answer = TaskVoiceStart.ok(mode);
+        probe = MicProbe(voice: voice, live: live);
+        AppLog.clear();
+        await probe.start();
+        // The service's own stop, a moment later, changes nothing.
+        voice.send(TaskVoiceEvent.stopped(TaskVoiceStop.call,
+            modeStart: mode, modeEnd: mode));
+        await settle();
+        await settle();
+        expect(probe.phase, MicProbePhase.done, reason: 'mode $mode');
+        expect(probe.counts.stopCode, 'call');
+        expect(probe.counts.modeAtStart, mode);
+        expect(probe.counts.modeAtEnd, mode);
+        expect(opened, isEmpty, reason: 'mode $mode: the mic is never opened');
+        expect(live.probing, isFalse);
+        expect(voice.log, ['listen', 'start', 'stop']);
+        expect(
+            AppLog.tail().where((l) => l.contains('mic test ended (call)')),
+            hasLength(1));
+      }
+    });
+  });
+
+  // Through the record plugin's own channel, no seam: what the phone's
+  // recorder is left doing once a test has ended. The recorder's calls run
+  // one at a time, in order, so a stop that lands in the middle of a
+  // restart queues behind it; whatever the timing, the microphone must end
+  // up off (owner, 2026-09-25: "start talk while it works").
+  group('the probe on the real recorder channel', () {
+    final live = LiveService.instance;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    late FakeRecorder rec;
+    late FakeVoice voice;
+    late MicProbe probe;
+    late List<Object> socket;
+    const callStop =
+        TaskVoiceEvent.stopped(TaskVoiceStop.call, modeStart: 0, modeEnd: 3);
+
+    setUp(() {
+      rec = FakeRecorder(messenger);
+      messenger.setMockMethodCallHandler(FakeRecorder.channel, rec.handle);
+      voice = FakeVoice();
+      probe = MicProbe(voice: voice, live: live);
+      socket = [];
+      AppLog.clear();
+      live.debugProbeStream = null;
+      live.debugWatchSocket(socket.add);
+      live.probeSessionHold = const Duration(milliseconds: 30);
+    });
+
+    tearDown(() async {
+      rec.onCall = null;
+      await live.stopProbe();
+      await until(() => rec.inFlight == 0);
+      live.debugWatchSocket(null);
+      live.probeSessionHold = const Duration(seconds: 1);
+      rec.release();
+      messenger.setMockMethodCallHandler(
+          FakeRecorder.channel, (call) async => null);
+    });
+
+    /// The test has ended and the recorder has answered everything.
+    Future<void> ended() async {
+      bool quiet() =>
+          rec.inFlight == 0 &&
+          AppLog.tail().any((l) => l.contains('mic test ended'));
+      await until(quiet);
+      // Nothing more arrives after it.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(quiet(), isTrue, reason: '${rec.calls}');
+    }
+
+    void expectOff() {
+      expect(probe.phase, MicProbePhase.done);
+      expect(probe.counts.stopCode, 'call');
+      expect(live.probing, isFalse);
+      expect(rec.on, isFalse,
+          reason: 'the microphone is off once the test has ended: '
+              '${rec.calls}');
+      expect(rec.calls.last, 'stop', reason: '${rec.calls}');
+      expect(voice.log.last, 'stop', reason: 'the service goes too');
+      expect(socket, isEmpty);
+    }
+
+    // Every call of both restarts: the stop arrives while it is in flight.
+    for (final (method, nth, what) in [
+      ('isRecording', 1, 'the first open checks the recorder'),
+      ('startStream', 1, 'the first open starts it'),
+      ('isRecording', 2, 'the task restart checks it'),
+      ('stop', 1, 'the task restart stops it'),
+      ('startStream', 2, 'the task restart starts it again'),
+    ]) {
+      test('a stop while $what ($method #$nth) leaves the microphone off',
+          () async {
+        rec.onCall = (m, n) {
+          if (m == method && n == nth) voice.send(callStop);
+        };
+        await probe.start();
+        await ended();
+        expectOff();
+        expect(rec.calls.where((c) => c == 'startStream').length,
+            lessThanOrEqualTo(2));
+      });
+    }
+
+    test('a stop while it holds the session settings leaves the microphone '
+        'off, with no task restart', () async {
+      rec.onCall = (m, n) {
+        // The open answers in 2 ms and the hold lasts 30: this lands in it.
+        if (m == 'startStream' && n == 1) {
+          Timer(const Duration(milliseconds: 15), () => voice.send(callStop));
+        }
+      };
+      await probe.start();
+      await ended();
+      expectOff();
+      expect(rec.calls,
+          ['isRecording=false', 'startStream', 'isRecording=true', 'stop']);
+    });
+
+    test('a stop once it runs leaves the microphone off', () async {
+      await probe.start();
+      expect(probe.phase, MicProbePhase.running);
+      expect(rec.on, isTrue);
+      voice.send(callStop);
+      await ended();
+      expectOff();
+      expect(rec.calls, [
+        'isRecording=false', 'startStream', // the session's settings
+        'isRecording=true', 'stop', 'startStream', // the task restart
+        'isRecording=true', 'stop', // the end
+      ]);
     });
   });
 }
