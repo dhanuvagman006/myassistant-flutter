@@ -16,7 +16,7 @@
 //   * the GPU picture is the same picture (pixel for pixel, within a
 //     rounding step or so), so nothing he knows changes;
 //   * the captions pay for their fade mask only when they overflow;
-//   * the orb keeps its painter across rebuilds and lays its glyph out once;
+//   * the orb keeps its painter across rebuilds and lays its name out once;
 //   * the splash rings, Welcome's confetti and the activity pill's spinner
 //     repaint on their own layers, not with the page round them.
 import 'dart:typed_data';
@@ -26,8 +26,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:myassistant/design/accent_controller.dart';
 import 'package:myassistant/design/gpu_programs.dart';
 import 'package:myassistant/design/neon_tokens.dart';
+import 'package:myassistant/design/orb_rings.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/features/assistant/widgets/siri_orb.dart';
@@ -132,7 +134,7 @@ Widget _orbScene(OrbMood mood) => MaterialApp(
                   Positioned.fill(
                     child: VoiceOrbBackdrop(orbSize: 168, mood: mood, level: 0.6),
                   ),
-                  VoiceOrb(size: 168, mood: mood, level: 0.6),
+                  const VoiceOrb(size: 168, label: 'My Assistant'),
                 ],
               ),
             ),
@@ -220,6 +222,7 @@ void main() {
   tearDown(() {
     GpuProgram.enabled = true;
     Neon.setDark(false);
+    AccentController.seed.value = AccentController.defaultSeed;
   });
 
   testWidgets('the three GPU programs ship with the app and load', (tester) async {
@@ -234,24 +237,31 @@ void main() {
   });
 
   group('the voice backdrop', () {
+    // 2026-09-25, the client's rings: the GPU program now draws the
+    // whole picture, ribbons and sparkles included — the 42 dust motes it
+    // used to leave on the Canvas went with the old design. Without the
+    // program: one prebuilt mesh per ring and one for the ribbons, and no
+    // offscreen layer (the top/bottom melt went with the tunnel).
     testWidgets('is one rectangle: no offscreen layer, no paths, no second pass',
         (tester) async {
       await _pumpOrbScene(tester, OrbMood.listening);
       final gpu = _record(tester, find.byType(VoiceOrbBackdrop));
-      expect(gpu['saveLayer'], 0, reason: 'the full-width offscreen layer is back');
-      expect(gpu['drawPath'], 0, reason: 'the liquid ring is stroked as paths again');
+      expect(gpu['saveLayer'], 0, reason: 'an offscreen layer is back');
+      expect(gpu['drawPath'], 0, reason: 'something is stroked as paths again');
       expect(gpu['drawRect'], 1, reason: 'one rectangle, drawn by the program');
-      expect(gpu['drawCircle'], lessThanOrEqualTo(42),
-          reason: 'only the dust motes stay on the Canvas');
+      expect(gpu['drawCircle'] + gpu['drawVertices'], 0,
+          reason: 'nothing is left on the Canvas beside the program');
+      expect(gpu.paints.where((p) => p.maskFilter != null), isEmpty);
 
-      // Without the program it draws as it always did.
+      // Without the program: the same table, as meshes built once.
       GpuProgram.enabled = false;
       final canvas = _record(tester, find.byType(VoiceOrbBackdrop));
-      expect(canvas['saveLayer'], 1);
-      expect(canvas['drawPath'], 4);
+      expect(canvas['saveLayer'], 0);
+      expect(canvas['drawPath'], 0);
+      expect(canvas['drawVertices'], OrbRings.elements.length + 1);
     });
 
-    for (final mood in [OrbMood.listening, OrbMood.thinking]) {
+    for (final mood in [OrbMood.listening, OrbMood.thinking, OrbMood.speaking]) {
       testWidgets('looks the same drawn by the GPU program (${mood.name})',
           (tester) async {
         await _pumpOrbScene(tester, mood);
@@ -265,6 +275,21 @@ void main() {
             reason: '${(d.far * 100).toStringAsFixed(3)}% of pixels differ visibly');
       });
     }
+
+    // Another theme colour moves every hue; both painters take it.
+    testWidgets('looks the same drawn by the GPU program (Teal theme)',
+        (tester) async {
+      AccentController.seed.value = const Color(0xFF3FE0C8);
+      await _pumpOrbScene(tester, OrbMood.listening);
+      final gpu = await _pixels(tester, _orbKey, 2.625);
+      GpuProgram.enabled = false;
+      await _pumpOrbScene(tester, OrbMood.listening);
+      final canvas = await _pixels(tester, _orbKey, 2.625);
+      final d = _compare(gpu, canvas);
+      expect(d.mean, lessThan(1.5), reason: 'mean difference ${d.mean}');
+      expect(d.far, lessThan(0.001),
+          reason: '${(d.far * 100).toStringAsFixed(3)}% of pixels differ visibly');
+    });
   });
 
   group('the Siri orb (splash, Welcome)', () {
@@ -424,10 +449,13 @@ void main() {
       await closeSession(tester);
     });
 
-    testWidgets('the orb keeps its painter, and lays its mic glyph out once',
+    // 2026-09-25: the mic is drawn as shapes now (the icon font's mic has
+    // no base bar, the client's picture's does); the text laid out once is
+    // the assistant's name under it.
+    testWidgets('the orb keeps its painter, and lays its name out once',
         (tester) async {
       await openSession(tester);
-      final laidOut = debugOrbGlyphLayouts;
+      final laidOut = debugOrbLabelLayouts;
       CustomPainter painter() => tester
           .widget<CustomPaint>(find
               .descendant(of: find.byType(VoiceOrb), matching: find.byType(CustomPaint))
@@ -441,23 +469,25 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
       }
       expect(identical(painter(), first), isTrue,
-          reason: 'a rebuild gave the sphere a new painter, and it built '
+          reason: 'a rebuild gave the disc a new painter, and it built '
               'its gradients again');
-      expect(debugOrbGlyphLayouts, laidOut,
-          reason: 'a rebuild laid the mic glyph out again');
+      expect(debugOrbLabelLayouts, laidOut,
+          reason: 'a rebuild laid the name out again');
       final orb = _record(tester, find.byType(VoiceOrb));
-      expect(orb['drawParagraph'], 1, reason: 'still the icon font, as crisp as ever');
+      expect(orb['drawParagraph'], 1, reason: 'the name, and no other text');
+      expect(orb.paints.where((p) => p.maskFilter != null), isEmpty,
+          reason: 'a blur in the still centre costs a pass on every frame');
       await closeSession(tester);
     });
   });
 
+  // The disc no longer listens at all (2026-09-25: it holds still); the
+  // rings round it read the level on their own frames.
   testWidgets('the quick-task orb reads the mic level itself', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: QuickTaskScreen()));
     await tester.pump();
-    expect(tester.widget<VoiceOrb>(find.byType(VoiceOrb)).levelListenable, isNotNull,
-        reason: 'each mic reading rebuilt the whole screen');
     expect(tester.widget<VoiceOrbBackdrop>(find.byType(VoiceOrbBackdrop)).levelListenable,
-        isNotNull);
+        isNotNull, reason: 'each mic reading rebuilt the whole screen');
     await tester.pumpWidget(const SizedBox());
   });
 

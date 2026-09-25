@@ -1,25 +1,34 @@
-// THE SPACE BEHIND THE LISTENING ORB, drawn by the GPU in one pass
-// (2026-09-24, GPU pass). See _BackdropPainter in
-// lib/widgets/voice_orb.dart, which this replaces when it loads.
+// THE SPEAKER ROUND THE VOICE ORB, drawn by the GPU in one pass
+// (2026-09-25). See _BackdropPainter in lib/widgets/voice_orb.dart,
+// which this replaces when it loads.
 //
-// WHY A SHADER. The Canvas version opened a full-width offscreen layer on
-// every frame of every voice session, filled it with three big gradient
-// clouds, five ring strokes and three pulses, built and stroked two
-// 121-point paths twice each, then ran a second full-size pass to fade the
-// top and bottom and composited the layer back. On his phone's Mali-G57
-// that was the most expensive thing the app drew. Here every pixel works
-// out its own colour once: no layer, no paths, no second pass, one
-// rectangle.
+// The client, about the old flares round the orb: "Change outer
+// rendering to other style", then a picture and "Make it something like
+// this, when it's on, only the speaker should move forward and
+// backwards". So this draws the picture's rings — five thin full rings,
+// four bright lenses at the sides (the speaker cones), a haze between
+// them, and the light-wave ribbons running out to both sides — and the
+// Dart side moves the rings in and out with the voice. The disc, the mic
+// and the name in the middle are a separate, still picture (VoiceOrb).
 //
-// THE PICTURE IS THE SAME. Every number below is the Canvas version's
-// number, in the same order of painting (aurora, tunnel, pulses, liquid
-// ring, comets, then the top/bottom fade and the bloom-in). Only the 42
-// dust motes stay on the Canvas, drawn after this with the same fade.
+// THE NUMBERS ARE THE SAME. Every number in the ring(), lens(),
+// strand() and sparkle() calls below is copied from OrbRings in
+// lib/design/orb_rings.dart, in the same order of painting (haze, lenses,
+// full rings, then each ribbon's sheet, strands and sparkles).
+// test/orb_rings_test.dart reads this
+// file and fails if a number here and there ever differ; the Canvas
+// painter draws the same table as triangle meshes, and
+// test/gpu_pass_test.dart compares the two pictures pixel by pixel.
+//
+// WHY A SHADER. Every pixel works out its own colour once: no offscreen
+// layer, no paths, no blur, one rectangle. The soft light round each ring
+// is part of its profile (a bright core, a bright edge, a fading glow),
+// never a blur pass.
 //
 // PRECISION. Mali runs mediump as 16-bit floats, which cannot hold a
 // screen coordinate to the pixel, so everything here is highp. Nothing
-// that grows without limit comes in: time arrives as angles already
-// wrapped to one turn by the Dart side.
+// that grows without limit comes in: the Dart side sends the rings'
+// scales and the ribbons' sway, never a clock.
 
 #version 460 core
 
@@ -28,18 +37,35 @@
 precision highp float;
 
 // Every uniform is a vec4, so no backend can pad them differently.
-uniform vec4 uGeom;    // xy: box size (logical px); z: orb radius; w: one device pixel
-uniform vec4 uState;   // x: bloom-in 0..1; y: voice level; z: pulses 0..1; w: thinking 0..1
-uniform vec4 uClouds;  // xy: left cloud centre; zw: right cloud centre
-uniform vec4 uCloudA;  // xyz: the three clouds' strength; w: the tunnel's breath
-uniform vec4 uPhase;   // x: the round-the-orb sweep's turn; y: pulse clock 0..1; z: comet angle
-uniform vec4 uLiquid0; // xyz: first strand's three ripple phases; w: its amplitude
-uniform vec4 uLiquid1; // the second strand, the same way
-uniform vec4 uViolet;  // rgb: the accent
-uniform vec4 uPink;    // rgb: its partner
-uniform vec4 uSweep0;  // rgb: the tunnel's left colour
-uniform vec4 uSweep1;  // rgb: its dark middle
-uniform vec4 uSweep2;  // rgb: its right colour
+uniform vec4 uGeom;   // xy: box size (logical px); z: disc radius R; w: one device pixel
+uniform vec4 uState;  // x: bloom-in 0..1; y: ribbons' sway (px); z: ribbons' stretch
+uniform vec4 uPush0;  // tiers 0..3: how far each is pushed out (its horizontal scale)
+uniform vec4 uPush1;  // x: tier 4; y: the push's share at the top and bottom
+// One colour per element, in OrbRings.elements order (a full ring's top
+// colour), then the full rings' side colours, then the ribbons'.
+uniform vec4 uC0;
+uniform vec4 uC1;
+uniform vec4 uC2;
+uniform vec4 uC3;
+uniform vec4 uC4;
+uniform vec4 uC5;
+uniform vec4 uC6;
+uniform vec4 uC7;
+uniform vec4 uC8;
+uniform vec4 uC9;
+uniform vec4 uC10;
+uniform vec4 uC11;
+uniform vec4 uC12;
+uniform vec4 uC13;
+uniform vec4 uS9;
+uniform vec4 uS10;
+uniform vec4 uS11;
+uniform vec4 uS12;
+uniform vec4 uS13;
+uniform vec4 uRibNear;
+uniform vec4 uRibFar;
+uniform vec4 uRibAccent;
+uniform vec4 uSparkle;
 
 out vec4 fragColor;
 
@@ -51,61 +77,78 @@ vec4 over(vec4 dst, vec4 src) {
   return src + dst * (1.0 - src.a);
 }
 
-// How much of a pixel a band of half-width h round a line covers, when the
-// pixel's centre is d from the line — anti-aliased over one device pixel,
-// and right for bands thinner than a pixel too.
-float band(float d, float h, float px) {
-  d = abs(d);
-  return clamp((h - d) / px + 0.5, 0.0, 1.0) -
-         clamp((-h - d) / px + 0.5, 0.0, 1.0);
+// Across an element: a0 over the core (half-width h), down to a1 over the
+// bright edge e, then to nothing over the glow g — straight lines between,
+// exactly what the Canvas painter's mesh interpolates.
+float prof(float d, float h, float e, float g, float a0, float a1) {
+  if (d <= h) return a0;
+  if (d <= h + e) return mix(a0, a1, (d - h) / e);
+  if (d <= h + e + g) return a1 * (1.0 - (d - h - e) / g);
+  return 0.0;
 }
 
-// A radial gradient clouded into an oval (squashed to 0.62 high), stops
-// 0 / 0.45 / 1 at full, 35% and no strength.
-float cloud(vec2 p, vec2 at, float radius, float a) {
-  vec2 q = p - at;
-  q.y /= 0.62;
-  float t = length(q) / radius;
-  if (t >= 1.0) return 0.0;
-  return t < 0.45 ? mix(a, a * 0.35, t / 0.45)
-                  : mix(a * 0.35, 0.0, (t - 0.45) / 0.55);
+// A lens at the sides. rho: distance from the middle in R; al: degrees
+// from the horizontal. It is w = 1 - (al/tip)^2 as thick as at the
+// horizontal, its middle drifts out by dr as it thins, and it fades by
+// smoothstep(f0, f1, w).
+vec4 lens(vec4 acc, float rho, float al, float r0, float dr, float h0,
+          float e, float g, float a0, float a1, float tip, float f0,
+          float f1, vec3 col) {
+  if (al >= tip) return acc;
+  float w = 1.0 - (al / tip) * (al / tip);
+  float d = abs(rho - (r0 + dr * (1.0 - w)));
+  float h = h0 * w;
+  if (d >= h + e + g) return acc;
+  float a = prof(d, h, e, g, a0, a1) * smoothstep(f0, f1, w) * uState.x;
+  return over(acc, vec4(col * a, a));
 }
 
-// The tunnel's left-to-right colour: accent, ink, partner.
-vec3 sweep(float u) {
-  u = clamp(u, 0.0, 1.0);
-  return u < 0.5 ? mix(uSweep0.rgb, uSweep1.rgb, u * 2.0)
-                 : mix(uSweep1.rgb, uSweep2.rgb, (u - 0.5) * 2.0);
+// A full ring, its colour turning from top to side within `side` degrees
+// of the horizontal.
+vec4 ring(vec4 acc, float rho, float al, float r0, float h, float e,
+          float g, float a0, float a1, float side, vec3 top, vec3 sideCol) {
+  float d = abs(rho - r0);
+  if (d >= h + e + g) return acc;
+  float ts = clamp(1.0 - (al / side) * (al / side), 0.0, 1.0);
+  float a = prof(d, h, e, g, a0, a1) * uState.x;
+  return over(acc, vec4(mix(top, sideCol, ts) * a, a));
 }
 
-// The colour that runs round the orb, turning slowly: accent, partner, a
-// blend of the two, and back.
-vec3 around(float theta) {
-  float t = fract((theta - uPhase.x) / TAU);
-  vec3 v = uViolet.rgb, k = uPink.rgb, m = mix(v, k, 0.4);
-  if (t < 0.4) return mix(v, k, t / 0.4);
-  if (t < 0.75) return mix(k, m, (t - 0.4) / 0.35);
-  return mix(m, v, (t - 0.75) / 0.25);
+// The ribbons' shape (OrbRings.ribbonMid / ribbonHalf / ribbonEnvelope /
+// sheetAlpha).
+float ribbonMid(float u, float side) {
+  return side > 0.0 ? -0.045 + 0.13 * u + 0.40 * u * u
+                    : -0.084 - 0.58 * u + 1.05 * u * u;
+}
+float ribbonHalf(float u, float side) {
+  return side > 0.0 ? 0.095 + 0.29 * u * u : 0.16 - 0.12 * u + 0.33 * u * u;
+}
+float ribbonEnvelope(float u) {
+  return smoothstep(-0.05, 0.04, u) * (1.0 - smoothstep(0.55, 1.0, u));
+}
+float sheetAlpha(float u) {
+  return ribbonEnvelope(u) * (0.12 + 0.55 * (1.0 - smoothstep(0.05, 0.55, u)));
 }
 
-// Distance to an ellipse with half-axes ab, near its outline (the first
-// order estimate: the implicit value over the length of its gradient).
-float ellipse(vec2 q, vec2 ab) {
-  vec2 k = q / ab;
-  float k0 = length(k);
-  float g = length(q / (ab * ab));
-  return (k0 - 1.0) * k0 / max(g, 1e-6);
+// One strand: a line of half-width hw at height y, fading to nothing at
+// its edges (a tent, like the mesh's three rows).
+vec4 strand(vec4 acc, float py, float y, float hw, float a, vec3 col) {
+  float cov = 1.0 - abs(py - y) / hw;
+  if (cov <= 0.0) return acc;
+  float k = a * cov * uState.x;
+  return over(acc, vec4(col * k, k));
 }
 
-// The liquid ring: its radius wanders with three harmonics. Returns the
-// distance to it, measured square to the ring (not just along the radius,
-// which would thicken it where it ripples steeply).
-float liquid(float rho, float theta, float base, vec4 ph) {
-  float a = ph.w;
-  float s3 = 3.0 * theta + ph.x, s5 = 5.0 * theta - ph.y, s8 = 8.0 * theta + ph.z;
-  float R = base + a * (0.55 * sin(s3) + 0.30 * sin(s5) + 0.15 * sin(s8));
-  float dR = a * (1.65 * cos(s3) + 1.50 * cos(s5) + 1.20 * cos(s8));
-  return (rho - R) / sqrt(1.0 + (dR * dR) / (R * R));
+// A sparkle at x (R) and dy above or below the ribbon's middle: flat to
+// 0.45 of its radius, then fading to its edge.
+vec4 sparkle(vec4 acc, vec2 p, float side, float x, float dy, float r,
+             float a) {
+  float sx = side * x;
+  vec2 at = vec2(sx, ribbonMid((x - 1.0) / 1.25, side) + dy);
+  float d = length(p - at);
+  if (d >= r) return acc;
+  float k = (d <= 0.45 * r ? a : a * (r - d) / (0.55 * r)) * uState.x;
+  return over(acc, vec4(uSparkle.rgb * k, k));
 }
 
 // A tiny hash for the dither (no sin: it stays exact on every GPU).
@@ -118,100 +161,114 @@ float hash12(vec2 p) {
 void main() {
   vec2 p = FlutterFragCoord().xy;
   vec2 size = uGeom.xy;
-  float r = uGeom.z;
+  float R = uGeom.z;
   float px = uGeom.w;
-  float appear = uState.x, level = uState.y, pulseAmt = uState.z, think = uState.w;
-  vec2 c = size * 0.5;
-  vec2 q = p - c;
-  float rho = length(q);
-
+  vec2 q = p - size * 0.5;
+  float rho0 = length(q) / R;
   vec4 acc = vec4(0.0);
 
-  // 1. AURORA — two soft clouds of the accent and its partner, drifting,
-  // and a fainter blend of both round the orb.
-  float a1 = cloud(p, uClouds.xy, r * 2.7, uCloudA.x);
-  acc = over(acc, vec4(uViolet.rgb * a1, a1));
-  float a2 = cloud(p, uClouds.zw, r * 2.5, uCloudA.y);
-  acc = over(acc, vec4(uPink.rgb * a2, a2));
-  float a3 = cloud(p, c, r * 1.8, uCloudA.z);
-  acc = over(acc, vec4(mix(uViolet.rgb, uPink.rgb, 0.45) * a3, a3));
-
-  // 3. THE TUNNEL — five thin ovals, breathing very slightly.
-  vec3 tunnel = sweep(p.x / size.x);
-  float breathe = uCloudA.w;
-  for (int i = 0; i < 5; i++) {
-    float fi = float(i);
-    float mult = i == 0 ? 1.39 : i == 1 ? 1.91 : i == 2 ? 2.42 : i == 3 ? 2.9 : 3.4;
-    vec2 ab = vec2(r * mult, r * (1.3 + fi * 0.16)) * breathe;
-    float a = 0.30 * (1.0 - fi / 5.0) * band(ellipse(q, ab), 0.6, px);
-    acc = over(acc, vec4(tunnel * a, a));
+  // Under the disc nothing shows (VoiceOrb paints it opaque on top).
+  if (rho0 < 0.96) {
+    fragColor = acc;
+    return;
   }
 
-  // Everything left hugs the orb (the liquid ring's deepest trough at
-  // 0.98 r less its 4 px glow, out to the pulses' 2.03 r): skip the angle
-  // maths beyond its reach.
-  if (rho > r * 0.95 - 6.0 && rho < r * 2.05 + 3.0) {
-    float theta = atan(q.y, q.x);
-    vec3 ring = around(theta);
+  // THE RINGS. Each tier is scaled out by its push — more at the sides
+  // than at the top — so each is looked up in its own, unpushed space.
+  if (rho0 < 1.95) {
+    // A scale is never below half (the pushes are a few per cent): the
+    // program's warm-up draw sets only the first few numbers, and nothing
+    // here may divide by the zeros it leaves.
+    vec4 s0 = max(uPush0, vec4(0.5));
+    float s4 = max(uPush1.x, 0.5);
+    float top = uPush1.y;
+    vec2 k0 = q / (R * vec2(s0.x, 1.0 + top * (s0.x - 1.0)));
+    vec2 k1 = q / (R * vec2(s0.y, 1.0 + top * (s0.y - 1.0)));
+    vec2 k2 = q / (R * vec2(s0.z, 1.0 + top * (s0.z - 1.0)));
+    vec2 k3 = q / (R * vec2(s0.w, 1.0 + top * (s0.w - 1.0)));
+    vec2 k4 = q / (R * vec2(s4, 1.0 + top * (s4 - 1.0)));
+    vec2 k5 = q / R;
+    float r0 = length(k0), r1 = length(k1), r2 = length(k2);
+    float r3 = length(k3), r4 = length(k4), r5 = length(k5);
+    float a0 = degrees(atan(abs(k0.y), abs(k0.x)));
+    float a1 = degrees(atan(abs(k1.y), abs(k1.x)));
+    float a2 = degrees(atan(abs(k2.y), abs(k2.x)));
+    float a3 = degrees(atan(abs(k3.y), abs(k3.x)));
+    float a4 = degrees(atan(abs(k4.y), abs(k4.x)));
+    float a5 = degrees(atan(abs(k5.y), abs(k5.x)));
 
-    // 4. PULSES rolling outward.
-    if (pulseAmt > 0.01) {
-      for (int i = 0; i < 3; i++) {
-        float ph = fract(uPhase.y + float(i) / 3.0);
-        float fade = (1.0 - ph) * (1.0 - ph);
-        float w = 0.6 + 2.2 * (1.0 - ph);
-        float a = fade * pulseAmt * (0.35 + level * 0.55) *
-                  band(rho - r * (1.08 + ph * 0.95), w * 0.5, px);
-        acc = over(acc, vec4(ring * a, a));
+    // The haze at the sides.
+    acc = lens(acc, r0, a0, 1.140, 0.0, 0.040, 0.012, 0.020, 0.95, 0.95, 60.0, 0.0, 1.0, uC0.rgb);
+    acc = lens(acc, r2, a2, 1.278, 0.0, 0.024, 0.010, 0.015, 0.95, 0.95, 48.0, 0.0, 1.0, uC1.rgb);
+    acc = lens(acc, r2, a2, 1.405, 0.0, 0.030, 0.012, 0.020, 1.00, 1.00, 40.0, 0.0, 1.0, uC2.rgb);
+    acc = lens(acc, r3, a3, 1.537, 0.0, 0.022, 0.012, 0.020, 0.95, 0.95, 38.0, 0.0, 1.0, uC3.rgb);
+    acc = lens(acc, r4, a4, 1.655, 0.0, 0.012, 0.010, 0.080, 0.60, 0.50, 36.0, 0.0, 1.0, uC4.rgb);
+    // The lenses: the speaker cones.
+    acc = lens(acc, r1, a1, 1.207, 0.006, 0.043, 0.008, 0.020, 1.0, 0.45, 49.0, 0.0, 0.15, uC5.rgb);
+    acc = lens(acc, r2, a2, 1.340, 0.0, 0.036, 0.008, 0.018, 1.0, 0.45, 38.0, 0.0, 0.4, uC6.rgb);
+    acc = lens(acc, r3, a3, 1.478, 0.004, 0.035, 0.008, 0.018, 1.0, 0.45, 37.0, 0.05, 0.4, uC7.rgb);
+    acc = lens(acc, r4, a4, 1.608, 0.008, 0.040, 0.006, 0.016, 1.0, 0.40, 38.0, 0.0, 0.2, uC8.rgb);
+    // The full rings.
+    acc = ring(acc, r0, a0, 1.099, 0.009, 0.008, 0.022, 1.0, 0.45, 50.0, uC9.rgb, uS9.rgb);
+    acc = ring(acc, r2, a2, 1.279, 0.007, 0.007, 0.028, 1.0, 0.35, 50.0, uC10.rgb, uS10.rgb);
+    acc = ring(acc, r3, a3, 1.460, 0.005, 0.007, 0.025, 1.0, 0.30, 36.0, uC11.rgb, uS11.rgb);
+    acc = ring(acc, r4, a4, 1.637, 0.005, 0.007, 0.020, 1.0, 0.30, 38.0, uC12.rgb, uS12.rgb);
+    acc = ring(acc, r5, a5, 1.815, 0.003, 0.007, 0.015, 1.0, 0.25, 40.0, uC13.rgb, uS13.rgb);
+  }
+
+  // THE RIBBONS — light-wave strands twisting out to both sides, swaying
+  // and swelling a little with the voice (sway and stretch undone here).
+  vec2 rp = vec2(q.x / R, (q.y - uState.y) / (R * max(uState.z, 0.5)));
+  float X = abs(rp.x);
+  if (X > 0.97 && X < 2.30) {
+    float side = rp.x > 0.0 ? 1.0 : -1.0;
+    float u = (X - 1.0) / 1.25;
+    float mid = ribbonMid(u, side);
+    float hh = ribbonHalf(u, side);
+    if (abs(rp.y - mid) < hh + 0.25) {
+      vec3 col = mix(uRibNear.rgb, uRibFar.rgb, smoothstep(0.0, 0.9, u));
+      // The sheet: full at the middle, 0.85 at 0.6 of the way out,
+      // nothing at the edge.
+      float t = abs(rp.y - mid) / hh;
+      if (t < 1.0) {
+        float k = (t <= 0.6 ? mix(1.0, 0.85, t / 0.6) : 0.85 * (1.0 - (t - 0.6) / 0.4)) *
+                  sheetAlpha(u) * uState.x;
+        acc = over(acc, vec4(col * k, k));
       }
-    }
-
-    // 5. THE LIQUID RING — two strands out of step, each a soft wide
-    // stroke under a crisp one.
-    float d0 = liquid(rho, theta, r * 1.12, uLiquid0);
-    float wide0 = (0.10 + level * 0.10) * band(d0, 4.0, px);
-    acc = over(acc, vec4(ring * wide0, wide0));
-    float thin0 = 0.9 * band(d0, 1.0, px);
-    acc = over(acc, vec4(ring * thin0, thin0));
-    float d1 = liquid(rho, theta, r * 1.155, uLiquid1);
-    float wide1 = (0.10 + level * 0.10) * band(d1, 4.0, px);
-    acc = over(acc, vec4(ring * wide1, wide1));
-    float thin1 = 0.5 * band(d1, 0.6, px);
-    acc = over(acc, vec4(ring * thin1, thin1));
-
-    // 6. THINKING — two comets chasing round the orb: an arc of 0.84 of a
-    // half turn, round-capped, fading in from its tail.
-    if (think > 0.01) {
-      float R = r * 1.26;
-      vec3 head = mix(uPink.rgb, vec3(1.0), 0.3);
-      for (int k = 0; k < 2; k++) {
-        float start = uPhase.z + float(k) * PI;
-        float t = fract((theta - start) / TAU);
-        float d;
-        if (t <= 0.42) {
-          d = abs(rho - R);
-        } else {
-          float end = start + PI * 0.84;
-          d = min(length(q - R * vec2(cos(start), sin(start))),
-                  length(q - R * vec2(cos(end), sin(end))));
-        }
-        vec4 col = t < 0.3 ? vec4(uViolet.rgb, t / 0.3)
-                 : t < 0.42 ? vec4(mix(uViolet.rgb, head, (t - 0.3) / 0.12), 1.0)
-                 : vec4(head, 1.0);
-        float a = col.a * think * (1.0 - float(k) * 0.45) * band(d, 1.3, px);
-        acc = over(acc, vec4(col.rgb * a, a));
+      float env = ribbonEnvelope(u);
+      float ph = TAU * 1.4 * u + (side > 0.0 ? 0.4 : 2.1);
+      for (int j = 0; j < 20; j++) {
+        float th = ph + TAU * float(j) / 20.0;
+        float a = 0.60 * env * (0.35 + 0.65 * (0.5 + 0.5 * cos(th)));
+        acc = strand(acc, rp.y, mid + hh * sin(th), 0.009, a, col);
+      }
+      float aa = 0.70 * env;
+      float pa = TAU * 0.8 * u;
+      acc = strand(acc, rp.y, mid + 0.35 * hh * sin(pa + (side > 0.0 ? 0.9 : 3.3)), 0.022, aa, uRibAccent.rgb);
+      acc = strand(acc, rp.y, mid + 0.35 * hh * sin(pa + (side > 0.0 ? 2.6 : 5.0)), 0.022, aa, uRibAccent.rgb);
+      if (side > 0.0) {
+        acc = sparkle(acc, rp, side, 1.08, -0.06, 0.012, 0.85);
+        acc = sparkle(acc, rp, side, 1.22, 0.05, 0.014, 0.75);
+        acc = sparkle(acc, rp, side, 1.34, -0.08, 0.010, 0.80);
+        acc = sparkle(acc, rp, side, 1.47, 0.03, 0.015, 0.90);
+        acc = sparkle(acc, rp, side, 1.58, 0.12, 0.011, 0.65);
+        acc = sparkle(acc, rp, side, 1.68, -0.04, 0.013, 0.80);
+        acc = sparkle(acc, rp, side, 1.80, 0.14, 0.016, 0.70);
+        acc = sparkle(acc, rp, side, 1.40, 0.16, 0.010, 0.55);
+      } else {
+        acc = sparkle(acc, rp, side, 1.06, 0.03, 0.013, 0.85);
+        acc = sparkle(acc, rp, side, 1.18, -0.08, 0.011, 0.75);
+        acc = sparkle(acc, rp, side, 1.30, 0.07, 0.015, 0.85);
+        acc = sparkle(acc, rp, side, 1.43, -0.05, 0.010, 0.70);
+        acc = sparkle(acc, rp, side, 1.55, 0.10, 0.013, 0.65);
+        acc = sparkle(acc, rp, side, 1.66, -0.09, 0.011, 0.80);
+        acc = sparkle(acc, rp, side, 1.78, 0.04, 0.015, 0.70);
+        acc = sparkle(acc, rp, side, 1.50, 0.19, 0.010, 0.55);
       }
     }
   }
 
-  // Melt away toward the top and bottom (0 -> 1 over the first and last
-  // 22% of the height), and the bloom-in.
-  float v = p.y / size.y;
-  float fade = v < 0.22 ? v / 0.22 : v > 0.78 ? (1.0 - v) / 0.22 : 1.0;
-  acc *= clamp(fade, 0.0, 1.0) * appear;
-
-  // Half a step of dither, so the dark ground under the clouds does not
-  // band into rings.
+  // Half a step of dither, so the soft glows do not band into rings.
   float n = (hash12(p / px) - 0.5) / 255.0;
   acc.rgb = clamp(acc.rgb + n, vec3(0.0), vec3(acc.a));
   fragColor = acc;

@@ -217,6 +217,11 @@ class AssistantEngine extends ChangeNotifier {
   /// tapped — a connecting orb on a dimmed page beats a frozen screen.
   bool get starting => _starting;
 
+  /// Holds the session on "Connecting…" for a test (the voice screen's
+  /// still, idle orb).
+  @visibleForTesting
+  set debugStarting(bool v) => _starting = v;
+
   /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
   /// clearing _conversationOpen makes the in-flight start terminate itself
   /// at the existing hot-mic guard instead of racing a second session.
