@@ -53,6 +53,7 @@ import 'package:myassistant/screens/voice_picker_screen.dart';
 import 'package:myassistant/screens/meetings/meeting_recorder_screen.dart';
 import 'package:myassistant/screens/studio/studio_screen.dart';
 import 'package:myassistant/screens/diagnostics_screen.dart';
+import 'package:myassistant/screens/mic_probe_screen.dart';
 import 'package:myassistant/screens/avatar_identity_screen.dart';
 import 'package:myassistant/shell/home_shell.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
@@ -237,6 +238,7 @@ final screens = <String, Widget Function()>{
   'Meeting recorder': () => const MeetingRecorderScreen(title: 'Quarterly review with the regional sales team'),
   'Studio': () => const StudioScreen(),
   'Diagnostics': () => const DiagnosticsScreen(),
+  'Mic test': () => const MicProbeScreen(),
   'Avatar identity': () => const AvatarIdentityScreen(),
   'Voice screen (long reply)': () => const _VoiceScreen(),
   'Do it for me (switched on)': () => const AutomationSetupScreen(),
