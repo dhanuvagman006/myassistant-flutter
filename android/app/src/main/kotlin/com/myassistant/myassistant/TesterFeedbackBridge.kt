@@ -1,6 +1,9 @@
 package com.myassistant.myassistant
 
 import android.app.Activity
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import com.google.firebase.appdistribution.FirebaseAppDistribution
 import io.flutter.plugin.common.BinaryMessenger
@@ -57,11 +60,29 @@ object TesterFeedbackBridge {
      * What can fail HERE — Firebase not started, the SDK missing from a
      * build — becomes an error Dart turns into one toast, never a crash
      * on the You tab.
+     *
+     * Two error codes, because Dart says two different things:
+     *  - "offline": no working internet, so the form was not started.
+     *  - "unavailable": anything else. Its cause is never the user's to
+     *    fix, so the message about it makes no claim about the cause.
      */
     private fun start(result: MethodChannel.Result) {
         val activity = activityRef?.get()
         if (activity == null || activity.isFinishing) {
             result.error("unavailable", "The app is not on screen.", null)
+            return
+        }
+        // NO INTERNET, SAID PLAINLY (review, 2026-09-25). Everything the SDK
+        // does after startFeedback() needs the internet: the tester sign-in,
+        // finding this release, sending. But all of it runs after this call
+        // has already answered true, so none of it can reach Dart; and when
+        // finding the release fails offline, the SDK's own toast is
+        // "Release not found. This app may not have been installed by App
+        // Distribution…", which blames the install, not the connection. So
+        // the connection is checked HERE, before anything starts, and Dart
+        // says "check your connection" only when that is actually the cause.
+        if (!hasInternet(activity)) {
+            result.error("offline", "No working internet connection.", null)
             return
         }
         // Channel calls already arrive on the main thread; runOnUiThread
@@ -76,5 +97,27 @@ object TesterFeedbackBridge {
                 result.error("unavailable", e.message ?: e.javaClass.simpleName, null)
             }
         }
+    }
+
+    /**
+     * Does the phone have internet that works right now? VALIDATED is
+     * Android's own check that the network really reaches the internet:
+     * not a Wi-Fi with nothing behind it, not a sign-in page. When Android
+     * cannot tell us, we say yes and let the SDK try, rather than block the
+     * form on a guess.
+     */
+    private fun hasInternet(context: Context): Boolean = try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (cm == null) {
+            true
+        } else {
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+            caps != null &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "connection check failed: ${e.javaClass.simpleName}")
+        true
     }
 }

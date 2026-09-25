@@ -247,14 +247,24 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
 
   /// Opens the tester feedback form (TesterFeedback). When it opened,
   /// the form speaks for itself; when it could not, one toast says so.
+  ///
+  /// Two messages, each only when it is true (review, 2026-09-25). The one
+  /// toast used to say "Check your internet" for every failure, but the
+  /// failures that reach here were never the internet (Firebase not
+  /// started, no Android half); the connection is now checked before the
+  /// form starts, and only that check's answer asks about the connection.
   Future<void> _sendFeedback() async {
-    final opened = await TesterFeedback.start();
-    if (opened || !mounted) return;
-    AppFeedback.show(
-      "Feedback couldn't open right now. Check your internet and try again.",
-      context: context,
-      tone: FeedbackTone.error,
-    );
+    final started = await TesterFeedback.start();
+    if (!mounted) return;
+    final msg = switch (started) {
+      FeedbackStart.opened => null,
+      FeedbackStart.offline =>
+        'Feedback needs the internet. Check your connection and try again.',
+      FeedbackStart.unavailable =>
+        "Feedback isn't available right now. Please try again later.",
+    };
+    if (msg == null) return;
+    AppFeedback.show(msg, context: context, tone: FeedbackTone.error);
   }
 
   @override

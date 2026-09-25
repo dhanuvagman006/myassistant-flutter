@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Publish the current release APK to the self-update channel.
 #
-#   tool/publish_update.sh <versionCode> <versionName> "<changelog line>" ["<line 2>" ...]
+#   APPDIST_GROUPS=<tester group> tool/publish_update.sh <versionCode> <versionName> "<changelog line>" ["<line 2>" ...]
 #
-# Copies build/app/outputs/flutter-apk/app-release.apk to the VPS, into
-# the backend pod, and registers it via routes/appUpdate.publish() — after
-# which every installed app sees "Update available" on next launch
+# First uploads build/app/outputs/flutter-apk/app-release.apk to Firebase
+# App Distribution, to the client's tester group (see SEND FEEDBACK below:
+# without it, Send feedback cannot work on this build). Then copies the
+# same file to the VPS, into the backend pod, and registers it via
+# routes/appUpdate.publish() — after which every installed app sees
+# "Update available" on next launch
 # (GET /config → latestVersionCode/apkUrl/apkSha256, GET /app/latest.apk).
 #
 # versionCode MUST match the pubspec build number the APK was built with
@@ -89,6 +92,74 @@ if [ -n "$AAPT" ]; then
 else
   echo "→ warning: aapt2 not found, could not verify the APK's versionCode" >&2
 fi
+
+# SEND FEEDBACK NEEDS THIS SAME FILE IN APP DISTRIBUTION (review,
+# 2026-09-25). The You tab's "Send feedback" (owner, 2026-09-25: "yes add
+# the send feedback button") is Firebase App Distribution's own form, and
+# its SDK finds the release a person is on by hashing the APK installed on
+# their phone and asking App Distribution for a release with that hash,
+# among the releases that person has access to. A build that only ever
+# went out over this channel has no such release: the client signs in with
+# Google, then gets "Release not found. This app may not have been
+# installed by App Distribution…". So every build published here also goes
+# to App Distribution:
+#   - THIS file, not a rebuild of the same version (a rebuild need not
+#     hash the same);
+#   - to the client's tester group, so the client has access to it;
+#   - FIRST, so that if it fails, nothing has been published yet.
+#
+#   APPDIST_GROUPS  the tester group alias(es) the client is in, comma-
+#                   separated (Firebase console → App Distribution →
+#                   Testers & Groups). Required.
+#   APPDIST_APP_ID  optional; read from android/app/google-services.json.
+#   SKIP_APPDIST=1  publish over this channel only, deliberately. Send
+#                   feedback then says "Release not found" on this build
+#                   until this same file is uploaded to App Distribution.
+#
+# Needs the Firebase CLI, signed in once: npm install -g firebase-tools,
+# then firebase login. Running it again for the same file is safe: App
+# Distribution recognises the file and updates that release instead of
+# adding a second one (the group may be emailed about it again). The
+# changelog becomes the release notes the client sees there too.
+if [ "${SKIP_APPDIST:-}" = "1" ]; then
+  echo "→ WARNING: SKIP_APPDIST=1, so build $CODE is NOT going to App Distribution." >&2
+  echo "  Send feedback will say \"Release not found\" on this build until this" >&2
+  echo "  same file is uploaded there: $APK" >&2
+else
+  if ! command -v firebase >/dev/null 2>&1; then
+    echo "REFUSING: the Firebase CLI is not installed, so build $CODE cannot go to" >&2
+    echo "  App Distribution, and Send feedback would not work on it." >&2
+    echo "  Install it (npm install -g firebase-tools, then firebase login)," >&2
+    echo "  or set SKIP_APPDIST=1 to publish over this channel only." >&2
+    exit 1
+  fi
+  if [ -z "${APPDIST_GROUPS:-}" ]; then
+    echo "REFUSING: APPDIST_GROUPS is not set. Name the App Distribution tester" >&2
+    echo "  group the client is in: APPDIST_GROUPS=<alias> $0 $CODE ..." >&2
+    echo "  (or set SKIP_APPDIST=1 to publish over this channel only)." >&2
+    exit 1
+  fi
+  if [ -z "${APPDIST_APP_ID:-}" ]; then
+    GSJ="$(dirname "$0")/../android/app/google-services.json"
+    APPDIST_APP_ID="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(next(c["client_info"]["mobilesdk_app_id"] for c in d["client"]
+           if c["client_info"]["android_client_info"]["package_name"] == "com.myassistant.myassistant"))
+' "$GSJ" 2>/dev/null || true)"
+  fi
+  if [ -z "$APPDIST_APP_ID" ]; then
+    echo "REFUSING: no Firebase app id for com.myassistant.myassistant in" >&2
+    echo "  android/app/google-services.json. Set APPDIST_APP_ID." >&2
+    exit 1
+  fi
+  echo "→ App Distribution: build $CODE to tester group(s) $APPDIST_GROUPS"
+  firebase appdistribution:distribute "$APK" \
+    --app "$APPDIST_APP_ID" \
+    --groups "$APPDIST_GROUPS" \
+    --release-notes "$(printf '%s\n' "$@")"
+fi
+
 echo "→ uploading $(du -h "$APK" | cut -f1) APK as build $CODE ($NAME)"
 # rsync, not scp: a 135 MB upload over a hotspot uplink takes ~40 min and
 # an interrupted one used to start over from byte zero. --partial --inplace

@@ -112,6 +112,13 @@ flutter build apk --release      # signed with android/hari-release.jks via key.
 See `PROJECT_STATUS.md` for the full release ritual (version bump → build →
 publish to the OTA channel) and the ⚠️ notes on keystore and OAuth SHA-1.
 
+Every OTA build must also be in Firebase App Distribution, as the same APK
+file, for the client's tester group. "Send feedback" on the You tab finds
+the release by hashing the installed APK; a build App Distribution never
+saw answers "Release not found". `tool/publish_update.sh` uploads it there
+first, and refuses to publish without it (needs the Firebase CLI, signed in,
+and `APPDIST_GROUPS=<group alias>`; `SKIP_APPDIST=1` skips it on purpose).
+
 ## How updates work (no rebuild)
 1. **Server-driven** — `GET /config` carries feature flags, announcements and
    changelog. The AI runs server-side, so new capabilities go live instantly on
