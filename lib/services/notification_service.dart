@@ -3,9 +3,13 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../models/momentum.dart';
 import '../models/reminder.dart';
 import '../core/log.dart';
 import 'api_service.dart';
+import 'focus_service.dart';
+import 'habit_alarms.dart';
+import 'momentum_service.dart';
 
 /// Turns backend reminders into LOCAL notifications, so "remind me to
 /// call amma at 5" actually rings the phone at 5 — even if the app is
@@ -61,6 +65,44 @@ class ReminderNotifications {
     category: AndroidNotificationCategory.reminder,
   );
 
+  // MOMENTUM (2026-09-25). Habit reminders get their own channel, so they
+  // can be quietened without silencing real reminders; the focus countdown
+  // is LOW importance (it sits in the shade, it never pops or sounds), and
+  // only its end rings.
+  static const _habitChannel = AndroidNotificationDetails(
+    'hari_habits',
+    'Habit reminders',
+    channelDescription: 'The daily nudge for a habit you track',
+    importance: Importance.defaultImportance,
+    priority: Priority.defaultPriority,
+    category: AndroidNotificationCategory.reminder,
+  );
+  static const int focusCountdownId = 0x3F0F0C01;
+  static const int focusDoneId = 0x3F0F0C02;
+
+  /// Where a tapped notification goes ('momentum', 'focus'). The shell sets
+  /// it once it can navigate; a tap that launched the app waits for it.
+  static void Function(String payload)? _onOpen;
+  static String? _launchPayload;
+  static set onOpen(void Function(String payload)? f) {
+    _onOpen = f;
+    final p = _launchPayload;
+    if (f != null && p != null) {
+      _launchPayload = null;
+      f(p);
+    }
+  }
+
+  static void _tapped(NotificationResponse r) {
+    final p = r.payload;
+    if (p == null || p.isEmpty) return;
+    final f = _onOpen;
+    if (f != null) {
+      f(p);
+    } else {
+      _launchPayload = p;
+    }
+  }
 
   Future<void> init() async {
     if (_ready) return;
@@ -78,7 +120,14 @@ class ReminderNotifications {
           android: AndroidInitializationSettings('@mipmap/ic_launcher'),
           iOS: DarwinInitializationSettings(),
         ),
+        // A tap on a habit reminder or the focus timer opens its screen.
+        onDidReceiveNotificationResponse: _tapped,
       );
+      try {
+        final launch = await _plugin.getNotificationAppLaunchDetails();
+        final r = launch?.notificationResponse;
+        if (launch?.didNotificationLaunchApp == true && r != null) _tapped(r);
+      } catch (_) {}
       final android = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       await android?.requestNotificationsPermission();
@@ -117,12 +166,13 @@ class ReminderNotifications {
   /// hands those to the app instead of displaying them, and swallowing
   /// them made every admin/server notification invisible whenever the
   /// app was open (which is exactly when people test).
-  Future<void> showNow(String title, String body) async {
+  Future<void> showNow(String title, String body, {String? payload}) async {
     if (!_ready) await init();
     if (!_ready) return;
     try {
       await _plugin.show(
-        DateTime.now().millisecondsSinceEpoch & 0x7fffffff,
+        // Below the habit and focus ids, whatever the clock says.
+        DateTime.now().millisecondsSinceEpoch & 0x3EFFFFFF,
         title,
         body,
         const NotificationDetails(
@@ -136,6 +186,7 @@ class ReminderNotifications {
           ),
           iOS: DarwinNotificationDetails(),
         ),
+        payload: payload,
       );
     } catch (_) {}
   }
@@ -194,9 +245,135 @@ class ReminderNotifications {
       }
       AppLog.add('remind',
           'scheduled $scheduled reminder alarm(s)${failedCount > 0 ? ", $failedCount failed" : ""} (${mode == AndroidScheduleMode.exactAllowWhileIdle ? "exact" : "inexact"})');
+      // cancelAll() above also took the habit reminders and a running
+      // focus countdown: put them back (Momentum, 2026-09-25).
+      await _armHabits(MomentumService.instance.summary?.habits ?? const [], mode);
+      await FocusService.instance.rearm();
     } catch (e) {
       AppLog.add('remind', 'sync failed: $e');
     }
     return reminders;
+  }
+
+  Future<AndroidScheduleMode> _scheduleMode() async {
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (android != null && await android.canScheduleExactNotifications() != true) {
+        return AndroidScheduleMode.inexactAllowWhileIdle;
+      }
+    } catch (_) {}
+    return AndroidScheduleMode.exactAllowWhileIdle;
+  }
+
+  /// Re-arms every habit reminder after the habits (or today's ticks)
+  /// changed, without touching reminders or the focus timer.
+  Future<void> armHabits(List<MomentumHabit> habits) async {
+    if (!_ready) await init();
+    if (!_ready) return;
+    try {
+      for (final p in await _plugin.pendingNotificationRequests()) {
+        if (HabitAlarms.isHabitAlarm(p.id)) await _plugin.cancel(p.id);
+      }
+      await _armHabits(habits, await _scheduleMode());
+    } catch (e) {
+      AppLog.add('habit', 'arm failed: $e');
+    }
+  }
+
+  Future<void> _armHabits(List<MomentumHabit> habits, AndroidScheduleMode mode) async {
+    var armed = 0;
+    for (final a in HabitAlarms.plan(habits, DateTime.now())) {
+      try {
+        await _plugin.zonedSchedule(
+          a.id,
+          a.title,
+          a.body,
+          tz.TZDateTime.from(a.at, tz.local),
+          const NotificationDetails(android: _habitChannel, iOS: DarwinNotificationDetails()),
+          androidScheduleMode: mode,
+          payload: 'momentum',
+        );
+        armed++;
+      } catch (e) {
+        AppLog.add('habit', 'schedule failed for ${a.id}: $e');
+      }
+    }
+    if (armed > 0) AppLog.add('habit', 'armed $armed habit reminder(s)');
+  }
+
+  static String _clock(DateTime t) {
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'am' : 'pm'}';
+  }
+
+  /// The focus countdown in the notification shade (a count-down
+  /// chronometer the system keeps ticking, so the app needs no timer of
+  /// its own) and the "Focus done — take 5?" alert at [endsAt].
+  Future<void> showFocus({required DateTime endsAt, required String label, required bool rest}) async {
+    if (!_ready) await init();
+    if (!_ready) return;
+    final left = endsAt.difference(DateTime.now());
+    if (left <= Duration.zero) return;
+    try {
+      await _plugin.show(
+        focusCountdownId,
+        rest ? 'Break' : (label.isEmpty ? 'Focusing' : 'Focusing on $label'),
+        'Ends at ${_clock(endsAt)}',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hari_focus',
+            'Focus timer',
+            channelDescription: 'The countdown while a focus session runs',
+            importance: Importance.low,
+            priority: Priority.low,
+            ongoing: true,
+            autoCancel: false,
+            onlyAlertOnce: true,
+            silent: true,
+            showWhen: true,
+            when: endsAt.millisecondsSinceEpoch,
+            usesChronometer: true,
+            chronometerCountDown: true,
+            timeoutAfter: left.inMilliseconds,
+            category: AndroidNotificationCategory.stopwatch,
+          ),
+        ),
+        payload: 'focus',
+      );
+      await _plugin.zonedSchedule(
+        focusDoneId,
+        rest ? 'Break over' : 'Focus done — take 5?',
+        rest
+            ? 'Ready for another focus?'
+            : label.isEmpty
+                ? 'Nice work. Stretch, breathe, then back to it.'
+                : 'Nice work on $label. Stretch, breathe, then back to it.',
+        tz.TZDateTime.from(endsAt, tz.local),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hari_focus_done',
+            'Focus finished',
+            channelDescription: 'When a focus session or a break ends',
+            importance: Importance.high,
+            priority: Priority.high,
+            category: AndroidNotificationCategory.reminder,
+          ),
+          iOS: DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: await _scheduleMode(),
+        payload: 'focus',
+      );
+    } catch (e) {
+      AppLog.add('focus', 'notification failed: $e');
+    }
+  }
+
+  /// Takes the countdown away, and the end alert too unless [keepAlert].
+  Future<void> cancelFocus({bool keepAlert = false}) async {
+    try {
+      await _plugin.cancel(focusCountdownId);
+      if (!keepAlert) await _plugin.cancel(focusDoneId);
+    } catch (_) {}
   }
 }

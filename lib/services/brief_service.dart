@@ -8,6 +8,7 @@ import '../models/brief.dart';
 import 'notification_service.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
+import 'momentum_service.dart';
 
 /// Fetches and caches the home screen's "Today" brief (GET /brief).
 ///
@@ -198,6 +199,8 @@ class BriefService extends ChangeNotifier {
     try {
       if (done) {
         await ApiService.sendJson('/commitments/${p.id}/done');
+        // A promise kept is a win: the streak may have just started today.
+        unawaited(MomentumService.instance.refresh(force: true));
       } else {
         await ApiService.sendJson('/commitments/${p.id}', method: 'DELETE');
       }

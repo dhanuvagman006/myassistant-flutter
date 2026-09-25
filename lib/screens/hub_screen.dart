@@ -7,6 +7,7 @@ import 'clients_screen.dart';
 import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
+import 'momentum_screen.dart';
 import 'phone/call_notes_screen.dart';
 import 'reminders_screen.dart';
 import 'meetings/meetings_screen.dart';
@@ -36,6 +37,13 @@ class HubScreen extends StatelessWidget {
           // The same large title every tab uses.
           const LargeTitle('Hub'),
           _group(context, 'Your day', [
+            _Row(
+              'Momentum',
+              "Today's 3, habits, focus and your streak",
+              Icons.local_fire_department_rounded,
+              Neon.accentD,
+              (c) => const MomentumScreen(),
+            ),
             _Row(
               'Reminders',
               'Everything you asked me to remember — add, tick off, remove',

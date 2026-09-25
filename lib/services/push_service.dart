@@ -12,6 +12,8 @@ import 'notification_service.dart';
 import 'avatar_message_service.dart';
 import 'brief_service.dart';
 import 'call_service.dart';
+import 'momentum_service.dart';
+import '../screens/momentum_screen.dart' show MomentumNav;
 
 /// Registers this device with the backend so other people's agents can
 /// reach the user.
@@ -73,6 +75,10 @@ class PushService {
           AppLog.add('push', 'scheduled call arrived (foreground)');
           _placeScheduledCall(m);
         }
+        // A Momentum nudge while the app is open: the card catches up.
+        if (m.data['kind'] == 'momentum') {
+          unawaited(MomentumService.instance.refresh(force: true));
+        }
         // EVERYTHING ELSE (admin notices, update announcements, task
         // outcomes…): Android does not display pushes for a foregrounded
         // app — the app must. Silently dropping them here is why "send
@@ -94,6 +100,8 @@ class PushService {
           ReminderNotifications.instance.showNow(
             n.title ?? 'MyAssistant',
             n.body ?? '',
+            // Tapped, a Momentum nudge opens Momentum.
+            payload: kind == 'momentum' ? 'momentum' : null,
           );
         }
       });
@@ -112,6 +120,10 @@ class PushService {
           AppLog.add('push', 'scheduled call opened from notification');
           _placeScheduledCall(m);
         }
+        if (m.data['kind'] == 'momentum') {
+          AppLog.add('push', 'momentum nudge opened');
+          unawaited(MomentumNav.open('momentum'));
+        }
       });
       // Cold start FROM the notification (app was killed).
       FirebaseMessaging.instance.getInitialMessage().then((m) {
@@ -126,6 +138,10 @@ class PushService {
         if (m != null && m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call launched the app');
           _placeScheduledCall(m);
+        }
+        if (m != null && m.data['kind'] == 'momentum') {
+          AppLog.add('push', 'momentum nudge launched the app');
+          unawaited(MomentumNav.open('momentum'));
         }
       });
       _listenerAttached = true;
