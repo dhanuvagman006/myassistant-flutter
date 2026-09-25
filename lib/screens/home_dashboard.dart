@@ -7,7 +7,7 @@ import '../design/neon_tokens.dart';
 import '../features/assistant/widgets/today_panel.dart';
 import '../core/daily_quotes.dart';
 import '../services/auth_service.dart';
-import '../services/streak_service.dart';
+import '../services/momentum_service.dart';
 import '../services/brief_service.dart';
 import '../widgets/call_led.dart';
 import '../widgets/missed_calls_card.dart';
@@ -46,9 +46,10 @@ class HomeDashboard extends StatelessWidget {
     // the list; only the call light stays put.
     final header = Reveal(
         child: AnimatedBuilder(
-      animation: BriefService.instance,
+      animation: Listenable.merge([BriefService.instance, MomentumService.instance]),
       builder: (context, _) {
         final b = BriefService.instance.brief;
+        final streak = MomentumService.instance.summary?.streak ?? 0;
         final first = (AuthService.instance.user?.name ?? '')
             .trim()
             .split(RegExp(r'\s+'))
@@ -105,10 +106,11 @@ class HomeDashboard extends StatelessWidget {
                   style: TextStyle(
                       color: Neon.textLo, fontSize: NeonType.body),
                 ),
-                // COMING BACK IS THE HABIT. A quiet streak count
-                // beside the date — visible enough to notice, far
-                // from a game badge.
-                if (StreakService.instance.count > 1) ...[
+                // A quiet streak count beside the date — visible enough
+                // to notice, far from a game badge. Since 2026-09-25 it
+                // is Momentum's: days something got DONE, kept on the
+                // server, where it used to count days the app was opened.
+                if (streak > 1) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 3),
@@ -125,7 +127,7 @@ class HomeDashboard extends StatelessWidget {
                         // Plain ink at night: the violet words sat on the
                         // brightest pool of the dark ambient at 3.4:1.
                         Text(
-                          '${StreakService.instance.count} days',
+                          '$streak days',
                           style: NeonType.manrope(
                                   NeonType.caption, FontWeight.w700)
                               .copyWith(

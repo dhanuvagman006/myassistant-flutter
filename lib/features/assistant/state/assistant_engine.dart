@@ -34,6 +34,9 @@ import '../../../screens/stocks_screen.dart';
 import '../../../screens/diagnostics_screen.dart';
 import '../../../screens/mcp_servers_screen.dart';
 import '../../../screens/news_screen.dart';
+import '../../../screens/focus_screen.dart';
+import '../../../screens/momentum_screen.dart';
+import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/news_item.dart';
 import '../../../models/schedule_item.dart';
@@ -537,6 +540,11 @@ class AssistantEngine extends ChangeNotifier {
       'translator_mode' => 'Switching modes…',
       'set_morning_brief' => 'Updating your brief…',
       'read_news_story' => 'Reading the story…',
+      'plan_my_day' => 'Planning your day…',
+      'complete_priority' || 'check_habit' => 'Ticking it off…',
+      'add_habit' => 'Adding the habit…',
+      'start_focus' => 'Starting your focus…',
+      'momentum_status' => 'Checking your progress…',
       _ => 'Working on it…',
     };
   }
@@ -2206,6 +2214,10 @@ class AssistantEngine extends ChangeNotifier {
 
   // ---------------- backend events ----------------
 
+  /// Hands an event to the engine as if the server had sent it (tests).
+  @visibleForTesting
+  void debugHandleEvent(Map<String, dynamic> e) => _onEvent(e);
+
   void _onEvent(Map<String, dynamic> e) {
     switch (e['type']) {
       case 'assistant_state':
@@ -2299,6 +2311,10 @@ class AssistantEngine extends ChangeNotifier {
         // those few seconds.
         if (_remindersTouchedBy(e['tool'] as String?)) {
           unawaited(ReminderNotifications.instance.sync());
+        }
+        // A promise kept by voice can make today count (Momentum).
+        if (e['tool'] == 'complete_commitment') {
+          unawaited(MomentumService.instance.refresh(force: true));
         }
         if (!activities.any((a) => !a.completed)) {
           activityLabel.value = null;
@@ -2574,6 +2590,29 @@ class AssistantEngine extends ChangeNotifier {
           }
         }
         _setPhase(AssistantPhase.completed);
+        break;
+
+      case 'start_focus':
+        // "Start a 25-minute focus on the report" (build 111): the Focus
+        // page opens and starts; it logs the minutes itself when it ends.
+        {
+          final nav = AvatarMessageService.navigatorKey.currentState;
+          final minutes = (e['minutes'] as num?)?.toInt() ?? 25;
+          final label = (e['label'] ?? '').toString();
+          if (nav == null) {
+            _reportDeviceFailure('start_focus', reason: 'the focus timer could not open');
+          } else {
+            nav.push(MaterialPageRoute(
+                builder: (_) => FocusScreen(minutes: minutes, label: label, autoStart: true)));
+          }
+        }
+        _setPhase(AssistantPhase.completed);
+        break;
+
+      case 'momentum_updated':
+        // A voice write to Today's 3 or a habit: Home redraws now, not at
+        // the next refresh. Asks nothing of the phone beyond that.
+        unawaited(MomentumService.instance.refresh(force: true));
         break;
 
       case 'open_usage_access':
@@ -4231,6 +4270,8 @@ class AssistantEngine extends ChangeNotifier {
         'diagnostics' => (_) => const DiagnosticsScreen(),
         'mcp' => (_) => const McpServersScreen(),
         'news' => (_) => const NewsScreen(),
+        'momentum' => (_) => const MomentumScreen(),
+        'focus' => (_) => const FocusScreen(),
         _ => null,
       };
 

@@ -20,8 +20,11 @@ import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
 import '../services/call_notes_service.dart';
-import '../services/streak_service.dart';
 import '../services/call_recording_watcher.dart';
+import '../services/focus_service.dart';
+import '../services/momentum_service.dart';
+import '../services/notification_service.dart';
+import '../screens/momentum_screen.dart';
 import '../core/log.dart';
 import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
@@ -103,6 +106,10 @@ class _HomeShellState extends State<HomeShell>
       // Coming back from a phone call is exactly when a fresh system
       // call recording exists — pick it up for analysis now.
       CallRecordingWatcher.instance.scan();
+      // Momentum: a new day may have begun, and a focus may have run out
+      // while the app was away.
+      unawaited(MomentumService.instance.refresh());
+      unawaited(FocusService.instance.tick());
       Timer(const Duration(seconds: 2), () {
         // Never over a conversation: the sheet used to open on top of one.
         if (mounted && !_conversationRunning) {
@@ -389,11 +396,8 @@ class _HomeShellState extends State<HomeShell>
     // disk. Deliberately after the first frame — it must never delay
     // launch.
     WidgetsBinding.instance.addPostFrameCallback((_) => _warmGreeting());
-    // Count today towards the streak before the first frame settles, so
-    // the header shows the right number on this launch, not the next one.
-    StreakService.instance.touch().then((_) {
-      if (mounted) setState(() {});
-    });
+    // (The app-open streak that was counted here is gone: the streak is
+    // Momentum's now, on the server — days something got done.)
     // A tapped message notification opens the conversation through the
     // same route as the mic button, so the assistant pops up and speaks.
     engine.onOpenConversation = () {
@@ -476,6 +480,11 @@ class _HomeShellState extends State<HomeShell>
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
+    // Momentum (2026-09-25): the day's list and streak, a focus that was
+    // running when the app closed, and taps on its notifications.
+    MomentumService.instance.start();
+    unawaited(FocusService.instance.restore());
+    ReminderNotifications.onOpen = (what) => unawaited(MomentumNav.open(what));
     // Deliberately NO message announcing here: launching the app must be
     // SILENT. Unread messages sit in the Home feed and are spoken when
     // the user starts a conversation or taps the message notification.

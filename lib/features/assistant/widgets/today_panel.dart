@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../design/motion.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/brief.dart';
+import '../../../widgets/momentum_card.dart';
 import '../../../widgets/month_calendar.dart';
 import '../../../widgets/whats_new_card.dart';
 import '../../../services/api_service.dart';
@@ -89,6 +90,9 @@ class TodayBriefBody extends StatelessWidget {
                   // People use the two things they discovered on day one
                   // unless something shows them the rest; these rotate
                   // with the clock so the app stays worth opening.
+                  // MOMENTUM (2026-09-25): the streak, Today's 3, habits
+                  // and Focus — deciding what matters comes first.
+                  if (!showHeader) const MomentumCard(),
                   // Once per release, on Home only: what just got better.
                   if (!showHeader) const WhatsNewCard(),
                   Reveal(delayMs: 40, child: _tryAsking(context)),
