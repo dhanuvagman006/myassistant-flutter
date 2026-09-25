@@ -16,6 +16,8 @@ import 'package:myassistant/features/assistant/widgets/action_cards.dart';
 import 'package:myassistant/models/news_item.dart';
 import 'package:myassistant/models/schedule_item.dart';
 import 'package:myassistant/services/app_feedback.dart';
+import 'package:myassistant/widgets/inline_voice.dart';
+import 'package:myassistant/widgets/news_deck.dart';
 import 'package:myassistant/widgets/news_panel.dart';
 import 'package:myassistant/widgets/schedule_panel.dart';
 import 'package:myassistant/shell/home_shell.dart';
@@ -118,10 +120,22 @@ void main() {
       e.notifyListeners();
       await tester.pump(const Duration(milliseconds: 300));
       final panel = which == 'news' ? find.byType(NewsPanel) : find.byType(SchedulePanel);
-      final list = find.descendant(of: panel, matching: find.byType(Scrollable)).first;
+      // The news panel is a deck of cards since 2026-09-25: the deck, not
+      // a list, must end at the bar.
+      final list = find
+          .descendant(
+              of: panel,
+              matching: which == 'news' ? find.byType(NewsDeck) : find.byType(Scrollable))
+          .first;
       final bar = tester.getRect(find.byType(BottomAppBar));
       expect(tester.getRect(list).bottom, lessThanOrEqualTo(bar.top + 0.5),
           reason: 'rows pass behind the bar and show through the ring around the mic');
+      if (which == 'news') {
+        // And its ‹ 1 of 14 › row sits clear above the mic.
+        final orb = tester.getRect(find.byType(AssistantOrbButton));
+        expect(tester.getRect(find.text('1 of 14')).bottom, lessThanOrEqualTo(orb.top),
+            reason: 'the counter is under the mic');
+      }
       e
         ..newsItems = const []
         ..scheduleItems = const []

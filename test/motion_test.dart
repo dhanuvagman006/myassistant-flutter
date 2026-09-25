@@ -38,6 +38,7 @@ import 'package:myassistant/shell/home_shell.dart';
 import 'package:myassistant/theme/app_theme.dart';
 import 'package:myassistant/widgets/assistant_result_overlay.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
+import 'package:myassistant/widgets/news_deck.dart';
 import 'package:myassistant/widgets/news_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -649,7 +650,7 @@ void main() {
           reason: 'with "Remove animations" on, nothing grows or moves');
     });
 
-    testWidgets('the headlines fade in and grow without their list crossing the dock line',
+    testWidgets('the headlines fade in and grow without their deck crossing the dock line',
         (tester) async {
       _resetEngineAfter();
       _ownersPhone(tester);
@@ -664,8 +665,9 @@ void main() {
         ..notifyListeners();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 16));
+      // A deck of cards since 2026-09-25; it ends where the list did.
       final list = find
-          .descendant(of: find.byType(NewsPanel), matching: find.byType(Scrollable))
+          .descendant(of: find.byType(NewsPanel), matching: find.byType(NewsDeck))
           .first;
       final early = tester.getRect(list);
       expect(_opacityProduct(tester, list), lessThan(1),
@@ -674,7 +676,7 @@ void main() {
       final settled = tester.getRect(list);
       expect(_opacityProduct(tester, list), 1);
       expect(early.bottom, moreOrLessEquals(settled.bottom, epsilon: 0.5),
-          reason: 'the list must end at the dock line on every frame');
+          reason: 'the deck must end at the dock line on every frame');
       expect(early.width, lessThan(settled.width));
     });
   });
