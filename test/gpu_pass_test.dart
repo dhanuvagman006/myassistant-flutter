@@ -40,6 +40,7 @@ import 'package:myassistant/widgets/activity_pill.dart';
 import 'package:myassistant/widgets/ambient_background.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
 import 'package:myassistant/widgets/overflow_fade.dart';
+import 'package:myassistant/widgets/streaming_caption.dart';
 import 'package:myassistant/widgets/voice_orb.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -423,11 +424,13 @@ void main() {
       expect(masks(tester), 0,
           reason: 'a mask over one short line is a full-size layer for nothing');
       final captions = find.byType(TopFadeWhenOverflowing);
-      final words = find.descendant(of: captions, matching: find.byType(AnimatedSize));
+      final words = find.descendant(of: captions, matching: find.byType(CaptionGlide));
       final kept = tester.state(words);
 
-      // A long reply: now the oldest words must melt away at the top.
+      // The same turn going on and on: now the oldest words must melt away
+      // at the top.
       final long = [
+        'What is on today?',
         for (var i = 1; i <= 14; i++)
           'Sentence number $i of a long answer that fills the screen.'
       ].join(' ');

@@ -133,6 +133,14 @@ class LiveService {
       ? 0
       : _envelope.levelAt(_clock.elapsedMicroseconds - _ringLatencyUs);
 
+  /// How long until the reply audio received so far has all been heard —
+  /// the captions finish their words with it (2026-09-25). More audio may
+  /// still be on its way until the turn is complete.
+  Duration get playbackRemaining {
+    final us = _playheadEndUs + _ringLatencyUs - _clock.elapsedMicroseconds;
+    return us > 0 ? Duration(microseconds: us) : Duration.zero;
+  }
+
   static const _outRate = 24000; // Gemini native-audio output sample rate
   static const _inRate = 16000; // what we send up
 

@@ -106,6 +106,17 @@ class AssistantEngine extends ChangeNotifier {
     return phase == AssistantPhase.speaking ? micLevel : 0;
   }
 
+  /// True once the model has finished GENERATING the reply being spoken
+  /// (turn_complete): all its words and audio are here, though the speaker
+  /// may still be playing them. Cleared when the next reply starts to play
+  /// or the user speaks. The captions use it to land the last word with
+  /// the last of the voice (2026-09-25, streaming captions).
+  bool replyComplete = false;
+
+  /// How much of her reply, as received so far, is still to be heard.
+  Duration get speakingRemaining =>
+      _liveSvc.playing ? _liveSvc.playbackRemaining : Duration.zero;
+
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
 
@@ -1330,6 +1341,8 @@ class AssistantEngine extends ChangeNotifier {
     };
     _liveSvc.onQuietTimeout = _onQuietMinute;
     _liveSvc.onSpeaking = (speaking) {
+      // A reply starting to play is a new reply: its words are still coming.
+      if (speaking) replyComplete = false;
       _setPhase(
         speaking ? AssistantPhase.speaking : AssistantPhase.listening,
         silent: true,
@@ -1341,6 +1354,7 @@ class AssistantEngine extends ChangeNotifier {
     // logged for diagnostics only — the screen stays clean.
     _liveSvc.onUserText = (t) {
       AppLog.add('live', 'you: $t');
+      replyComplete = false;
       _captionFrom('you', t);
       _maybeAskLocationFor(_capUser.isNotEmpty ? _capUser : t);
       // Gemini streams the user's transcript WHILE they are still talking,
@@ -1395,6 +1409,7 @@ class AssistantEngine extends ChangeNotifier {
     _liveSvc.onTurnComplete = () {
       // A chip that outlives its turn reads as a hang — end it with the turn.
       activityLabel.value = null;
+      replyComplete = true;
       _refreshBriefSoon();
       // End of Hari's turn — back to listening. Same reasoning as above:
       // without local audio there is no playback-finished event to wait on.
