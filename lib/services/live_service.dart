@@ -198,11 +198,24 @@ class LiveService {
   /// up, with the absolute minimum lowered to fit a quiet microphone.
   /// On a normal handset the peak sits well above _minSpeechLevel and
   /// this returns exactly what it always did.
-  double get _speechThreshold {
+  double get _speechThreshold => speechThresholdFor(
+        noiseFloor: _noiseFloor,
+        peakLevel: _peakLevel,
+      );
+
+  /// The bar above, as a pure function of the two things it learns: the
+  /// room's [noiseFloor] and the loudest [peakLevel] this microphone has
+  /// produced. Shared with the mic test (MicProbe) so its "VAD-loud" count
+  /// uses exactly the session's bar (owner, 2026-09-25: "start talk while
+  /// it works").
+  static double speechThresholdFor({
+    required double noiseFloor,
+    required double peakLevel,
+  }) {
     final adaptive =
-        _peakLevel > 0.012 ? _peakLevel * 0.30 : _minSpeechLevel;
+        peakLevel > 0.012 ? peakLevel * 0.30 : _minSpeechLevel;
     return math.max(
-      _noiseFloor * _speechFactor,
+      noiseFloor * _speechFactor,
       math.min(_minSpeechLevel, adaptive),
     );
   }
@@ -365,6 +378,9 @@ class LiveService {
     if (_active) return;
     _active = true;
     final era = _era;
+    // A mic test from Diagnostics gives the recorder back first: the
+    // conversation always wins it. Nothing happens here when none runs.
+    if (_probeOn) await _endProbe(probeEndedBySession);
     if (!await _rec.hasPermission()) {
       onError?.call('Microphone permission is needed for live mode.');
       return;
@@ -466,18 +482,7 @@ class LiveService {
     // the hardware echo canceller so Hari's own playback doesn't feed back
     // into the model (which would make her interrupt herself).
     try {
-      final mic = await _rec.startStream(
-        const RecordConfig(
-          encoder: AudioEncoder.pcm16bits,
-          sampleRate: _inRate,
-          numChannels: 1,
-          echoCancel: true,
-          noiseSuppress: true,
-          androidConfig: AndroidRecordConfig(
-            audioSource: AndroidAudioSource.voiceCommunication,
-          ),
-        ),
-      );
+      final mic = await _rec.startStream(micConfig());
       _micSub = mic.listen(_onMicChunk);
     } catch (e) {
       onError?.call('Could not open the microphone for live mode.');
@@ -506,6 +511,33 @@ class LiveService {
       }
     });
   }
+
+  /// THE MICROPHONE'S SETTINGS, IN ONE PLACE.
+  ///
+  /// Default ([task] false): exactly what [start] always opened — PCM16
+  /// mono 16 kHz through voiceCommunication, so the hardware echo canceller
+  /// keeps Hari's own playback out of the model. audioInterruption is left
+  /// at the plugin's own default, as before.
+  ///
+  /// [task] true (owner, 2026-09-25: "start talk while it works"): the same,
+  /// with audioInterruption none. With any other mode the plugin asks for
+  /// audio focus and PAUSES the recorder when it loses focus — and a reel
+  /// in Instagram takes focus, so the microphone would stop for good in the
+  /// middle of a task. With none it never asks for focus and never pauses.
+  /// In this build only the mic test (probeMic) uses it.
+  static RecordConfig micConfig({bool task = false}) => RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: _inRate,
+        numChannels: 1,
+        echoCancel: true,
+        noiseSuppress: true,
+        androidConfig: const AndroidRecordConfig(
+          audioSource: AndroidAudioSource.voiceCommunication,
+        ),
+        audioInterruption: task
+            ? AudioInterruptionMode.none
+            : const RecordConfig().audioInterruption,
+      );
 
   /// Everything one session starts from. Shared by [start] and the tests.
   void _resetSession() {
@@ -848,6 +880,166 @@ class LiveService {
             math.sin(dLng / 2);
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
+
+  // ---------------- the mic test (P1 probe) ----------------
+  //
+  // Owner, 2026-09-25: "start talk while it works". Before the session may
+  // stay open while a task runs in another app, one thing has to be
+  // measured on his phone: does THIS recorder, restarted with the task
+  // settings (micConfig(task: true)), keep hearing real sound while the app
+  // is off screen? probeMic starts the same AudioRecorder the session uses,
+  // through the same startStream call, and hands every frame to the
+  // caller's counter — and to nothing else. No socket, no session state,
+  // no orb level, no LiveMicStats, no file. It refuses while a session is
+  // open, and a session that opens takes the recorder back (see [start]).
+
+  bool _probeOn = false;
+  int _probeToken = 0;
+  StreamSubscription<Uint8List>? _probeSub;
+  void Function(String why)? _probeEnded;
+
+  /// The mic test's last recorder restart, finished or still in flight.
+  /// Never throws. [_endProbe] waits for it before it looks at the recorder.
+  Future<void>? _probeRestarting;
+
+  /// True while the mic test holds the recorder.
+  bool get probing => _probeOn;
+
+  /// Tests replace the plugin's stream (and its permission check) here.
+  @visibleForTesting
+  Future<Stream<Uint8List>> Function(RecordConfig config)? debugProbeStream;
+
+  /// Asks for the microphone permission when it is missing. Never throws.
+  Future<bool> probePermission() async {
+    if (debugProbeStream != null) return true;
+    try {
+      return await _rec.hasPermission();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Why a mic test ended without [stopProbe] (the codes MicProbe shows).
+  static const probeEndedBySession = 'voice_session';
+  static const probeEndedByError = 'mic_error';
+  static const probeEndedByDone = 'mic_done';
+
+  /// How long the mic test holds the session's own settings before the
+  /// restart into the task settings (see [probeMic]).
+  @visibleForTesting
+  Duration probeSessionHold = const Duration(seconds: 1);
+
+  /// Starts the mic test's recorder. Every frame goes to [onFrame] only.
+  /// [onEnded] hears why it ended when that was not [stopProbe] (one of
+  /// the probeEndedBy* codes). False when a conversation is open, a test
+  /// already runs, or the recorder would not start.
+  ///
+  /// AS A CONVERSATION WOULD HAVE IT AT THE START OF A TASK: the recorder
+  /// first opens with the session's own settings — which take audio focus,
+  /// so music pauses exactly as when the orb opens — and after
+  /// [probeSessionHold] it is RESTARTED with the task settings, the
+  /// hand-over the plan's Task Voice will do. Only the frames after the
+  /// restart are handed on. The plan's A4 check (does music the orb paused
+  /// stay paused?) watches that hand-over.
+  Future<bool> probeMic(
+    void Function(Uint8List frame) onFrame, {
+    void Function(String why)? onEnded,
+  }) async {
+    if (_active || _probeOn) return false;
+    _probeOn = true;
+    final token = ++_probeToken;
+    _probeEnded = onEnded;
+    try {
+      final asSession = await _probeRestart(micConfig());
+      // ENDED WHILE THE RECORDER WAS OPENING (owner, 2026-09-25: "start
+      // talk while it works"): a call already on, Stop, the screen going
+      // off. _endProbe waited for this open and lets the recorder go, so
+      // nothing may listen to it now; it would stay attached for good.
+      if (token != _probeToken) return false;
+      _probeSub = asSession.listen((_) {}, onError: (Object _) {});
+      await Future<void>.delayed(probeSessionHold);
+      // Stopped, or a conversation took the recorder, meanwhile: whoever
+      // did that already dealt with the recorder.
+      if (token != _probeToken) return false;
+      // Not awaited: the cancel takes effect at once, and its future can
+      // belong to the root zone (a test's fake clock never finishes it).
+      unawaited(_probeSub?.cancel());
+      _probeSub = null;
+      final mic = await _probeRestart(micConfig(task: true));
+      // The same: _endProbe waited for this restart and stops it.
+      if (token != _probeToken) return false;
+      _probeSub = mic.listen(
+        onFrame,
+        onError: (Object _) => _endProbe(probeEndedByError),
+        onDone: () => _endProbe(probeEndedByDone),
+        cancelOnError: true,
+      );
+      return true;
+    } catch (e) {
+      AppLog.add('micprobe', 'recorder would not start: ${e.runtimeType}');
+      if (token == _probeToken) await _endProbe(null);
+      return false;
+    }
+  }
+
+  /// THE RESTART: whatever the recorder is doing stops, then it starts
+  /// again with [cfg]. The mic test uses it; the plan's useTaskMic is meant
+  /// to reuse it when the live session switches to the task settings.
+  Future<Stream<Uint8List>> _restartMic(RecordConfig cfg) async {
+    final seam = debugProbeStream;
+    if (seam != null) return seam(cfg);
+    try {
+      if (await _rec.isRecording()) await _rec.stop();
+    } catch (_) {}
+    return _rec.startStream(cfg);
+  }
+
+  /// The mic test's restart, remembered so [_endProbe] can wait for it.
+  Future<Stream<Uint8List>> _probeRestart(RecordConfig cfg) {
+    final restart = _restartMic(cfg);
+    // probeMic's own await sees an error; this copy only says "finished".
+    _probeRestarting = restart.then<void>((_) {}, onError: (Object _) {});
+    return restart;
+  }
+
+  /// Ends the mic test and releases the recorder. Safe to call any time.
+  Future<void> stopProbe() => _endProbe(null);
+
+  Future<void> _endProbe(String? why) async {
+    if (!_probeOn) return;
+    _probeOn = false;
+    _probeToken++;
+    final sub = _probeSub;
+    _probeSub = null;
+    final ended = _probeEnded;
+    _probeEnded = null;
+    final restarting = _probeRestarting;
+    _probeRestarting = null;
+    // Cancelled at once, not awaited (see probeMic).
+    unawaited(sub?.cancel());
+    // A RESTART STILL IN FLIGHT FINISHES FIRST (owner, 2026-09-25: "start
+    // talk while it works"). The recorder answers its calls one at a time,
+    // in order. A test ended while probeMic was opening the recorder used
+    // to ask "recording?" before that open had run, hear "no", and stop
+    // nothing; the open then went ahead, and the microphone stayed on (and
+    // music stayed paused) after the screen said Finished. Once the open
+    // has finished, the answer below is the truth.
+    if (restarting != null) await restarting;
+    // A newer mic test that began meanwhile restarts the recorder itself;
+    // stopping here would cut it off.
+    if (debugProbeStream == null && !_probeOn) {
+      try {
+        if (await _rec.isRecording()) await _rec.stop();
+      } catch (_) {}
+    }
+    if (why != null) ended?.call(why);
+  }
+
+  /// Anything that would go up the socket is handed to [sink] instead,
+  /// without opening a session. Tests use it to prove the mic test never
+  /// sends a byte; null puts the socket back.
+  @visibleForTesting
+  void debugWatchSocket(void Function(Object frame)? sink) => _testSink = sink;
 
   // ---------------- test seams ----------------
 
@@ -1347,6 +1539,9 @@ class LiveService {
       } catch (_) {}
     }
   }
+
+  /// The session's level measure, for the mic test's "VAD-loud" count.
+  static double? levelOf(List<int> chunk) => _levelOf(chunk);
 
   /// 0..1 mic level from a PCM16 chunk, for the orb animation.
   static double? _levelOf(List<int> chunk) {

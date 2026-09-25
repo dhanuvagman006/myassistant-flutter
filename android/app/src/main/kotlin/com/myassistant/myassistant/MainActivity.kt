@@ -743,6 +743,11 @@ class MainActivity : FlutterFragmentActivity() {
         // "Send feedback" on the You tab: opens App Distribution's own
         // feedback form (TesterFeedbackBridge).
         TesterFeedbackBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
+
+        // "Talk while it works" (owner, 2026-09-25: "start talk while it
+        // works"): the microphone foreground service. In this build only the
+        // mic test on the Diagnostics screen uses it (TaskVoiceBridge).
+        TaskVoiceBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
     /** True automatic SMS — SmsManager sends without opening any app.

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../core/log.dart';
 import 'assistant_settings_screen.dart';
 import 'mcp_servers_screen.dart';
+import 'mic_probe_screen.dart';
 import '../design/apple_kit.dart';
 import '../design/gyro_motion.dart';
 import '../design/neon_tokens.dart';
@@ -20,6 +21,7 @@ import '../services/app_feedback.dart';
 ///      the app at your laptop's LAN IP while developing)
 ///    • a live /health check with the raw failure text
 ///    • the assistant stream state
+///    • the mic test ("talk while it works", MicProbeScreen)
 ///    • the app log tail (every API/SSE/voice event, timestamped)
 /// ─────────────────────────────────────────────────────────────────────────
 class DiagnosticsScreen extends StatefulWidget {
@@ -169,6 +171,24 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 subtitle: 'Connect external tools (advanced)',
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const McpServersScreen())),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          // "Talk while it works" (owner, 2026-09-25: "start talk while it
+          // works"): first, a test on the phone that the microphone still
+          // hears while another app is on screen. It runs only from here,
+          // only when tapped.
+          const GroupLabel('Tests'),
+          GroupedCard(
+            dividerInset: 60,
+            children: [
+              AppleRow(
+                leading: IconTile(Icons.mic_rounded, AppleColors.orange),
+                title: 'Mic test',
+                subtitle: 'Does the mic still hear you in another app?',
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const MicProbeScreen())),
               ),
             ],
           ),
