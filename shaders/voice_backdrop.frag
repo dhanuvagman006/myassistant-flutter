@@ -10,6 +10,9 @@
 // them, and the light-wave ribbons running out to both sides — and the
 // Dart side moves the rings in and out with the voice. The disc, the mic
 // and the name in the middle are a separate, still picture (VoiceOrb).
+// Under it all lies the picture's teal night (2026-09-25, review: its
+// ground is a dark teal, ours a navy, and its gaps between the rings read
+// as lit haze where ours read as black) — one more term, no extra pass.
 //
 // THE NUMBERS ARE THE SAME. Every number in the ring(), lens(),
 // strand() and sparkle() calls below is copied from OrbRings in
@@ -42,7 +45,8 @@ uniform vec4 uState;  // x: bloom-in 0..1; y: ribbons' sway (px); z: ribbons' st
 uniform vec4 uPush0;  // tiers 0..3: how far each is pushed out (its horizontal scale)
 uniform vec4 uPush1;  // x: tier 4; y: the push's share at the top and bottom
 // One colour per element, in OrbRings.elements order (a full ring's top
-// colour), then the full rings' side colours, then the ribbons'.
+// colour), then the full rings' side colours, then the ribbons', the
+// sparkles' and the teal wash's (its alpha too: 0 in the warm-up draw).
 uniform vec4 uC0;
 uniform vec4 uC1;
 uniform vec4 uC2;
@@ -66,6 +70,7 @@ uniform vec4 uRibNear;
 uniform vec4 uRibFar;
 uniform vec4 uRibAccent;
 uniform vec4 uSparkle;
+uniform vec4 uWash;
 
 out vec4 fragColor;
 
@@ -123,11 +128,25 @@ float ribbonMid(float u, float side) {
 float ribbonHalf(float u, float side) {
   return side > 0.0 ? 0.095 + 0.29 * u * u : 0.16 - 0.12 * u + 0.33 * u * u;
 }
+// Gone by 2.05 R and a lower accent (2026-09-25, review: past the outer
+// ring they were twice as bright as the picture's), and the sheet kept
+// on over the lenses (it thinned out by 1.4 R, and the violet lens showed
+// through unwashed).
 float ribbonEnvelope(float u) {
-  return smoothstep(-0.05, 0.04, u) * (1.0 - smoothstep(0.55, 1.0, u));
+  return smoothstep(-0.05, 0.04, u) * (1.0 - smoothstep(0.52, 0.84, u));
 }
 float sheetAlpha(float u) {
-  return ribbonEnvelope(u) * (0.12 + 0.55 * (1.0 - smoothstep(0.05, 0.55, u)));
+  return ribbonEnvelope(u) * (0.12 + 0.55 * (1.0 - smoothstep(0.10, 0.80, u)));
+}
+
+// The teal night under the rings (OrbRings.washFull / washGone /
+// washSquash): full to 1.9 R, gone by 2.7 R, squashed top and bottom to
+// end exactly at the box's edge, never in a hard line across the screen.
+vec4 wash(vec2 q, float R, float halfHeight) {
+  float squash = clamp(halfHeight / (R * 2.7), 0.5, 1.0);
+  float d = length(vec2(q.x, q.y / squash)) / R;
+  float a = (1.0 - smoothstep(1.9, 2.7, d)) * uWash.a * uState.x;
+  return vec4(uWash.rgb * a, a);
 }
 
 // One strand: a line of half-width hw at height y, fading to nothing at
@@ -165,9 +184,9 @@ void main() {
   float px = uGeom.w;
   vec2 q = p - size * 0.5;
   float rho0 = length(q) / R;
-  vec4 acc = vec4(0.0);
+  vec4 acc = wash(q, R, size.y * 0.5);
 
-  // Under the disc nothing shows (VoiceOrb paints it opaque on top).
+  // Under the disc nothing else shows (VoiceOrb paints it opaque on top).
   if (rho0 < 0.96) {
     fragColor = acc;
     return;
@@ -220,7 +239,7 @@ void main() {
   // and swelling a little with the voice (sway and stretch undone here).
   vec2 rp = vec2(q.x / R, (q.y - uState.y) / (R * max(uState.z, 0.5)));
   float X = abs(rp.x);
-  if (X > 0.97 && X < 2.30) {
+  if (X > 0.97 && X < 2.05) {
     float side = rp.x > 0.0 ? 1.0 : -1.0;
     float u = (X - 1.0) / 1.25;
     float mid = ribbonMid(u, side);
@@ -242,7 +261,7 @@ void main() {
         float a = 0.60 * env * (0.35 + 0.65 * (0.5 + 0.5 * cos(th)));
         acc = strand(acc, rp.y, mid + hh * sin(th), 0.009, a, col);
       }
-      float aa = 0.70 * env;
+      float aa = 0.38 * env;
       float pa = TAU * 0.8 * u;
       acc = strand(acc, rp.y, mid + 0.35 * hh * sin(pa + (side > 0.0 ? 0.9 : 3.3)), 0.022, aa, uRibAccent.rgb);
       acc = strand(acc, rp.y, mid + 0.35 * hh * sin(pa + (side > 0.0 ? 2.6 : 5.0)), 0.022, aa, uRibAccent.rgb);

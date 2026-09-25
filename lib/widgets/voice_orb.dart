@@ -27,11 +27,12 @@ import '../services/assistant_identity.dart';
 ///     a white microphone with a little trail of dots above it, and the
 ///     assistant's name. It holds still: no ticker, painted once.
 ///   * THE SPEAKER ([VoiceOrbBackdrop]) — the rings round it, brighter
-///     and thicker at the sides like speaker cones seen side-on, and the
-///     light-wave ribbons running out to both edges. While he talks (his
-///     mic level) or the assistant answers (her voice's level) the rings
-///     push out and spring back in with the voice; thinking is a slow
-///     breath; at rest it is still.
+///     and thicker at the sides like speaker cones seen side-on, the
+///     light-wave ribbons running out to both sides, and the picture's
+///     teal night under them. While he talks (his mic level) or the
+///     assistant answers (her voice's level) the rings push out and spring
+///     back in with the voice; thinking is a slow breath; at rest it is
+///     still.
 ///
 ///  EVERY NUMBER WAS MEASURED OFF THE REFERENCE, not guessed: the disc's
 ///  colours and rim, the mic's parts, the dots and the ring table in
@@ -400,9 +401,10 @@ class _Label {
 
 /// THE SPEAKER — the rings round the disc and the ribbons at its sides.
 ///
-/// Paint it full-width: the ribbons run out toward both screen edges; the
-/// rings need a slot [reach] times the disc's size, so size the slot for
-/// that and every ring is a whole circle.
+/// Paint it full-width: the ribbons, and the teal wash under the rings,
+/// run out toward both screen edges; the rings need a slot [reach] times
+/// the disc's size, so size the slot for that and every ring is a whole
+/// circle (the wash is squashed to end at the slot's top and bottom).
 class VoiceOrbBackdrop extends StatefulWidget {
   const VoiceOrbBackdrop({
     super.key,
@@ -597,10 +599,13 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     final moving = _moving;
 
     // A whisper does not move a speaker: below 3% is silence, and the
-    // curve lifts quiet speech so it still shows.
+    // curve lifts quiet speech so it still shows (OrbRings.driveCurve:
+    // 0.6 since the review of 2026-09-25, so an ordinary voice moves the
+    // rings a push you can see, not a shimmer).
     final heard = moving ? _heard() : 0.0;
-    final drive =
-        heard <= 0.03 ? 0.0 : math.pow((heard - 0.03) / 0.97, 0.75).toDouble();
+    final drive = heard <= 0.03
+        ? 0.0
+        : math.pow((heard - 0.03) / 0.97, OrbRings.driveCurve).toDouble();
     sc.glow = _ease(sc.glow, drive, drive > sc.glow ? 30 : 8, dt);
     sc.think =
         _ease(sc.think, moving && widget.mood == OrbMood.thinking ? 1 : 0, 4, dt);
@@ -715,9 +720,10 @@ class _BackdropPainter extends CustomPainter {
     _f(1);
   }
 
-  /// THE GPU PATH: the whole picture — rings, ribbons, sparkles — in ONE
-  /// rectangle, drawn by shaders/voice_backdrop.frag. No offscreen layer,
-  /// no paths, no blur, nothing on the Canvas beside it.
+  /// THE GPU PATH: the whole picture — the teal wash under it, rings,
+  /// ribbons, sparkles — in ONE rectangle, drawn by
+  /// shaders/voice_backdrop.frag. No offscreen layer, no paths, no blur,
+  /// nothing on the Canvas beside it.
   void _paintGpu(Canvas canvas, Size size, ui.FragmentProgram program) {
     final sc = scene;
     final r = orbRadius;
@@ -753,6 +759,7 @@ class _BackdropPainter extends CustomPainter {
     _rgb(palette.ribbonFar);
     _rgb(palette.ribbonAccent);
     _rgb(palette.sparkle);
+    _rgb(palette.wash);
     if (_box.width != size.width || _box.height != size.height) {
       _box = Offset.zero & size;
     }
@@ -776,6 +783,13 @@ class _BackdropPainter extends CustomPainter {
       _meshAlpha = sc.appear;
       _mesh.color = Color.fromRGBO(255, 255, 255, sc.appear);
     }
+    // The picture's teal night under the rings (OrbRings.washFull),
+    // squashed to end at the box's top and bottom.
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.scale(r, r * OrbRings.washSquash(cy / r));
+    canvas.drawVertices(meshes.wash, BlendMode.dst, _mesh);
+    canvas.restore();
     const top = OrbRings.pushTopShare;
     for (var i = 0; i < OrbRings.elements.length; i++) {
       final s = sc.scaleOf(OrbRings.elements[i].tier);
@@ -812,12 +826,14 @@ class _BackdropPainter extends CustomPainter {
 /// profile the GPU program works out per pixel.
 class _OrbMeshes {
   _OrbMeshes._(OrbPalette p)
-      : elements = [
+      : wash = _wash(p.wash),
+        elements = [
           for (var i = 0; i < OrbRings.elements.length; i++)
             _element(OrbRings.elements[i], p.elements[i], p.sides[i]),
         ],
         ribbons = _ribbons(p);
 
+  final ui.Vertices wash;
   final List<ui.Vertices> elements;
   final ui.Vertices ribbons;
 
@@ -837,6 +853,45 @@ class _OrbMeshes {
       (((c.r * 255).round()) << 16) |
       (((c.g * 255).round()) << 8) |
       ((c.b * 255).round());
+
+  /// The wash: a round disc at radius 1 (the painter squashes it), full
+  /// strength to [OrbRings.washFull] — one fan from the middle — then
+  /// rows every twentieth of a radius out to [OrbRings.washGone], each
+  /// with the fade's own strength there, so the straight lines between
+  /// the rows follow the program's smoothstep to well under a colour step.
+  static ui.Vertices _wash(Color c) {
+    const n = 128, rows = 16;
+    final radii = [
+      for (var k = 0; k <= rows; k++)
+        OrbRings.washFull + (OrbRings.washGone - OrbRings.washFull) * k / rows,
+    ];
+    final pos = Float32List((1 + n * radii.length) * 2);
+    final col = Int32List(1 + n * radii.length);
+    col[0] = _argb(c, 1);
+    var vi = 1;
+    for (final rr in radii) {
+      final a = OrbRings.washAlpha(rr);
+      for (var k = 0; k < n; k++) {
+        final th = 2 * math.pi * k / n;
+        pos[vi * 2] = math.cos(th) * rr;
+        pos[vi * 2 + 1] = math.sin(th) * rr;
+        col[vi] = _argb(c, a);
+        vi++;
+      }
+    }
+    final idx = <int>[];
+    int at(int row, int k) => 1 + row * n + k % n;
+    for (var k = 0; k < n; k++) {
+      idx.addAll([0, at(0, k), at(0, k + 1)]);
+      for (var row = 0; row < rows; row++) {
+        final a = at(row, k), b = at(row, k + 1);
+        final c0 = at(row + 1, k), d = at(row + 1, k + 1);
+        idx.addAll([a, c0, b, b, c0, d]);
+      }
+    }
+    return ui.Vertices.raw(ui.VertexMode.triangles, pos,
+        colors: col, indices: Uint16List.fromList(idx));
+  }
 
   static ui.Vertices _element(OrbElement el, Color top, Color side) {
     // Angles to sample: all the way round for a full ring; for a lens,

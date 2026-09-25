@@ -241,7 +241,9 @@ void main() {
     // whole picture, ribbons and sparkles included — the 42 dust motes it
     // used to leave on the Canvas went with the old design. Without the
     // program: one prebuilt mesh per ring and one for the ribbons, and no
-    // offscreen layer (the top/bottom melt went with the tunnel).
+    // offscreen layer (the top/bottom melt went with the tunnel). Since the
+    // review of 2026-09-25 also one for the picture's teal night laid
+    // under the rings (the program draws it in its same one rectangle).
     testWidgets('is one rectangle: no offscreen layer, no paths, no second pass',
         (tester) async {
       await _pumpOrbScene(tester, OrbMood.listening);
@@ -258,7 +260,8 @@ void main() {
       final canvas = _record(tester, find.byType(VoiceOrbBackdrop));
       expect(canvas['saveLayer'], 0);
       expect(canvas['drawPath'], 0);
-      expect(canvas['drawVertices'], OrbRings.elements.length + 1);
+      expect(canvas['drawVertices'], OrbRings.elements.length + 2,
+          reason: 'the wash, each ring, the ribbons');
     });
 
     for (final mood in [OrbMood.listening, OrbMood.thinking, OrbMood.speaking]) {

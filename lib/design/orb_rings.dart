@@ -28,8 +28,10 @@ import 'accent_controller.dart';
 ///     are lit, not black);
 ///   * the light-wave RIBBONS running out of both sides: a twisted bundle
 ///     of fine strands (a lattice of little diamonds), lavender near the
-///     disc and fading out toward the screen's edges, with a pink strand
-///     through them and a few sparkles.
+///     disc, washing the lenses bluer where it crosses them, and gone by
+///     about 2 R, with a violet strand through them and a few sparkles;
+///   * and the GROUND round it all: the picture's night is a dark teal,
+///     not our navy, so the gaps between its rings read as lit haze.
 ///  Unwrapped into angle and radius, the reference and these numbers were
 ///  compared ray by ray until they matched.
 ///
@@ -146,7 +148,22 @@ abstract final class OrbRings {
   /// radius: the inner rings most, the outer ones less, the frame not at
   /// all — a cone moves most at its middle and not at its rim, and the
   /// eye reads a push travelling outward.
-  static const List<double> push = [0.070, 0.064, 0.056, 0.048, 0.040];
+  ///
+  /// BIGGER, 2026-09-25 (review). The client asked for a speaker moving
+  /// "forward and backwards"; at 0.070 an ordinary voice moved the inner
+  /// ring 2-3 dp, which at arm's length reads as a shimmer, and a quiet
+  /// word looked the same as the thinking breath. At 0.105 (with the
+  /// livelier curve in _onTick) ordinary speech pushes it about 5-6 dp at
+  /// the sides. The frame still holds: the violet lens at its peak,
+  /// overshoot and all (1.608 × (1 + 0.060 × 1.23) + 0.062 ≈ 1.79 R),
+  /// stays inside the frame ring at 1.815 R (orb_rings_test checks every
+  /// tier).
+  static const List<double> push = [0.105, 0.096, 0.084, 0.072, 0.060];
+
+  /// The curve from the voice's loudness to the push: ((l - 0.03) / 0.97)
+  /// to this power. Below 1 lifts ordinary speech (the mic reads it at
+  /// about 0.2-0.4) toward a full push; it was 0.75.
+  static const double driveCurve = 0.6;
 
   /// A cone seen from the side moves along the axis it faces: the rings
   /// push further at the left and right than at the top and bottom.
@@ -163,8 +180,10 @@ abstract final class OrbRings {
   /// diamonds are about 0.04 R across).
   static const int strands = 20, accents = 2;
 
-  /// Where the ribbons run, from under the disc's edge outward.
-  static const double ribbonFrom = 0.97, ribbonTo = 2.30;
+  /// Where the ribbons run, from under the disc's edge outward, to where
+  /// they are gone (2.05 R, see [ribbonEnvelope]; nothing is drawn past
+  /// it — it ran to 2.30 R before the review of 2026-09-25).
+  static const double ribbonFrom = 0.97, ribbonTo = 2.05;
 
   /// Half-width of a strand and of an accent strand (vertical, R units).
   static const double strandHalf = 0.009, accentHalf = 0.022;
@@ -172,7 +191,8 @@ abstract final class OrbRings {
   /// Samples along each strand in the Canvas painter's mesh.
   static const int ribbonSamples = 100;
 
-  /// 0 at the disc's edge, 1 where a ribbon has faded out.
+  /// How far along a ribbon [x] is: 0 at the disc's edge, 0.84 where the
+  /// ribbon is gone (the shapes below were measured on this scale).
   static double ribbonU(double x) => (x - 1.0) / 1.25;
 
   /// The ribbon's middle line and half-height at [u], for the right (+1)
@@ -191,9 +211,25 @@ abstract final class OrbRings {
   static double accentPhase(int side, int i) =>
       side > 0 ? (i == 0 ? 0.9 : 2.6) : (i == 0 ? 3.3 : 5.0);
 
-  /// Full strength as it leaves the disc, gone toward the screen's edge.
+  /// Full strength as it leaves the disc, fading from [fadeOut0] and
+  /// gone by [fadeOut1] (x = 2.05 R).
+  ///
+  /// SHORTER, 2026-09-25 (review). Faded over 0.55-1.0 the ribbons ran on
+  /// to about 2.25 R and past the outer ring were twice as bright as the
+  /// picture's, drooping there into crisp magenta lattices; the picture's
+  /// ends are a faint grey-lavender, gone by about 2 R. The review's
+  /// 0.42-0.80 went too far the other way once drawn (under half the
+  /// picture's light at 1.86-1.95 R, and too dark from 1.75 R); 0.52-0.84
+  /// is about half the old light there, which is about the picture's.
+  static const double fadeIn0 = -0.05, fadeIn1 = 0.04;
+  static const double fadeOut0 = 0.52, fadeOut1 = 0.84;
   static double ribbonEnvelope(double u) =>
-      smoothstep(-0.05, 0.04, u) * (1 - smoothstep(0.55, 1.0, u));
+      smoothstep(fadeIn0, fadeIn1, u) * (1 - smoothstep(fadeOut0, fadeOut1, u));
+
+  /// The strands' and the accent strands' strength. The accent was 0.70
+  /// and pink (2026-09-25, review: in the picture it is a faint violet
+  /// thread, not a magenta one).
+  static const double strandStrength = 0.60, accentStrength = 0.38;
 
   /// Strand [j] of [side] at [u]: its height and its brightness (strands
   /// on the near side of the twist are brighter, which is what makes a
@@ -205,7 +241,7 @@ abstract final class OrbRings {
   static double strandAlpha(double u, int side, int j) {
     final depth = math.cos(
         2 * math.pi * twist * u + ribbonPhase(side) + 2 * math.pi * j / strands);
-    return 0.60 * ribbonEnvelope(u) * (0.35 + 0.65 * (0.5 + 0.5 * depth));
+    return strandStrength * ribbonEnvelope(u) * (0.35 + 0.65 * (0.5 + 0.5 * depth));
   }
 
   static double accentY(double u, int side, int i) =>
@@ -213,15 +249,25 @@ abstract final class OrbRings {
       0.35 *
           ribbonHalf(u, side) *
           math.sin(2 * math.pi * accentTwist * u + accentPhase(side, i));
-  static double accentAlpha(double u) => 0.70 * ribbonEnvelope(u);
+  static double accentAlpha(double u) => accentStrength * ribbonEnvelope(u);
 
   /// THE SHEET under the strands: near the disc the picture's lattice is
   /// so dense it reads as a band of lavender light laid over the rings;
   /// further out it thins to lines. Its strength across the band, from
   /// the middle (0) to the edge (1): full, 0.85 at 0.6, nothing at 1.
+  ///
+  /// OVER THE LENSES TOO, 2026-09-25 (review). It used to thin out by
+  /// u = 0.55 (about 1.4 R), so the violet lens showed through almost
+  /// unchanged and the band read as separate thin lines; in the picture a
+  /// soft blue-lavender band still washes the violet and blue lenses at
+  /// 1.6 R. It now thins over [sheetThin0]-[sheetThin1] (0.34 at 1.62 R,
+  /// was 0.135), and the far colour it turns to is bluer.
   static const double sheetKnee = 0.6, sheetKneeAlpha = 0.85;
+  static const double sheetFloor = 0.12, sheetNear = 0.55;
+  static const double sheetThin0 = 0.10, sheetThin1 = 0.80;
   static double sheetAlpha(double u) =>
-      ribbonEnvelope(u) * (0.12 + 0.55 * (1 - smoothstep(0.05, 0.55, u)));
+      ribbonEnvelope(u) *
+      (sheetFloor + sheetNear * (1 - smoothstep(sheetThin0, sheetThin1, u)));
 
   /// Near-to-far colour share along a ribbon.
   static double ribbonShade(double u) => smoothstep(0.0, 0.9, u);
@@ -249,6 +295,31 @@ abstract final class OrbRings {
     (1.78, 0.04, 0.015, 0.70),
     (1.50, 0.19, 0.010, 0.55),
   ];
+
+  // ── The ground under the rings ────────────────────────────────────────
+  /// THE WASH, 2026-09-25 (review). The picture's night round the orb is
+  /// a dark teal (#081718-#0A1D1F), ours a navy (#06070F): its gaps
+  /// between the rings read as lit haze, ours as black, and next to it
+  /// ours looked colder and harder-edged. The screen's ground stays as it
+  /// is (the words' contrast is measured on it); the speaker lays the
+  /// picture's teal ([OrbPalette.wash]) under its own rings instead: full
+  /// out to [washFull], gone by [washGone].
+  ///
+  /// AN ELLIPSE AS HIGH AS ITS BOX. The rings fill their slot: it reaches
+  /// only about 1.85-1.96 R above and below the middle, and a wash cut
+  /// off there would end in a hard line across the screen. So the wash
+  /// is squashed to end exactly at the box's top and bottom ([washSquash])
+  /// and runs its full width to the sides, where the ribbons are. It
+  /// never reaches past the slot, over the words or the Sound button.
+  static const double washFull = 1.9, washGone = 2.7;
+
+  /// The wash's height as a share of its width in a box reaching
+  /// [halfHeight] (in R) above and below the middle.
+  static double washSquash(double halfHeight) =>
+      (halfHeight / washGone).clamp(0.5, 1.0);
+
+  /// Its strength [d] (in R, the ellipse's own measure) from the middle.
+  static double washAlpha(double d) => 1 - smoothstep(washFull, washGone, d);
 
   static double smoothstep(double e0, double e1, double x) {
     final t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -278,6 +349,7 @@ class OrbPalette {
         ribbonFar = f(_ribbonFar),
         ribbonAccent = f(_ribbonAccent),
         sparkle = f(_sparkle),
+        wash = f(_wash),
         disc = [for (final c in _disc) f(c)],
         rim = f(_rim),
         rimHalo = f(_rimHalo),
@@ -292,6 +364,9 @@ class OrbPalette {
   /// A full ring's side colour, per element (lenses repeat their colour).
   final List<Color> sides;
   final Color ribbonNear, ribbonFar, ribbonAccent, sparkle;
+
+  /// The teal night laid under the rings (see [OrbRings.washFull]).
+  final Color wash;
 
   /// The disc's fill, at [discStops] of its radius.
   final List<Color> disc;
@@ -334,9 +409,14 @@ class OrbPalette {
     Color(0xFF40304C), // ring-frame
   ];
   static const _ribbonNear = Color(0xFFB0B2FF);
-  static const _ribbonFar = Color(0xFF8C7FE4);
-  static const _ribbonAccent = Color(0xFFCF7EF0);
+  // 2026-09-25 (review): the far colour was a violet #8C7FE4; the
+  // picture's band turns the violet lens bluer where it crosses it, so it
+  // is a periwinkle now. The accent strand was a pink #CF7EF0; in the
+  // picture it is a violet-lavender.
+  static const _ribbonFar = Color(0xFF8C8CF0);
+  static const _ribbonAccent = Color(0xFFA884F2);
   static const _sparkle = Color(0xFFEDEBFF);
+  static const _wash = Color(0xFF0B1E20);
   static const _disc = <Color>[
     Color(0xFF0B0C28),
     Color(0xFF090B20),

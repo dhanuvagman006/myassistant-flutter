@@ -11,12 +11,14 @@
 //   * the default theme is the picture's own colours, and another theme
 //     colour moves every hue toward itself;
 //   * the rings push out with his voice while listening and with hers
-//     while speaking (never with the wrong one), breathe while thinking,
-//     and hold completely still — no ticker — at rest;
+//     while speaking (never with the wrong one) — far enough that an
+//     ordinary voice reads as a push, not a shimmer — breathe while
+//     thinking, and hold completely still — no ticker — at rest;
 //   * "Remove animations" holds them still;
 //   * the whole ring system fits its slot on the voice screen, at rest and
 //     with the keyboard up, so it never runs under the words or the bar.
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -137,6 +139,68 @@ void main() {
       }
     });
 
+    // 2026-09-25, review: the ribbons' fade, the sheet over the lenses, the
+    // strands' strength and the teal wash under the rings are copies too.
+    test('...and the fade, the sheet, the strengths and the wash', () {
+      String body(String head) =>
+          RegExp(RegExp.escape(head) + r'\s*\{([^}]*)\}').firstMatch(frag)!.group(1)!;
+      expect(_numbers(body('float ribbonEnvelope(float u)')), [
+        OrbRings.fadeIn0, OrbRings.fadeIn1, 1.0, OrbRings.fadeOut0, OrbRings.fadeOut1,
+      ]);
+      expect(_numbers(body('float sheetAlpha(float u)')), [
+        OrbRings.sheetFloor, OrbRings.sheetNear, 1.0, OrbRings.sheetThin0,
+        OrbRings.sheetThin1,
+      ]);
+      double strength(String name) => double.parse(
+          RegExp('float $name' r' = ([\d.]+) \* env').firstMatch(frag)!.group(1)!);
+      expect(strength('a'), OrbRings.strandStrength);
+      expect(strength('aa'), OrbRings.accentStrength);
+      expect(_numbers(RegExp(r'if \(X > ([\d.]+) && X < ([\d.]+)\)').firstMatch(frag)!.group(0)!),
+          [OrbRings.ribbonFrom, OrbRings.ribbonTo]);
+      expect(_numbers(body('vec4 wash(vec2 q, float R, float halfHeight)')), [
+        OrbRings.washGone, 0.5, 1.0, 1.0, OrbRings.washFull, OrbRings.washGone,
+      ]);
+      // The squash the program works out is the table's.
+      for (final half in [1.0, 1.85, 1.96, 3.0]) {
+        expect(OrbRings.washSquash(half), (half / 2.7).clamp(0.5, 1.0));
+      }
+    });
+
+    test('the ribbons are gone before the screen edge, past the outer ring', () {
+      // The picture's ends are faint and gone by about 2 R (2026-09-25,
+      // review: ours ran on to 2.25 R, twice as bright past the ring).
+      expect(OrbRings.ribbonEnvelope(OrbRings.ribbonU(OrbRings.ribbonTo)), 0);
+      expect(OrbRings.ribbonTo, lessThanOrEqualTo(2.1));
+      // ...but the sheet still washes the lenses at 1.6 R (it was 0.135).
+      expect(OrbRings.sheetAlpha(OrbRings.ribbonU(1.62)), greaterThan(0.25));
+    });
+
+    test('the teal wash ends at its box, top and bottom, never in a line', () {
+      // The slot reaches 1.85-1.96 R above and below the middle on the
+      // phones the layout sweep uses; the wash must be nothing there.
+      for (final half in [1.85, 1.96, 2.2]) {
+        final squash = OrbRings.washSquash(half);
+        expect(OrbRings.washAlpha(half / squash), closeTo(0, 1e-9), reason: '$half R');
+        expect(OrbRings.washAlpha(0.8 * half / squash), greaterThan(0.3));
+      }
+      expect(OrbPalette.of(AccentController.defaultSeed).wash, const Color(0xFF0B1E20),
+          reason: "the picture's own night");
+    });
+
+    test('at the top of a full push, overshoot and all, the rings stay inside the frame',
+        () {
+      // An under-damped spring overshoots a step by this much.
+      const z = OrbRings.damping;
+      final overshoot = 1 + math.exp(-z * math.pi / math.sqrt(1 - z * z));
+      final frame = OrbRings.elements.firstWhere((e) => e.tier == OrbRings.frame);
+      for (final el in OrbRings.elements) {
+        if (el.tier == OrbRings.frame) continue;
+        final out = (el.r0 + el.drift + el.h + el.e) *
+            (1 + OrbRings.push[el.tier] * overshoot);
+        expect(out, lessThan(frame.r0 - frame.h), reason: el.name);
+      }
+    });
+
     test('the whole system fits the reach a slot is sized by', () {
       for (final el in OrbRings.elements) {
         expect(el.reach, lessThanOrEqualTo(OrbRings.reach), reason: el.name);
@@ -204,6 +268,28 @@ void main() {
           reason: 'and they come back when he stops');
       expect(SchedulerBinding.instance.transientCallbackCount, greaterThan(0),
           reason: 'still listening: ready for the next word');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('an ordinary voice is a push you can see, not a shimmer', (tester) async {
+      // 2026-09-25, review: the mic reads speech at about 0.2-0.4, and at
+      // the first pushes that moved the inner ring 2-3 dp at the sides —
+      // a shimmer at arm's length — and a quiet word looked like the
+      // thinking breath (which stays under 0.022, see below).
+      final level = ValueNotifier<double>(0);
+      await tester.pumpWidget(_rings(OrbMood.listening, level: level));
+      await _run(tester, 40);
+      final ring = OrbRings.elements.firstWhere((e) => e.name == 'ring-mint');
+      // On his phone the disc is 168 dp across: R is 84 dp.
+      double dp(double push) => push * ring.r0 * 84;
+      level.value = 0.3;
+      await _run(tester, 40);
+      expect(dp(VoiceOrbBackdrop.debugPush), greaterThan(4.0),
+          reason: 'an ordinary voice barely moved the speaker');
+      level.value = 0.2;
+      await _run(tester, 40);
+      expect(VoiceOrbBackdrop.debugPush, greaterThan(0.03),
+          reason: 'a quiet word looks like the thinking breath');
       await tester.pumpWidget(const SizedBox());
     });
 
