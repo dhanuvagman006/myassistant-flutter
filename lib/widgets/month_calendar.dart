@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -44,7 +45,26 @@ class MonthCalendar extends StatefulWidget {
             : HSLColor.fromColor(Neon.pink)
                 .withLightness(HSLColor.fromColor(Neon.pink).lightness * 0.9)
                 .toColor(),
-      ];
+      ].map(_readable).toList();
+
+  /// A busy shade, darkened only as far as its day number needs to read
+  /// (4.5:1). The fluorescent accents (2026-09-25) put some shades right
+  /// in the middle — the Orange partner by day was 4.35:1 for white AND
+  /// for dark numbers — and a fixed per-colour tweak would break again
+  /// with the next palette. A shade that already reads is left alone.
+  static Color _readable(Color c) {
+    double ratio(Color a, Color b) {
+      final x = a.computeLuminance(), y = b.computeLuminance();
+      return (math.max(x, y) + 0.05) / (math.min(x, y) + 0.05);
+    }
+    var h = HSLColor.fromColor(c);
+    for (var i = 0; i < 16; i++) {
+      final col = h.toColor();
+      if (ratio(Neon.textOn(col), col) >= 4.5) return col;
+      h = h.withLightness((h.lightness - 0.03).clamp(0.0, 1.0));
+    }
+    return h.toColor();
+  }
 
   @override
   State<MonthCalendar> createState() => _MonthCalendarState();

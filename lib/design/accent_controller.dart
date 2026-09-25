@@ -20,36 +20,74 @@ class AccentController {
   static const _key = 'accent_seed_v1';
 
   /// What everyone gets until they choose: Indigo. Owner, 2026-09-25:
-  /// "set indigo as default theme" (it was the app's own violet). Anyone
-  /// who already picked a colour keeps it — only an unset choice follows
-  /// this.
-  static const defaultSeed = Color(0xFF8B9CFF);
+  /// "set indigo as default theme" (it was the app's own violet) — now
+  /// the fluorescent Indigo below. Anyone who already picked a colour
+  /// keeps it (or its fluorescent twin, see [load]).
+  static const defaultSeed = Color(0xFF6E73FF);
 
   /// Bumps whenever the accent changes; the app root rebuilds on it.
   static final ValueNotifier<Color> seed = ValueNotifier(defaultSeed);
 
   /// Named choices for the settings row. Deliberately short: a dozen
   /// swatches is a decision, thirty is a chore.
+  ///
+  /// FLUORESCENT, NOT PASTEL. The client, 2026-09-25, on a screenshot of
+  /// this row: "These colors are not good; use some nice fluorescent
+  /// colors." Twelve highlighter-bright hues round the wheel, each lit
+  /// enough to read as text on the dark theme; the light theme draws text
+  /// in each one's darker ink (Neon.violet), and bright ones get dark
+  /// glyphs on top (Neon.onAccent) — test/contrast_test.dart checks every
+  /// swatch in both themes.
   static const swatches = <(String, Color)>[
-    ('Violet', Color(0xFFC77DFF)),
-    ('Indigo', Color(0xFF8B9CFF)),
-    ('Ocean', Color(0xFF4FC3F7)),
-    ('Teal', Color(0xFF3FE0C8)),
-    ('Mint', Color(0xFF6EE7A8)),
-    ('Lime', Color(0xFFBDF64B)),
-    ('Amber', Color(0xFFFFC24B)),
-    ('Coral', Color(0xFFFF8A65)),
-    ('Rose', Color(0xFFFF7BA3)),
-    ('Magenta', Color(0xFFFF6FD8)),
-    ('Crimson', Color(0xFFFF6B6B)),
-    ('Slate', Color(0xFF9FB3C8)),
+    ('Indigo', Color(0xFF6E73FF)),
+    ('Violet', Color(0xFFB14DFF)),
+    ('Magenta', Color(0xFFFF2BD6)),
+    ('Pink', Color(0xFFFF3D8B)),
+    ('Red', Color(0xFFFF3B3B)),
+    ('Orange', Color(0xFFFF7A1A)),
+    ('Lemon', Color(0xFFFFE81A)),
+    ('Lime', Color(0xFFC6FF1A)),
+    ('Green', Color(0xFF39FF14)),
+    ('Mint', Color(0xFF1AFFB2)),
+    ('Aqua', Color(0xFF1AF0FF)),
+    ('Blue', Color(0xFF1A8CFF)),
   ];
+
+  /// The pastel row this replaced, and the fluorescent colour each owner
+  /// choice moves to — so a saved "Coral" becomes Orange, not a colour
+  /// the picker can no longer show as selected.
+  static const _pastelToFluorescent = <int, int>{
+    0xFFC77DFF: 0xFFB14DFF, // Violet  → Violet
+    0xFF8B9CFF: 0xFF6E73FF, // Indigo  → Indigo
+    0xFF4FC3F7: 0xFF1A8CFF, // Ocean   → Blue
+    0xFF3FE0C8: 0xFF1AF0FF, // Teal    → Aqua
+    0xFF6EE7A8: 0xFF1AFFB2, // Mint    → Mint
+    0xFFBDF64B: 0xFFC6FF1A, // Lime    → Lime
+    0xFFFFC24B: 0xFFFFE81A, // Amber   → Lemon
+    0xFFFF8A65: 0xFFFF7A1A, // Coral   → Orange
+    0xFFFF7BA3: 0xFFFF3D8B, // Rose    → Pink
+    0xFFFF6FD8: 0xFFFF2BD6, // Magenta → Magenta
+    0xFFFF6B6B: 0xFFFF3B3B, // Crimson → Red
+    0xFF9FB3C8: 0xFF1A8CFF, // Slate   → Blue
+  };
+
+  /// A saved colour from the old pastel row, as its fluorescent twin;
+  /// anything else as it was.
+  static Color migrate(Color c) {
+    final to = _pastelToFluorescent[c.toARGB32()];
+    return to == null ? c : Color(to);
+  }
 
   static Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final v = prefs.getInt(_key);
-      if (v != null) seed.value = Color(v);
+      if (v != null) {
+        final c = migrate(Color(v));
+        seed.value = c;
+        // Stored once, so the picker shows the new swatch as chosen.
+        if (c.toARGB32() != v) await prefs.setInt(_key, c.toARGB32());
+      }
     } catch (_) {}
     _apply();
   }
