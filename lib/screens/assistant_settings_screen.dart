@@ -23,6 +23,7 @@ import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
 import '../services/greeting_voice.dart';
 import '../services/app_feedback.dart';
+import '../services/tester_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
@@ -242,6 +243,28 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   void _snack(String msg) {
     if (!mounted) return;
     AppFeedback.show(msg, context: context);
+  }
+
+  /// Opens the tester feedback form (TesterFeedback). When it opened,
+  /// the form speaks for itself; when it could not, one toast says so.
+  ///
+  /// Two messages, each only when it is true (review, 2026-09-25). The one
+  /// toast used to say "Check your internet" for every failure, but the
+  /// failures that reach here were never the internet (Firebase not
+  /// started, no Android half); the connection is now checked before the
+  /// form starts, and only that check's answer asks about the connection.
+  Future<void> _sendFeedback() async {
+    final started = await TesterFeedback.start();
+    if (!mounted) return;
+    final msg = switch (started) {
+      FeedbackStart.opened => null,
+      FeedbackStart.offline =>
+        'Feedback needs the internet. Check your connection and try again.',
+      FeedbackStart.unavailable =>
+        "Feedback isn't available right now. Please try again later.",
+    };
+    if (msg == null) return;
+    AppFeedback.show(msg, context: context, tone: FeedbackTone.error);
   }
 
   @override
@@ -521,6 +544,26 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 const SizedBox(height: 24),
 
                 const AccountSection(),
+                const SizedBox(height: 24),
+
+                // SEND FEEDBACK (owner, 2026-09-25: "yes add the send
+                // feedback button"). Opens the feedback form of the service
+                // the client installs the app from; what they write reaches
+                // the owner with the build it is about. Next to About,
+                // where a person looks for "tell someone".
+                const GroupLabel('Help'),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading:
+                          IconTile(Icons.feedback_outlined, AppleColors.blue),
+                      title: 'Send feedback',
+                      subtitle: 'Tell the developer what to improve',
+                      onTap: _sendFeedback,
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 24),
 
                 const GroupLabel('About & legal'),

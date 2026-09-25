@@ -95,4 +95,16 @@ flutter {
 }
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // SEND FEEDBACK (owner, 2026-09-25: "yes add the send feedback button").
+    // The client gets the app through Firebase App Distribution; this SDK
+    // opens its feedback form (TesterFeedbackBridge), and what the client
+    // writes shows up in the Firebase console under the release.
+    //
+    // The FULL SDK, because this app is sideloaded and never on Play. It
+    // also carries App Distribution's own self-update code, which Play
+    // forbids: a Play build must use "firebase-appdistribution-api"
+    // instead. We never call that update code (updateIfNewReleaseAvailable,
+    // checkForNewRelease, updateApp) — our own updater stays the only one.
+    implementation("com.google.firebase:firebase-appdistribution:16.0.0-beta20")
 }
