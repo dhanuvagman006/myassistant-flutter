@@ -739,6 +739,10 @@ class MainActivity : FlutterFragmentActivity() {
         // "Do it for me" inside other apps: the task loop's line to the
         // accessibility service (AutomationBridge, HariAccessibilityService).
         AutomationBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
+
+        // "Send feedback" on the You tab: opens App Distribution's own
+        // feedback form (TesterFeedbackBridge).
+        TesterFeedbackBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
     /** True automatic SMS — SmsManager sends without opening any app.

@@ -23,6 +23,7 @@ import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
 import '../services/greeting_voice.dart';
 import '../services/app_feedback.dart';
+import '../services/tester_feedback.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ASSISTANT SETTINGS — how the assistant sounds and looks, plus the
@@ -242,6 +243,18 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   void _snack(String msg) {
     if (!mounted) return;
     AppFeedback.show(msg, context: context);
+  }
+
+  /// Opens the tester feedback form (TesterFeedback). When it opened,
+  /// the form speaks for itself; when it could not, one toast says so.
+  Future<void> _sendFeedback() async {
+    final opened = await TesterFeedback.start();
+    if (opened || !mounted) return;
+    AppFeedback.show(
+      "Feedback couldn't open right now. Check your internet and try again.",
+      context: context,
+      tone: FeedbackTone.error,
+    );
   }
 
   @override
@@ -521,6 +534,26 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 const SizedBox(height: 24),
 
                 const AccountSection(),
+                const SizedBox(height: 24),
+
+                // SEND FEEDBACK (owner, 2026-09-25: "yes add the send
+                // feedback button"). Opens the feedback form of the service
+                // the client installs the app from; what they write reaches
+                // the owner with the build it is about. Next to About,
+                // where a person looks for "tell someone".
+                const GroupLabel('Help'),
+                GroupedCard(
+                  dividerInset: 60,
+                  children: [
+                    AppleRow(
+                      leading:
+                          IconTile(Icons.feedback_outlined, AppleColors.blue),
+                      title: 'Send feedback',
+                      subtitle: 'Tell the developer what to improve',
+                      onTap: _sendFeedback,
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 24),
 
                 const GroupLabel('About & legal'),
