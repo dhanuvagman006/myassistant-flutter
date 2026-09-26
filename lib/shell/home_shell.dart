@@ -23,6 +23,7 @@ import '../services/call_notes_service.dart';
 import '../services/call_recording_watcher.dart';
 import '../services/focus_service.dart';
 import '../services/momentum_service.dart';
+import '../services/news_feed.dart';
 import '../services/notification_service.dart';
 import '../screens/momentum_screen.dart';
 import '../core/log.dart';
@@ -109,6 +110,8 @@ class _HomeShellState extends State<HomeShell>
       // Momentum: a new day may have begun, and a focus may have run out
       // while the app was away.
       unawaited(MomentumService.instance.refresh());
+      // News: the saved copy is refreshed quietly if it has gone stale.
+      unawaited(NewsFeed.warm());
       unawaited(FocusService.instance.tick());
       Timer(const Duration(seconds: 2), () {
         // Never over a conversation: the sheet used to open on top of one.
@@ -148,8 +151,13 @@ class _HomeShellState extends State<HomeShell>
     if (up != _keyboardUp) setState(() => _keyboardUp = up);
   }
 
+  /// The quiet news fetch after launch (see _bootOnce); cancelled with the
+  /// shell so it never outlives it.
+  Timer? _newsWarm;
+
   @override
   void dispose() {
+    _newsWarm?.cancel();
     HomeShell.requestedTab.removeListener(_onTabRequested);
     AssistantEngine.instance.removeListener(_onEngineForPicker);
     AssistantEngine.instance.removeListener(_onEngineForToast);
@@ -483,6 +491,9 @@ class _HomeShellState extends State<HomeShell>
     // Momentum (2026-09-25): the day's list and streak, a focus that was
     // running when the app closed, and taps on its notifications.
     MomentumService.instance.start();
+    // Hub → News opens from a saved copy: fetch it once the launch has
+    // settled, never in the way of the first frames.
+    _newsWarm = Timer(const Duration(seconds: 8), () => unawaited(NewsFeed.warm()));
     unawaited(FocusService.instance.restore());
     ReminderNotifications.onOpen = (what) => unawaited(MomentumNav.open(what));
     // Deliberately NO message announcing here: launching the app must be

@@ -25,6 +25,35 @@ abstract final class NewsFeed {
     return parse(j['items']);
   }
 
+  /// THE FIRST OPEN IS INSTANT (2026-09-26). On the owner's phone the
+  /// first News of the morning sat on a spinner while the server looked
+  /// the stories up. The topic last read is fetched quietly in the
+  /// background shortly after launch (and on coming back to the app), so
+  /// Hub → News opens straight from the saved copy. Skipped while the
+  /// saved copy is fresher than [maxAge]: the server caches each topic for
+  /// everyone anyway, this only saves the phone a wait.
+  static Future<void> warm({Duration maxAge = const Duration(minutes: 30)}) async {
+    if (_warming) return;
+    _warming = true;
+    try {
+      var topic = '';
+      try {
+        final p = await SharedPreferences.getInstance();
+        topic = p.getString('news_topic') ?? '';
+      } catch (_) {}
+      final saved = await NewsFeedCache.load(topic);
+      if (saved != null && DateTime.now().difference(saved.savedAt) < maxAge) return;
+      final fresh = await fetch(topic);
+      if (fresh != null && fresh.isNotEmpty) await NewsFeedCache.save(topic, fresh);
+    } catch (e) {
+      AppLog.add('news', 'warm-up failed: $e');
+    } finally {
+      _warming = false;
+    }
+  }
+
+  static bool _warming = false;
+
   static List<NewsItem> parse(Object? raw) => (raw is List ? raw : const [])
       .whereType<Map<String, dynamic>>()
       .map(NewsItem.fromJson)
