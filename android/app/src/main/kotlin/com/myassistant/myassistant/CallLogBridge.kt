@@ -243,6 +243,8 @@ object CallLogBridge {
         val wantDigits = digits(person).takeLast(10)
         val canLookup = granted(ctx, Manifest.permission.READ_CONTACTS)
         val names = HashMap<String, String>() // number -> contact name, per read
+        // Last ten digits -> name, read only after PhoneLookup misses once.
+        var byDigits: Map<String, String>? = null
         val out = ArrayList<Map<String, Any>>()
         val proj = arrayOf(
             CallLog.Calls.CACHED_NAME, CallLog.Calls.NUMBER, CallLog.Calls.TYPE,
@@ -258,7 +260,12 @@ object CallLogBridge {
                 val number = c.getString(1)?.trim().orEmpty()
                 var name = c.getString(0)?.trim().orEmpty()
                 if (name.isEmpty() && number.isNotEmpty() && canLookup) {
-                    name = names.getOrPut(number) { lookupName(ctx, number) ?: "" }
+                    name = names.getOrPut(number) {
+                        lookupName(ctx, number)
+                            ?: (byDigits ?: contactsByDigits(ctx).also { byDigits = it })[
+                                digits(number).takeLast(10)]
+                            ?: ""
+                    }
                 }
                 if (want.isNotEmpty()) {
                     val byName = name.isNotEmpty() && name.lowercase().contains(want)
@@ -275,6 +282,36 @@ object CallLogBridge {
                     "durationSec" to c.getLong(4).toInt(),
                 ))
             }
+        }
+        return out
+    }
+
+    /**
+     * EVERY SAVED NUMBER, BY ITS LAST TEN DIGITS (2026-09-26). Owner: "check
+     * users contact list if name is present". PhoneLookup matches a number
+     * the way the dialler does, and a contact saved in another form
+     * ("+91 63601 39965" against a logged "06360139965") can slip past it,
+     * leaving a saved caller announced as a stranger. Read at most once per
+     * call-log read, and only after such a miss.
+     */
+    private fun contactsByDigits(ctx: Context): Map<String, String> {
+        val out = HashMap<String, String>()
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(0)?.trim().orEmpty()
+                    val key = digits(c.getString(1).orEmpty()).takeLast(10)
+                    if (name.isNotEmpty() && key.length >= 7) out.putIfAbsent(key, name)
+                }
+            }
+        } catch (_: Throwable) {
+            // No contacts to read: the number stays unnamed, as before.
         }
         return out
     }

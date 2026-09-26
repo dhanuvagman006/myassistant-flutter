@@ -36,8 +36,11 @@ void main() {
       expect(
           line,
           '[SYSTEM] Missed calls in the last 24 hours: '
-          '+91 98765 45678 at 5:02 pm, Ravi Kumar at 3:10 pm (2 times). '
-          'Say this in one or two short sentences and offer to call back.');
+          '+91 98765 45678 (not in contacts) at 5:02 pm, Ravi Kumar at 3:10 pm '
+          '(2 times). Say this in one or two short sentences and offer to call '
+          'back. A number marked (not in contacts) is not saved on their phone: '
+          "say you can't find it in their contacts instead of reading its "
+          'digits, unless they ask for the number.');
     });
 
     test('at most five people; the rest are counted, never dumped', () {
@@ -147,8 +150,53 @@ void main() {
       expect(
           CallHistory.greetingMention(many,
               honorific: 'Sir', hello: true, now: now),
-          'Hello Sir! You missed 3 calls — a number ending 5678 at 5:02 pm, '
-          'Ravi at 3:10 pm and 1 other.');
+          'Hello Sir! You missed 3 calls — Ravi at 3:10 pm, Anita at 9:00 am '
+          "and 1 from a number I can't find in your contacts.");
+    });
+
+    test('a number not in the contacts is never read out as digits (2026-09-26)',
+        () {
+      expect(
+          CallHistory.greetingMention([stranger],
+              honorific: 'Sir', hello: true, now: now),
+          "Hello Sir! You missed a call at 5:02 pm. I can't find that number "
+          'in your contacts.');
+      final again = call('missed', DateTime(2026, 9, 24, 17, 20),
+          number: '+91 98765 45678');
+      final other = call('missed', DateTime(2026, 9, 24, 17, 40),
+          number: '9811122233');
+      expect(
+          CallHistory.greetingMention([again, stranger],
+              honorific: 'Sir', hello: false, now: now),
+          "You missed 2 calls, the last at 5:20 pm. I can't find that number "
+          'in your contacts.',
+          reason: 'the same number twice is one number');
+      expect(
+          CallHistory.greetingMention([other, stranger],
+              honorific: 'Sir', hello: false, now: now),
+          "You missed 2 calls, the last at 5:40 pm. I can't find those "
+          'numbers in your contacts.');
+      for (final said in [
+        CallHistory.greetingMention([stranger, ravi1],
+            honorific: 'Sir', hello: true, now: now),
+        CallHistory.greetingMention([other, again],
+            honorific: 'Sir', hello: true, now: now),
+      ]) {
+        expect(said, isNot(contains('ending')));
+        expect(said, isNot(contains('5678')));
+      }
+    });
+
+    test("the assistant's line marks a number that is not saved, and says how to say it",
+        () {
+      final line = CallHistory.summaryLine(
+          calls: [stranger, ravi1], filter: 'missed', sinceHours: 24, now: now);
+      expect(line, contains('+91 98765 45678 (not in contacts) at 5:02 pm'));
+      expect(line, contains("say you can't find it in their contacts instead of "
+          'reading its digits'));
+      final named = CallHistory.summaryLine(
+          calls: [ravi1], filter: 'missed', sinceHours: 24, now: now);
+      expect(named, isNot(contains('not in contacts')));
     });
   });
 
@@ -208,7 +256,7 @@ void main() {
       // A new one: only it is mentioned.
       svc.pending.value = [stranger, ravi1, ravi0];
       expect(svc.takeMention(honorific: 'Sir', hello: false, now: now),
-          'You missed a call — a number ending 5678 at 5:02 pm.');
+          "You missed a call at 5:02 pm. I can't find that number in your contacts.");
       // Heard in an answer to "any missed calls?" counts as mentioned.
       final later = call('missed', DateTime(2026, 9, 24, 17, 50),
           name: 'Anita', number: '9900112233');

@@ -255,8 +255,11 @@ class CallHistory {
     final showType = filter == 'all' || filter == 'incoming';
     final groups = group(calls, byType: showType);
     final parts = <String>[];
+    var unsaved = false;
     for (final g in groups.take(cap)) {
       final c = g.latest;
+      final notSaved = c.name.isEmpty && c.number.isNotEmpty;
+      unsaved = unsaved || notSaved;
       final tags = <String>[
         if (showType && !(filter == 'incoming' && c.type == 'incoming'))
           c.type,
@@ -265,7 +268,7 @@ class CallHistory {
             c.durationSec >= 60)
           '${(c.durationSec / 60).round()} min',
       ];
-      parts.add('${c.label} ${when(c.at, now)}'
+      parts.add('${c.label}${notSaved ? ' (not in contacts)' : ''} ${when(c.at, now)}'
           '${tags.isEmpty ? '' : ' (${tags.join(', ')})'}');
     }
     var more = 0;
@@ -276,7 +279,12 @@ class CallHistory {
     final anyMissed = calls.any((c) => c.type == 'missed');
     return '[SYSTEM] $head in $range: ${parts.join(', ')}'
         '${more > 0 ? ', and $more more call${more == 1 ? '' : 's'}' : ''}. '
-        '${anyMissed ? 'Say this in one or two short sentences and offer to call back.' : 'Say this in one or two short sentences.'}';
+        '${anyMissed ? 'Say this in one or two short sentences and offer to call back.' : 'Say this in one or two short sentences.'}'
+        // Owner, 2026-09-26: "check users contact list if name is present…
+        // if not say sir i can't find it" — not a string of digits.
+        '${unsaved ? ' A number marked (not in contacts) is not saved on '
+            "their phone: say you can't find it in their contacts instead of "
+            'reading its digits, unless they ask for the number.' : ''}';
   }
 
   /// What the greeting says ONCE about calls missed since the owner last
@@ -285,6 +293,12 @@ class CallHistory {
   /// title belongs to the greeting and was just said (owner, 2026-09-26:
   /// "initially we need hello sir, but in each and every sentence, I think
   /// it's not necessary").
+  ///
+  /// A caller saved in the owner's contacts is named; a number that is not
+  /// is never read out as its last four digits (owner, 2026-09-26: "check
+  /// users contact list if name is present… if not say sir i can't find
+  /// it"): "You missed a call at 5:02 pm. I can't find that number in your
+  /// contacts."
   static String greetingMention(
     List<CallEntry> missed, {
     required String honorific,
@@ -294,21 +308,30 @@ class CallHistory {
     final sorted = [...missed]..sort((a, b) => b.at.compareTo(a.at));
     final groups = group(sorted);
     final n = sorted.length;
-    final who = [
-      for (final g in groups.take(2)) '${g.latest.shortLabel} ${when(g.latest.at, now)}',
-    ];
-    final others = groups.length - who.length;
-    final list = switch (who.length) {
-      0 => '',
-      1 => others > 0
-          ? '${who[0]} and $others other${others == 1 ? '' : 's'}'
-          : who[0],
-      _ => others > 0
-          ? '${who[0]}, ${who[1]} and $others other${others == 1 ? '' : 's'}'
-          : '${who[0]} and ${who[1]}',
-    };
     final count = n == 1 ? 'a call' : '$n calls';
     final opener = hello ? 'Hello $honorific! You' : 'You';
+    final named = groups.where((g) => g.latest.name.isNotEmpty).toList();
+    final unnamed = groups.where((g) => g.latest.name.isEmpty).toList();
+    final unnamedCalls = unnamed.fold<int>(0, (s, g) => s + g.count);
+    if (named.isEmpty) {
+      // Nobody it can name: when, and that it looked.
+      final that = unnamed.length == 1 ? 'that number' : 'those numbers';
+      final last = when(sorted.first.at, now);
+      return n == 1
+          ? "$opener missed a call $last. I can't find $that in your contacts."
+          : "$opener missed $n calls, the last $last. I can't find $that in your contacts.";
+    }
+    final items = <String>[
+      for (final g in named.take(2)) '${g.latest.shortLabel} ${when(g.latest.at, now)}',
+      if (named.length > 2)
+        '${named.length - 2} other${named.length - 2 == 1 ? '' : 's'}',
+      if (unnamedCalls > 0)
+        "$unnamedCalls from ${unnamedCalls == 1 ? 'a number' : 'numbers'} "
+            "I can't find in your contacts",
+    ];
+    final list = items.length == 1
+        ? items.first
+        : '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
     return '$opener missed $count — $list.';
   }
 }
