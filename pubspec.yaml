@@ -1,7 +1,7 @@
 name: myassistant
 description: MYASSISTANT — AI personal assistant for Android and iOS.
 publish_to: 'none'
-version: 0.2.99+118
+version: 0.2.99+119
 
 environment:
   # Color.withValues() (used throughout lib/design) requires Dart 3.6 / Flutter 3.27+
@@ -141,6 +141,11 @@ flutter:
     # Manrope + Space Grotesk, every weight, so text never starts in a
     # fallback font and swaps (lib/core/bundled_fonts.dart).
     - assets/google_fonts/
+    # Birthday cards (2026-09-26): Noto Serif Display for the wording, and
+    # Noto Serif Malayalam / Devanagari so "ജന്മദിനാശംസകൾ" is drawn by a
+    # font we ship, not whatever the phone has. All OFL (OFL-Noto.txt);
+    # loaded by lib/features/poster/poster_fonts.dart.
+    - assets/poster_fonts/
     # On-device speaker-ID model (sherpa-onnx CAM++ zh/en) — voice
     # enrollment + owner-only listening. Runs fully offline.
     - assets/models/

@@ -230,6 +230,18 @@
         <receiver
             android:name=".InstallResultReceiver"
             android:exported="false" />
+        <!-- Gift cards (2026-09-26): hands the finished card to WhatsApp
+             (PosterShareBridge). Not exported; each share grants read on
+             that one file only. -->
+        <provider
+            android:name=".PosterFileProvider"
+            android:authorities="${applicationId}.posters"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/poster_paths" />
+        </provider>
         <!-- Local reminder notifications: without these two receivers the
              AlarmManager broadcast reached NO component and "remind me at
              5" never rang — on any device, ever. -->

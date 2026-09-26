@@ -29,5 +29,8 @@ void useBundledFonts() {
       final text = await rootBundle.loadString('assets/google_fonts/OFL-$family.txt');
       yield LicenseEntryWithLineBreaks(['google_fonts', family], text);
     }
+    // The photo cards' Noto faces (lib/features/poster/poster_fonts.dart).
+    yield LicenseEntryWithLineBreaks(['photo cards', 'Noto Serif'],
+        await rootBundle.loadString('assets/poster_fonts/OFL-Noto.txt'));
   });
 }

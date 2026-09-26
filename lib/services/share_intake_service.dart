@@ -7,6 +7,10 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
+import '../features/poster/photo_source_sheet.dart';
+import '../features/poster/poster_controller.dart';
+import '../features/poster/poster_screen.dart';
+import 'avatar_message_service.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
 import 'app_feedback.dart';
@@ -119,6 +123,12 @@ class ShareIntakeService {
       AppFeedback.toast('Sign in first, then share it again — nothing was saved.');
       return;
     }
+    // ONE PHOTO: maybe it is for a card (2026-09-26 — his daughter's old
+    // photo arrives on WhatsApp). Closing the question keeps today's
+    // behaviour: it is saved to My documents.
+    if (files.length == 1 && files.first.type == SharedMediaType.image) {
+      if (await _offerCard(files.first)) return;
+    }
     var saved = 0;
     var failed = 0;
     var skipped = 0;
@@ -193,6 +203,33 @@ class ShareIntakeService {
       AppFeedback.toast("Couldn't save that — check your connection.");
     } else if (skipped > 0) {
       AppFeedback.toast("Couldn't read that file type — photos and PDFs work.");
+    }
+  }
+
+  Future<bool> _offerCard(SharedMediaFile f) async {
+    final ctx = AvatarMessageService.navigatorKey.currentContext;
+    if (ctx == null || f.path.isEmpty) return false;
+    try {
+      final choice = await PhotoSourceSheet.askShared(ctx);
+      if (choice != 'card') return false;
+      final raw = await File(f.path).readAsBytes();
+      if (raw.isEmpty) return false;
+      // The same clean-up the picker gives a photo: a HEIC or a huge camera
+      // file is redrawn as one the server takes.
+      ({Uint8List bytes, String mime}) usable;
+      try {
+        usable = await PhotoSourceSheet.normalise(raw);
+      } catch (e) {
+        AppLog.add('share', 'shared photo does not open: $e');
+        AppFeedback.toast("That photo doesn't open here — please pick another one.");
+        return true;
+      }
+      await PosterNav.cardFromPhoto(
+          PickedPhoto(usable.bytes, mime: usable.mime, source: 'share'));
+      return true;
+    } catch (e) {
+      AppLog.add('share', 'card from shared photo failed: $e');
+      return false;
     }
   }
 

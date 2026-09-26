@@ -16,6 +16,7 @@ import 'email_setup_screen.dart';
 import 'features_screen.dart';
 import 'stocks_screen.dart';
 import 'studio/studio_screen.dart';
+import '../features/poster/poster_screen.dart';
 
 /// HUB TAB — every feature as a front door.
 ///
@@ -110,6 +111,15 @@ class HubScreen extends StatelessWidget {
             ),
           ]),
           _group(context, 'Looks', [
+            // Gift cards from his own photo (client, 2026-09-26: "make a
+            // birthday card for my daughter… with my signature").
+            _Row(
+              'Photo cards',
+              'Birthday cards from your own photo, with your words',
+              Icons.card_giftcard_rounded,
+              Neon.accentD,
+              (c) => const PosterScreen(openLatest: true),
+            ),
             _Row(
               'Style Studio',
               'Try on outfits and hairstyles on your own photo',

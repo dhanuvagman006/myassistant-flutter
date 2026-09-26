@@ -66,6 +66,8 @@ import '../../../services/usage_service.dart';
 import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
 import '../../../services/greeting_voice.dart';
+import '../../poster/poster_device_actions.dart';
+import '../../poster/poster_engine_host.dart';
 
 /// The assistant experience's single source of truth (ChangeNotifier — the
 /// state-management style used across this codebase; the UI observes it
@@ -304,6 +306,11 @@ class AssistantEngine extends ChangeNotifier {
   /// UI hook (registered by HomeShell): present recalled documents as the
   /// full-screen swipe gallery, over whatever screen the user is on.
   bool Function(List<UserDocument> documents)? onShowDocuments;
+
+  /// UI hook (registered by HomeShell): bring up the photo-card screen
+  /// over whatever is on top (gift cards, 2026-09-26). False when there is
+  /// no screen to push it on.
+  bool Function()? onShowPoster;
 
   /// Live interpreter mode ("be my translator") — while true the speaker
   /// gate is open to everyone and the live model translates instead of
@@ -2451,6 +2458,16 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
+      case 'poster_pick_photo':
+      case 'poster_show':
+      case 'poster_share':
+      case 'poster_sign':
+        // PHOTO CARDS (client, 2026-09-26: "make a birthday card for my
+        // daughter… with my signature"). The server's card tools only send
+        // these from build 119; the card is drawn here, never by a model.
+        unawaited(PosterDeviceActions(EnginePosterHost(this)).handle(e));
+        break;
+
       case 'phone_control':
         // Flashlight / volume / media / battery / settings — executed on
         // the device with the REAL result reported back; a control that
@@ -3316,6 +3333,27 @@ class AssistantEngine extends ChangeNotifier {
       }
     } finally {
       _deviceFlowActive = false;
+      if (liveGated) _liveSvc.remoteSpeaking = false;
+    }
+  }
+
+  /// [_tellModel] for feature modules (the photo-card actions).
+  Future<void> tellModel(String line) => _tellModel(line);
+
+  /// Holds the microphone shut while [body] owns the screen — a picker, a
+  /// signature pad — exactly as the photo flows above do: the continuous
+  /// loop stays closed and live mode stops sending mic audio, so the next
+  /// turn is not shutter noise or a pen on glass.
+  Future<T> holdMicDuring<T>(Future<T> Function() body) async {
+    final wasHeld = _deviceFlowActive;
+    _deviceFlowActive = true;
+    final liveGated = liveActive && !wasHeld;
+    if (liveGated) _liveSvc.remoteSpeaking = true;
+    try {
+      if (!wasHeld) await _voice.stopSpeaking();
+      return await body();
+    } finally {
+      if (!wasHeld) _deviceFlowActive = false;
       if (liveGated) _liveSvc.remoteSpeaking = false;
     }
   }

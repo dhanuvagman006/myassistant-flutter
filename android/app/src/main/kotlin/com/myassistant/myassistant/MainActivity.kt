@@ -592,6 +592,18 @@ class MainActivity : FlutterFragmentActivity() {
                             result.success(false)
                         }
                     }
+                    // GIFT CARDS: straight to WhatsApp, or into his Photos
+                    // (PosterShareBridge). Each returns a reason, never a
+                    // bare false, so Dart knows when to open the share sheet.
+                    "shareImageTo" -> result.success(PosterShareBridge.shareImageTo(
+                        applicationContext,
+                        call.argument<String>("path") ?: "",
+                        call.argument<String>("mime") ?: "image/png",
+                        call.argument<String>("pkg") ?: "com.whatsapp"))
+                    "saveImageToGallery" -> result.success(PosterShareBridge.saveImageToGallery(
+                        applicationContext,
+                        call.argument<ByteArray>("bytes") ?: ByteArray(0),
+                        call.argument<String>("name") ?: "card.png"))
                     "launchApp" -> {
                         val want = (call.argument<String>("name") ?: "")
                             .lowercase().replace(Regex("[^a-z0-9]"), "")

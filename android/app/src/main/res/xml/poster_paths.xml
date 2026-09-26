@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gift cards shared to WhatsApp (PosterShareBridge): only the app's own
+     cache folder "posters/" is ever handed to another app. -->
+<paths>
+    <cache-path name="posters" path="posters/" />
+</paths>

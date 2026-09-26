@@ -35,6 +35,7 @@ import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
+import '../features/poster/poster_screen.dart';
 import '../screens/quick_task_screen.dart';
 import '../services/app_feedback.dart';
 import '../services/app_update_service.dart';
@@ -434,6 +435,19 @@ class _HomeShellState extends State<HomeShell>
           .whenComplete(() {
         if (gen == _galleryGen) _galleryShowing = false;
       });
+      return true;
+    };
+    // PHOTO CARDS (2026-09-26): the card the assistant is making comes up
+    // over whatever screen is on top — once. A second show only updates the
+    // card already open (it shares one controller), so voice edits never
+    // stack screens.
+    engine.onShowPoster = () {
+      if (!mounted) return false;
+      if (PosterScreen.showing > 0) return true;
+      Navigator.of(context, rootNavigator: true).push(MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const PosterScreen(),
+      ));
       return true;
     };
     // Duplicate contact names ("call Manish" with three Manishes) resolve
