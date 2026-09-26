@@ -3666,13 +3666,26 @@ class AssistantEngine extends ChangeNotifier {
         await _followAgentCall(id, contact.name);
         return;
       }
-      // Couldn't start after all — fall through to a direct dial, and be
-      // honest about it.
+      // A MESSAGE CALL IS THE ASSISTANT'S CALL, NEVER THE PHONE'S
+      // (2026-09-26). This used to fall through to a direct dial. The
+      // owner asked it to call 6360139965 — his own number — with a
+      // message; the server was slow to answer, the phone gave up after
+      // 20 s and dialled the number from the handset, and the relayed
+      // call then met a busy line. "Use agent call … when such request is
+      // made." So nothing is dialled here: the user hears that the call
+      // could not be placed and decides.
       if (liveActive) {
         _liveSvc.sendText(
-            '[SYSTEM] I could not start the relay call to ${contact.name}. '
-            'The phone is dialling them directly instead — tell me briefly.');
+            '[SYSTEM] I could not place the call to ${contact.name} with the '
+            'message just now, and NOTHING was dialled. Tell me that in one '
+            'short sentence and ask whether you should try again. Do NOT '
+            'dial them from my phone unless I ask for that myself.');
+      } else {
+        await _speakReply(
+            "I couldn't place that call just now, so nothing was dialled. "
+            'Shall I try again?');
       }
+      return;
     }
 
     await _dialAndReport(contact);

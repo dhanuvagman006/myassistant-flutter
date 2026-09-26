@@ -60,12 +60,36 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        hideWholeScreenFocusOutline()
         // Back here after installing the app they asked to open: open it.
         InstallWatch.takeReady(this)?.let {
             try { startActivity(it) } catch (e: Throwable) {
                 Log.w("hari/install", "open after install failed: ${e.javaClass.simpleName}")
             }
         }
+    }
+
+    /**
+     * NO GREEN FRAME ROUND THE WHOLE APP (2026-09-26).
+     *
+     * The whole app is one Android view — Flutter draws everything inside
+     * it — so when a key press takes the phone out of touch mode (a
+     * hardware keyboard, or a key sent over USB while testing) Android
+     * draws its default focus highlight round that one view: a green line
+     * along every edge of the screen, which the owner saw and asked
+     * about. Flutter shows its own focus for the widget that has it; the
+     * outline round everything says nothing, so it is switched off for
+     * every view in the window.
+     */
+    private fun hideWholeScreenFocusOutline() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+        fun off(v: android.view.View) {
+            v.defaultFocusHighlightEnabled = false
+            if (v is android.view.ViewGroup) {
+                for (i in 0 until v.childCount) off(v.getChildAt(i))
+            }
+        }
+        try { off(window.decorView) } catch (_: Throwable) {}
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

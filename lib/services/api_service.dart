@@ -918,7 +918,10 @@ class ApiService {
             if (lang != null) 'lang': lang,
           }),
         )
-        .timeout(const Duration(seconds: 20));
+        // The server answers once the calling service has taken the call
+        // (a few seconds); 35 s so a slow moment is not mistaken for a
+        // failure (2026-09-26).
+        .timeout(const Duration(seconds: 35));
     if (r.statusCode == 503) throw AgentCallUnavailable();
     checkQuota(r.statusCode, r.body); // 402 → QuotaExceeded (upsell)
     if (r.statusCode != 202 && r.statusCode != 200) {
