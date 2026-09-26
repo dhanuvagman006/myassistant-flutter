@@ -281,7 +281,10 @@ class CallHistory {
 
   /// What the greeting says ONCE about calls missed since the owner last
   /// heard about them: "Hello Sir! You missed 2 calls — Ravi at 3:10 pm."
-  /// [hello] false (greeted a moment ago): "Sir, you missed 2 calls — …".
+  /// [hello] false (greeted a moment ago): "You missed 2 calls — …". The
+  /// title belongs to the greeting and was just said (owner, 2026-09-26:
+  /// "initially we need hello sir, but in each and every sentence, I think
+  /// it's not necessary").
   static String greetingMention(
     List<CallEntry> missed, {
     required String honorific,
@@ -305,7 +308,7 @@ class CallHistory {
           : '${who[0]} and ${who[1]}',
     };
     final count = n == 1 ? 'a call' : '$n calls';
-    final opener = hello ? 'Hello $honorific! You' : '$honorific, you';
+    final opener = hello ? 'Hello $honorific! You' : 'You';
     return '$opener missed $count — $list.';
   }
 }

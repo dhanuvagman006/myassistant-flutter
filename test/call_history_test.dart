@@ -136,7 +136,8 @@ void main() {
       expect(
           CallHistory.greetingMention([ravi1],
               honorific: "Ma'am", hello: false, now: now),
-          "Ma'am, you missed a call — Ravi at 3:10 pm.");
+          'You missed a call — Ravi at 3:10 pm.',
+          reason: 'greeted a moment ago: the title is not said twice');
       final many = [
         stranger,
         ravi1,
@@ -207,7 +208,7 @@ void main() {
       // A new one: only it is mentioned.
       svc.pending.value = [stranger, ravi1, ravi0];
       expect(svc.takeMention(honorific: 'Sir', hello: false, now: now),
-          'Sir, you missed a call — a number ending 5678 at 5:02 pm.');
+          'You missed a call — a number ending 5678 at 5:02 pm.');
       // Heard in an answer to "any missed calls?" counts as mentioned.
       final later = call('missed', DateTime(2026, 9, 24, 17, 50),
           name: 'Anita', number: '9900112233');

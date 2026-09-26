@@ -19,6 +19,12 @@ class LiveMicStats {
   static int speechFrames = 0;
   static int gatedFrames = 0; // attenuated as noise — high means trouble
 
+  /// Build 113: times the owner talked over her, and how much of her voice
+  /// this phone lets back into the microphone (barge_in.dart). A phone
+  /// where she keeps getting cut off shows it here.
+  static int bargeIns = 0;
+  static double echoCoupling = 0;
+
   static void note({
     required double level,
     required double noiseFloor,
@@ -41,6 +47,8 @@ class LiveMicStats {
     frames = 0;
     speechFrames = 0;
     gatedFrames = 0;
+    bargeIns = 0;
+    echoCoupling = 0;
   }
 
   /// Rounded for a log line, empty before the first session so a fresh
@@ -55,6 +63,8 @@ class LiveMicStats {
       'micFrames': frames,
       'micSpeechPct': ((speechFrames / frames) * 100).round(),
       'micGatedPct': ((gatedFrames / frames) * 100).round(),
+      'micBargeIns': bargeIns,
+      'micEchoCoupling': r(echoCoupling),
     };
   }
 }

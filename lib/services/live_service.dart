@@ -11,7 +11,9 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/log.dart';
 import 'api_service.dart';
+import 'barge_in.dart';
 import 'device_capabilities.dart';
+import 'echo_reference.dart';
 import 'live_mic_stats.dart';
 import 'location_service.dart';
 import 'mic_preroll.dart';
@@ -19,11 +21,13 @@ import 'playback_envelope.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  LIVE MODE — real speech-to-speech (Gemini Live API via the backend
-///  /live/ws proxy). No transcription step, no client VAD, and NO barge-in
-///  since 2026-09-20: the mic streams PCM up EXCEPT while she is speaking
-///  and — since 2026-09-24 — while nobody is talking (a short tail after
-///  each utterance, then an audio_pause until speech resumes it), and
-///  Hari's VOICE streams back down. A minute with nobody talking ends the
+///  /live/ws proxy). No transcription step, no client VAD. The mic streams
+///  PCM up EXCEPT while she is speaking (no barge-in since 2026-09-20; from
+///  build 113, when the server offers it, only on a strict check that the
+///  owner really is talking over her — see [BargeInDetector]) and — since
+///  2026-09-24 — while nobody is talking (a short tail after each
+///  utterance, then an audio_pause until speech resumes it), and Hari's
+///  VOICE streams back down. A minute with nobody talking ends the
 ///  session ([onQuietTimeout]).
 ///
 ///  Wire protocol (must match backend src/live/proxy.js):
@@ -120,6 +124,42 @@ class LiveService {
   static final Stopwatch _clock = Stopwatch()..start();
   int _playheadEndUs = 0;
 
+  /// The monotonic clock the envelope and the echo reference are filed on
+  /// (tests drive it with their fake clock).
+  int Function() _nowUs = _stopwatchUs;
+  static int _stopwatchUs() => _clock.elapsedMicroseconds;
+
+  // ---- TALKING OVER HER (build 113) ---------------------------------------
+  //
+  // The owner, 2026-09-26: "interrupt should be there… a strong valid one…
+  // how we talk with a human". Offered by the server per session ("ready"
+  // carries bargeIn), and even then only on the strict check in
+  // [BargeInDetector]: sustained speech well above what her own voice
+  // could put into this phone's microphone.
+
+  /// The server says this session may be interrupted.
+  bool bargeInOffered = false;
+
+  /// Her reply as it will come back into the microphone.
+  final EchoReference _echo = EchoReference();
+
+  /// One per app: how much of her voice leaks back belongs to the handset,
+  /// not to a conversation, so a new session starts already knowing it.
+  static final BargeInDetector _barge = BargeInDetector();
+
+  /// What the microphone heard while she spoke, so an interruption goes up
+  /// whole once it is confirmed: the 384 ms that confirmed it and the
+  /// frame before, which holds their first consonant. No further back —
+  /// what came before that is her own voice.
+  final MicPreRoll _bargeRoll = MicPreRoll(keepMs: 512);
+
+  /// The owner talked over her: the rest of the reply she was giving is
+  /// dropped, not queued behind their words.
+  bool _dropReply = false;
+
+  /// A reply is on its way: audio or words since the last turn ended.
+  bool _turnOpen = false;
+
   /// How long after the playhead a sound is actually heard: the stream
   /// player's own buffer (4096) and the phone's audio path. A guess until
   /// it is checked on his phone; too small and the rings move before the
@@ -131,13 +171,13 @@ class LiveService {
   /// makes no sound, so it is 0.
   double playbackLevelNow() => speakerMuted
       ? 0
-      : _envelope.levelAt(_clock.elapsedMicroseconds - _ringLatencyUs);
+      : _envelope.levelAt(_nowUs() - _ringLatencyUs);
 
   /// How long until the reply audio received so far has all been heard —
   /// the captions finish their words with it (2026-09-25). More audio may
   /// still be on its way until the turn is complete.
   Duration get playbackRemaining {
-    final us = _playheadEndUs + _ringLatencyUs - _clock.elapsedMicroseconds;
+    final us = _playheadEndUs + _ringLatencyUs - _nowUs();
     return us > 0 ? Duration(microseconds: us) : Duration.zero;
   }
 
@@ -568,6 +608,12 @@ class LiveService {
     _playheadEnd = DateTime.fromMillisecondsSinceEpoch(0);
     _playheadEndUs = 0;
     _envelope.clear();
+    _echo.clear();
+    _bargeRoll.clear();
+    _barge.resetRun();
+    bargeInOffered = false; // until this session's "ready" says otherwise
+    _dropReply = false;
+    _turnOpen = false;
     _uplinkPaused = false;
     _quietSentMs = 0;
     _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
@@ -614,6 +660,10 @@ class LiveService {
           _endUtterance();
         }
         _preRoll.clear(); // her voice is never replayed as the user's
+        // BUILD 113: unless the owner is really talking over her. Nothing
+        // goes up until [BargeInDetector] is sure; then she stops and
+        // what they are saying goes up whole (see [_takeTheFloor]).
+        if (_mayBargeIn && l != null && _bargeCheck(chunk, l, now)) return;
         // The loudspeaker keeps sounding for a moment past the
         // playhead. Sending that tail up would hand Google the end of
         // her own sentence as if it were the user starting to talk.
@@ -719,6 +769,68 @@ class LiveService {
         _endUtterance();
       }
     } catch (_) {}
+  }
+
+  /// Talking over her is possible right now: the server offered it, she
+  /// is sounding out of THIS phone (the avatar's voice has no reference
+  /// here), and nothing else owns the microphone — typing, the speaker
+  /// gate's voiceprint hold, translator mode.
+  bool get _mayBargeIn =>
+      bargeInOffered &&
+      playing &&
+      !remoteSpeaking &&
+      !typingMute &&
+      !_gateActive &&
+      !translatorBypass;
+
+  /// One microphone frame heard while she speaks. True when it confirmed
+  /// that the owner is talking over her (and their words are now going up).
+  bool _bargeCheck(List<int> chunk, double level, DateTime now) {
+    final ms = _msOf(chunk);
+    _bargeRoll.add(chunk, ms);
+    // What of her voice this frame can hold: the moments it covers, as
+    // heard (the player's own latency), reaching 300 ms further back for
+    // the room's tail and the canceller, and 100 ms on for timing slop.
+    final heardUs = _nowUs() - _ringLatencyUs;
+    final echo = _echo.maxBetween(heardUs - ms * 1000 - 300000, heardUs + 100000);
+    final confirmed = _barge.feed(
+      mic: level,
+      echo: echo,
+      floor: _noiseFloor,
+      speechBar: _speechThreshold,
+      ms: ms,
+    );
+    if (!confirmed) return false;
+    _takeTheFloor(now);
+    return true;
+  }
+
+  /// The owner talked over her: she stops at once, the way a person does,
+  /// and what they are saying goes up at full volume from its first word.
+  /// Google hears speech arriving during its turn and ends that turn
+  /// (START_OF_ACTIVITY_INTERRUPTS, the server's setting for build 113).
+  void _takeTheFloor(DateTime now) {
+    LiveMicStats.bargeIns++;
+    LiveMicStats.echoCoupling = _barge.coupling;
+    AppLog.add('live',
+        'barge-in (leak ${_barge.coupling.toStringAsFixed(2)})');
+    // Whatever of this reply is still to come was never heard. Dropped
+    // only while the server is still producing it: a reply that already
+    // finished sends nothing more, and its NEXT one must play.
+    _dropReply = _turnOpen;
+    unawaited(_stopPlayback(clear: true)); // [playing] is false from here
+    _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _speaking = true;
+    _aboveMs = 0;
+    _belowMs = 0;
+    _utteranceMs = 0;
+    _lastLifeAt = now;
+    _quietSentMs = 0;
+    for (final c in _bargeRoll.drain()) {
+      _upAudio(Uint8List.fromList(c));
+    }
+    _send({'type': 'activity_start'});
+    onInterrupted?.call();
   }
 
   /// A frame from a room nobody is (known to be) talking in: it streams
@@ -1060,13 +1172,22 @@ class LiveService {
 
   /// Opens a session with no socket, recorder or player: every frame that
   /// would go up is handed to [sink]. [clock] replaces the wall clock.
+  ///
+  /// [speaker] true plays reply audio into nothing, as though a speaker were
+  /// there: the playhead, [playing] and the echo reference all move, so
+  /// barge-in can be driven. The monotonic clock then follows [clock] too.
   @visibleForTesting
   void debugBeginSession({
     required void Function(Object frame) sink,
     DateTime Function()? clock,
+    bool speaker = false,
   }) {
     _testSink = sink;
     _now = clock ?? DateTime.now;
+    _testSpeaker = speaker;
+    _nowUs = clock == null
+        ? _stopwatchUs
+        : () => clock().microsecondsSinceEpoch;
     _peakLevel = 0;
     _micOpenAt = DateTime.fromMillisecondsSinceEpoch(0);
     _active = true;
@@ -1079,11 +1200,20 @@ class LiveService {
   @visibleForTesting
   void debugServerFrame(Object frame) => _onFrame(frame);
 
+  /// The app-wide barge-in check, so a test can start it from nothing.
+  @visibleForTesting
+  BargeInDetector get debugBarge => _barge;
+
+  /// True: [_feed] runs as though a speaker were attached (tests only).
+  bool _testSpeaker = false;
+
   @visibleForTesting
   void debugEndSession() {
     _active = false;
     _resetSession();
     _testSink = null;
+    _testSpeaker = false;
+    _nowUs = _stopwatchUs;
     _now = DateTime.now;
     onQuietTimeout = null;
     translatorBypass = false;
@@ -1110,19 +1240,39 @@ class LiveService {
   }
 
   /// Gemini's live PCM is mastered quiet — noticeably softer than the
-  /// avatar path, which plays through WebRTC's call stack. +5.6 dB with a
-  /// hard ceiling brings the two in line; speech rarely peaks, so clipping
-  /// is inaudible in practice.
+  /// avatar path, which plays through WebRTC's call stack. +5.6 dB brings
+  /// the two in line.
   static const double _playbackGain = 1.9;
+
+  /// Where the limiter starts to lean in (about -3 dBFS). Below it, the
+  /// boost is exactly linear.
+  static const double _limiterKnee = 23000;
+
+  /// THE LOUDEST SYLLABLES ARE ROUNDED, NOT CUT (2026-09-26).
+  ///
+  /// The boost used to stop dead at full scale. Speech does peak — plosives,
+  /// a laugh, an emphatic word — and every peak cut flat is a burst of
+  /// harsh distortion, part of what the owner heard as "robotic". Above the
+  /// knee the level now bends smoothly towards full scale (a tanh curve),
+  /// so a peak comes out a little softer instead of broken.
+  @visibleForTesting
+  static int softLimit(double v) {
+    final a = v.abs();
+    if (a <= _limiterKnee) return v.round();
+    const room = 32767 - _limiterKnee;
+    final x = (a - _limiterKnee) / room;
+    final e = math.exp(2 * x);
+    final y = _limiterKnee + room * ((e - 1) / (e + 1));
+    final r = math.min(32767, y.round());
+    return v.isNegative ? -r : r;
+  }
 
   static Uint8List _boost(Uint8List chunk) {
     final out = Uint8List(chunk.length & ~1);
     for (var i = 0; i + 1 < chunk.length; i += 2) {
       var s = chunk[i] | (chunk[i + 1] << 8);
       if (s >= 0x8000) s -= 0x10000;
-      var v = (s * _playbackGain).round();
-      if (v > 32767) v = 32767;
-      if (v < -32768) v = -32768;
+      final v = softLimit(s * _playbackGain);
       out[i] = v & 0xFF;
       out[i + 1] = (v >> 8) & 0xFF;
     }
@@ -1138,7 +1288,7 @@ class LiveService {
   /// Feeds one reply chunk to the speaker and advances the playhead clock.
   void _feed(Uint8List rawChunk) {
     final chunk = _boost(rawChunk);
-    if (!_fsStreaming || chunk.isEmpty) return;
+    if ((!_fsStreaming && !_testSpeaker) || chunk.isEmpty) return;
     // MUTED DROPS THE SOUND, NOT THE TURN.
     //
     // This check used to sit at the top and return before the playhead
@@ -1166,9 +1316,11 @@ class LiveService {
     _playheadEnd = base.add(Duration(milliseconds: ms));
     // The same playhead on the orb's clock, and this chunk's loudness
     // filed under it — the boosted chunk, which is what is heard.
-    final nowUs = _clock.elapsedMicroseconds;
+    final nowUs = _nowUs();
     final baseUs = _playheadEndUs > nowUs ? _playheadEndUs : nowUs + 80000;
     _envelope.add(baseUs, chunk);
+    // What the microphone will hear of it — nothing, when she is muted.
+    if (!speakerMuted) _echo.add(baseUs, chunk);
     _playheadEndUs = baseUs + chunk.length * 1000000 ~/ (_outRate * 2);
     if (!playing) {
       // Close the mic gate IMMEDIATELY — waiting for the 100 ms timer left
@@ -1453,7 +1605,10 @@ class LiveService {
     // session alive, never a quiet minute.
     noteActivity();
     if (frame is List<int>) {
-      // Reply audio: PCM16 @24 kHz — straight to the stream player.
+      // Reply audio: PCM16 @24 kHz — straight to the stream player. Not
+      // the rest of a reply the owner talked over (see [_takeTheFloor]).
+      if (_dropReply) return;
+      _turnOpen = true;
       _expectReply();
       final chunk = frame is Uint8List ? frame : Uint8List.fromList(frame);
       _feed(chunk);
@@ -1469,6 +1624,11 @@ class LiveService {
       }
       switch (m['type']) {
         case 'ready':
+          // Build 113: may the owner talk over her this session? The
+          // server decides per session and can switch it off without a
+          // new build (LIVE_BARGE_IN=off); older servers never send it.
+          bargeInOffered = m['bargeIn'] == true;
+          if (bargeInOffered) AppLog.add('live', 'barge-in offered');
           onReady?.call();
           break;
         case 'avatar_speaking':
@@ -1486,11 +1646,16 @@ class LiveService {
           // buffer.
           _stopPlayback(clear: true);
           _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
+          // Her turn is over: whatever comes next is a new reply.
+          _dropReply = false;
+          _turnOpen = false;
           onInterrupted?.call();
           break;
         case 'turn_complete':
           // Nothing to flush — every byte was fed on arrival. Her turn is
           // over once the audio already fed has played ([playing]).
+          _dropReply = false;
+          _turnOpen = false;
           _replyUntil = DateTime.fromMillisecondsSinceEpoch(0);
           _toolsInFlight = 0;
           onTurnComplete?.call();
@@ -1501,6 +1666,10 @@ class LiveService {
           if (t.isNotEmpty) onUserText?.call(t);
           break;
         case 'output_transcript':
+          // Words of a reply the owner talked over were never said aloud,
+          // so they never reach the captions either.
+          if (_dropReply) break;
+          _turnOpen = true;
           _expectReply();
           final t = m['text'] as String? ?? '';
           if (t.isNotEmpty) onHariText?.call(t);
