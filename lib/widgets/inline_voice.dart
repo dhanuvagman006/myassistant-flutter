@@ -15,7 +15,7 @@ import '../features/assistant/state/assistant_state.dart';
 import '../services/app_feedback.dart';
 import '../services/assistant_identity.dart';
 import '../services/auth_service.dart';
-import 'overflow_fade.dart';
+import 'caption_scroll.dart';
 import 'streaming_caption.dart';
 import 'voice_orb.dart';
 
@@ -482,66 +482,51 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     return engine.liveActive ? OrbMood.listening : OrbMood.idle;
   }
 
-  /// This turn's words, streaming in (see StreamingCaption), in a space
-  /// that keeps the newest line in view and lets the oldest leave over the
-  /// top.
+  /// The turn whose words outgrew their space: for the rest of that turn
+  /// the orb steps back and the words get the room (2026-09-26, the owner:
+  /// "if we have long output it's getting hidden… the full response should
+  /// be visible"). Kept for the whole turn, so the orb does not bounce
+  /// between sizes as the extra room makes the words fit again.
+  int _roomyTurn = -1;
+
+  bool get _roomy => _roomyTurn == _turn;
+
+  /// This turn's words, streaming in (see StreamingCaption). The newest
+  /// line stays in view as they arrive, and the whole reply can be scrolled
+  /// back through (see CaptionScroll): nothing of it is ever cut off.
   Widget _passage(String words, bool typing) {
     // Her words large and bright, his own softer; smaller while typing,
-    // when there is little room.
-    final size = typing ? 17.0 : (_fromUser ? 19.0 : 22.0);
+    // when there is little room, and a step smaller once a long reply has
+    // taken the orb's room, so more of it is in view at once.
+    final size = typing
+        ? 17.0
+        : (_fromUser ? 19.0 : (_roomy ? 19.0 : 22.0));
     final style = _VoiceType.spoken(size).copyWith(
       color: _fromUser ? Colors.white.withValues(alpha: 0.62) : Colors.white,
     );
-    return LayoutBuilder(
-      builder: (context, area) => TopFadeWhenOverflowing(
-        // A soft top edge: when a reply is taller than its space the OLDEST
-        // words fade out up there — never a hard slice. Only then: a mask
-        // over words that fit was a full-size layer on every frame of the
-        // orb (2026-09-24, see the widget). About two lines deep: a
-        // passage of 22 pt lines leaving under a 14 dp fade still read as
-        // a line cut in half (2026-09-25).
-        height: 64,
-        child: ClipRect(
-          // Clipped to its own space: long replies once ran down over the
-          // text box while the keyboard was up (2026-09-24).
-          child: SingleChildScrollView(
-            // Taller than its space (a long reply, keyboard up): cut at the
-            // TOP. The line being spoken now — often the question the user
-            // has to answer — is the one that must stay.
-            reverse: true,
-            physics: const NeverScrollableScrollPhysics(),
-            child: ConstrainedBox(
-              // Short replies still sit right under the orb.
-              constraints: BoxConstraints(minHeight: area.maxHeight),
-              child: Align(
-                alignment: Alignment.topLeft,
-                // Each new line of a long reply eases the passage up
-                // instead of jolting it up a line.
-                child: CaptionGlide(
-                  viewport: area.maxHeight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 14),
-                    // The keyboard coming up eases the size down as a
-                    // picture, on the orb's 220 ms: laid out once at the new
-                    // size, never again on the keyboard's frames
-                    // (2026-09-24, review).
-                    child: TextResize(
-                      size: size,
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.topLeft,
-                      child: StreamingCaption(
-                        text: words,
-                        style: style,
-                        // Earlier sentences stay readable on the night
-                        // ground: 60% white for hers, 50% for his.
-                        earlierOpacity: _fromUser ? 0.8 : 0.6,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+    final turn = _turn;
+    return CaptionScroll(
+      onOverflow: () {
+        if (mounted && _turn == turn && _roomyTurn != turn) {
+          setState(() => _roomyTurn = turn);
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 8),
+        // The keyboard coming up eases the size down as a picture, on the
+        // orb's 220 ms: laid out once at the new size, never again on the
+        // keyboard's frames (2026-09-24, review).
+        child: TextResize(
+          size: size,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topLeft,
+          child: StreamingCaption(
+            text: words,
+            style: style,
+            // Earlier sentences stay readable on the night ground: 60% white
+            // for hers, 80% of his own softer white for his.
+            earlierOpacity: _fromUser ? 0.8 : 0.6,
           ),
         ),
       ),
@@ -631,7 +616,17 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                   children: [_MuteButton(engine: engine)],
                 ),
               ),
-              const Spacer(flex: 5),
+              // ABOVE THE ORB, the room eases away for a long reply too
+              // (2026-09-26), so its words get most of the screen: the
+              // same 5 : 7 split as always, counted in hundredths so it can
+              // glide instead of jump.
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(end: _roomy ? 1.0 : 0.0),
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                builder: (_, r, __) =>
+                    Spacer(flex: math.max(1, (500 * (1 - r)).round())),
+              ),
               // THE PRESENCE — the client's picture (2026-09-25): a dark
               // disc with the mic and the assistant's name, still, inside
               // rings that push out and back with the voice like a
@@ -671,8 +666,11 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // The keyboard lays this column out on every one of its
               // frames anyway, so this adds no new kind of work; the orb
               // itself is still laid out once, in its fixed box.
+              // A LONG REPLY TAKES THE ORB'S ROOM (2026-09-26): the same
+              // compact orb as while typing, eased the same way, for the
+              // rest of the turn whose words outgrew their space.
               TweenAnimationBuilder<double>(
-                tween: Tween<double>(end: typing ? 1.0 : 0.0),
+                tween: Tween<double>(end: typing || _roomy ? 1.0 : 0.0),
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutCubic,
                 builder: (_, k, __) {
@@ -748,7 +746,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // the orb (which reads error as "running") just stopped it.
               if (engine.phase == AssistantPhase.error)
                 Expanded(
-                  flex: 7,
+                  flex: 700,
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: _ErrorCaption(engine: engine),
@@ -766,7 +764,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
               // was — its newest lines — instead of jumping to its top.
               else
                 Expanded(
-                  flex: 7,
+                  flex: 700,
                   child: AnimatedSwitcher(
                     duration: Motion.short,
                     reverseDuration: Motion.out,

@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
@@ -29,7 +28,8 @@ import '../design/motion.dart';
 ///  * The ticker runs only while something is fading; a settled caption
 ///    asks for no frames. "Remove animations": the words are simply there.
 ///
-/// The screen around it glides the passage up as it grows ([CaptionGlide]).
+/// The screen around it follows the newest line and lets the whole
+/// passage be scrolled back through (CaptionScroll).
 class StreamingCaption extends StatefulWidget {
   const StreamingCaption({
     super.key,
@@ -416,163 +416,5 @@ class _StreamingCaptionState extends State<StreamingCaption>
           ),
       ],
     );
-  }
-}
-
-/// THE PASSAGE GLIDES UP AS IT GROWS (2026-09-25, streaming captions).
-///
-/// The captions sit in a bottom-anchored scroll view: once a reply is
-/// taller than its space the newest line stays in view and the oldest
-/// leave over the top. So every new line used to push all the words above
-/// it up by a whole line in one frame. This paints the passage where it
-/// was and eases it up over [duration]: the new line rises into view from
-/// the bottom edge while its words fade in.
-///
-/// Only a push that shows glides: while the words still fit under the orb
-/// a new line simply appears below the others. A shrink never glides, and
-/// neither does anything on "Remove animations". It moves the picture,
-/// not the layout, and asks for frames only while it moves.
-class CaptionGlide extends StatefulWidget {
-  const CaptionGlide({
-    super.key,
-    required this.viewport,
-    required this.child,
-    this.duration = const Duration(milliseconds: 220),
-  });
-
-  /// The height of the space the passage scrolls in: a passage taller than
-  /// this is pushed up by what it grows.
-  final double viewport;
-
-  final Duration duration;
-  final Widget child;
-
-  @override
-  State<CaptionGlide> createState() => _CaptionGlideState();
-}
-
-class _CaptionGlideState extends State<CaptionGlide>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: widget.duration);
-
-  @override
-  void didUpdateWidget(CaptionGlide old) {
-    super.didUpdateWidget(old);
-    _c.duration = widget.duration;
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => _Glide(
-        controller: _c,
-        viewport: widget.viewport,
-        still: Motion.reduced(context),
-        child: widget.child,
-      );
-}
-
-class _Glide extends SingleChildRenderObjectWidget {
-  const _Glide({
-    required this.controller,
-    required this.viewport,
-    required this.still,
-    super.child,
-  });
-
-  final AnimationController controller;
-  final double viewport;
-  final bool still;
-
-  @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderGlide(controller, viewport, still);
-
-  @override
-  void updateRenderObject(BuildContext context, _RenderGlide renderObject) {
-    renderObject
-      ..viewport = viewport
-      ..still = still;
-  }
-}
-
-class _RenderGlide extends RenderProxyBox {
-  _RenderGlide(this._c, this.viewport, this.still) {
-    _c
-      ..addListener(markNeedsPaint)
-      ..addStatusListener(_onStatus);
-  }
-
-  void _onStatus(AnimationStatus s) {
-    if (s == AnimationStatus.completed) _from = 0;
-  }
-
-  @override
-  void dispose() {
-    _c
-      ..removeListener(markNeedsPaint)
-      ..removeStatusListener(_onStatus);
-    super.dispose();
-  }
-
-  final AnimationController _c;
-  double viewport;
-  bool still;
-
-  double? _lastHeight;
-
-  /// How far below its place the passage was drawn when the glide began.
-  double _from = 0;
-
-  double get _offset =>
-      _from == 0 ? 0 : _from * (1 - Motion.easeMove.transform(_c.value));
-
-  @override
-  void performLayout() {
-    super.performLayout();
-    final h = size.height;
-    final last = _lastHeight;
-    _lastHeight = h;
-    if (last == null || still) return;
-    // How far a bottom-anchored passage of height x is pushed up over the
-    // top of the viewport.
-    double over(double x) => math.max(0.0, x - viewport);
-    final push = over(h) - over(last);
-    if (push > 0) {
-      // Carries on from where it is drawn now; never more than a screen.
-      _from = math.min(_offset + push, viewport);
-      _c.forward(from: 0);
-    } else if (push < 0 && _from != 0) {
-      _from = 0;
-      _c.stop();
-    }
-  }
-
-  @override
-  void paint(PaintingContext context, Offset offset) {
-    final child = this.child;
-    if (child == null) return;
-    context.paintChild(child, offset + Offset(0, _offset));
-  }
-
-  @override
-  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
-    final child = this.child;
-    if (child == null) return false;
-    return result.addWithPaintOffset(
-      offset: Offset(0, _offset),
-      position: position,
-      hitTest: (r, p) => child.hitTest(r, position: p),
-    );
-  }
-
-  @override
-  void applyPaintTransform(RenderBox child, Matrix4 transform) {
-    transform.translateByDouble(0.0, _offset, 0.0, 1.0);
   }
 }

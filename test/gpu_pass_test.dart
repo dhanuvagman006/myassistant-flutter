@@ -39,7 +39,7 @@ import 'package:myassistant/screens/splash_screen.dart';
 import 'package:myassistant/widgets/activity_pill.dart';
 import 'package:myassistant/widgets/ambient_background.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
-import 'package:myassistant/widgets/overflow_fade.dart';
+import 'package:myassistant/widgets/caption_scroll.dart';
 import 'package:myassistant/widgets/streaming_caption.dart';
 import 'package:myassistant/widgets/voice_orb.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -423,12 +423,12 @@ void main() {
       expect(find.text('What is on today?'), findsOneWidget);
       expect(masks(tester), 0,
           reason: 'a mask over one short line is a full-size layer for nothing');
-      final captions = find.byType(TopFadeWhenOverflowing);
-      final words = find.descendant(of: captions, matching: find.byType(CaptionGlide));
+      final captions = find.byType(CaptionScroll);
+      final words = find.descendant(of: captions, matching: find.byType(StreamingCaption));
       final kept = tester.state(words);
 
-      // The same turn going on and on: now the oldest words must melt away
-      // at the top.
+      // The same turn going on and on: the words above the view (scrolled
+      // past to follow the newest line) fade at the top edge.
       final long = [
         'What is on today?',
         for (var i = 1; i <= 14; i++)
@@ -442,7 +442,8 @@ void main() {
           find.descendant(of: captions, matching: find.byType(Scrollable)));
       expect(scroll.position.maxScrollExtent, greaterThan(0),
           reason: 'the test needs a reply taller than its space');
-      expect(masks(tester), 1, reason: 'an overflowing reply fades at the top');
+      expect(masks(tester), 1,
+          reason: 'an overflowing reply fades where there is more to see');
       expect(identical(tester.state(words), kept), isTrue,
           reason: 'the mask coming on rebuilt the captions from nothing');
 
