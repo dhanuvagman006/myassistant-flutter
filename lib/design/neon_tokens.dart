@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'neon_palette.dart';
+
+export 'neon_palette.dart';
+
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MYASSISTANT · Design System V3.0 — "Daylight"
 ///  Light, professional re-skin (Sept 2026). Same token API as Neon V2 so
@@ -17,6 +21,17 @@ class Neon {
   static bool isDark = false;
 
   static void setDark(bool v) => isDark = v;
+
+  /// A WHOLE SCHEME, when one is chosen ([NeonPalette]): ground, cards,
+  /// words and accents together. Null — the default — leaves every token
+  /// below exactly as it was, the user's accent included.
+  static NeonPalette? _palette;
+  static NeonPalette? get palette => _palette;
+
+  static void usePalette(NeonPalette? p) {
+    _palette = p;
+    if (p != null) isDark = p.dark;
+  }
 
   // Core palette — deep, confident accents on white; PURE BLACK in the
   // dark (owner's call, 2026-09-18: "don't use grey"): true-black ground,
@@ -58,17 +73,19 @@ class Neon {
         .toColor();
   }
 
-  static Color get violet => _accent != null
+  static Color get violet => _palette?.primary ?? _violet;
+  static Color get _violet => _accent != null
       ? (isDark ? _accent! : _accentInk!)
       : (isDark ? const Color(0xFFC77DFF) : const Color(0xFFA855F7));
   // Whole accent set brightened with it ("entire app all colors") —
   // higher luminance, saturation kept, so black stays black and the
   // accents carry the energy.
-  static Color get cyan =>
-      isDark ? const Color(0xFF3FE3FD) : const Color(0xFF0891B2);
+  static Color get cyan => _palette?.secondary ??
+      (isDark ? const Color(0xFF3FE3FD) : const Color(0xFF0891B2));
   /// The gradient partner — derived from the accent so every gradient in
   /// the app (orb, mic, tiles, quote card) stays in tune with one choice.
-  static Color get pink => _accentPartner != null
+  static Color get pink => _palette?.partner ?? _pink;
+  static Color get _pink => _accentPartner != null
       ? (isDark
           ? _accentPartner!
           : HSLColor.fromColor(_accentPartner!)
@@ -77,13 +94,15 @@ class Neon {
                       .clamp(0.26, 0.50))
               .toColor())
       : (isDark ? const Color(0xFFFF8AC8) : const Color(0xFFDB2777));
-  static Color get lime =>
-      isDark ? const Color(0xFFBDF64B) : const Color(0xFF65A30D);
+  static Color get lime => _palette?.tertiary ??
+      (isDark ? const Color(0xFFBDF64B) : const Color(0xFF65A30D));
   /// The page ground. In the dark it is a near-black carrying a trace of
   /// the theme colour rather than #000000 — flat black made every screen
   /// read as empty (2026-09-19). AmbientBackground lays the soft pools of
   /// light on top of this.
   static Color get bg {
+    final p = _palette;
+    if (p != null) return p.bg;
     if (!isDark) return const Color(0xFFF7F7FB);
     final h = HSLColor.fromColor(violet);
     return h.withSaturation(0.42).withLightness(0.035).toColor();
@@ -92,31 +111,31 @@ class Neon {
   // black; the cards sitting on it are a violet-cast near-black, which
   // is what stops a dark theme reading as "charcoal sheets on nothing"
   // (2026-09-19 — "the colour combination is worst, it looks boring").
-  static Color get surface => isDark
+  static Color get surface => _palette?.surface ?? (isDark
       ? HSLColor.fromColor(violet)
           .withSaturation(0.30)
           .withLightness(0.085)
           .toColor()
-      : const Color(0xFFFFFFFF);
-  static Color get surfaceHigh =>
-      isDark ? const Color(0xFF1E1730) : const Color(0xFFEEEFF6);
-  static Color get success =>
-      isDark ? const Color(0xFF62F49B) : const Color(0xFF16A34A);
-  static Color get warning =>
-      isDark ? const Color(0xFFFFD03E) : const Color(0xFFD97706);
-  static Color get error =>
-      isDark ? const Color(0xFFFF8585) : const Color(0xFFEF4444);
+      : const Color(0xFFFFFFFF));
+  static Color get surfaceHigh => _palette?.surfaceHigh ??
+      (isDark ? const Color(0xFF1E1730) : const Color(0xFFEEEFF6));
+  static Color get success => _palette?.success ??
+      (isDark ? const Color(0xFF62F49B) : const Color(0xFF16A34A));
+  static Color get warning => _palette?.warning ??
+      (isDark ? const Color(0xFFFFD03E) : const Color(0xFFD97706));
+  static Color get error => _palette?.error ??
+      (isDark ? const Color(0xFFFF8585) : const Color(0xFFEF4444));
 
   // Text — ink on paper; on pure black, brighter steps so secondary text
   // still reads instead of sinking into gray mud.
-  static Color get textHi =>
-      isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1B1D28);
-  static Color get textLo =>
-      isDark ? const Color(0xFFD8D2EA) : const Color(0xFF585E70);
+  static Color get textHi => _palette?.textHi ??
+      (isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1B1D28));
+  static Color get textLo => _palette?.textLo ??
+      (isDark ? const Color(0xFFD8D2EA) : const Color(0xFF585E70));
   // Light mode was #9BA0B0 — 2.4:1 on the page, unreadable for the
   // timestamps, hints and footnotes it is used for. Now 4.5:1.
-  static Color get textDim =>
-      isDark ? const Color(0xFF9E96B8) : const Color(0xFF6B7185);
+  static Color get textDim => _palette?.textDim ??
+      (isDark ? const Color(0xFF9E96B8) : const Color(0xFF6B7185));
 
   /// The GROUND color for things painted in [textHi] — icon-on-ink tiles,
   /// text on the primary button. Tracks the theme so "white on ink" in
@@ -140,8 +159,16 @@ class Neon {
   // same hues, deep enough to read (4.5:1 or better where each is used —
   // test/contrast_test.dart measures them). Colour words with the *Ink
   // token; keep the plain one for icons, borders and fills.
-  static Color get cyanInk =>
-      isDark ? const Color(0xFF3FE3FD) : const Color(0xFF155E75);
+  static Color get cyanInk {
+    final p = _palette;
+    if (p != null) {
+      // The palette's info colour, deep enough to read as words by day.
+      if (p.dark) return p.secondary;
+      final h = HSLColor.fromColor(p.secondary);
+      return h.withLightness((h.lightness * 0.62).clamp(0.18, 0.40)).toColor();
+    }
+    return isDark ? const Color(0xFF3FE3FD) : const Color(0xFF155E75);
+  }
   static Color get warningInk =>
       isDark ? const Color(0xFFFFD03E) : const Color(0xFFA14A07);
   static Color get errorInk =>
