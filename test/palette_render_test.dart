@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -30,6 +31,41 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   flutter test test/palette_render_test.dart \
 ///     --dart-define=PALETTE_RENDERS=build/palette_renders
 const _out = String.fromEnvironment('PALETTE_RENDERS');
+
+/// A larger set, as JSON ({"themes": [{number, name, dark, bg, surface,
+/// raised, primary, partner, info, third, text, text2, hint}]}), rendered
+/// instead of the twelve below, as <number>.png:
+///   --dart-define=PALETTE_FILE=path/to/palettes.json
+const _file = String.fromEnvironment('PALETTE_FILE');
+
+Color _hex(String h) => Color(int.parse('FF${h.replaceFirst('#', '')}', radix: 16));
+
+List<(String, NeonPalette)> _fromFile() {
+  final j = jsonDecode(File(_file).readAsStringSync()) as Map<String, dynamic>;
+  return [
+    for (final t in (j['themes'] as List).cast<Map<String, dynamic>>())
+      (
+        (t['number'] as int).toString().padLeft(3, '0'),
+        NeonPalette(
+          name: t['name'] as String,
+          dark: t['dark'] as bool,
+          bg: _hex(t['bg'] as String),
+          surface: _hex(t['surface'] as String),
+          surfaceHigh: _hex(t['raised'] as String),
+          primary: _hex(t['primary'] as String),
+          partner: _hex(t['partner'] as String),
+          secondary: _hex(t['info'] as String),
+          tertiary: _hex(t['third'] as String),
+          textHi: _hex(t['text'] as String),
+          textLo: _hex(t['text2'] as String),
+          textDim: _hex(t['hint'] as String),
+          success: t['dark'] as bool ? _okDark : _okLight,
+          warning: t['dark'] as bool ? _warnDark : _warnLight,
+          error: t['dark'] as bool ? _errDark : _errLight,
+        ),
+      ),
+  ];
+}
 
 const Color _okDark = Color(0xFF4ADE80), _warnDark = Color(0xFFFBBF24), _errDark = Color(0xFFF87171);
 const Color _okLight = Color(0xFF15803D), _warnLight = Color(0xFFB45309), _errLight = Color(0xFFDC2626);
@@ -227,6 +263,15 @@ void main() {
     await MomentumService.instance.reset();
     await tester.pump(const Duration(seconds: 5));
     tester.takeException();
+  }
+
+  if (_file.isNotEmpty) {
+    for (final (file, p) in _fromFile()) {
+      testWidgets('palette $file: ${p.name}', (tester) async {
+        await render(tester, file, palette: p);
+      }, skip: _out.isEmpty);
+    }
+    return;
   }
 
   testWidgets('today\'s look, for reference', (tester) async {
