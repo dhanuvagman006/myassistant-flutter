@@ -42,6 +42,9 @@ class AutomationDirective {
   /// (the server's old behaviour), rather than a 0 that would make it
   /// throw away the steps already done.
   final int? startSeq;
+  /// What kind of task (food, grocery, ride…) — from build 115, used to
+  /// offer an installed app of the same kind when the named one is missing.
+  final String category;
 
   const AutomationDirective({
     required this.runId,
@@ -58,6 +61,7 @@ class AutomationDirective {
     this.mayInstall = false,
     this.installApp = '',
     this.startSeq,
+    this.category = '',
   });
 
   static AutomationDirective? fromEvent(Map<String, dynamic> e) {
@@ -81,6 +85,7 @@ class AutomationDirective {
       mayInstall: e['may_install'] == true,
       installApp: e['install_app'] as String? ?? '',
       startSeq: (e['seq'] as num?)?.toInt(),
+      category: e['category'] as String? ?? '',
     );
   }
 }
@@ -116,6 +121,8 @@ class AutomationOutcome {
 abstract class AutomationDevice {
   Future<({bool connected, bool enabled})> status();
   Future<Map<String, String>?> resolveApp(String name);
+  /// Whether the app with this package is on the phone at all.
+  Future<bool> installed(String pkg);
   Future<Map<String, dynamic>> launch({String pkg = '', String url = ''});
   /// False when the phone refuses to start (an app is installing).
   Future<bool> begin(List<String> allowed, String status,
@@ -178,6 +185,16 @@ class ChannelAutomationDevice implements AutomationDevice {
       return m.map((k, v) => MapEntry(k.toString(), v.toString()));
     } catch (_) {
       return null;
+    }
+  }
+
+  @override
+  Future<bool> installed(String pkg) async {
+    try {
+      return (await _ch.invokeMethod('installed', {'pkg': pkg})) == true;
+    } catch (_) {
+      // Cannot tell: let the task try, as before this check existed.
+      return true;
     }
   }
 
@@ -534,6 +551,48 @@ class AutomationRunner {
 
   static bool _locked(Map<String, dynamic>? m) =>
       m?['access'] is Map && (m!['access'] as Map)['locked'] == true;
+
+  /// Apps that do the same job, by the server's category — for "Zomato
+  /// isn't installed, but you have Swiggy".
+  static const sameJob = <String, List<String>>{
+    'food': ['Swiggy', 'Zomato', 'EatSure', 'magicpin'],
+    'grocery': ['Blinkit', 'Zepto', 'Swiggy', 'BigBasket', 'JioMart', 'Amazon', 'Flipkart'],
+    'shopping': ['Amazon', 'Flipkart', 'Meesho', 'Myntra', 'Ajio'],
+    'ride': ['Uber', 'Ola', 'Rapido', 'Namma Yatri'],
+    'movies': ['District', 'BookMyShow', 'Paytm'],
+    'travel': ['MakeMyTrip', 'Goibibo', 'ixigo', 'Cleartrip', 'IRCTC'],
+  };
+
+  /// IS THE APP HERE? Asked before the conversation closes for a task
+  /// (build 115). The owner, 2026-09-26: "it's saying Zomato is not present,
+  /// but it should ask should I install it" — the task used to start, fail
+  /// at once, and read out a report after the conversation had gone, in
+  /// another voice.
+  ///
+  /// Null when the app is on the phone (or the task names none). Otherwise
+  /// the run is closed on the server as not installed, and the answer is
+  /// the apps of the same kind that ARE here, best first — often the one
+  /// the owner actually said, when a name was misheard.
+  Future<List<String>?> missingApp(AutomationDirective d) async {
+    if (d.web || d.resume) return null;
+    if (d.pkg.isEmpty && d.appName.isEmpty) return null;
+    if (d.pkg.isNotEmpty) {
+      if (await device.installed(d.pkg)) return null;
+    } else {
+      final hit = await device.resolveApp(d.appName);
+      if (hit != null && (hit['pkg'] ?? '').isNotEmpty) return null;
+    }
+    await _finish(d.runId, 'not_installed');
+    final asked = {d.app.toLowerCase(), d.appName.toLowerCase()};
+    final here = <String>[];
+    for (final name in sameJob[d.category] ?? const <String>[]) {
+      if (asked.contains(name.toLowerCase())) continue;
+      final hit = await device.resolveApp(name);
+      if (hit != null && (hit['pkg'] ?? '').isNotEmpty) here.add(name);
+      if (here.length == 2) break;
+    }
+    return here;
+  }
 
   Future<AutomationOutcome> run(AutomationDirective d) async {
     if (_busy) {

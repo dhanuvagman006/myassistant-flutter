@@ -4341,6 +4341,13 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> _runAutomationNow(AutomationDirective d) async {
+    // IS THE APP HERE? Checked before anything closes (build 115; the
+    // owner, 2026-09-26: "it's saying Zomato is not present, but it should
+    // ask should I install it"). A missing app becomes a question in this
+    // same conversation, in her own voice — install it, or use the app of
+    // the same kind the phone has (often the one he actually said, when a
+    // name was misheard) — instead of a failure read out afterwards.
+    final missing = await AutomationRunner.instance.missingApp(d);
     // "On it, doing this in Swiggy…" is still being spoken, and leaving
     // the screen silences the assistant (onAppPaused). Let it finish.
     await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -4349,10 +4356,20 @@ class AssistantEngine extends ChangeNotifier {
         (_ttsActive || _speakQueue.isNotEmpty || phase == AssistantPhase.speaking)) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
+    if (missing != null) {
+      AppLog.add('auto',
+          'run ${d.runId}: ${d.app} not installed; here: ${missing.join(', ')}');
+      await _tellModel(notInstalledNote(d, missing));
+      return;
+    }
     // A TASK IS ITS OWN FLOW: "On it" → the bar → the report. The voice
     // session closes here so nothing else is heard or said meanwhile —
     // left open, it answered room noise while the task ran (2026-09-24).
     if (inlineVoice || liveActive) {
+      // Closed for the task, not by the owner: "On it…" is no answer, and
+      // must not linger as a card over Home (the owner, 2026-09-26: the
+      // same words came back "as a toast — that is not necessary").
+      _quietEndAt = DateTime.now();
       await endInlineConversation();
     }
     _leftForExternalApp = true;
@@ -4396,6 +4413,44 @@ class AssistantEngine extends ChangeNotifier {
       unawaited(ReminderNotifications.instance
           .showNow(automationTitles[o.status] ?? 'Task update', report));
     }
+  }
+
+  /// What the conversation is told when the task's app is not on the phone:
+  /// ask, in one question, to install it — or to use [here], the apps of
+  /// the same kind that are installed.
+  static String notInstalledNote(AutomationDirective d, List<String> here) {
+    final app = d.app.isEmpty ? 'That app' : d.app;
+    final install = 'If they want $app, call open_named_app with the name '
+        '"$app" and install true.';
+    if (here.isEmpty) {
+      return '[SYSTEM] $app is not installed on this phone, so the task did '
+          'not start and nothing was opened. Ask in ONE short question '
+          'whether to install $app from the app store. $install';
+    }
+    final alt = here.first;
+    return '[SYSTEM] $app is not installed on this phone, so the task did '
+        'not start and nothing was opened. The phone does have '
+        '${here.join(' and ')}, which can do the same — they may even have '
+        'said $alt and been misheard. Ask in ONE short question whether to '
+        'do it in $alt instead, or to install $app from the app store. If '
+        'they choose $alt, call do_task_in_app again with app "$alt" and the '
+        'same goal. $install';
+  }
+
+  /// When the conversation was last closed for a task rather than by the
+  /// owner: its last line ("On it…") is not an answer to keep on screen.
+  DateTime? _quietEndAt;
+
+  /// True once, just after a conversation closed for a task — read by the
+  /// answer card (AnswerAfterglow). Stale after a few seconds, so a close
+  /// nobody was watching cannot hide a later, real answer.
+  @visibleForTesting
+  void debugMarkQuietEnd() => _quietEndAt = DateTime.now();
+
+  bool takeQuietEnd() {
+    final at = _quietEndAt;
+    _quietEndAt = null;
+    return at != null && DateTime.now().difference(at) < const Duration(seconds: 5);
   }
 
   /// The notification title for how a task ended, when the owner is out

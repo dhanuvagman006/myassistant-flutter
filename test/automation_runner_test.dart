@@ -41,10 +41,23 @@ class FakeDevice implements AutomationDevice {
   @override
   Future<({bool connected, bool enabled})> status() async =>
       (connected: connected, enabled: connected);
+  /// By name, when a test needs several apps; otherwise [resolved].
+  Map<String, Map<String, String>>? apps;
+
+  /// The packages on the phone; null means every one asked about.
+  Set<String>? installedPkgs;
+
   @override
   Future<Map<String, String>?> resolveApp(String name) async {
     log.add('resolve:$name');
-    return resolved;
+    final a = apps;
+    return a == null ? resolved : a[name.toLowerCase()];
+  }
+
+  @override
+  Future<bool> installed(String pkg) async {
+    log.add('installed:$pkg');
+    return installedPkgs?.contains(pkg) ?? true;
   }
 
   @override
@@ -195,6 +208,73 @@ AutomationDirective swiggy({String pkg = sw}) => AutomationDirective(
     );
 
 void main() {
+  group('is the app here, before the conversation closes (build 115)', () {
+    AutomationDirective zomato({String pkg = 'com.application.zomato'}) =>
+        AutomationDirective(
+          runId: 28,
+          goal: 'Order biryani on Zomato',
+          app: 'Zomato',
+          appName: 'zomato',
+          pkg: pkg,
+          category: 'food',
+        );
+
+    test('an app that is on the phone: nothing to ask', () async {
+      final dev = FakeDevice()..installedPkgs = {'com.application.zomato'};
+      final api = FakeApi([]);
+      expect(await AutomationRunner(device: dev, api: api).missingApp(zomato()), isNull);
+      expect(api.finishes, isEmpty, reason: 'the run goes on');
+    });
+
+    test('missing: the run is closed, and the app of the same kind that IS here is offered',
+        () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {sw}
+        ..apps = {
+          'swiggy': {'pkg': sw, 'label': 'Swiggy'},
+        };
+      final api = FakeApi([]);
+      final here = await AutomationRunner(device: dev, api: api).missingApp(zomato());
+      expect(here, ['Swiggy']);
+      expect(api.finishes, ['not_installed']);
+      expect(dev.log.where((l) => l.startsWith('launch')), isEmpty,
+          reason: 'nothing was opened');
+    });
+
+    test('missing, and nothing else of its kind: an empty list (offer the install)',
+        () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {}
+        ..apps = {};
+      final here =
+          await AutomationRunner(device: dev, api: FakeApi([])).missingApp(zomato());
+      expect(here, isEmpty);
+    });
+
+    test('found by name when the server named no package', () async {
+      final dev = FakeDevice()
+        ..apps = {
+          'zomato': {'pkg': 'com.application.zomato', 'label': 'Zomato'},
+        };
+      expect(
+          await AutomationRunner(device: dev, api: FakeApi([])).missingApp(zomato(pkg: '')),
+          isNull);
+    });
+
+    test('web tasks and resumed runs are never asked about', () async {
+      final dev = FakeDevice()..installedPkgs = {};
+      final r = AutomationRunner(device: dev, api: FakeApi([]));
+      expect(
+          await r.missingApp(const AutomationDirective(runId: 1, goal: 'x', web: true)),
+          isNull);
+      expect(
+          await r.missingApp(const AutomationDirective(
+              runId: 1, goal: 'x', app: 'Zomato', appName: 'zomato',
+              pkg: 'com.application.zomato', resume: true)),
+          isNull);
+    });
+  });
+
   test('look → act → look again, reporting whether each step changed the screen', () async {
     final dev = FakeDevice(screens: [
       screen(sw, ['Search']),

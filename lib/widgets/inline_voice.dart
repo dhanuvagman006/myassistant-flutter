@@ -1407,7 +1407,11 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
       // A new session replaces the old afterglow immediately.
       _close();
     }
-    if (_wasActive && !active) {
+    if (_wasActive && !active && engine.takeQuietEnd()) {
+      // Closed for a task, not by the owner: "On it, doing this in
+      // Swiggy…" is no answer to keep on screen (2026-09-26).
+      _lastAnswer = null;
+    } else if (_wasActive && !active) {
       var last = _lastAnswer;
       if (last == null) {
         // Classic turns write to the transcript — but only THIS session's.

@@ -112,6 +112,15 @@ object AutomationBridge {
                     } catch (_: Throwable) { result.success(false) }
                 }
                 "resolveApp" -> result.success(resolveApp(activity, call.argument<String>("name") ?: ""))
+                // Build 115: is this exact app on the phone? Asked BEFORE the
+                // conversation closes for a task, so a missing app becomes a
+                // question ("install it, or use Swiggy?") instead of a
+                // failure read out after the conversation has gone.
+                "installed" -> {
+                    val pkg = call.argument<String>("pkg") ?: ""
+                    result.success(pkg.isNotEmpty() &&
+                        activity.packageManager.getLaunchIntentForPackage(pkg) != null)
+                }
                 "launch" -> result.success(launch(activity,
                     call.argument<String>("pkg") ?: "", call.argument<String>("url") ?: ""))
                 "bringBack" -> {

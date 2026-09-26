@@ -396,6 +396,40 @@ void main() {
     });
   });
 
+  group('closed for a task', () {
+    testWidgets('"On it…" leaves no answer card behind (2026-09-26)', (tester) async {
+      final engine = AssistantEngine.instance;
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(body: Stack(children: [AnswerAfterglow()])),
+      ));
+      engine
+        ..inlineVoice = true
+        ..phase = AssistantPhase.speaking
+        ..notifyListeners();
+      await tester.pump();
+      const said = 'On it, doing this in Swiggy. I will stop before any payment.';
+      engine.caption.value = const CaptionLine('hari', said);
+      await tester.pump();
+      engine.debugMarkQuietEnd();
+      _closeSession();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(said), findsNothing);
+
+      // The next conversation, closed by the owner, still keeps its answer.
+      engine
+        ..inlineVoice = true
+        ..phase = AssistantPhase.speaking
+        ..notifyListeners();
+      await tester.pump();
+      const answer = 'Your meeting with Ravi is at five this evening.';
+      engine.caption.value = const CaptionLine('hari', answer);
+      await tester.pump();
+      _closeSession();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(answer), findsOneWidget);
+    });
+  });
+
   group('the shell under the session', () {
     Scaffold shellScaffold(WidgetTester tester) => tester.widget<Scaffold>(find
         .descendant(of: find.byType(HomeShell), matching: find.byType(Scaffold))
