@@ -60,7 +60,7 @@ class Rig {
   /// A spoken sentence: onset, speech, then the hangover that ends it.
   void utterance({int frames = 6}) {
     feed(speech, frames);
-    feed(quiet, 4); // 512 ms of quiet > the 450 ms hangover
+    feed(quiet, 8); // 1024 ms of quiet > the 1000 ms hangover
   }
 }
 
@@ -138,7 +138,7 @@ void main() {
     // Speech streams live from here on, and the next pause needs a new
     // tail after the next utterance.
     r.feed(speech, 3);
-    r.feed(quiet, 4);
+    r.feed(quiet, 8);
     expect(r.markers, ['activity_start', 'activity_end']);
     r.server({'type': 'turn_complete'});
     r.sent.clear();
@@ -214,7 +214,10 @@ void main() {
     r.feed(speech, 3);
     expect(r.svc.ownerTalking, isTrue);
     expect(r.svc.modelTurn, isFalse, reason: 'his turn, not hers');
-    r.feed(quiet, 4);
+    // A breath is not the end of what he is saying (2026-09-26).
+    r.feed(quiet, 5);
+    expect(r.svc.ownerTalking, isTrue, reason: '640 ms of quiet is a pause, not the end');
+    r.feed(quiet, 3);
     expect(r.svc.ownerTalking, isFalse);
   });
 
@@ -223,7 +226,7 @@ void main() {
     r.svc.speakerScorer = (pcm) async => 0.9;
     r.feed(speech, 2);
     expect(r.svc.ownerTalking, isTrue, reason: 'held, not yet scored');
-    r.feed(quiet, 4);
+    r.feed(quiet, 8);
     await Future<void>.delayed(Duration.zero);
     expect(r.svc.ownerTalking, isFalse);
   });
@@ -290,7 +293,7 @@ void main() {
         [for (var i = 0; i < 8; i++) ...speech]);
 
     r.feed(speech, 2); // accepted: live
-    r.feed(quiet, 4);
+    r.feed(quiet, 8);
     expect(r.markers, ['activity_start', 'activity_end']);
     r.server({'type': 'turn_complete'});
     r.sent.clear();
@@ -310,7 +313,7 @@ void main() {
     // cold detector counts any first sound as loud).
     r.feed(speech, 8);
     await Future<void>.delayed(Duration.zero);
-    r.feed(quiet, 4);
+    r.feed(quiet, 8);
     r.server({'type': 'turn_complete'});
     r.feed(quiet, 30);
     expect(r.svc.uplinkPaused, isTrue);

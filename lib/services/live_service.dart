@@ -238,16 +238,23 @@ class LiveService {
   /// or a keyboard click from opening a turn.
   static const _onsetMs = 200;
 
-  /// How much quiet before the turn is ENDED. This is the number the user
-  /// feels — the pause between them stopping and Hari starting. Short
-  /// enough to feel immediate, long enough to survive the gap between
-  /// words. Tuned here rather than on the server because only this side
-  /// knows the room.
-  static const _hangoverMs = 450;
+  /// How much quiet before THIS SIDE counts the utterance over. Google's
+  /// detector decides when the turn really ends (the server's
+  /// silenceDurationMs); this one decides when the audio after a pause
+  /// stops going up as speech. At 450 ms, anyone who paused for a breath
+  /// and went on quietly had their next words sent as a whisper until the
+  /// onset probe caught up — near-silence to Google, which then ended the
+  /// turn on them (2026-09-26, the client: "before we complete what we
+  /// want to say if it stops then it's a major problem"). Held for 1 s
+  /// now, just under the server's 1.1 s, so a pause is heard as a pause
+  /// and whatever follows it is heard in full.
+  static const _hangoverMs = 1000;
 
   /// A turn that never ends is a hung app. If someone is in a genuinely
   /// loud place the detector could in principle stay open, so cut it.
-  static const _maxUtteranceMs = 30000;
+  /// Two minutes (was 30 s, 2026-09-26): a dictated message for a call can
+  /// run long, and at 30 s its end went up as a whisper.
+  static const _maxUtteranceMs = 120000;
 
   // ---- SPEAKER GATE ("only my voice") -------------------------------------
   //
