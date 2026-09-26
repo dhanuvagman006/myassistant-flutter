@@ -2353,6 +2353,7 @@ class AssistantEngine extends ChangeNotifier {
           retryTimes: (e['retry_times'] as num?)?.toInt() ?? 0,
           retryGapMinutes: (e['retry_gap_minutes'] as num?)?.toInt() ?? 0,
           tone: e['tone'] as String?,
+          language: e['language'] as String?,
         );
         break;
 
@@ -3454,22 +3455,30 @@ class AssistantEngine extends ChangeNotifier {
   int _localCallRetryGap = 0;
   String? _localCallTone;
 
+  /// The language the relayed message is to be spoken in ('ml' for
+  /// Malayalam…), as the server worked it out when the user confirmed the
+  /// read-back (2026-09-26). Null: the usual.
+  String? _localCallLanguage;
+
   /// Live-mode "call X [and tell them Y]": resolve the name against the
-  /// phone's contacts and act. The spoken yes/no already happened inside
-  /// the live conversation (high-risk tools are gated server-side), so a
-  /// single match proceeds immediately — no second tap to approve.
+  /// phone's contacts and act. The spoken yes already happened inside the
+  /// live conversation — since 2026-09-26 a relayed message is read back
+  /// word for word and confirmed before the server sends this — so a
+  /// single match proceeds immediately, no second tap to approve.
   Future<void> _handleResolveAndCall(String name, String? message,
       {bool agentAvailable = false,
       String via = 'phone',
       int retryTimes = 0,
       int retryGapMinutes = 0,
-      String? tone}) async {
+      String? tone,
+      String? language}) async {
     if (name.trim().isEmpty) return;
     // Whatever the user decided about a no-answer. Zero means one
     // attempt — the assistant never invents a retry.
     _localCallRetryTimes = retryTimes;
     _localCallRetryGap = retryGapMinutes;
     _localCallTone = tone;
+    _localCallLanguage = language;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
     _localCallVia = via;
@@ -3648,6 +3657,7 @@ class AssistantEngine extends ChangeNotifier {
           retryTimes: _localCallRetryTimes,
           retryGapMinutes: _localCallRetryGap,
           tone: _localCallTone,
+          lang: _localCallLanguage,
         );
       } catch (_) {
         id = null; // unavailable / quota / network — fall through
