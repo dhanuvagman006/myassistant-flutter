@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
 import '../core/log.dart';
@@ -42,9 +43,16 @@ class AutomationDirective {
   /// (the server's old behaviour), rather than a 0 that would make it
   /// throw away the steps already done.
   final int? startSeq;
-  /// What kind of task (food, grocery, ride…) — from build 115, used to
-  /// offer an installed app of the same kind when the named one is missing.
+  /// What kind of task (food, grocery, ride…) — used to find an app of
+  /// the same kind on the phone when the server's own pick is missing.
   final String category;
+  /// The owner's own words named this app (the server's "you asked for").
+  /// Only a named app is installed for a task when the phone already has
+  /// one of the same kind; the server's default pick never is.
+  final bool named;
+  /// A money app (payments, banking): never installed for a task — that
+  /// is the owner's step.
+  final bool noInstall;
 
   const AutomationDirective({
     required this.runId,
@@ -62,6 +70,8 @@ class AutomationDirective {
     this.installApp = '',
     this.startSeq,
     this.category = '',
+    this.named = false,
+    this.noInstall = false,
   });
 
   static AutomationDirective? fromEvent(Map<String, dynamic> e) {
@@ -86,6 +96,8 @@ class AutomationDirective {
       installApp: e['install_app'] as String? ?? '',
       startSeq: (e['seq'] as num?)?.toInt(),
       category: e['category'] as String? ?? '',
+      named: e['named'] == true,
+      noInstall: e['no_install'] == true,
     );
   }
 }
@@ -123,6 +135,11 @@ abstract class AutomationDevice {
   Future<Map<String, String>?> resolveApp(String name);
   /// Whether the app with this package is on the phone at all.
   Future<bool> installed(String pkg);
+  /// Opens [pkg]'s store page (a search for [name] when the package is not
+  /// known) and has Install pressed; false when that could not start.
+  Future<bool> installForTask(String pkg, String name);
+  /// The install [installForTask] started: still running, and how it ended.
+  Future<({bool installing, String outcome})> installState();
   Future<Map<String, dynamic>> launch({String pkg = '', String url = ''});
   /// False when the phone refuses to start (an app is installing).
   Future<bool> begin(List<String> allowed, String status,
@@ -195,6 +212,25 @@ class ChannelAutomationDevice implements AutomationDevice {
     } catch (_) {
       // Cannot tell: let the task try, as before this check existed.
       return true;
+    }
+  }
+
+  @override
+  Future<bool> installForTask(String pkg, String name) async {
+    try {
+      return (await _ch.invokeMethod('installForTask', {'pkg': pkg, 'name': name})) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<({bool installing, String outcome})> installState() async {
+    try {
+      final m = _map(await _ch.invokeMethod('installState'));
+      return (installing: m['installing'] == true, outcome: '${m['outcome'] ?? ''}');
+    } catch (_) {
+      return (installing: false, outcome: 'error');
     }
   }
 
@@ -552,50 +588,152 @@ class AutomationRunner {
   static bool _locked(Map<String, dynamic>? m) =>
       m?['access'] is Map && (m!['access'] as Map)['locked'] == true;
 
-  /// Apps that do the same job, by the server's category — for "Zomato
-  /// isn't installed, but you have Swiggy".
+  /// Apps that do the same job, by the server's category. Money apps are
+  /// never listed: the phone never works in them.
   static const sameJob = <String, List<String>>{
     'food': ['Swiggy', 'Zomato', 'EatSure', 'magicpin'],
     'grocery': ['Blinkit', 'Zepto', 'Swiggy', 'BigBasket', 'JioMart', 'Amazon', 'Flipkart'],
     'shopping': ['Amazon', 'Flipkart', 'Meesho', 'Myntra', 'Ajio'],
     'ride': ['Uber', 'Ola', 'Rapido', 'Namma Yatri'],
-    'movies': ['District', 'BookMyShow', 'Paytm'],
+    'movies': ['District', 'BookMyShow'],
     'travel': ['MakeMyTrip', 'Goibibo', 'ixigo', 'Cleartrip', 'IRCTC'],
   };
 
-  /// IS THE APP HERE? Asked before the conversation closes for a task
-  /// (build 115). The owner, 2026-09-26: "it's saying Zomato is not present,
-  /// but it should ask should I install it" — the task used to start, fail
-  /// at once, and read out a report after the conversation had gone, in
-  /// another voice.
+  /// Money apps by name — the server's MONEY_APP_NAME (guard.js); the
+  /// phone's own package list (HariAccessibilityService.never) backs it.
+  static final moneyName = RegExp(
+      r'\b(?:g ?pay|google pay|phone ?pe|paytm|bhim|cred|mobikwik|freecharge|amazon pay|'
+      r'yono|imobile|net ?banking|mobile banking|bank|upi|wallet)\b',
+      caseSensitive: false);
+
+  static bool _money(AutomationDirective d) =>
+      d.noInstall || moneyName.hasMatch('${d.app} ${d.appName}');
+
+  /// WHAT TO DO ABOUT THE TASK'S APP, before the conversation closes
+  /// (build 117):
+  /// - here: it is on the phone (or the task needs none) — go.
+  /// - install: it is missing — installed first, then the task carries on.
+  ///   The owner, 2026-09-26: "it should click on the install and it
+  ///   should install the app… my assistant should be that much smart".
+  /// - other: missing, the owner never named it (the server's usual pick)
+  ///   and [alt], an app of the same kind, IS here: the run is closed and
+  ///   the task starts again in [alt] — nothing is installed that nobody
+  ///   asked for.
+  /// - money: a missing money app — the run is closed; installing it is
+  ///   the owner's step.
+  Future<({String kind, String alt})> appPlan(AutomationDirective d) async {
+    if (!await appMissing(d)) return (kind: 'here', alt: '');
+    if (_money(d)) {
+      await _finish(d.runId, 'not_installed');
+      return (kind: 'money', alt: '');
+    }
+    if (!d.named) {
+      final asked = {d.app.toLowerCase(), d.appName.toLowerCase()};
+      for (final name in sameJob[d.category] ?? const <String>[]) {
+        if (asked.contains(name.toLowerCase())) continue;
+        final hit = await device.resolveApp(name);
+        if (hit != null && (hit['pkg'] ?? '').isNotEmpty) {
+          await _finish(d.runId, 'not_installed');
+          return (kind: 'other', alt: name);
+        }
+      }
+    }
+    return (kind: 'install', alt: '');
+  }
+
+  /// IS THE APP HERE? Asked before the conversation closes for a task.
+  /// True when the task names an app that is not on the phone.
+  Future<bool> appMissing(AutomationDirective d) async {
+    if (d.web || d.resume) return false;
+    if (d.pkg.isEmpty && d.appName.isEmpty) return false;
+    if (d.pkg.isNotEmpty) return !await device.installed(d.pkg);
+    final hit = await device.resolveApp(d.appName);
+    return hit == null || (hit['pkg'] ?? '').isEmpty;
+  }
+
+  /// How often, and for how long at most, an install is watched.
+  @visibleForTesting
+  Duration installPoll = const Duration(seconds: 1);
+  @visibleForTesting
+  Duration installCap = const Duration(minutes: 13);
+
+  /// A TASK INSTALLS ITS OWN APP (build 117). The owner, 2026-09-26, asked
+  /// to order from Amazon with no Amazon on the phone: "if the Play Store is
+  /// opened, I should not click on the install button… it should click on
+  /// the install and it should install the app" — and then do the task.
+  /// Build 115 asked whether to install instead, and ended the task.
   ///
-  /// Null when the app is on the phone (or the task names none). Otherwise
-  /// the run is closed on the server as not installed, and the answer is
-  /// the apps of the same kind that ARE here, best first — often the one
-  /// the owner actually said, when a name was misheard.
-  Future<List<String>?> missingApp(AutomationDirective d) async {
-    if (d.web || d.resume) return null;
-    if (d.pkg.isEmpty && d.appName.isEmpty) return null;
-    if (d.pkg.isNotEmpty) {
-      if (await device.installed(d.pkg)) return null;
-    } else {
-      final hit = await device.resolveApp(d.appName);
-      if (hit != null && (hit['pkg'] ?? '').isNotEmpty) return null;
+  /// The app's own store page opens, the accessibility service presses
+  /// Install and watches the download (HariAccessibilityService.autoInstall,
+  /// forTask), and this waits for it. Null when the app is now installed
+  /// and the task can carry on; otherwise the run is closed and the
+  /// outcome says why, in one sentence: a paid app, the store wanting a
+  /// sign-in, no Install button, Stop, or a download that outlasted the cap.
+  Future<AutomationOutcome?> installFor(AutomationDirective d) async {
+    final name = d.app.isNotEmpty ? d.app : (d.appName.isNotEmpty ? d.appName : 'the app');
+    // One thing in the store at a time: a second install, or a task
+    // already working, would press the wrong app's buttons (review,
+    // 2026-09-26).
+    if (_busy || _installing) {
+      return const AutomationOutcome('busy',
+          "I'm already doing another task on the phone — let me finish that first.");
     }
-    await _finish(d.runId, 'not_installed');
-    final asked = {d.app.toLowerCase(), d.appName.toLowerCase()};
-    final here = <String>[];
-    for (final name in sameJob[d.category] ?? const <String>[]) {
-      if (asked.contains(name.toLowerCase())) continue;
-      final hit = await device.resolveApp(name);
-      if (hit != null && (hit['pkg'] ?? '').isNotEmpty) here.add(name);
-      if (here.length == 2) break;
+    if (_money(d)) {
+      await _finish(d.runId, 'not_installed');
+      return AutomationOutcome('failed',
+          "$name isn't on your phone, and money apps are yours to install — "
+          'install it yourself, then ask me again.');
     }
-    return here;
+    _installing = true;
+    try {
+      return await _installFor(d, name);
+    } finally {
+      _installing = false;
+    }
+  }
+
+  bool _installing = false;
+
+  Future<AutomationOutcome?> _installFor(AutomationDirective d, String name) async {
+    AppLog.add('auto', 'run ${d.runId}: installing $name first');
+    if (!await device.installForTask(d.pkg, name)) {
+      // The phone refuses while another install is on: said as such.
+      if ((await device.installState()).installing) {
+        return const AutomationOutcome('busy',
+            "Another app is still installing — let me finish that first.");
+      }
+      await _finish(d.runId, 'not_installed');
+      return AutomationOutcome('failed',
+          "$name isn't on your phone and I couldn't start installing it — "
+          'please install it from the app store, then ask me again.');
+    }
+    final clock = Stopwatch()..start();
+    var st = (installing: true, outcome: '');
+    while (clock.elapsed < installCap) {
+      await Future<void>.delayed(installPoll);
+      st = await device.installState();
+      if (!st.installing) break;
+    }
+    AppLog.add('auto', 'run ${d.runId}: install ${st.installing ? 'still running' : st.outcome}'
+        ' after ${clock.elapsed.inSeconds}s');
+    if (!st.installing && (st.outcome == 'installed' || st.outcome == 'already')) return null;
+    final (reason, report) = switch (st.installing ? 'timeout' : st.outcome) {
+      'stopped' => ('stopped', 'Stopped, as you asked.'),
+      'paid' => ('not_installed',
+          "$name is a paid app — buying it is your step, so I've left its page open for you."),
+      'sign_in' => ('not_installed',
+          'The app store wants you to sign in first — sign in, then ask me again.'),
+      'timeout' => ('not_installed',
+          "$name is still downloading — ask me again once it's installed."),
+      _ => ('not_installed',
+          "I couldn't press Install for $name — please tap Install, then ask me again."),
+    };
+    await _finish(d.runId, reason);
+    return AutomationOutcome(reason == 'stopped' ? 'stopped' : 'failed', report);
   }
 
   Future<AutomationOutcome> run(AutomationDirective d) async {
-    if (_busy) {
+    if (_busy || _installing) {
       return const AutomationOutcome('busy',
           "I'm already doing another task on the phone — let me finish that first.");
     }

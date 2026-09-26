@@ -94,6 +94,9 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // A stopped voice player's last write must not kill the app (see
+        // PlayerRaceGuard).
+        PlayerRaceGuard.install()
 
         if (intent?.getBooleanExtra(TaskWidgetProvider.EXTRA_QUICK_TASK, false) == true) {
             pendingQuickTask = true

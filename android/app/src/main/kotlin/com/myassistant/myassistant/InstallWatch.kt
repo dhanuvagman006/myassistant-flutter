@@ -34,18 +34,24 @@ object InstallWatch {
     private var until = 0L
     private var readyPkg: String? = null
     private var readyUntil = 0L
+    /**
+     * A task's own install (build 117): no "is installed" notification and
+     * nothing opened on return here — the task opens the app itself.
+     */
+    private var quiet = false
     private var receiver: BroadcastReceiver? = null
 
     private fun now() = System.currentTimeMillis()
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
 
     /** Called when the Store was opened for an app the phone lacks. */
-    fun arm(ctx: Context, pkg: String, name: String) {
+    fun arm(ctx: Context, pkg: String, name: String, forTask: Boolean = false) {
         val app = ctx.applicationContext
         wantPkg = pkg
         wantName = norm(name)
         until = now() + WINDOW_MS
         readyPkg = null
+        quiet = forTask
         if (receiver != null) return
         val r = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
@@ -73,6 +79,25 @@ object InstallWatch {
         receiver = null
     }
 
+    /**
+     * A task's install is over, however it ended: nothing is watched any
+     * more, so an app that lands later is neither announced nor opened the
+     * next time the owner comes back here.
+     */
+    fun clear(ctx: Context) {
+        val app = ctx.applicationContext
+        readyPkg?.let {
+            (app.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                ?.cancel(it.hashCode())
+        }
+        wantPkg = ""
+        wantName = ""
+        until = 0L
+        readyPkg = null
+        quiet = false
+        disarm(app)
+    }
+
     private fun onAdded(app: Context, added: String) {
         if (now() > until) { disarm(app); return }
         val pm = app.packageManager
@@ -91,12 +116,17 @@ object InstallWatch {
         Log.i(TAG, "installed $added ($label)")
         readyPkg = added
         readyUntil = now() + WINDOW_MS
-        notifyReady(app, added, label, launch)
+        if (!quiet) notifyReady(app, added, label, launch)
         disarm(app)
     }
 
-    /** The app to open now the user is back here — once, while fresh. */
-    fun takeReady(ctx: Context): Intent? {
+    /**
+     * The app to open now the user is back here — once, while fresh.
+     * [installer]: the install's own watcher asking; a task's app is only
+     * ever handed to it, never opened by coming back here.
+     */
+    fun takeReady(ctx: Context, installer: Boolean = false): Intent? {
+        if (quiet && !installer) return null
         val pkg = readyPkg ?: return null
         readyPkg = null
         if (now() > readyUntil) return null

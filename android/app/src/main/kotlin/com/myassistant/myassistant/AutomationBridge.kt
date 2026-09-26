@@ -155,6 +155,50 @@ object AutomationBridge {
                 // opened, then open the app when it lands.
                 "autoInstall" -> result.success(svc?.autoInstall(
                     call.argument<String>("pkg") ?: "", call.argument<String>("name") ?: "") ?: false)
+                // Build 117: a task whose app is not on the phone installs it
+                // first — the app's own store page (or a search for it), with
+                // Install pressed by the service — and then carries on.
+                "installForTask" -> {
+                    if (svc == null) { result.success(false); return@setMethodCallHandler }
+                    val pkg = call.argument<String>("pkg") ?: ""
+                    val name = call.argument<String>("name") ?: ""
+                    // Refused BEFORE the store opens or the watch is armed:
+                    // another install (or run) owns the Store and the watch,
+                    // and a money app is the owner's to install (review,
+                    // 2026-09-26).
+                    if (svc.installing || svc.running ||
+                        (pkg.isNotEmpty() && HariAccessibilityService.never(pkg))) {
+                        Log.i("hari/install", "task install refused: installing=${svc.installing} running=${svc.running} pkg=$pkg")
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    val tries = if (pkg.isNotEmpty()) listOf(
+                        "market://details?id=" + Uri.encode(pkg),
+                        "https://play.google.com/store/apps/details?id=" + Uri.encode(pkg)
+                    ) else listOf(
+                        "market://search?q=" + Uri.encode(name) + "&c=apps",
+                        "https://play.google.com/store/search?q=" + Uri.encode(name) + "&c=apps"
+                    )
+                    InstallWatch.arm(activity.applicationContext, pkg, name, forTask = true)
+                    var opened = false
+                    for (u in tries) {
+                        try {
+                            activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            Log.i("hari/install", "opened $u")
+                            opened = true
+                            break
+                        } catch (e: Throwable) {
+                            Log.w("hari/install", "failed $u: ${e.javaClass.simpleName}")
+                        }
+                    }
+                    val started = opened && svc.autoInstall(pkg, name, forTask = true)
+                    if (!started) InstallWatch.clear(activity.applicationContext)
+                    result.success(started)
+                }
+                "installState" -> result.success(mapOf(
+                    "installing" to (svc?.installing ?: false),
+                    "outcome" to (svc?.installOutcome ?: "")))
                 "foreground" -> result.success(svc?.foreground() ?: "")
                 "stopRequested" -> result.success(svc?.stopRequested ?: false)
                 "snapshot" -> {

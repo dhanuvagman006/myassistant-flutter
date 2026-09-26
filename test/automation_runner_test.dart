@@ -60,6 +60,27 @@ class FakeDevice implements AutomationDevice {
     return installedPkgs?.contains(pkg) ?? true;
   }
 
+  /// Whether installForTask may start, and the states installState
+  /// answers in turn (the last one repeats).
+  bool installStarts = true;
+  List<({bool installing, String outcome})> installStates = [
+    (installing: false, outcome: 'installed'),
+  ];
+  int _installLook = 0;
+
+  @override
+  Future<bool> installForTask(String pkg, String name) async {
+    log.add('installForTask:$pkg|$name');
+    return installStarts;
+  }
+
+  @override
+  Future<({bool installing, String outcome})> installState() async {
+    final i = _installLook < installStates.length ? _installLook : installStates.length - 1;
+    _installLook++;
+    return installStates[i];
+  }
+
   @override
   Future<Map<String, dynamic>> launch({String pkg = '', String url = ''}) async {
     log.add('launch:$pkg|$url');
@@ -208,70 +229,207 @@ AutomationDirective swiggy({String pkg = sw}) => AutomationDirective(
     );
 
 void main() {
-  group('is the app here, before the conversation closes (build 115)', () {
-    AutomationDirective zomato({String pkg = 'com.application.zomato'}) =>
+  group('a task installs its own app (build 117)', () {
+    AutomationDirective amazon({String pkg = 'in.amazon.mShop.android.shopping'}) =>
         AutomationDirective(
-          runId: 28,
-          goal: 'Order biryani on Zomato',
-          app: 'Zomato',
-          appName: 'zomato',
+          runId: 33,
+          goal: 'order a guitar on Amazon',
+          app: 'Amazon',
+          appName: 'amazon',
           pkg: pkg,
-          category: 'food',
+          category: 'shopping',
         );
+    AutomationRunner runner(FakeDevice dev, FakeApi api) => AutomationRunner(device: dev, api: api)
+      ..installPoll = Duration.zero
+      ..installCap = const Duration(seconds: 2);
 
-    test('an app that is on the phone: nothing to ask', () async {
-      final dev = FakeDevice()..installedPkgs = {'com.application.zomato'};
-      final api = FakeApi([]);
-      expect(await AutomationRunner(device: dev, api: api).missingApp(zomato()), isNull);
-      expect(api.finishes, isEmpty, reason: 'the run goes on');
-    });
-
-    test('missing: the run is closed, and the app of the same kind that IS here is offered',
-        () async {
-      final dev = FakeDevice()
-        ..installedPkgs = {sw}
-        ..apps = {
-          'swiggy': {'pkg': sw, 'label': 'Swiggy'},
-        };
-      final api = FakeApi([]);
-      final here = await AutomationRunner(device: dev, api: api).missingApp(zomato());
-      expect(here, ['Swiggy']);
-      expect(api.finishes, ['not_installed']);
-      expect(dev.log.where((l) => l.startsWith('launch')), isEmpty,
-          reason: 'nothing was opened');
-    });
-
-    test('missing, and nothing else of its kind: an empty list (offer the install)',
-        () async {
-      final dev = FakeDevice()
-        ..installedPkgs = {}
-        ..apps = {};
-      final here =
-          await AutomationRunner(device: dev, api: FakeApi([])).missingApp(zomato());
-      expect(here, isEmpty);
+    test('an app on the phone is not missing', () async {
+      final dev = FakeDevice()..installedPkgs = {'in.amazon.mShop.android.shopping'};
+      expect(await runner(dev, FakeApi([])).appMissing(amazon()), isFalse);
     });
 
     test('found by name when the server named no package', () async {
       final dev = FakeDevice()
         ..apps = {
-          'zomato': {'pkg': 'com.application.zomato', 'label': 'Zomato'},
+          'amazon': {'pkg': 'in.amazon.mShop.android.shopping', 'label': 'Amazon'},
         };
-      expect(
-          await AutomationRunner(device: dev, api: FakeApi([])).missingApp(zomato(pkg: '')),
-          isNull);
+      expect(await runner(dev, FakeApi([])).appMissing(amazon(pkg: '')), isFalse);
+      final none = FakeDevice()..apps = {};
+      expect(await runner(none, FakeApi([])).appMissing(amazon(pkg: '')), isTrue);
     });
 
-    test('web tasks and resumed runs are never asked about', () async {
+    test('web tasks and resumed runs are never checked', () async {
       final dev = FakeDevice()..installedPkgs = {};
-      final r = AutomationRunner(device: dev, api: FakeApi([]));
+      final r = runner(dev, FakeApi([]));
+      expect(await r.appMissing(const AutomationDirective(runId: 1, goal: 'x', web: true)), isFalse);
       expect(
-          await r.missingApp(const AutomationDirective(runId: 1, goal: 'x', web: true)),
-          isNull);
-      expect(
-          await r.missingApp(const AutomationDirective(
-              runId: 1, goal: 'x', app: 'Zomato', appName: 'zomato',
-              pkg: 'com.application.zomato', resume: true)),
-          isNull);
+          await r.appMissing(const AutomationDirective(
+              runId: 1, goal: 'x', app: 'Amazon', appName: 'amazon',
+              pkg: 'in.amazon.mShop.android.shopping', resume: true)),
+          isFalse);
+    });
+
+    test('missing: Install is pressed, the install is waited for, and the task can go on',
+        () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {}
+        ..installStates = [
+          (installing: true, outcome: ''),
+          (installing: true, outcome: ''),
+          (installing: false, outcome: 'installed'),
+        ];
+      final api = FakeApi([]);
+      final r = runner(dev, api);
+      expect(await r.appMissing(amazon()), isTrue);
+      expect(await r.installFor(amazon()), isNull, reason: 'installed: carry on');
+      expect(dev.log, contains('installForTask:in.amazon.mShop.android.shopping|Amazon'));
+      expect(api.finishes, isEmpty, reason: 'the run stays open for the task');
+    });
+
+    test('already installed after all: carry on', () async {
+      final dev = FakeDevice()..installStates = [(installing: false, outcome: 'already')];
+      expect(await runner(dev, FakeApi([])).installFor(amazon()), isNull);
+    });
+
+    test('an install that cannot finish ends the run with one true sentence', () async {
+      for (final (outcome, reason, words) in [
+        ('paid', 'not_installed', 'paid app'),
+        ('sign_in', 'not_installed', 'sign in first'),
+        ('no_button', 'not_installed', "couldn't press Install"),
+        ('not_started', 'not_installed', "couldn't press Install"),
+        ('stopped', 'stopped', 'Stopped, as you asked'),
+      ]) {
+        final dev = FakeDevice()..installStates = [(installing: false, outcome: outcome)];
+        final api = FakeApi([]);
+        final o = await runner(dev, api).installFor(amazon());
+        expect(o, isNotNull, reason: outcome);
+        expect(o!.report, contains(words), reason: outcome);
+        expect(api.finishes, [reason], reason: outcome);
+      }
+    });
+
+    test('a download that outlasts the wait is said so, not left hanging', () async {
+      final dev = FakeDevice()..installStates = [(installing: true, outcome: '')];
+      final api = FakeApi([]);
+      final r = AutomationRunner(device: dev, api: api)
+        ..installPoll = const Duration(milliseconds: 1)
+        ..installCap = const Duration(milliseconds: 20);
+      final o = await r.installFor(amazon());
+      expect(o!.report, contains('still downloading'));
+      expect(api.finishes, ['not_installed']);
+    });
+
+    test('the store could not be opened: said so, and the run is closed', () async {
+      final dev = FakeDevice()..installStarts = false;
+      final api = FakeApi([]);
+      final o = await runner(dev, api).installFor(amazon());
+      expect(o!.report, contains("couldn't start installing it"));
+      expect(api.finishes, ['not_installed']);
+    });
+
+    AutomationDirective pick({bool named = false, bool noInstall = false,
+            String app = 'Amazon', String pkg = 'in.amazon.mShop.android.shopping'}) =>
+        AutomationDirective(
+          runId: 34,
+          goal: 'order a phone cover',
+          app: app,
+          appName: app.toLowerCase(),
+          pkg: pkg,
+          category: 'shopping',
+          named: named,
+          noInstall: noInstall,
+        );
+
+    test('the directive says whether the owner named the app, and money apps', () {
+      final d = AutomationDirective.fromEvent(
+          {'run_id': 5, 'goal': 'x', 'app': 'Amazon', 'named': true, 'no_install': true})!;
+      expect(d.named, isTrue);
+      expect(d.noInstall, isTrue);
+      final old = AutomationDirective.fromEvent({'run_id': 6, 'goal': 'x'})!;
+      expect(old.named, isFalse, reason: 'an older server sends neither');
+      expect(old.noInstall, isFalse);
+    });
+
+    test('a named app that is missing is installed, even with another of its kind here', () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {}
+        ..apps = {'flipkart': {'pkg': 'com.flipkart.android', 'label': 'Flipkart'}};
+      final api = FakeApi([]);
+      final plan = await runner(dev, api).appPlan(pick(named: true));
+      expect(plan.kind, 'install');
+      expect(api.finishes, isEmpty);
+    });
+
+    test("the server's own pick is not installed when an app of its kind is here", () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {}
+        ..apps = {'flipkart': {'pkg': 'com.flipkart.android', 'label': 'Flipkart'}};
+      final api = FakeApi([]);
+      final plan = await runner(dev, api).appPlan(pick());
+      expect(plan, (kind: 'other', alt: 'Flipkart'));
+      expect(api.finishes, ['not_installed'], reason: 'the task starts again in Flipkart');
+      expect(dev.log, isNot(contains(startsWith('installForTask'))));
+    });
+
+    test("the server's pick is installed when nothing of its kind is here", () async {
+      final dev = FakeDevice()
+        ..installedPkgs = {}
+        ..apps = {};
+      expect((await runner(dev, FakeApi([])).appPlan(pick())).kind, 'install');
+    });
+
+    test('an app on the phone needs no plan', () async {
+      final dev = FakeDevice()..installedPkgs = {'in.amazon.mShop.android.shopping'};
+      expect((await runner(dev, FakeApi([])).appPlan(pick())).kind, 'here');
+    });
+
+    test('a money app is never installed for a task', () async {
+      for (final d in [
+        pick(named: true, noInstall: true, app: 'PhonePe', pkg: 'com.phonepe.app'),
+        pick(named: true, app: 'Google Pay', pkg: ''),
+      ]) {
+        final dev = FakeDevice()
+          ..installedPkgs = {}
+          ..apps = {};
+        final api = FakeApi([]);
+        final r = runner(dev, api);
+        expect((await r.appPlan(d)).kind, 'money', reason: d.app);
+        final o = await r.installFor(d);
+        expect(o!.report, contains('money apps are yours to install'));
+        expect(dev.log, isNot(contains(startsWith('installForTask'))), reason: d.app);
+      }
+    });
+
+    test('one install at a time: a second waits its turn, and no task starts meanwhile',
+        () async {
+      final dev = FakeDevice()
+        ..installStates = [
+          (installing: true, outcome: ''),
+          (installing: true, outcome: ''),
+          (installing: true, outcome: ''),
+          (installing: false, outcome: 'installed'),
+        ];
+      final api = FakeApi([]);
+      final r = AutomationRunner(device: dev, api: api)
+        ..installPoll = const Duration(milliseconds: 5)
+        ..installCap = const Duration(seconds: 2);
+      final first = r.installFor(amazon());
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      final second = await r.installFor(pick(named: true, app: 'Flipkart', pkg: 'com.flipkart.android'));
+      expect(second!.status, 'busy');
+      expect((await r.run(amazon())).status, 'busy');
+      expect(await first, isNull);
+      expect(dev.log.where((l) => l.startsWith('installForTask')).length, 1);
+    });
+
+    test('the phone refusing because another install is on is said as busy', () async {
+      final dev = FakeDevice()
+        ..installStarts = false
+        ..installStates = [(installing: true, outcome: '')];
+      final api = FakeApi([]);
+      final o = await runner(dev, api).installFor(amazon());
+      expect(o!.status, 'busy');
+      expect(api.finishes, isEmpty, reason: 'the run is not closed for a wait');
     });
   });
 

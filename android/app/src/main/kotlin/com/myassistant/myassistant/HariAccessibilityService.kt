@@ -412,7 +412,8 @@ class HariAccessibilityService : AccessibilityService() {
     @Volatile
     private var allowed: Set<String> = emptySet()
     @Volatile
-    private var running = false
+    var running = false
+        private set
     /** Whole-phone runs: any app except NEVER (and never this app). */
     @Volatile
     private var anyApp = false
@@ -2140,8 +2141,8 @@ class HariAccessibilityService : AccessibilityService() {
      * app's own page, only a result whose name matches. Returns false when
      * it cannot start (another task running).
      */
-    @Volatile
-    private var installing = false
+    @Volatile var installing = false
+        private set
 
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
 
@@ -2164,10 +2165,30 @@ class HariAccessibilityService : AccessibilityService() {
         return t?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
     }
 
-    fun autoInstall(pkg: String, name: String): Boolean {
-        if (installing || running) return false
+    /**
+     * How the last install ended, for a task waiting on it (build 117):
+     * installed | already | paid | sign_in | not_started | no_button |
+     * stopped | timeout — "" while one runs or none has.
+     */
+    @Volatile var installOutcome = ""
+
+    /**
+     * [forTask]: installing the app a task needs (build 117). The owner,
+     * 2026-09-26: "order something from Amazon" with no Amazon on the phone
+     * — "it should click on the install and it should install the app", and
+     * then do the task. On success the app is NOT opened here and the bar is
+     * not ended: the task's own run opens it where it needs to (a search
+     * link) and takes the bar over. The outcome is left in [installOutcome].
+     */
+    fun autoInstall(pkg: String, name: String, forTask: Boolean = false): Boolean {
+        if (installing || running) {
+            Log.i(TAG, "install refused: installing=$installing running=$running")
+            return false
+        }
         installing = true
+        installOutcome = ""
         stopRequested = false
+        Log.i(TAG, "install start pkg=$pkg name=$name forTask=$forTask")
         val store = "com.android.vending"
         val label = name.trim().ifEmpty { pkg }
         val want = norm(name)
@@ -2177,17 +2198,31 @@ class HariAccessibilityService : AccessibilityService() {
         var openedListing = pkg.isNotEmpty()
         showPill("Installing $label…")
 
-        fun done(text: String) {
+        fun done(text: String, outcome: String) {
+            Log.i(TAG, "install end outcome=$outcome presses=$presses")
+            if (forTask) InstallWatch.clear(this)
+            installOutcome = outcome
             installing = false
             end(text)
         }
 
         fun openApp(launch: Intent) {
+            if (forTask) {
+                // The task opens it, where it needs to; the bar stays up.
+                Log.i(TAG, "install end outcome=installed presses=$presses (task carries on)")
+                InstallWatch.clear(this)
+                installOutcome = "installed"
+                installing = false
+                status("$label is installed — carrying on…")
+                // Should the task never take the bar over, it goes anyway.
+                main.postDelayed({ if (!running && !installing) hidePill() }, 30_000)
+                return
+            }
             try {
                 startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                done("$label is installed — opened it for you.")
+                done("$label is installed — opened it for you.", "installed")
             } catch (e: Throwable) {
-                done("$label is installed — tap its icon to open it.")
+                done("$label is installed — tap its icon to open it.", "installed")
             }
         }
 
@@ -2196,18 +2231,20 @@ class HariAccessibilityService : AccessibilityService() {
                 if (!installing) return
                 val now = SystemClock.uptimeMillis()
                 if (stopRequested) {
-                    done(if (presses > 0) "Stopped. The download may still finish on its own." else "Stopped.")
+                    done(if (presses > 0) "Stopped. The download may still finish on its own." else "Stopped.", "stopped")
                     return
                 }
                 // Arrived — open it (InstallWatch saw the package land).
-                InstallWatch.takeReady(this@HariAccessibilityService)?.let { openApp(it); return }
+                InstallWatch.takeReady(this@HariAccessibilityService, installer = true)?.let { openApp(it); return }
                 if (pkg.isNotEmpty() && presses > 0) {
                     packageManager.getLaunchIntentForPackage(pkg)?.let { openApp(it); return }
                 }
 
                 val root = rootInActiveWindow
-                if (root?.packageName?.toString() == store) {
-                    val nodes = visibleNodes(root)
+                val front = root?.packageName?.toString().orEmpty()
+                if (front != store && presses == 0) Log.i(TAG, "install waiting: front=$front")
+                if (front == store) {
+                    val nodes = visibleNodes(root!!)
                     val said = { n: AccessibilityNodeInfo ->
                         (n.text?.toString()?.trim().takeUnless { it.isNullOrEmpty() }
                             ?: n.contentDescription?.toString()?.trim()).orEmpty()
@@ -2217,11 +2254,11 @@ class HariAccessibilityService : AccessibilityService() {
                     // A price instead of Install: buying is the owner's step.
                     if (presses == 0 && install == null &&
                         nodes.any { PRICE_ONLY.matches(said(it)) || said(it).startsWith("Buy", true) }) {
-                        done("$label is a paid app — buying it is your step, so I've left it open for you.")
+                        done("$label is a paid app — buying it is your step, so I've left it open for you.", "paid")
                         return
                     }
                     if (nodes.any { said(it).matches(Regex("(?i)^sign in$")) }) {
-                        done("The app store wants you to sign in first — then say install $label again.")
+                        done("The app store wants you to sign in first — then say install $label again.", "sign_in")
                         return
                     }
                     // "Complete account setup" and similar: skip, never add
@@ -2245,12 +2282,13 @@ class HariAccessibilityService : AccessibilityService() {
                     } else if (install != null && install.isEnabled) {
                         if (presses == 0 || now - pressedAt > 7000) {
                             if (presses >= 2) {
-                                done("The download didn't start — tap Install yourself.")
+                                done("The download didn't start — tap Install yourself.", "not_started")
                                 return
                             }
                             if (clickUp(install)) {
                                 presses++
                                 pressedAt = now
+                                Log.i(TAG, "install pressed ($presses)")
                                 status("Downloading $label…")
                             }
                         }
@@ -2260,19 +2298,28 @@ class HariAccessibilityService : AccessibilityService() {
                             ?.let { status("Downloading $label… ${Regex("\\d+\\s*%").find(it)!!.value}") }
                     } else if (open != null && presses == 0) {
                         // Already on the phone.
+                        if (forTask) {
+                            Log.i(TAG, "install end outcome=already")
+                            InstallWatch.clear(this@HariAccessibilityService)
+                            installOutcome = "already"
+                            installing = false
+                            return
+                        }
                         clickUp(open)
-                        done("$label was already installed — opened it.")
+                        done("$label was already installed — opened it.", "already")
                         return
+                    } else if (install == null && presses == 0) {
+                        Log.i(TAG, "install looking: no Install button yet (${nodes.size} nodes)")
                     }
                 }
 
                 val waited = now - started
                 if (presses == 0 && waited > 30_000) {
-                    done("I couldn't find the Install button — please tap it yourself.")
+                    done("I couldn't find the Install button — please tap it yourself.", "no_button")
                     return
                 }
                 if (waited > 12 * 60_000) {
-                    done("$label is still downloading — it'll be on your home screen when done.")
+                    done("$label is still downloading — it'll be on your home screen when done.", "timeout")
                     return
                 }
                 main.postDelayed(this, if (presses == 0) 700 else 1500)

@@ -2766,7 +2766,15 @@ class AssistantEngine extends ChangeNotifier {
                     }
                     // "DO IT FOR ME" ON: press Install for them, then open
                     // the app when it lands (HariAccessibilityService).
-                    // Free apps only; a price stops it.
+                    // Free apps only; a price stops it. The service is
+                    // waited for first, as a task does: just after the app
+                    // started, Android binds it within seconds, and not
+                    // waiting sent the owner to tap Install himself.
+                    var st = await AutomationRunner.instance.device.status();
+                    for (var i = 0; i < 12 && !st.connected && st.enabled; i++) {
+                      await Future<void>.delayed(const Duration(milliseconds: 500));
+                      st = await AutomationRunner.instance.device.status();
+                    }
                     final auto = await const MethodChannel('hari/automation')
                         .invokeMethod<bool>('autoInstall', {'pkg': pkg, 'name': want})
                         .catchError((_) => false);
@@ -4341,13 +4349,16 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   Future<void> _runAutomationNow(AutomationDirective d) async {
-    // IS THE APP HERE? Checked before anything closes (build 115; the
-    // owner, 2026-09-26: "it's saying Zomato is not present, but it should
-    // ask should I install it"). A missing app becomes a question in this
-    // same conversation, in her own voice — install it, or use the app of
-    // the same kind the phone has (often the one he actually said, when a
-    // name was misheard) — instead of a failure read out afterwards.
-    final missing = await AutomationRunner.instance.missingApp(d);
+    // IS THE APP HERE? Checked before anything closes. Build 115 asked
+    // whether to install a missing app and ended the task; the owner,
+    // 2026-09-26, asking to order from Amazon with no Amazon on the phone:
+    // "it should click on the install and it should install the app… my
+    // assistant should be that much smart". So it says so in one line, in
+    // her own voice, installs the app and carries on with the task. An app
+    // he never named is not installed when one of the same kind is here
+    // (the task starts again in that one), and a money app never is.
+    final plan = await AutomationRunner.instance.appPlan(d);
+    final missing = plan.kind == 'install';
     // "On it, doing this in Swiggy…" is still being spoken, and leaving
     // the screen silences the assistant (onAppPaused). Let it finish.
     await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -4356,11 +4367,17 @@ class AssistantEngine extends ChangeNotifier {
         (_ttsActive || _speakQueue.isNotEmpty || phase == AssistantPhase.speaking)) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
-    if (missing != null) {
-      AppLog.add('auto',
-          'run ${d.runId}: ${d.app} not installed; here: ${missing.join(', ')}');
-      await _tellModel(notInstalledNote(d, missing));
+    if (plan.kind == 'other' || plan.kind == 'money') {
+      AppLog.add('auto', 'run ${d.runId}: ${d.app} not installed -> ${plan.kind} ${plan.alt}');
+      // The conversation stays open: the task starts again in the app
+      // that is here, or she says the one line.
+      await _tellModel(plan.kind == 'other' ? useInsteadNote(d, plan.alt) : moneyAppNote(d));
       return;
+    }
+    if (missing) {
+      AppLog.add('auto', 'run ${d.runId}: ${d.app} not installed — installing it first');
+      await _tellModel(installingNote(d));
+      await _letHerSay();
     }
     // A TASK IS ITS OWN FLOW: "On it" → the bar → the report. The voice
     // session closes here so nothing else is heard or said meanwhile —
@@ -4373,9 +4390,35 @@ class AssistantEngine extends ChangeNotifier {
       await endInlineConversation();
     }
     _leftForExternalApp = true;
+    if (missing) {
+      final failed = await AutomationRunner.instance.installFor(d);
+      if (failed != null) {
+        AppLog.add('auto', 'run ${d.runId} -> ${failed.status} (install)');
+        await _onAutomationOutcome(d, failed);
+        return;
+      }
+    }
     final out = await AutomationRunner.instance.run(d);
     AppLog.add('auto', 'run ${d.runId} -> ${out.status}');
     await _onAutomationOutcome(d, out);
+  }
+
+  /// Waits for the line the model was just asked to say: until she starts
+  /// (at most [start]) and then until she has finished (at most [cap] in
+  /// all) — so the conversation does not close over her words.
+  Future<void> _letHerSay({
+    Duration start = const Duration(seconds: 4),
+    Duration cap = const Duration(seconds: 10),
+  }) async {
+    final t0 = DateTime.now();
+    bool over(Duration d) => DateTime.now().difference(t0) >= d;
+    while (!over(start) && phase != AssistantPhase.speaking && !_ttsActive) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    while (!over(cap) &&
+        (phase == AssistantPhase.speaking || _ttsActive || _speakQueue.isNotEmpty)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
   }
 
   Future<void> _onAutomationOutcome(
@@ -4415,26 +4458,35 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
-  /// What the conversation is told when the task's app is not on the phone:
-  /// ask, in one question, to install it — or to use [here], the apps of
-  /// the same kind that are installed.
-  static String notInstalledNote(AutomationDirective d, List<String> here) {
+  /// What the conversation is told when the task's app is not on the
+  /// phone: it is being installed and the task carries on — one line to
+  /// say, no question, no tool.
+  /// The server's usual pick is missing but an app of the same kind is
+  /// here: the same task, started again in that app — no question.
+  static String useInsteadNote(AutomationDirective d, String alt) {
     final app = d.app.isEmpty ? 'That app' : d.app;
-    final install = 'If they want $app, call open_named_app with the name '
-        '"$app" and install true.';
-    if (here.isEmpty) {
-      return '[SYSTEM] $app is not installed on this phone, so the task did '
-          'not start and nothing was opened. Ask in ONE short question '
-          'whether to install $app from the app store. $install';
-    }
-    final alt = here.first;
-    return '[SYSTEM] $app is not installed on this phone, so the task did '
-        'not start and nothing was opened. The phone does have '
-        '${here.join(' and ')}, which can do the same — they may even have '
-        'said $alt and been misheard. Ask in ONE short question whether to '
-        'do it in $alt instead, or to install $app from the app store. If '
-        'they choose $alt, call do_task_in_app again with app "$alt" and the '
-        'same goal. $install';
+    return '[SYSTEM] $app is not installed on this phone, but $alt (the same '
+        'kind of app) is, and the user did not name $app. Call do_task_in_app '
+        'again now with app "$alt", the same goal and the same query. Do not '
+        'ask anything first.';
+  }
+
+  /// A money app the task needs is missing: installing it is the owner's.
+  static String moneyAppNote(AutomationDirective d) {
+    final app = d.app.isEmpty ? 'That app' : d.app;
+    return '[SYSTEM] $app is not installed on this phone, and it is a money '
+        'app, which the user installs themselves. Say exactly this and '
+        "nothing else: \"$app isn't on your phone — money apps are yours to "
+        "install, so once it's in, ask me again.\" Do not call any tool.";
+  }
+
+  static String installingNote(AutomationDirective d) {
+    final app = d.app.isEmpty ? 'The app' : d.app;
+    return '[SYSTEM] $app is not installed on this phone. It is being '
+        'installed from the app store right now, and the task carries on by '
+        'itself as soon as it is installed. Say exactly this and nothing '
+        "else: \"$app isn't on your phone, so I'm installing it now — then "
+        "I'll carry on.\" Do not ask anything and do not call any tool.";
   }
 
   /// When the conversation was last closed for a task rather than by the
