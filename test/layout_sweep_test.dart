@@ -58,6 +58,8 @@ import 'package:myassistant/screens/studio/studio_screen.dart';
 import 'package:myassistant/screens/diagnostics_screen.dart';
 import 'package:myassistant/screens/mic_probe_screen.dart';
 import 'package:myassistant/screens/avatar_identity_screen.dart';
+import 'package:myassistant/screens/identity_record_screen.dart';
+import 'package:myassistant/services/avatar_message_service.dart';
 import 'package:myassistant/screens/focus_screen.dart';
 import 'package:myassistant/screens/momentum_screen.dart';
 import 'package:myassistant/models/momentum.dart';
@@ -304,6 +306,21 @@ final screens = <String, Widget Function()>{
   'Diagnostics': () => const DiagnosticsScreen(),
   'Mic test': () => const MicProbeScreen(),
   'Avatar identity': () => const AvatarIdentityScreen(),
+  // SEND MESSAGES AS YOU (2026-09-26): before consent, and with a video.
+  'Avatar identity (before consent)': () =>
+      AvatarIdentityScreen(loader: () async => const AvatarProfile()),
+  'Avatar identity (recorded)': () => AvatarIdentityScreen(
+      loader: () async => AvatarProfile(
+            consented: true,
+            consentedAt: DateTime(2026, 9, 26).millisecondsSinceEpoch,
+            enabled: true,
+            hasVideo: true,
+            video: IdentityVideo(
+                id: 'v1',
+                durationMs: 31250,
+                createdAt: DateTime(2026, 9, 26).millisecondsSinceEpoch),
+          )),
+  'Record your video': () => const IdentityRecordScreen(),
   'Voice screen (long reply)': () => const _VoiceScreen(),
   'Do it for me (switched on)': () => const AutomationSetupScreen(),
   'Hub (with dock)': () => _shellAt(1),

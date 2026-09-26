@@ -5,7 +5,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hari listens to your voice so you can talk to your assistant.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>The camera lets you save documents and receipts by photographing them.</string>
+	<string>The camera lets you save documents and receipts by photographing them, and record your own short video for the video notes you send.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Speech recognition turns your voice into questions for Hari.</string>
 	<key>NSContactsUsageDescription</key>

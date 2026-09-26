@@ -65,8 +65,19 @@ class PushService {
         // user opens a conversation or taps the notification.
         if (m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message arrived (foreground)');
-          AppFeedback.toast(
-              'New message from your circle — tap the mic and I\'ll read it.');
+          if (m.data['avatar'] == '1') {
+            // A VIDEO NOTE (2026-09-26) is only ever shown by its popup —
+            // the voice path skips rows with media — so "tap the mic and
+            // I'll read it" led nowhere and the note sat unread. It opens
+            // here once nothing is using the speaker and mic and the app
+            // is unlocked (showPending waits; after ten minutes it leaves
+            // a notification instead).
+            AppFeedback.toast('New video note from your circle.');
+            unawaited(AvatarMessageService.instance.showPending());
+          } else {
+            AppFeedback.toast(
+                'New message from your circle — tap the mic and I\'ll read it.');
+          }
           BriefService.instance.refresh(force: true);
         }
         // Scheduled call, app in front: dial NOW, in front of the user —
@@ -113,7 +124,7 @@ class PushService {
         }
         if (m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message opened from notification');
-          _deliver(m);
+          _deliver(avatar: m.data['avatar'] == '1');
           BriefService.instance.refresh(force: true);
         }
         if (m.data['kind'] == 'scheduled_call') {
@@ -133,7 +144,7 @@ class PushService {
         }
         if (m != null && m.data['kind'] == 'agent_message') {
           AppLog.add('push', 'agent message launched the app');
-          _deliver(m);
+          _deliver(avatar: m.data['avatar'] == '1');
         }
         if (m != null && m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call launched the app');
@@ -186,12 +197,17 @@ class PushService {
     }
   }
 
+  /// The notification a video note leaves when it could not open for a
+  /// long while, or when the user chose to see the rest later: its tap
+  /// goes the way a tapped video-note push does.
+  Future<void> openVideoNotes() => _deliver(avatar: true);
+
   /// A tapped agent message: avatar media (the sender's AI face/voice)
   /// shows as a popup; anything without media is spoken by the assistant
   /// exactly as before. The popup service reports whether it consumed
   /// pending rows, so both can coexist in one inbox sweep.
-  Future<void> _deliver(RemoteMessage m) async {
-    if (m.data['avatar'] == '1') {
+  Future<void> _deliver({required bool avatar}) async {
+    if (avatar) {
       final shown = await AvatarMessageService.instance.showPending();
       if (shown) {
         // Any remaining text-only rows still deserve their voice delivery.

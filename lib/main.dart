@@ -88,6 +88,9 @@ Future<void> main() async {
   }
   await fonts; // usually long done; never throws
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
+  // Signing out also clears this phone's copy of the identity video and
+  // any downloaded video notes (2026-09-26).
+  AvatarMessageService.wireSignOut();
   runApp(const MyAssistantApp());
 }
 

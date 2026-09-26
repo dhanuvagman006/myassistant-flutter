@@ -1,7 +1,7 @@
 name: myassistant
 description: MYASSISTANT — AI personal assistant for Android and iOS.
 publish_to: 'none'
-version: 0.2.99+117
+version: 0.2.99+118
 
 environment:
   # Color.withValues() (used throughout lib/design) requires Dart 3.6 / Flutter 3.27+
@@ -81,6 +81,11 @@ dependencies:
   share_plus: ^10.1.2              # F2 export sharing + J3 share-anywhere drafts
 
   video_player: ^2.9.2
+  # "Send messages as you" (2026-09-26): the 30-second identity video is
+  # recorded IN the app, front camera, with the script scrolling over the
+  # preview. image_picker's video capture hands the screen to the system
+  # camera (no teleprompter possible) and would let a gallery clip in.
+  camera: ^0.12.1
   livekit_client: ^2.4.9           # avatar video: subscribes to the BEY track
   firebase_core: ^4.14.0
   firebase_auth: ^6.6.1             # phone OTP: proves the number is theirs
@@ -105,6 +110,10 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # A fake front camera drives the identity recorder in its tests.
+  camera_platform_interface: ^2.14.0
+  # ...and a fake player its review, and the saved video's preview.
+  video_player_platform_interface: ^6.9.0
   flutter_launcher_icons: ^0.14.1
 
 flutter_launcher_icons:

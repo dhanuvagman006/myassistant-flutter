@@ -10,6 +10,7 @@ import '../../core/log.dart';
 import '../../design/neon_tokens.dart';
 import '../../features/assistant/state/assistant_engine.dart';
 import '../../services/meetings_service.dart';
+import '../../services/recording_guard.dart';
 import 'meeting_detail_screen.dart';
 import '../../services/app_feedback.dart';
 
@@ -68,6 +69,7 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
     _title.dispose();
     _people.dispose();
     _device.invokeMethod('keepScreenOn', {'on': false}).catchError((_) => null);
+    RecordingGuard.release(this);
     super.dispose();
   }
 
@@ -98,6 +100,9 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
     );
     HapticFeedback.mediumImpact();
     _device.invokeMethod('keepScreenOn', {'on': true}).catchError((_) => null);
+    // A video note arriving now waits: its popup would cover this screen
+    // and its sound would be in the recording (2026-09-26).
+    RecordingGuard.hold(this);
     _amp = _rec
         .onAmplitudeChanged(const Duration(milliseconds: 160))
         .listen((a) {
@@ -133,6 +138,7 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
     _amp?.cancel();
     final path = await _rec.stop() ?? _path;
     _device.invokeMethod('keepScreenOn', {'on': false}).catchError((_) => null);
+    RecordingGuard.release(this);
     if (path == null) return;
     if (_elapsed.inSeconds < 10) {
       _snack('That was too short to make minutes from.');

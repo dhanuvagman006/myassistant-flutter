@@ -36,6 +36,7 @@ import '../../../screens/mcp_servers_screen.dart';
 import '../../../screens/news_screen.dart';
 import '../../../screens/focus_screen.dart';
 import '../../../screens/momentum_screen.dart';
+import '../../../screens/avatar_identity_screen.dart';
 import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/news_item.dart';
@@ -4303,8 +4304,15 @@ class AssistantEngine extends ChangeNotifier {
         'news' => (_) => const NewsScreen(),
         'momentum' => (_) => const MomentumScreen(),
         'focus' => (_) => const FocusScreen(),
+        // "Send a video note to …" with no video recorded yet: the server
+        // opens the place to record it (send_video_note, 2026-09-26).
+        'avatar_identity' => (_) => const AvatarIdentityScreen(),
         _ => null,
       };
+
+  /// Whether a voice command can open [screen] (open_app_screen).
+  @visibleForTesting
+  bool canOpenAppScreen(String screen) => _appScreenBuilder(screen) != null;
 
   /// "Scan this visiting card" — the camera, the server's reading, and the
   /// result sheet (add to contacts / say hello / call). The voice loop is
