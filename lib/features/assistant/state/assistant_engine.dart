@@ -37,6 +37,7 @@ import '../../../screens/news_screen.dart';
 import '../../../screens/focus_screen.dart';
 import '../../../screens/momentum_screen.dart';
 import '../../../screens/avatar_identity_screen.dart';
+import '../../../screens/bills_email_screen.dart';
 import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/vision_result.dart';
@@ -4370,6 +4371,8 @@ class AssistantEngine extends ChangeNotifier {
         // "Send a video note to …" with no video recorded yet: the server
         // opens the place to record it (send_video_note, 2026-09-26).
         'avatar_identity' => (_) => const AvatarIdentityScreen(),
+        // "What's my bills email" (bills_email tool, build 120).
+        'bills_email' => (_) => const BillsEmailScreen(),
         _ => null,
       };
 

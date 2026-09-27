@@ -84,6 +84,14 @@ class UserDocument {
   /// licence, passport, PUC, warranty…), or '' — read by the server.
   final String expiresOn;
 
+  /// Bills by email (build 120): 'email' when it arrived from an outside
+  /// sender, else ''. [sourceLabel] is the sending DOMAIN (never a name the
+  /// sender chose); [sourceVerified] is true when its signature checked out
+  /// or the user said the address is theirs. Older servers send neither.
+  final String source;
+  final String sourceLabel;
+  final bool sourceVerified;
+
   const UserDocument({
     required this.id,
     required this.filename,
@@ -96,7 +104,12 @@ class UserDocument {
     this.clientId,
     required this.createdAt,
     this.expiresOn = '',
+    this.source = '',
+    this.sourceLabel = '',
+    this.sourceVerified = false,
   });
+
+  bool get fromEmail => source == 'email';
 
   /// Whole days until expiry (negative once lapsed), or null if none.
   int? daysToExpiry([DateTime? now]) {
@@ -188,6 +201,9 @@ class UserDocument {
         clientId: (j['clientId'] as num?)?.toInt(),
         createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
         expiresOn: (j['expiresOn'] ?? '').toString(),
+        source: (j['source'] ?? '').toString(),
+        sourceLabel: (j['sourceLabel'] ?? '').toString(),
+        sourceVerified: j['sourceVerified'] == true,
       );
 
   static List<UserDocument> listFromJson(dynamic j) {

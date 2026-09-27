@@ -16,7 +16,16 @@ import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/services/automation_runner.dart';
 
 final String _app = Directory.current.path;
-final String _be = '${Directory.current.parent.path}/myassistant-backend';
+// A feature pair (ft-<name>-app beside ft-<name>) is checked against its
+// own backend half, as the backend's scripts/app-root.js does.
+final String _be = () {
+  final here = Directory.current.uri.pathSegments.where((s) => s.isNotEmpty).last;
+  if (here.startsWith('ft-') && here.endsWith('-app')) {
+    final twin = '${Directory.current.parent.path}/${here.substring(0, here.length - 4)}';
+    if (File('$twin/src/tools/builtins.js').existsSync()) return twin;
+  }
+  return '${Directory.current.parent.path}/myassistant-backend';
+}();
 final bool _haveBackend = File('$_be/src/tools/builtins.js').existsSync();
 final Object? _needsBackend =
     _haveBackend ? null : 'the backend repo is not checked out next to this one';

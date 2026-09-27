@@ -394,7 +394,33 @@ class DocumentGridTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: DocumentThumb(document: d, radius: 10)),
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                        child: DocumentThumb(document: d, radius: 10)),
+                    // Bills by email: it came from an outside sender.
+                    if (d.fromEmail)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Semantics(
+                          label: 'From email',
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: Neon.surface,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Neon.line),
+                            ),
+                            child: Icon(Icons.mail_outline_rounded,
+                                size: 14, color: Neon.textLo),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 8),
               Text(title,
                   maxLines: 2,
@@ -497,6 +523,32 @@ Future<void> showDocumentActions(
               ],
             ),
           ),
+          if (d.fromEmail)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    d.sourceLabel.isEmpty
+                        ? 'From email'
+                        : 'From email · ${d.sourceLabel}',
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.footnote),
+                  ),
+                  if (!d.sourceVerified)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Sender not confirmed — check it before paying.',
+                        style: TextStyle(
+                            color: Neon.warningInk,
+                            fontSize: NeonType.footnote),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ListTile(
             leading: Icon(Icons.open_in_full_rounded, color: Neon.textHi),
             title: Text('Open', style: TextStyle(color: Neon.textHi)),

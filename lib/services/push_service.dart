@@ -14,6 +14,8 @@ import 'brief_service.dart';
 import 'call_service.dart';
 import 'momentum_service.dart';
 import '../screens/momentum_screen.dart' show MomentumNav;
+import '../screens/bills_email_screen.dart' show BillsEmailNav;
+import 'document_events.dart';
 
 /// Registers this device with the backend so other people's agents can
 /// reach the user.
@@ -90,6 +92,9 @@ class PushService {
         if (m.data['kind'] == 'momentum') {
           unawaited(MomentumService.instance.refresh(force: true));
         }
+        // Bills by email: a document arrived — open lists reload.
+        final isMail = m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm';
+        if (isMail) DocumentEvents.bump();
         // EVERYTHING ELSE (admin notices, update announcements, task
         // outcomes…): Android does not display pushes for a foregrounded
         // app — the app must. Silently dropping them here is why "send
@@ -112,7 +117,11 @@ class PushService {
             n.title ?? 'MyAssistant',
             n.body ?? '',
             // Tapped, a Momentum nudge opens Momentum.
-            payload: kind == 'momentum' ? 'momentum' : null,
+            payload: kind == 'momentum'
+                ? 'momentum'
+                : isMail
+                    ? 'bills_email'
+                    : null,
           );
         }
       });
@@ -135,6 +144,10 @@ class PushService {
           AppLog.add('push', 'momentum nudge opened');
           unawaited(MomentumNav.open('momentum'));
         }
+        if (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm') {
+          AppLog.add('push', 'bills email opened');
+          unawaited(BillsEmailNav.open());
+        }
       });
       // Cold start FROM the notification (app was killed).
       FirebaseMessaging.instance.getInitialMessage().then((m) {
@@ -153,6 +166,10 @@ class PushService {
         if (m != null && m.data['kind'] == 'momentum') {
           AppLog.add('push', 'momentum nudge launched the app');
           unawaited(MomentumNav.open('momentum'));
+        }
+        if (m != null && (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm')) {
+          AppLog.add('push', 'bills email launched the app');
+          unawaited(BillsEmailNav.open());
         }
       });
       _listenerAttached = true;
