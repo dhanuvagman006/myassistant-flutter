@@ -353,6 +353,22 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- CONNECTED APPS (build 120): "Connect Notion" opens the consent page
+             in a Custom Tab; the backend finishes the exchange and sends the
+             tab to com.myassistant.myassistant://connected?result=… (a result
+             word only, never a code or a token). This activity catches it and
+             hands it to flutter_web_auth_2. MainActivity is not touched. -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true"
+            android:taskAffinity="">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="com.myassistant.myassistant" android:host="connected"/>
+            </intent-filter>
+        </activity>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

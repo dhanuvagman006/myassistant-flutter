@@ -5,6 +5,7 @@ import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../services/app_lock.dart';
 import '../services/app_feedback.dart';
+import 'help_improve_row.dart';
 
 /// PRIVACY & SECURITY — the app lock's switch.
 ///
@@ -114,13 +115,17 @@ class _AppLockSectionState extends State<AppLockSection> {
                 },
               ),
             ),
+            // Build 120: whether our team may review chats to fix mistakes.
+            const HelpImproveRow(),
           ],
         ),
         Padding(
           padding: const EdgeInsets.only(left: 16, top: 6, right: 16),
           child: Text(
             'Locks when you have been away for more than a minute. Your PIN '
-            'stays on this phone.',
+            'stays on this phone.\n'
+            "When off, voice recordings aren't kept and your chats stay "
+            'private. The assistant works the same.',
             style: TextStyle(color: Neon.textDim, fontSize: 12),
           ),
         ),

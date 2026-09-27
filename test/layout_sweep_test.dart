@@ -69,6 +69,31 @@ import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:myassistant/screens/connected_apps_screen.dart';
+import 'package:myassistant/screens/help_improve_row.dart';
+import 'package:myassistant/services/connections_service.dart';
+import 'package:myassistant/services/privacy_prefs_service.dart';
+
+/// The server's answer for the Notion card in [status], with a long name.
+JsonTransport _connections(String status) => (method, path, [body]) async =>
+    path == '/connections'
+        ? {
+            'connections': [
+              {
+                'id': 'notion', 'name': 'Notion', 'available': true, 'status': status,
+                'workspace': status == 'not_connected'
+                    ? null
+                    : "Dhanush's workspace for the family business and the school trust",
+              },
+            ],
+          }
+        : {'connected': true};
+
+Widget _connectedApps(String status, {bool connecting = false}) {
+  ConnectionsService.instance.resetForTest();
+  ConnectionsService.transport = _connections(status);
+  return ConnectedAppsScreen(startConnecting: connecting);
+}
 
 /// The voice screen as it is during a conversation, with a long answer.
 class _VoiceScreen extends StatefulWidget {
@@ -321,6 +346,24 @@ final screens = <String, Widget Function()>{
                 createdAt: DateTime(2026, 9, 26).millisecondsSinceEpoch),
           )),
   'Record your video': () => const IdentityRecordScreen(),
+  // CONNECTED APPS (build 120): the Notion card in all four states.
+  'Connected apps (not connected)': () => _connectedApps('not_connected'),
+  'Connected apps (connecting)': () => _connectedApps('not_connected', connecting: true),
+  'Connected apps (connected)': () => _connectedApps('connected'),
+  'Connected apps (needs reconnect)': () => _connectedApps('needs_reconnect'),
+  // HELP IMPROVE (build 120): the one-time card, and the dialog behind it.
+  'Help improve card': () => Scaffold(
+        body: Align(
+          alignment: Alignment.bottomCenter,
+          child: SingleChildScrollView(child: HelpImproveAskCard(days: 14, onAnswer: (_) {})),
+        ),
+      ),
+  'Help improve notice': () => Builder(
+        builder: (c) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => showHelpImproveNotice(c, 14));
+          return const Scaffold(body: SizedBox());
+        },
+      ),
   'Voice screen (long reply)': () => const _VoiceScreen(),
   'Do it for me (switched on)': () => const AutomationSetupScreen(),
   'Hub (with dock)': () => _shellAt(1),
@@ -390,6 +433,8 @@ void main() {
   tearDown(() {
     HomeShell.lastTab = 0;
     AppFeedback.resetForTest();
+    ConnectionsService.transport = apiTransport;
+    PrivacyPrefsService.transport = apiTransport;
   });
 
   for (final s in screens.entries) {

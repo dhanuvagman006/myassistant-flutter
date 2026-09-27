@@ -71,6 +71,10 @@ dependencies:
   flutter_timezone: ^3.0.1
 
   url_launcher: ^6.3.0
+  # Connected apps (build 120): "Connect Notion" opens Notion's consent page
+  # in a Custom Tab and catches the backend's com.myassistant.myassistant://
+  # redirect (result word only — the code never reaches the phone).
+  flutter_web_auth_2: ^5.1.0
            # opens App Store on iOS
 
   # Sign-in (F1) — email + Google + Apple, verified by the backend

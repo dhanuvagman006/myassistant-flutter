@@ -347,9 +347,10 @@ void main() {
   testWidgets('Hub uses the shared label and card', (t) async {
     tallPhone(t);
     await pumpOffline(t, const Scaffold(body: HubScreen()));
-    // Seven since 2026-09-25: "Stay informed" holds News.
-    expect(find.byType(GroupLabel), findsNWidgets(7));
-    expect(find.byType(GroupedCard), findsNWidgets(7));
+    // Seven since 2026-09-25: "Stay informed" holds News. Eight in build
+    // 120: "Connections" holds Connected apps.
+    expect(find.byType(GroupLabel), findsNWidgets(8));
+    expect(find.byType(GroupedCard), findsNWidgets(8));
     expect(styleOf(t, 'YOUR DAY').color, Neon.textLo);
     await closeApp(t);
   });

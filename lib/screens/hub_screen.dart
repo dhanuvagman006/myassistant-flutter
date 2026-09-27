@@ -4,6 +4,7 @@ import '../design/apple_kit.dart';
 import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
+import 'connected_apps_screen.dart';
 import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
@@ -92,6 +93,15 @@ class HubScreen extends StatelessWidget {
               Icons.alternate_email_rounded,
               Neon.accentA,
               (c) => const EmailSetupScreen(),
+            ),
+          ]),
+          _group(context, 'Connections', [
+            _Row(
+              'Connected apps',
+              'Link your notes app, mail and more — in one place',
+              Icons.hub_rounded,
+              Neon.accentA,
+              (c) => const ConnectedAppsScreen(),
             ),
           ]),
           _group(context, 'Practice', [
