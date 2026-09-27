@@ -41,6 +41,7 @@ import '../../../screens/connected_apps_screen.dart';
 import '../../../screens/shortcuts_screen.dart';
 import '../../../models/shortcut.dart';
 import '../../../services/shortcut_runner.dart';
+import '../../../screens/bills_email_screen.dart';
 import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/vision_result.dart';
@@ -4431,6 +4432,8 @@ class AssistantEngine extends ChangeNotifier {
         'connected_apps' => (_) => const ConnectedAppsScreen(),
         // "Show my shortcuts" (build 120).
         'shortcuts' => (_) => const ShortcutsScreen(),
+        // "What's my bills email" (bills_email tool, build 120).
+        'bills_email' => (_) => const BillsEmailScreen(),
         _ => null,
       };
 

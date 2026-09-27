@@ -21,6 +21,9 @@ import 'automation_setup_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
+import 'bills_email_screen.dart';
+import '../models/mail_inbox.dart';
+import '../services/mail_inbox_service.dart';
 import '../services/greeting_voice.dart';
 import '../services/app_feedback.dart';
 import '../services/tester_feedback.dart';
@@ -67,6 +70,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   @override
   void initState() {
     super.initState();
+    // Bills by email: is it switched on for this server? (hidden if not)
+    unawaited(MailInboxService.instance.refresh());
     _load();
   }
 
@@ -484,6 +489,37 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 24),
+
+                // Bills by email (build 120): only when the server says it
+                // is switched on — until then there is nothing to show.
+                ValueListenableBuilder<MailInboxState?>(
+                  valueListenable: MailInboxService.instance.state,
+                  builder: (context, s, _) => s?.available != true
+                      ? const SizedBox.shrink()
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const GroupLabel('Documents'),
+                            GroupedCard(
+                              dividerInset: 60,
+                              children: [
+                                AppleRow(
+                                  leading: IconTile(Icons.forward_to_inbox_rounded,
+                                      AppleColors.blue),
+                                  title: 'Bills by email',
+                                  subtitle: "Forward bills and tickets — I'll file "
+                                      'them and remind you',
+                                  onTap: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                        builder: (_) => const BillsEmailScreen()),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                          ],
+                        ),
+                ),
 
                 const GroupLabel('Standing rules'),
                 Padding(

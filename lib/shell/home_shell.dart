@@ -30,6 +30,7 @@ import '../services/notification_service.dart';
 import '../services/avatar_message_service.dart';
 import '../services/push_service.dart';
 import '../screens/momentum_screen.dart';
+import '../screens/bills_email_screen.dart' show BillsEmailNav;
 import '../core/log.dart';
 import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
@@ -49,6 +50,19 @@ import '../services/usage_service.dart';
 import '../services/api_service.dart';
 import '../services/device_control_service.dart';
 import '../services/greeting_voice.dart';
+
+/// Where a tapped notification goes, by its payload: a video note left in
+/// the tray opens the notes again, a Bills by email one opens that screen
+/// (build 120), anything else is a Momentum screen. [billsEmail] is for
+/// tests.
+Future<void> openNotificationPayload(String what,
+    {Future<void> Function()? billsEmail}) {
+  if (what == AvatarMessageService.videoNotePayload) {
+    return PushService.instance.openVideoNotes();
+  }
+  if (what == 'bills_email') return (billsEmail ?? BillsEmailNav.open)();
+  return MomentumNav.open(what);
+}
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  HOME SHELL — the app's new backbone (Daylight redesign, Sept 2026).
@@ -513,12 +527,8 @@ class _HomeShellState extends State<HomeShell>
     // settled, never in the way of the first frames.
     _newsWarm = Timer(const Duration(seconds: 8), () => unawaited(NewsFeed.warm()));
     unawaited(FocusService.instance.restore());
-    // A tapped notification: a video note left in the tray opens the
-    // notes again; anything else is a Momentum screen.
-    ReminderNotifications.onOpen = (what) => unawaited(
-        what == AvatarMessageService.videoNotePayload
-            ? PushService.instance.openVideoNotes()
-            : MomentumNav.open(what));
+    // A tapped notification: see openNotificationPayload.
+    ReminderNotifications.onOpen = (what) => unawaited(openNotificationPayload(what));
     // Deliberately NO message announcing here: launching the app must be
     // SILENT. Unread messages sit in the Home feed and are spoken when
     // the user starts a conversation or taps the message notification.
