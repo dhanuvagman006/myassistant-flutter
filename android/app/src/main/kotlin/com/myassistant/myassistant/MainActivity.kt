@@ -754,6 +754,13 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     "openPanel" -> result.success(
                         DeviceControl.openPanel(ctx, call.argument<String>("panel") ?: ""))
+                    // Build 120 (shortcuts): the ringer and Do Not Disturb.
+                    "ringer" -> result.success(
+                        DeviceControl.ringer(ctx, call.argument<String>("mode") ?: ""))
+                    "dnd" -> result.success(
+                        DeviceControl.dnd(ctx, call.argument<Boolean>("on") == true))
+                    "hasDndAccess" -> result.success(DeviceControl.hasDndAccess(ctx))
+                    "dndAccess" -> result.success(DeviceControl.openDndAccess(ctx))
                     else -> result.notImplemented()
                 }
             }

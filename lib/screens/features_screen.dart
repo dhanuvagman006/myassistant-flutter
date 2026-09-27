@@ -22,6 +22,7 @@ class FeaturesScreen extends StatelessWidget {
     ('Email', 'Reads and sends your mail when you ask'),
     ('Daily brief', 'Agenda, promises, weather and news in one glance'),
     ('Phone control', 'Open apps, call contacts, set timers — by voice'),
+    ('Shortcuts', 'Say one word and I do several things'),
     ('Legal lookup', 'Indian case-law search built in'),
     ('Automatic updates', 'New versions install themselves'),
   ];

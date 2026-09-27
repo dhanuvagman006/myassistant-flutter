@@ -51,6 +51,9 @@
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
     android:maxSdkVersion="32"/>
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+<!-- Shortcuts (build 120): "phone on silent" and Do Not Disturb. Android
+     still asks the owner once, on its own Do Not Disturb access page. -->
+<uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY"/>
 <!-- Sideloaded installs get aggressive OEM battery management (Realme/
      Oppo/Xiaomi especially), which delays or drops FCM and kills the
      background — the single biggest "works on my phone, breaks on my

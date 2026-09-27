@@ -94,6 +94,9 @@ Widget _connectedApps(String status, {bool connecting = false}) {
   ConnectionsService.transport = _connections(status);
   return ConnectedAppsScreen(startConnecting: connecting);
 }
+import 'package:myassistant/screens/shortcuts_screen.dart';
+import 'package:myassistant/services/shortcuts_service.dart';
+import 'package:myassistant/models/shortcut.dart';
 
 /// The voice screen as it is during a conversation, with a long answer.
 class _VoiceScreen extends StatefulWidget {
@@ -313,6 +316,17 @@ final screens = <String, Widget Function()>{
     return const MomentumScreen();
   },
   'Focus (choose how long)': () => const FocusScreen(),
+  // SHORTCUTS (build 120): long names and steps, a learned one, and the
+  // "save your last task" card.
+  'Shortcuts (filled in)': () {
+    ShortcutsService.instance.debugSeed(_shortcutsSeed());
+    return ShortcutsScreen(
+        lastTask: ValueNotifier((runId: 9, goal: 'add milk, bread and eggs to my grocery cart and stop at payment')));
+  },
+  'Shortcuts (none yet)': () {
+    ShortcutsService.instance.debugSeed(const []);
+    return ShortcutsScreen(lastTask: ValueNotifier(null));
+  },
   'Focus (running)': () => const FocusScreen(
       minutes: 25, label: 'Quarterly report for the board meeting', autoStart: true),
   'Sign in': () => const AuthScreen(),
@@ -383,6 +397,22 @@ final screens = <String, Widget Function()>{
         }),
       ),
 };
+
+List<Shortcut> _shortcutsSeed() => [
+      Shortcut.fromJson({
+        'id': 1, 'name': 'Office mode for the long drive to the factory', 'version': 1,
+        'other_names': ['ഓഫീസ് മോഡ്'],
+        'steps': [
+          {'i': 0, 'tool': 'phone_control', 'label': 'Phone on silent', 'class': 'in_app'},
+          {'i': 1, 'tool': 'send_whatsapp_message', 'label': 'Chat message to Priya Shetty: “Leaving now, will call from the car” (you tap Send)', 'class': 'hand_back'},
+          {'i': 2, 'tool': 'start_navigation', 'label': 'Directions to 4th floor, Mangalore One, MG Road, Bengaluru', 'class': 'stays'},
+        ],
+      }),
+      Shortcut.fromJson({
+        'id': 2, 'name': 'Weekly groceries', 'version': 1, 'learned': true,
+        'steps': [{'i': 0, 'tool': 'do_task_in_app', 'label': 'In the grocery app: add milk, bread and eggs to my grocery cart', 'class': 'app_task'}],
+      }),
+    ];
 
 /// A full Momentum summary for today, with titles long enough to wrap.
 Map<String, dynamic> _momentumJson() {

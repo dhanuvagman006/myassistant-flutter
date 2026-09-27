@@ -1,5 +1,6 @@
 package com.myassistant.myassistant
 
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.hardware.camera2.CameraCharacteristics
@@ -98,6 +99,68 @@ object DeviceControl {
             else -> Intent(Settings.ACTION_SETTINGS)
         }
         return try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * The ringer (build 120): "silent" | "vibrate" | "normal". Returns
+     * "ok", "needs_access" (Android asks for Do Not Disturb access before
+     * an app may silence the phone) or "failed". The owner flips that
+     * switch himself; nothing here ever automates it.
+     */
+    fun ringer(context: Context, mode: String): String {
+        return try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val m = when (mode) {
+                "silent" -> AudioManager.RINGER_MODE_SILENT
+                "vibrate" -> AudioManager.RINGER_MODE_VIBRATE
+                "normal" -> AudioManager.RINGER_MODE_NORMAL
+                else -> return "failed"
+            }
+            if (m == AudioManager.RINGER_MODE_SILENT && !hasDndAccess(context)) return "needs_access"
+            am.ringerMode = m
+            "ok"
+        } catch (e: SecurityException) {
+            "needs_access"
+        } catch (e: Exception) {
+            "failed"
+        }
+    }
+
+    /** Do Not Disturb on (priority only) or off. Same answers as ringer(). */
+    fun dnd(context: Context, on: Boolean): String {
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (!nm.isNotificationPolicyAccessGranted) return "needs_access"
+            nm.setInterruptionFilter(
+                if (on) NotificationManager.INTERRUPTION_FILTER_PRIORITY
+                else NotificationManager.INTERRUPTION_FILTER_ALL)
+            "ok"
+        } catch (e: SecurityException) {
+            "needs_access"
+        } catch (e: Exception) {
+            "failed"
+        }
+    }
+
+    fun hasDndAccess(context: Context): Boolean {
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.isNotificationPolicyAccessGranted
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Opens the Do Not Disturb access page; the owner flips the switch. */
+    fun openDndAccess(context: Context): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
             true
