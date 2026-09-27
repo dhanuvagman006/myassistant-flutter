@@ -49,7 +49,12 @@ class LockLayer extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [...previous, if (current != null) current],
               ),
-              child: on ? const LockScreen() : const SizedBox.shrink(),
+              // Its own messenger: under the app's, the lock's Scaffold
+              // would show every toast the hidden screens raise — their
+              // words, and an Undo that works — on top of the lock.
+              child: on
+                  ? const ScaffoldMessenger(child: LockScreen())
+                  : const SizedBox.shrink(),
             ),
           ],
         );

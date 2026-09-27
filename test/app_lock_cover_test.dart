@@ -123,6 +123,34 @@ void main() {
     expect(find.text('Open case file'), findsOneWidget);
   });
 
+  testWidgets('a toast a hidden screen raises does not show on the lock',
+      (tester) async {
+    await lock.enable('1234');
+    addTearDown(lock.disable);
+    await tester.pumpWidget(app());
+    await tester.tap(find.text('Open case file'));
+    await tester.pumpAndSettle();
+    final hidden = tester.element(find.text('Patient case file'));
+
+    awayThreeMinutes();
+    await tester.pump();
+    final undone = <bool>[];
+    ScaffoldMessenger.of(hidden).showSnackBar(SnackBar(
+      content: const Text('Biopsy report shared with Ravi'),
+      action: SnackBarAction(label: 'Undo', onPressed: () => undone.add(true)),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('MyAssistant is locked'), findsOneWidget);
+    expect(find.text('Biopsy report shared with Ravi'), findsNothing,
+        reason: "a hidden screen's words show on the lock");
+    expect(find.text('Undo'), findsNothing,
+        reason: 'an action under the lock can be used');
+    ScaffoldMessenger.of(hidden).removeCurrentSnackBar();
+    await tester.pumpAndSettle();
+    expect(undone, isEmpty);
+  });
+
   testWidgets('with the lock off nothing is covered', (tester) async {
     await tester.pumpWidget(app());
     awayThreeMinutes();
