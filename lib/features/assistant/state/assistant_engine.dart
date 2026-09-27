@@ -37,6 +37,9 @@ import '../../../screens/news_screen.dart';
 import '../../../screens/focus_screen.dart';
 import '../../../screens/momentum_screen.dart';
 import '../../../screens/avatar_identity_screen.dart';
+import '../../../screens/shortcuts_screen.dart';
+import '../../../models/shortcut.dart';
+import '../../../services/shortcut_runner.dart';
 import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/vision_result.dart';
@@ -2598,6 +2601,16 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.completed);
         break;
 
+      case 'shortcut_run':
+        // "Office mode" (build 120): the phone steps of a shortcut, in the
+        // order the server fixed. Each one is an ordinary device action
+        // this switch already performs and reports on; the runner decides
+        // when (in-app at once, the chat message, the app that stays open,
+        // a phone task last) and keeps the rest for the owner's return.
+        unawaited(ShortcutRunner.instance.run(ShortcutRunDirective.fromJson(e), shortcutPorts));
+        _setPhase(AssistantPhase.completed);
+        break;
+
       case 'open_app_screen':
         // A screen inside THIS app, opened by voice. The four main tabs go
         // through the shell; everything else is a pushed route.
@@ -3799,6 +3812,37 @@ class AssistantEngine extends ChangeNotifier {
             : '[SYSTEM] ERROR: battery level could not be read.';
       case 'open_settings':
         ok = await dc.openPanel((e['panel'] ?? 'settings').toString());
+      // THE RINGER AND DO NOT DISTURB (build 120, shortcuts). Android asks
+      // the owner once, on its own page, before an app may silence the
+      // phone: that page is opened (never flipped for him), and silent
+      // falls back to vibrate meanwhile — said plainly, not claimed.
+      case 'ringer_silent':
+        final r = await dc.ringer('silent');
+        if (r == 'needs_access') {
+          await _askDndAccess();
+          ok = await dc.ringer('vibrate') == 'ok';
+          report = ok
+              ? '[SYSTEM] The phone is on VIBRATE, not silent: full silent needs Do Not '
+                  'Disturb access — it is the switch on the screen I opened. Say that in one short line.'
+              : null;
+        } else {
+          ok = r == 'ok';
+        }
+      case 'ringer_vibrate':
+        ok = await dc.ringer('vibrate') == 'ok';
+      case 'ringer_normal':
+        ok = await dc.ringer('normal') == 'ok';
+      case 'dnd_on':
+      case 'dnd_off':
+        final r = await dc.dnd(action == 'dnd_on');
+        if (r == 'needs_access') {
+          await _askDndAccess();
+          ok = true; // nothing failed: it is waiting on his switch
+          report = '[SYSTEM] Do Not Disturb was NOT changed: it needs Do Not Disturb '
+              'access — it is the switch on the screen I opened. Say that in one short line.';
+        } else {
+          ok = r == 'ok';
+        }
       default:
         ok = false;
     }
@@ -3818,6 +3862,16 @@ class AssistantEngine extends ChangeNotifier {
         } catch (_) {}
       }
     }
+  }
+
+  /// Do Not Disturb access is asked for once per app run: the page opens,
+  /// and the owner flips the switch himself.
+  bool _dndAccessAsked = false;
+  Future<void> _askDndAccess() async {
+    if (_dndAccessAsked) return;
+    _dndAccessAsked = true;
+    _leftForExternalApp = true;
+    await DeviceControlService.instance.openDndAccess();
   }
 
   /// True while the user is deliberately in ANOTHER app because we sent
@@ -3883,6 +3937,8 @@ class AssistantEngine extends ChangeNotifier {
     // no conversation is open, and leaving the flag false there would
     // silence a legitimate chime for the rest of the app's life.
     _foreground = true;
+    // Back from the chat the shortcut opened: carry on with its next step.
+    unawaited(ShortcutRunner.instance.resumePending(shortcutPorts));
     // Back on screen: where the owner is now (and every 5 minutes from
     // here), and any calls missed while they were away — for the card.
     _startLocationTicker();
@@ -4370,8 +4426,21 @@ class AssistantEngine extends ChangeNotifier {
         // "Send a video note to …" with no video recorded yet: the server
         // opens the place to record it (send_video_note, 2026-09-26).
         'avatar_identity' => (_) => const AvatarIdentityScreen(),
+        // "Show my shortcuts" (build 120).
+        'shortcuts' => (_) => const ShortcutsScreen(),
         _ => null,
       };
+
+  /// Performs one device action as if the server had just sent it — the
+  /// shortcut runner's hands. Every action keeps its own honest reporting.
+  void performDeviceAction(Map<String, dynamic> action) => _onEvent(action);
+
+  /// The shortcut runner's view of this app.
+  late final ShortcutPorts shortcutPorts = _EngineShortcutPorts(this);
+
+  /// The last phone task that finished (done, or handed over at payment):
+  /// what "Save as shortcut" on the Shortcuts screen saves.
+  final ValueNotifier<({int runId, String goal})?> lastSavableTask = ValueNotifier(null);
 
   /// Whether a voice command can open [screen] (open_app_screen).
   @visibleForTesting
@@ -4514,6 +4583,10 @@ class AssistantEngine extends ChangeNotifier {
             'briefly. When they answer, call do_task_in_app with run_id '
             '${d.runId} and their answer.');
         return;
+    }
+    // A task that got there can become a shortcut (build 120).
+    if ((o.status == 'done' || o.status == 'handoff') && d.runId > 0) {
+      lastSavableTask.value = (runId: d.runId, goal: d.goal);
     }
     // Done, handed over, stopped or failed: the report goes where the
     // owner is. Out in the other app that is a notification and the bar —
@@ -5035,4 +5108,33 @@ class CaptionLine {
   final String speaker; // 'you' | 'hari'
   final String text;
   const CaptionLine(this.speaker, this.text);
+}
+
+/// The shortcut runner's hands in the app: each step goes through the
+/// engine's own device-action switch; a step that has to wait for the
+/// owner gets a notification (Android lets an app open another only while
+/// it is on screen).
+class _EngineShortcutPorts implements ShortcutPorts {
+  _EngineShortcutPorts(this.engine);
+  final AssistantEngine engine;
+
+  @override
+  Future<void> perform(Map<String, dynamic> action) async => engine.performDeviceAction(action);
+
+  @override
+  Future<bool> canLaunchFromBackground() async {
+    final st = await AutomationRunner.instance.device.status();
+    return st.connected && st.enabled;
+  }
+
+  @override
+  Future<void> notifyContinue(ShortcutRunDirective d, ShortcutEnvelope next) =>
+      ReminderNotifications.instance.showNow(d.name, 'Tap to carry on: ${next.label}');
+
+  @override
+  Future<void> notifyUnfinished(String name, String label) =>
+      ReminderNotifications.instance.showNow(name, "I didn't finish: $label");
+
+  @override
+  Future<void> wait(Duration d) => Future<void>.delayed(d);
 }

@@ -10,6 +10,7 @@ import 'finance_screen.dart';
 import 'momentum_screen.dart';
 import 'phone/call_notes_screen.dart';
 import 'reminders_screen.dart';
+import 'shortcuts_screen.dart';
 import 'meetings/meetings_screen.dart';
 import 'news_screen.dart';
 import 'email_setup_screen.dart';
@@ -39,6 +40,14 @@ class HubScreen extends StatelessWidget {
           // The same large title every tab uses.
           const LargeTitle('Hub'),
           _group(context, 'Your day', [
+            // "Office mode" (build 120): made by voice, run from here.
+            _Row(
+              'Shortcuts',
+              'One word does several things — say its name',
+              Icons.bolt_rounded,
+              Neon.accentA,
+              (c) => const ShortcutsScreen(),
+            ),
             _Row(
               'Momentum',
               "Today's 3, habits, focus and your streak",
