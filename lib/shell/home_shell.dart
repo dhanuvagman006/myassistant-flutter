@@ -20,8 +20,6 @@ import '../widgets/assistant_result_overlay.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/assistant/state/assistant_state.dart';
 import '../services/call_notes_service.dart';
-import '../services/privacy_prefs_service.dart';
-import '../screens/help_improve_row.dart';
 import '../services/call_recording_watcher.dart';
 import '../services/focus_service.dart';
 import '../services/momentum_service.dart';
@@ -565,8 +563,8 @@ class _HomeShellState extends State<HomeShell>
     }
     if (!mounted || _conversationRunning) return;
     if (await _maybeShowCallNotesIntro()) return;
-    if (!mounted || _conversationRunning) return;
-    if (await _maybeShowHelpImproveAsk()) return;
+    // The one-time "Help improve" question is not shown (owner, 2026-09-27:
+    // every tester has agreed); the switch stays in You → Privacy.
     if (!mounted || _conversationRunning) return;
     if (await AppUpdateService.instance.check(context)) return;
     if (!mounted || _conversationRunning) return;
@@ -691,43 +689,6 @@ class _HomeShellState extends State<HomeShell>
                 ]),
               ],
             ),
-          ),
-        ),
-      );
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// "Help improve the assistant?" — asked once, off until they say yes.
-  /// Answered only by a button: Back and a tap outside do nothing, the
-  /// same lesson as the call-notes notice. Never over a conversation.
-  /// Returns true when the sheet was shown.
-  Future<bool> _maybeShowHelpImproveAsk() async {
-    try {
-      final prefs = PrivacyPrefsService.instance;
-      await prefs.load();
-      if (!prefs.ask || !mounted || _conversationRunning) return false;
-      await showAppSheet<void>(
-        context: context,
-        isDismissible: false,
-        enableDrag: false,
-        backgroundColor: Neon.surface,
-        shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (ctx) => PopScope(
-          canPop: false,
-          child: HelpImproveAskCard(
-            days: prefs.recordingDays,
-            onAnswer: (yes) async {
-              Navigator.pop(ctx);
-              final ok = await prefs.set(yes, source: 'ask_card');
-              if (!ok) {
-                AppFeedback.show("Couldn't save that — you can choose later in "
-                    'You → Privacy & security.');
-              }
-            },
           ),
         ),
       );
