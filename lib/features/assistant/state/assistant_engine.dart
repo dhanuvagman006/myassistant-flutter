@@ -18,6 +18,7 @@ import '../../../core/log.dart';
 // Screens and settings reachable BY VOICE (open_app_screen / set_theme).
 import '../../../services/avatar_message_service.dart';
 import '../../../services/notification_service.dart';
+import '../../../design/motion.dart' show showAppDialog;
 import '../../../design/theme_controller.dart';
 import '../../../shell/home_shell.dart';
 import '../../../screens/documents_screen.dart';
@@ -3821,11 +3822,13 @@ class AssistantEngine extends ChangeNotifier {
       case 'ringer_silent':
         final r = await dc.ringer('silent');
         if (r == 'needs_access') {
-          await _askDndAccess();
+          // Vibrate first, so the phone is quiet while he decides.
           ok = await dc.ringer('vibrate') == 'ok';
+          final opened = await _askDndAccess();
           report = ok
               ? '[SYSTEM] The phone is on VIBRATE, not silent: full silent needs Do Not '
-                  'Disturb access — it is the switch on the screen I opened. Say that in one short line.'
+                  'Disturb access${opened ? ' — it is the switch on the screen I opened' : ', which they can allow later'}. '
+                  'Say that in one short line.'
               : null;
         } else {
           ok = r == 'ok';
@@ -3838,10 +3841,11 @@ class AssistantEngine extends ChangeNotifier {
       case 'dnd_off':
         final r = await dc.dnd(action == 'dnd_on');
         if (r == 'needs_access') {
-          await _askDndAccess();
+          final opened = await _askDndAccess();
           ok = true; // nothing failed: it is waiting on his switch
           report = '[SYSTEM] Do Not Disturb was NOT changed: it needs Do Not Disturb '
-              'access — it is the switch on the screen I opened. Say that in one short line.';
+              'access${opened ? ' — it is the switch on the screen I opened' : ', which they can allow later'}. '
+              'Say that in one short line.';
         } else {
           ok = r == 'ok';
         }
@@ -3866,14 +3870,32 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
-  /// Do Not Disturb access is asked for once per app run: the page opens,
-  /// and the owner flips the switch himself.
+  /// Do Not Disturb access is asked for once per app run, IN the app first:
+  /// Android's own page is a long list of every app, and dropping the owner
+  /// there unannounced (2026-09-27) left him lost in Settings. He chooses;
+  /// the switch on that page is always flipped by him, never for him.
+  /// Returns true when Android's page was opened.
   bool _dndAccessAsked = false;
-  Future<void> _askDndAccess() async {
-    if (_dndAccessAsked) return;
+  Future<bool> _askDndAccess() async {
+    if (_dndAccessAsked) return false;
     _dndAccessAsked = true;
+    final ctx = AvatarMessageService.navigatorKey.currentContext;
+    if (ctx == null || !_foreground) return false;
+    final open = await showAppDialog<bool>(
+      context: ctx,
+      builder: (c) => AlertDialog(
+        title: const Text('Allow full silent?'),
+        content: const Text('To put your phone fully on silent, allow "Do Not Disturb" '
+            'for My Assistant once, then come back. Until then I use vibrate.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Use vibrate')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Open settings')),
+        ],
+      ),
+    );
+    if (open != true) return false;
     _leftForExternalApp = true;
-    await DeviceControlService.instance.openDndAccess();
+    return DeviceControlService.instance.openDndAccess();
   }
 
   /// True while the user is deliberately in ANOTHER app because we sent

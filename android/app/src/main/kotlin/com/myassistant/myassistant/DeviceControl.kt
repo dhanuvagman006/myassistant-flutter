@@ -161,7 +161,10 @@ object DeviceControl {
     fun openDndAccess(context: Context): Boolean {
         return try {
             val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // A fresh Settings task: joining the old one meant Back walked
+            // through whatever Settings page he had open before (2026-09-27).
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_HISTORY)
             context.startActivity(intent)
             true
         } catch (e: Exception) {
