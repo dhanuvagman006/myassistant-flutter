@@ -39,6 +39,7 @@ import '../../../screens/momentum_screen.dart';
 import '../../../screens/avatar_identity_screen.dart';
 import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
+import '../../../models/vision_result.dart';
 import '../../../models/news_item.dart';
 import '../../../models/schedule_item.dart';
 import '../../../services/api_service.dart';
@@ -55,6 +56,7 @@ import '../../../services/call_history.dart';
 import '../../../services/call_service.dart';
 import '../../../services/location_service.dart';
 import '../../../services/missed_calls_service.dart';
+import '../../../services/phone_calendar.dart';
 import '../../../services/phone_state_guard.dart';
 import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
@@ -571,6 +573,13 @@ class AssistantEngine extends ChangeNotifier {
   ContactMatch? foundContact;
   List<ContactMatch> ambiguousContacts = const [];
   PendingConfirmation? pendingConfirmation;
+
+  /// An event read off a picture the user picked (look_at_screenshot):
+  /// offered as one tap — a reminder, or the phone's calendar. The server
+  /// always resolved it ("this Sunday" → a date); nothing here read it
+  /// (2026-09-27). Like a confirmation it waits for the user, so a new
+  /// answer does not retire it — a tap, the ✕ or a new turn does.
+  VisionAction? seenEvent;
 
   /// The call card. Stamped on every change, so a call the server stopped
   /// reporting on cannot hold a session open forever ([callStillRunning]).
@@ -3320,9 +3329,25 @@ class AssistantEngine extends ChangeNotifier {
               '[SYSTEM] ERROR: nothing could be read from that image. Say so '
               'and offer to try another one.');
         } else {
+          // AN EVENT IN THE PICTURE (an invite, a ticket, a booking): the
+          // server resolved its date; the answer alone lost it. It goes on
+          // screen as one tap, and to the model exactly, so "when is it?"
+          // and "remind me" work from the real date.
+          final seen = res.action;
+          final event = seen != null && seen.isUpcoming() ? seen : null;
+          if (event != null) {
+            seenEvent = event;
+            notifyListeners();
+          }
+          final where = (event?.location ?? '').trim();
           await _tellModel(
               '[SYSTEM] The image the user picked says this — answer them '
-              'from IT and nothing else:\n$answer');
+              'from IT and nothing else:\n$answer'
+              '${event == null ? '' : '\nIt shows an event: "${event.title}" '
+                  'on ${event.whenLabel(withYear: true)}'
+                  '${where.isEmpty ? '' : ' at $where'}. A card on their '
+                  'screen sets a reminder or adds it to their calendar in '
+                  'one tap — mention it in a few words.'}');
         }
       } catch (e) {
         AppLog.add('vision', 'screenshot ask failed: $e');
@@ -4625,6 +4650,50 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// User closed the event card without acting on it.
+  void dismissSeenEvent() {
+    if (seenEvent == null) return;
+    seenEvent = null;
+    notifyListeners();
+  }
+
+  /// "Remind me" on the event card: an ordinary reminder at the event's
+  /// time, the same one the Reminders screen makes. True when it was set.
+  Future<bool> remindSeenEvent() async {
+    final e = seenEvent;
+    if (e == null || e.start == null) return false;
+    try {
+      await ApiService.createReminder(e.title, e.start);
+      if (identical(seenEvent, e)) seenEvent = null;
+      notifyListeners();
+      AppFeedback.toast('Reminder set — ${e.title}, ${e.whenLabel()}.',
+          tone: FeedbackTone.success);
+      return true;
+    } catch (err) {
+      AppLog.add('vision', 'reminder from the picture failed: $err');
+      AppFeedback.toast("Couldn't set that reminder — try again.");
+      return false;
+    }
+  }
+
+  /// "Add to calendar" on the event card: into the phone's own calendar.
+  Future<bool> calendarSeenEvent() async {
+    final e = seenEvent;
+    if (e == null || e.start == null) return false;
+    final ok = await PhoneCalendar.addEvent(
+        title: e.title, start: e.start!, durationMin: e.durationMin);
+    if (ok) {
+      if (identical(seenEvent, e)) seenEvent = null;
+      notifyListeners();
+      AppFeedback.toast('Added to your calendar — ${e.title}, ${e.whenLabel()}.',
+          tone: FeedbackTone.success);
+    } else {
+      AppFeedback.toast("Couldn't add it to your calendar — allow calendar "
+          'access, or use Remind me.');
+    }
+    return ok;
+  }
+
   /// The cards that belong to ONE answer — cleared when the next question
   /// starts. Separate from _resetTurn, which also tears down turn state
   /// that a live session manages itself.
@@ -4659,6 +4728,7 @@ class AssistantEngine extends ChangeNotifier {
     foundContact = null;
     ambiguousContacts = const [];
     pendingConfirmation = null;
+    seenEvent = null;
     callStatus = null;
     readyAudioUrl = null;
     activities.clear();

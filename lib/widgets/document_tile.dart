@@ -58,7 +58,7 @@ void openDocument(BuildContext context, UserDocument d,
   // documents and sheets the assistant writes, go to whichever app on the
   // phone can open that type.
   if (!d.isImage) {
-    _openFile(context, d);
+    openDocumentFile(d);
     return;
   }
   final list = within ?? [d];
@@ -81,7 +81,10 @@ void openDocument(BuildContext context, UserDocument d,
 /// 2026-09-20). Images never hit this because they are fetched in-app
 /// with auth headers. So: fetch the bytes with auth, write them to the
 /// cache, and hand THAT file to whichever viewer the phone has.
-Future<void> _openFile(BuildContext context, UserDocument d) async {
+///
+/// The one open path for anything that is not an image: the Documents
+/// list, the recall gallery's Open button and a document received in chat.
+Future<void> openDocumentFile(UserDocument d) async {
   AppFeedback.toast('Opening…', tone: FeedbackTone.progress);
   try {
     final file = await ApiService.downloadDocument(d.id);
@@ -89,10 +92,13 @@ Future<void> _openFile(BuildContext context, UserDocument d) async {
     final safe = (d.title.isEmpty ? 'document' : d.title)
         .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
         .trim();
-    final path =
-        '${dir.path}/${safe.isEmpty ? 'document' : safe}-${d.id}${d.fileExtension}';
+    // The type the server sent wins over the card's: a chat attachment
+    // from an older server arrives with none.
+    final mime = extensionForMime(file.mime) != null ? file.mime : d.mime;
+    final ext = extensionForMime(mime) ?? d.fileExtension;
+    final path = '${dir.path}/${safe.isEmpty ? 'document' : safe}-${d.id}$ext';
     await File(path).writeAsBytes(file.bytes, flush: true);
-    final res = await OpenFilex.open(path, type: d.mime);
+    final res = await OpenFilex.open(path, type: mime);
     if (res.type != ResultType.done) {
       // Not an error the user caused, and not a dead end: Share hands the
       // same file to Google Slides/Docs/Sheets, Drive or WhatsApp, which

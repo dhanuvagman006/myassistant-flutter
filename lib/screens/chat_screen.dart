@@ -11,6 +11,8 @@ import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../models/user_document.dart';
 import '../services/api_service.dart';
+import '../widgets/document_tile.dart'
+    show documentGlyph, documentTypeLabel, openDocumentFile;
 import 'chat_group_screen.dart';
 import 'chat_new_screen.dart';
 import '../services/app_feedback.dart';
@@ -365,8 +367,86 @@ class _ChatItem {
   final String text;
   final int at;
   final int? documentId;
+
+  /// What the attached document IS, from the server (2026-09-27 on).
+  final String? documentMime, documentTitle, media;
   _ChatItem(this.id, this.mine, this.text, this.at, this.auto, this.documentId,
-      {this.deleted = false});
+      {this.deleted = false, this.documentMime, this.documentTitle, this.media});
+
+  UserDocument? get document => documentId == null
+      ? null
+      : chatDocument(
+          id: documentId!, mime: documentMime, title: documentTitle, media: media);
+}
+
+/// The document a chat message carries, shaped for the gallery and the
+/// open path. Every attachment used to be built as a JPEG, so a PDF sent
+/// by a contact showed "Couldn't load this document" and a video note sat
+/// there as a broken picture. The server now says the type; a video note
+/// is known by `media` even without it, and anything still unknown (an
+/// older server) keeps the old guess, a photo.
+@visibleForTesting
+UserDocument chatDocument(
+    {required int id, String? mime, String? title, String? media}) {
+  final type = (mime ?? '').trim().isNotEmpty
+      ? mime!.trim()
+      : media == 'video'
+          ? 'video/mp4'
+          : 'image/jpeg';
+  return UserDocument(
+    id: id,
+    filename: '',
+    mime: type,
+    title: (title ?? '').trim().isEmpty ? 'Document' : title!.trim(),
+    category: 'other',
+    docDate: '',
+    summary: '',
+    note: '',
+    createdAt: 0,
+  );
+}
+
+/// A chat attachment that is not a picture: the type's glyph, its title
+/// and what it is ("PDF", "Video"). Tapping opens it.
+class _AttachmentTile extends StatelessWidget {
+  final UserDocument document;
+  const _AttachmentTile({required this.document});
+
+  @override
+  Widget build(BuildContext context) {
+    final g = documentGlyph(document);
+    final type = documentTypeLabel(document);
+    return Container(
+      width: 190,
+      constraints: const BoxConstraints(minHeight: 56),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      color: Neon.surfaceHigh,
+      child: Row(
+        children: [
+          Icon(g.icon, color: g.color, size: 26),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(document.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Neon.textHi,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                if (type.isNotEmpty)
+                  Text(type,
+                      style: TextStyle(color: Neon.textLo, fontSize: 12)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class ChatThreadScreen extends StatefulWidget {
@@ -435,6 +515,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 m['auto'] == true,
                 (m['documentId'] as num?)?.toInt(),
                 deleted: m['deleted'] == true,
+                documentMime: m['documentMime'] as String?,
+                documentTitle: m['documentTitle'] as String?,
+                media: m['media'] as String?,
               ))
           .toList();
       final grew = items.length != _items.length;
@@ -493,20 +576,16 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     }
   }
 
-  Future<void> _openDocument(int id) async {
+  Future<void> _openDocument(UserDocument doc) async {
     // The id references OUR copy of the file, so the gallery's viewer and
-    // share button work exactly like any owned document.
-    final doc = UserDocument(
-      id: id,
-      filename: '',
-      mime: 'image/jpeg',
-      title: 'Document',
-      category: 'other',
-      docDate: '',
-      summary: '',
-      note: '',
-      createdAt: 0,
-    );
+    // share button work exactly like any owned document. A photo or a
+    // video note opens in the gallery (the video plays there); a PDF or
+    // an office file goes through the signed-in download to the phone's
+    // own viewer, as it does from My documents.
+    if (!doc.isImage && !doc.mime.startsWith('video/')) {
+      await openDocumentFile(doc);
+      return;
+    }
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => DocumentGalleryScreen(documents: [doc]),
     ));
@@ -674,33 +753,39 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                             : Neon.textDim,
                         fontSize: 12)),
               ),
-            if (m.documentId != null)
+            if (m.document != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: InkWell(
-                  onTap: () => _openDocument(m.documentId!),
+                  onTap: () => _openDocument(m.document!),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      ApiService.documentFileUrl(m.documentId!),
-                      headers: ApiService.imageHeaders,
-                      width: 190,
-                      height: 140,
-                      fit: BoxFit.cover,
-                      // Decoded at the size it is drawn (2026-09-24): 400
-                      // px was upscaled about 1.25x on his phone (190 dp at
-                      // 2.625) and looked soft. A tenth over, for the crop.
-                      cacheWidth:
-                          (190 * MediaQuery.devicePixelRatioOf(context) * 1.1)
-                              .round(),
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 190,
-                        height: 60,
-                        color: Neon.surfaceHigh,
-                        child: Icon(Icons.description_rounded,
-                            color: Neon.violet),
-                      ),
-                    ),
+                    child: !m.document!.isImage
+                        // Not a picture: its type's glyph and title, not
+                        // an Image.network that can only fail.
+                        ? _AttachmentTile(document: m.document!)
+                        : Image.network(
+                            ApiService.documentFileUrl(m.documentId!),
+                            headers: ApiService.imageHeaders,
+                            width: 190,
+                            height: 140,
+                            fit: BoxFit.cover,
+                            // Decoded at the size it is drawn (2026-09-24):
+                            // 400 px was upscaled about 1.25x on his phone
+                            // (190 dp at 2.625) and looked soft. A tenth
+                            // over, for the crop.
+                            cacheWidth: (190 *
+                                    MediaQuery.devicePixelRatioOf(context) *
+                                    1.1)
+                                .round(),
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 190,
+                              height: 60,
+                              color: Neon.surfaceHigh,
+                              child: Icon(Icons.description_rounded,
+                                  color: Neon.violet),
+                            ),
+                          ),
                   ),
                 ),
               ),

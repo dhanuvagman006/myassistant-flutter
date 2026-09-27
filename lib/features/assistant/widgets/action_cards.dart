@@ -9,13 +9,14 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../design/gyro_tilt.dart';
 import '../../../design/neon_tokens.dart';
 import '../../../models/user_document.dart';
+import '../../../models/vision_result.dart';
 // openDocument/documentGlyph live with the document tiles. The import
 // is circular (document_tile imports this file for the gallery and the
 // share helper) — Dart resolves that fine, and one shared open path is
 // worth it: the two used to diverge, and this card still carried the
 // launchUrl bug that made every saved PDF answer "sign in required".
 import '../../../widgets/document_tile.dart'
-    show openDocument, documentGlyph;
+    show openDocument, openDocumentFile, documentGlyph, documentTypeLabel;
 import '../../../services/api_service.dart';
 import '../../../theme/app_theme.dart';
 import '../state/assistant_state.dart';
@@ -410,6 +411,111 @@ class ConfirmationCard extends StatelessWidget {
   }
 }
 
+/// An event read off a picture the user picked — "Priya's wedding, Sun 4
+/// Oct, 11:00 AM" — with the two things people do with one: a reminder,
+/// or the phone's calendar. One tap each; ✕ leaves it.
+class EventOfferCard extends StatefulWidget {
+  final VisionAction event;
+  final Future<bool> Function() onRemind;
+  final Future<bool> Function() onCalendar;
+  final VoidCallback onClose;
+  const EventOfferCard({
+    super.key,
+    required this.event,
+    required this.onRemind,
+    required this.onCalendar,
+    required this.onClose,
+  });
+
+  @override
+  State<EventOfferCard> createState() => _EventOfferCardState();
+}
+
+class _EventOfferCardState extends State<EventOfferCard> {
+  bool _busy = false;
+
+  Future<void> _run(Future<bool> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.event;
+    final where = (e.location ?? '').trim();
+    return _Glass(
+      borderTint: Neon.cyan,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event_rounded, size: 18, color: Neon.cyan),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  e.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: Neon.textHi,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Close',
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                padding: EdgeInsets.zero,
+                onPressed: widget.onClose,
+                icon: Icon(Icons.close_rounded, color: Neon.textLo, size: 20),
+              ),
+            ],
+          ),
+          Text(
+            where.isEmpty ? e.whenLabel() : '${e.whenLabel()} · $where',
+            style: TextStyle(color: Neon.textLo, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.peacock,
+                      minimumSize: const Size(0, 48)),
+                  onPressed: _busy ? null : () => _run(widget.onRemind),
+                  icon: const Icon(Icons.alarm_add_rounded, size: 18),
+                  label: const Text('Remind me'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Neon.cyanInk,
+                    minimumSize: const Size(0, 48),
+                    side: BorderSide(color: Neon.cyan.withValues(alpha: 0.5)),
+                  ),
+                  onPressed: _busy ? null : () => _run(widget.onCalendar),
+                  icon: const Icon(Icons.calendar_month_rounded, size: 18),
+                  label: const Text('Add to calendar'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A saved document Hari just recalled ("show me my Aadhaar card") — image
 /// thumbnail or PDF badge + title/date/summary, with a Send button that
 /// shares the real file out (WhatsApp, email, Drive…). Tap the card to
@@ -572,7 +678,7 @@ class _DocumentCardState extends State<DocumentCard> {
 Future<void> shareDocumentFile(UserDocument document) async {
   final file = await ApiService.downloadDocument(document.id);
   final dir = await getTemporaryDirectory();
-  final safeName = _shareName(document, file.mime);
+  final safeName = shareFileName(document, file.mime);
   final path = '${dir.path}/$safeName';
   await File(path).writeAsBytes(file.bytes, flush: true);
   await Share.shareXFiles(
@@ -584,18 +690,17 @@ Future<void> shareDocumentFile(UserDocument document) async {
 /// A clean filename for sharing — the document's own title (so the
 /// recipient sees "Aadhaar Card.jpg", not the internal save name), with a
 /// correct extension derived from the mime type.
-String _shareName(UserDocument d, String mime) {
+///
+/// Every type the server serves, then the document's own extension: only
+/// PDF and three image types were known here, so a deck, a Word file, a
+/// sheet or a video note went out as "<title>.jpg" and opened nowhere
+/// (2026-09-27).
+String shareFileName(UserDocument d, String mime) {
   var base = d.title.trim();
   if (base.isEmpty) base = 'document';
   // Strip anything filesystem-hostile; collapse whitespace.
   base = base.replaceAll(RegExp(r'[\\/:*?"<>|]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-  const extByMime = {
-    'application/pdf': '.pdf',
-    'image/png': '.png',
-    'image/webp': '.webp',
-    'image/jpeg': '.jpg',
-  };
-  final ext = extByMime[mime] ?? (d.isPdf ? '.pdf' : '.jpg');
+  final ext = extensionForMime(mime) ?? d.fileExtension;
   return base.toLowerCase().endsWith(ext) ? base : '$base$ext';
 }
 
@@ -799,7 +904,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
     try {
       final file = await ApiService.downloadDocument(widget.document.id);
       final dir = await getTemporaryDirectory();
-      final safeName = _shareName(widget.document, file.mime);
+      final safeName = shareFileName(widget.document, file.mime);
       final path = '${dir.path}/$safeName';
       await File(path).writeAsBytes(file.bytes, flush: true);
       await Share.shareXFiles(
@@ -1092,14 +1197,25 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
           onPageChanged: (i) => setState(() => _index = i),
           itemBuilder: (_, i) {
             final d = docs[i];
-            if (d.isPdf) {
-              // No in-app PDF renderer (kept the app light) — badge + open.
+            if (d.mime.startsWith('video/')) {
+              // Without this an MP4 fell through to Image.network and drew
+              // the broken-image placeholder full screen.
+              return _GalleryVideo(key: ValueKey('gv-${d.id}'), document: d);
+            }
+            if (!d.isImage) {
+              // No in-app PDF or office-file renderer (kept the app light):
+              // the type's glyph and one Open. Open is the signed-in
+              // download the Documents list uses — the file URL handed to
+              // a browser has no session and answered "sign in required",
+              // and a deck or sheet fell through to Image.network and drew
+              // "Couldn't load this document." (2026-09-27).
+              final g = documentGlyph(d);
+              final type = documentTypeLabel(d);
               return Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.picture_as_pdf_rounded,
-                        color: Neon.pink, size: 64),
+                    Icon(g.icon, color: g.color, size: 64),
                     const SizedBox(height: 14),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -1109,27 +1225,27 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(color: Colors.white)),
                     ),
+                    if (type.isNotEmpty && !d.isPdf) ...[
+                      const SizedBox(height: 4),
+                      Text(type,
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.6))),
+                    ],
                     const SizedBox(height: 14),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
+                        minimumSize: const Size(120, 48),
                         side: BorderSide(
                             color: Colors.white.withValues(alpha: 0.5)),
                       ),
-                      onPressed: () => launchUrl(
-                          Uri.parse(ApiService.documentFileUrl(d.id)),
-                          mode: LaunchMode.externalApplication),
+                      onPressed: () => openDocumentFile(d),
                       icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                      label: const Text('Open PDF'),
+                      label: Text(d.isPdf ? 'Open PDF' : 'Open'),
                     ),
                   ],
                 ),
               );
-            }
-            if (d.mime.startsWith('video/')) {
-              // Without this an MP4 fell through to Image.network and drew
-              // the broken-image placeholder full screen.
-              return _GalleryVideo(key: ValueKey('gv-${d.id}'), document: d);
             }
             return Center(
               child: InteractiveViewer(

@@ -34,6 +34,37 @@ String mimeForFilename(String filename) {
   }
 }
 
+/// The file extension for a content type, or null when it is not one we
+/// know. The server's type is the truth about the bytes: a deck saved and
+/// shared as ".jpg" (2026-09-27) opened nowhere.
+String? extensionForMime(String mime) => const {
+      'application/pdf': '.pdf',
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp',
+      'image/heic': '.heic',
+      'image/heif': '.heif',
+      'image/gif': '.gif',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+          '.pptx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+          '.docx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+          '.xlsx',
+      'application/vnd.ms-powerpoint': '.ppt',
+      'application/msword': '.doc',
+      'application/vnd.ms-excel': '.xls',
+      'text/csv': '.csv',
+      'text/tab-separated-values': '.tsv',
+      'text/plain': '.txt',
+      'text/markdown': '.md',
+      'application/json': '.json',
+      'application/rtf': '.rtf',
+      'text/rtf': '.rtf',
+      'video/mp4': '.mp4',
+      'video/quicktime': '.mov',
+    }[mime.split(';').first.trim().toLowerCase()];
+
 /// A document the user saved into Hari's long-term memory — a hospital
 /// report, a prescription photo, a receipt… Stored server-side; Hari can
 /// pull it back up from a voice request ("show me my last hospital report").
@@ -127,6 +158,8 @@ class UserDocument {
       final e = filename.substring(i).toLowerCase();
       if (RegExp(r'^\.[a-z0-9]{2,5}$').hasMatch(e)) return e;
     }
+    final known = extensionForMime(mime);
+    if (known != null) return known;
     switch (kind) {
       case 'pdf':
         return '.pdf';
@@ -178,12 +211,20 @@ class DocumentUploadResult {
   final String? clientName;
   final List<String> clientCandidates;
 
+  /// False for a file the server keeps but cannot read inside (an old
+  /// .doc/.xls/.ppt, a GIF) — [notice] is then the sentence to show
+  /// instead of "reading it now". Servers before 2026-09-27 send neither.
+  final bool readable;
+  final String? notice;
+
   const DocumentUploadResult({
     required this.document,
     required this.filedUnder,
     this.clientId,
     this.clientName,
     this.clientCandidates = const [],
+    this.readable = true,
+    this.notice,
   });
 
   bool get filedUnderClient => filedUnder == 'client' && clientId != null;
@@ -205,6 +246,10 @@ class DocumentUploadResult {
               .where((n) => n.isNotEmpty)
               .toList(growable: false)
           : const [],
+      readable: j['readable'] != false,
+      notice: (j['notice'] is String && (j['notice'] as String).trim().isNotEmpty)
+          ? (j['notice'] as String).trim()
+          : null,
     );
   }
 }

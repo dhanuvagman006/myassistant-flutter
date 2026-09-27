@@ -144,6 +144,18 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
       );
     }
 
+    // An event read off a picked screenshot: a one-tap choice, so it sits
+    // with the decisions, above anything only to be read.
+    if (e.seenEvent != null) {
+      return EventOfferCard(
+        key: const ValueKey('seen-event'),
+        event: e.seenEvent!,
+        onRemind: e.remindSeenEvent,
+        onCalendar: e.calendarSeenEvent,
+        onClose: e.dismissSeenEvent,
+      );
+    }
+
     // A CALL IN PROGRESS IS NOT A CARD ANY MORE (his call, 2026-09-20:
     // "don't display that current call on the orb itself"). It covered
     // whatever screen the user was on for the length of the conversation,

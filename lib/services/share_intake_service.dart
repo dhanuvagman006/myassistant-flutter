@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -10,6 +11,7 @@ import '../features/assistant/state/assistant_engine.dart';
 import '../features/poster/photo_source_sheet.dart';
 import '../features/poster/poster_controller.dart';
 import '../features/poster/poster_screen.dart';
+import '../models/user_document.dart' show DocumentUploadException;
 import 'avatar_message_service.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
@@ -86,6 +88,8 @@ class ShareIntakeService {
     'png': 'image/png',
     'webp': 'image/webp',
     'heic': 'image/heic',
+    'heif': 'image/heif',
+    'gif': 'image/gif',
     'pdf': 'application/pdf',
     // Office and plain-text files: the server reads the words out of
     // these before understanding them, so a shared spreadsheet or deck is
@@ -102,7 +106,37 @@ class ShareIntakeService {
     'md': 'text/markdown',
     'json': 'application/json',
     'rtf': 'application/rtf',
+    // Older office formats: kept and shareable, but the server cannot
+    // read inside them — it says so, and that sentence is shown.
+    'doc': 'application/msword',
+    'xls': 'application/vnd.ms-excel',
+    'ppt': 'application/vnd.ms-powerpoint',
   };
+
+  /// Pictures the server reads as they are. Any other image (a GIF, a
+  /// BMP) is redrawn as one first — see [PhotoSourceSheet.normalise].
+  static const _readableImages = {
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+  };
+
+  /// What to tell the user when nothing was saved and the server said why
+  /// (a 4xx with its own sentence: an unsupported type, the size or the
+  /// document limit). Null for anything else — a timeout, no network, a
+  /// 5xx — which is the connection message's job.
+  @visibleForTesting
+  static String? refusalMessage(Object error) {
+    if (error is DocumentUploadException &&
+        error.statusCode >= 400 &&
+        error.statusCode < 500 &&
+        error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    return null;
+  }
 
   /// Types the server will store. Anything else is reported as skipped
   /// rather than silently dropped.
@@ -113,6 +147,19 @@ class ShareIntakeService {
       mime == 'application/msword' ||
       mime == 'application/vnd.ms-excel' ||
       mime == 'application/vnd.ms-powerpoint';
+
+  /// A shared FILE, as opposed to a link or a passage of text. The share
+  /// plugin types by mime, so a CSV or a .txt file arrives as "text" with
+  /// its path where the words would be — that is a document to save, not
+  /// a path to read out to the assistant.
+  @visibleForTesting
+  static bool isSharedFile(SharedMediaType type, String path) =>
+      type == SharedMediaType.image ||
+      type == SharedMediaType.file ||
+      (type == SharedMediaType.text &&
+          path.startsWith('/') &&
+          !path.contains('\n') &&
+          File(path).existsSync());
 
   /// Anything above this never fits the server's 18 MB document cap.
   static const _maxShareBytes = 20 * 1024 * 1024;
@@ -133,26 +180,34 @@ class ShareIntakeService {
     var failed = 0;
     var skipped = 0;
     var tooLarge = 0;
+    String? refusal; // the server's own words for a file it would not take
+    String? notice; // saved, but the server cannot read inside it
     for (final f in files) {
       // A SHARED LINK IS A QUESTION, NOT A DOCUMENT. "Share → Hari" from a
       // browser hands over a URL; filing that as a file would save nothing
       // and answer nothing. It goes to the assistant, which reads the page.
-      if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
-        if (await _handleSharedText(f.path)) {
-          saved++;
-        } else {
-          skipped++;
+      if (!isSharedFile(f.type, f.path)) {
+        if (f.type == SharedMediaType.text || f.type == SharedMediaType.url) {
+          if (await _handleSharedText(f.path)) {
+            saved++;
+          } else {
+            skipped++;
+          }
+          continue;
         }
-        continue;
-      }
-      if (f.type != SharedMediaType.image && f.type != SharedMediaType.file) {
         skipped++;
         continue;
       }
       final path = f.path;
       if (path.isEmpty) continue;
       final ext = path.split('.').last.toLowerCase();
-      final mime = f.mimeType ?? _mimeByExt[ext];
+      // The sender's type, unless it is one we do not know and the name
+      // says better: a file manager's "application/octet-stream", or
+      // "text/comma-separated-values" for a .csv.
+      final given = f.mimeType;
+      final mime = given != null && _acceptable(given)
+          ? given
+          : (_mimeByExt[ext] ?? given);
       if (mime == null || !_acceptable(mime)) {
         skipped++; // extension-less or exotic type — SAY so below, the old
         continue; // silent drop looked like the share simply vanished
@@ -164,24 +219,56 @@ class ShareIntakeService {
           tooLarge++;
           continue;
         }
-        final bytes = await File(path).readAsBytes();
+        var bytes = await File(path).readAsBytes();
         if (bytes.isEmpty) continue;
-        final name = path.split('/').last;
-        final doc = await ApiService.uploadDocument(
+        var name = path.split('/').last;
+        var type = mime;
+        if (type.startsWith('image/') && !_readableImages.contains(type)) {
+          // A GIF or a BMP is redrawn as a picture the server can read.
+          // One the phone cannot open either goes up as it is; the server
+          // keeps it or says why not.
+          try {
+            final usable = await PhotoSourceSheet.normalise(bytes);
+            bytes = usable.bytes;
+            type = usable.mime;
+            final stem = name.contains('.')
+                ? name.substring(0, name.lastIndexOf('.'))
+                : name;
+            name = '$stem${type == 'image/png' ? '.png' : '.jpg'}';
+          } catch (e) {
+            AppLog.add('share', 'shared picture not redrawn: $e');
+          }
+        }
+        final result = await ApiService.uploadDocumentDetailed(
           bytes: bytes,
           filename: name.isEmpty ? 'Shared.jpg' : name,
-          mimeType: mime,
+          mimeType: type,
           note: 'shared from another app',
         );
         saved++;
+        if (!result.readable) {
+          // Kept, not read: nothing will be understood, so there is
+          // nothing to follow — say so instead of "reading it now".
+          notice = result.notice;
+          continue;
+        }
         // THE WHOLE POINT: the user shared it and is done. The server is
         // now reading it; when it has understood — timetable, invite,
         // legal paper — we mirror any events into the phone's calendar
         // and say what happened. Fire-and-forget; failures stay quiet
         // (the server's own notification still tells the outcome).
-        unawaited(_followUnderstanding(doc.id));
+        unawaited(_followUnderstanding(result.document.id));
       } catch (e) {
-        failed++;
+        // A refusal the server explained is not a connection problem —
+        // "check your connection" for an unsupported type sent people
+        // looking for a network fault (2026-09-27).
+        final why = refusalMessage(e);
+        if (why != null) {
+          refusal = why;
+          skipped++;
+        } else {
+          failed++;
+        }
         AppLog.add('share', 'upload failed: $e');
       }
     }
@@ -189,7 +276,9 @@ class ShareIntakeService {
       _lastWasText = false;
       return; // its own message was already shown
     }
-    if (saved > 0) {
+    if (saved == 1 && notice != null) {
+      AppFeedback.toast(notice);
+    } else if (saved > 0) {
       AppFeedback.toast(
           saved == 1
               ? 'Got it — reading it now…'
@@ -201,8 +290,11 @@ class ShareIntakeService {
           : 'Those files are too large to save (20 MB max each).');
     } else if (failed > 0) {
       AppFeedback.toast("Couldn't save that — check your connection.");
+    } else if (refusal != null) {
+      AppFeedback.toast(refusal);
     } else if (skipped > 0) {
-      AppFeedback.toast("Couldn't read that file type — photos and PDFs work.");
+      AppFeedback.toast("Couldn't read that file type — photos, PDFs, "
+          'documents, sheets and slides work.');
     }
   }
 
