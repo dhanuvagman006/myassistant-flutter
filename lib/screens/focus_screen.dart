@@ -240,7 +240,10 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
       return SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: c.maxHeight - 32),
+          // Full width too: a scroll view hands its child a loose width,
+          // and a shrink-wrapped column sits at the left, not the centre.
+          constraints: BoxConstraints(
+              minHeight: c.maxHeight - 32, minWidth: math.max(0.0, c.maxWidth - 40)),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

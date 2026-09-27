@@ -263,6 +263,17 @@ void main() {
       await close(t);
     });
 
+    testWidgets('the ring and its buttons sit in the middle of the screen', (t) async {
+      await open(t, const FocusScreen(minutes: 25, autoStart: true));
+      final mid = t.getSize(find.byType(FocusScreen)).width / 2;
+      final ring = find.byWidgetPredicate(
+          (w) => w is CustomPaint && w.painter is FocusRingPainter);
+      expect(t.getCenter(ring).dx, closeTo(mid, 1));
+      expect(t.getCenter(find.text('Pause')).dx, greaterThan(mid - 1),
+          reason: 'Pause sits right of +5 min, both centred as a pair');
+      await close(t);
+    });
+
     testWidgets('covered by another page, it stops asking for frames', (t) async {
       await open(t, const FocusScreen(minutes: 15, autoStart: true));
       expect(stateOf(t).ticking, isTrue);
