@@ -73,6 +73,9 @@ import 'package:myassistant/screens/connected_apps_screen.dart';
 import 'package:myassistant/screens/help_improve_row.dart';
 import 'package:myassistant/services/connections_service.dart';
 import 'package:myassistant/services/privacy_prefs_service.dart';
+import 'package:myassistant/screens/shortcuts_screen.dart';
+import 'package:myassistant/services/shortcuts_service.dart';
+import 'package:myassistant/models/shortcut.dart';
 
 /// The server's answer for the Notion card in [status], with a long name.
 JsonTransport _connections(String status) => (method, path, [body]) async =>
@@ -94,9 +97,6 @@ Widget _connectedApps(String status, {bool connecting = false}) {
   ConnectionsService.transport = _connections(status);
   return ConnectedAppsScreen(startConnecting: connecting);
 }
-import 'package:myassistant/screens/shortcuts_screen.dart';
-import 'package:myassistant/services/shortcuts_service.dart';
-import 'package:myassistant/models/shortcut.dart';
 
 /// The voice screen as it is during a conversation, with a long answer.
 class _VoiceScreen extends StatefulWidget {
