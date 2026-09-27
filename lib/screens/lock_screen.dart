@@ -2,9 +2,82 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/app_lock.dart';
 
-/// F1 — the gate shown while [AppLock.shouldLock] is true. Fires the
-/// biometric prompt immediately on open; a 4-digit PIN pad is always
-/// available underneath. Nothing else in the app renders until unlock.
+/// THE LOCK SITS ABOVE EVERY SCREEN (audit, 2026-09-27). It used to be the
+/// first route's child, so relocking covered only that route: Email, a
+/// patient's case file or a screen opened by voice stayed on top of it,
+/// readable and usable. MaterialApp.builder puts this layer over the
+/// Navigator itself. While [locked] says so, everything under it is
+/// hidden, unfocusable (a field's keyboard goes) and still, but kept: the
+/// owner is back where they were after unlocking. It goes up instantly —
+/// a lock that faded in would show private content under it — and fades
+/// out on unlock.
+class LockLayer extends StatelessWidget {
+  const LockLayer({
+    super.key,
+    required this.locked,
+    required this.changes,
+    required this.child,
+  });
+
+  /// Whether the lock is up now; asked again whenever [changes] fires.
+  final bool Function() locked;
+  final Listenable changes;
+
+  /// The app's Navigator (MaterialApp.builder's child).
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: changes,
+      builder: (context, _) {
+        final on = locked();
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            ExcludeFocus(
+              excluding: on,
+              child: TickerMode(
+                enabled: !on,
+                child: Offstage(offstage: on, child: child),
+              ),
+            ),
+            AnimatedSwitcher(
+              duration: Duration.zero,
+              reverseDuration: const Duration(milliseconds: 160),
+              layoutBuilder: (current, previous) => Stack(
+                fit: StackFit.expand,
+                children: [...previous, if (current != null) current],
+              ),
+              child: on ? const LockScreen() : const SizedBox.shrink(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Back on the lock leaves the app, as it did when the lock was the first
+/// screen, and never pops, unseen, the screens hidden under it. Added in
+/// main() before runApp, so it is asked before the app's Navigator is.
+class LockBackGuard with WidgetsBindingObserver {
+  LockBackGuard(this.locked);
+
+  final bool Function() locked;
+
+  @override
+  Future<bool> didPopRoute() async {
+    if (!locked()) return false;
+    await SystemNavigator.pop();
+    return true;
+  }
+}
+
+/// F1 — the gate shown while [AppLock.shouldLock] is true, above every
+/// screen ([LockLayer]). Fires the biometric prompt immediately on open; a
+/// 4-digit PIN pad is always available underneath. Nothing under it can be
+/// seen or used until unlock.
 class LockScreen extends StatefulWidget {
   const LockScreen({super.key});
 

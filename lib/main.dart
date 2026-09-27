@@ -89,6 +89,8 @@ Future<void> main() async {
   }
   await fonts; // usually long done; never throws
   AppLock.instance.init(); // F1 — resolves before AuthGate finishes restoring
+  // Before runApp, so back reaches it before the app's Navigator.
+  WidgetsBinding.instance.addObserver(LockBackGuard(() => AuthGate.locked));
   // Signing out also clears this phone's copy of the identity video and
   // any downloaded video notes (2026-09-26).
   AvatarMessageService.wireSignOut();
@@ -129,6 +131,12 @@ class MyAssistantApp extends StatelessWidget {
         theme: AppTheme.light(),
         darkTheme: AppTheme.light(),
         themeMode: ThemeMode.light, // AppTheme reads Neon.isDark itself
+        // F1 — the app lock, drawn over the Navigator so it covers every
+        // screen, not only the first one (audit, 2026-09-27).
+        builder: (context, child) => LockLayer(
+            locked: () => AuthGate.locked,
+            changes: AuthGate.lockChanges,
+            child: child!),
         home: KeyedSubtree(
             key: ValueKey('$dark|${AccentController.seed.value.toARGB32()}'),
             child: const AuthGate()),
@@ -161,18 +169,52 @@ const bool _skipPhoneGate =
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
+  /// Up while the session restores and the splash plays. A theme change
+  /// rebuilds the entire tree from the root (see the KeyedSubtree in
+  /// [MyAssistantApp]), so the State is recreated even though the app
+  /// never left the foreground. Restoring the session is a
+  /// once-per-process job: re-running it flashed the splash screen over a
+  /// live app and re-ran the launch sequence behind it. Adaptive theme
+  /// does that flip on its own at dusk and dawn. So this lives here, not
+  /// in the State.
+  static final ValueNotifier<bool> splash =
+      ValueNotifier<bool>(!AuthService.instance.restored);
+  static bool _restoreStarted = false;
+
+  /// Whether the app lock (F1) is up now. [LockLayer] draws it over every
+  /// screen; it applies where [_AuthGateState._gate] would reach the app
+  /// itself — never over the splash, sign-in or number verification.
+  static bool get locked {
+    if (splash.value) return false;
+    final auth = AuthService.instance;
+    if (!auth.isSignedIn || _needsPhone(auth)) return false;
+    return AppLock.instance.shouldLock;
+  }
+
+  /// What [locked] depends on.
+  static final Listenable lockChanges =
+      Listenable.merge([splash, AuthService.instance, AppLock.instance]);
+
+  /// Registration is not finished until a number is VERIFIED: it is the
+  /// address other people's agents deliver to, so an account without one
+  /// can never be reached.
+  ///
+  /// id == -1 is the offline/server-hiccup placeholder AuthService falls
+  /// back to, and it carries no phone state. Gating on it would strand an
+  /// already-verified user behind a screen that cannot complete without a
+  /// network — so an unknown user is let through, and the gate applies
+  /// only when the server actually told us the number is missing.
+  static bool _needsPhone(AuthService auth) {
+    final u = auth.user;
+    return !_skipPhoneGate && u != null && u.id > 0 && !u.phoneVerified;
+  }
+
   @override
   State<AuthGate> createState() => _AuthGateState();
 }
 
 class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
-  /// A theme change rebuilds the entire tree from the root (see the
-  /// KeyedSubtree in [MyAssistantApp]), so this State is recreated even
-  /// though the app never left the foreground. Restoring the session is a
-  /// once-per-process job: re-running it flashed the splash screen over a
-  /// live app and re-ran the launch sequence behind it. Adaptive theme
-  /// does that flip on its own at dusk and dawn.
-  late bool _restoring = !AuthService.instance.restored;
+  bool get _restoring => AuthGate.splash.value;
 
   @override
   void initState() {
@@ -180,7 +222,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this); // F1 — relock on background
     AppLock.instance.addListener(_onAuthChanged);
     AuthService.instance.addListener(_onAuthChanged);
-    if (_restoring) {
+    AuthGate.splash.addListener(_onAuthChanged);
+    if (_restoring && !AuthGate._restoreStarted) {
+      AuthGate._restoreStarted = true;
       // THE SPLASH MUST BE SEEN. A cached session restores in ~50 ms,
       // which gave the animated opening exactly one frame — "the splash
       // screen is not visible". Hold it just long enough for the
@@ -189,15 +233,15 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       AuthService.instance.init().whenComplete(() {
         const minShow = Duration(milliseconds: 1700);
         final left = minShow - DateTime.now().difference(shownAt);
-        Future.delayed(left.isNegative ? Duration.zero : left, () {
-          if (mounted) setState(() => _restoring = false);
-        });
+        Future.delayed(left.isNegative ? Duration.zero : left,
+            () => AuthGate.splash.value = false);
       });
     }
   }
 
   @override
   void dispose() {
+    AuthGate.splash.removeListener(_onAuthChanged);
     AuthService.instance.removeListener(_onAuthChanged);
     AppLock.instance.removeListener(_onAuthChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -242,7 +286,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final gate = _gate();
     return AnimatedSwitcher(
-      duration: gate is LockScreen
+      duration: gate is _Locked
           ? Duration.zero
           : const Duration(milliseconds: 280),
       reverseDuration: const Duration(milliseconds: 160),
@@ -260,24 +304,22 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (_restoring) return const SplashScreen();
     final auth = AuthService.instance;
     if (!auth.isSignedIn) return const AuthScreen();
+    if (AuthGate._needsPhone(auth)) return const PhoneVerifyScreen();
 
-    // Registration is not finished until a number is VERIFIED: it is the
-    // address other people's agents deliver to, so an account without one
-    // can never be reached.
-    //
-    // id == -1 is the offline/server-hiccup placeholder AuthService falls
-    // back to, and it carries no phone state. Gating on it would strand an
-    // already-verified user behind a screen that cannot complete without a
-    // network — so an unknown user is let through, and the gate applies
-    // only when the server actually told us the number is missing.
-    final u = auth.user;
-    if (!_skipPhoneGate && u != null && u.id > 0 && !u.phoneVerified) {
-      return const PhoneVerifyScreen();
-    }
-
-    // F1 — optional fingerprint/PIN wall in front of everything.
-    if (AppLock.instance.shouldLock) return const LockScreen();
+    // F1 — optional fingerprint/PIN wall in front of everything. The lock
+    // itself is drawn over every screen by LockLayer; here the app stops
+    // until unlock, its live voice session included.
+    if (AppLock.instance.shouldLock) return const _Locked();
     // Last onboarding step: a first-time account names its assistant.
     return const AssistantSetupGate();
   }
+}
+
+/// Home while the app lock is up: nothing runs and nothing shows under
+/// the lock ([LockLayer]).
+class _Locked extends StatelessWidget {
+  const _Locked();
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(color: Neon.bg);
 }

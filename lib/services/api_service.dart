@@ -1153,10 +1153,19 @@ class ApiService {
     }
   }
 
-  static Future<void> disconnectGoogle() async {
-    await http
-        .delete(Uri.parse('$baseUrl/google'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
+  /// True only when the server says the link is gone. A 5xx or a dead
+  /// network used to read as "disconnected" while the server still held
+  /// the grant and kept reading mail (audit, 2026-09-27).
+  static Future<bool> disconnectGoogle() async {
+    try {
+      final r = await http
+          .delete(Uri.parse('$baseUrl/google'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 15));
+      _flagAuthFailure(r.statusCode);
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// null = Gmail not linked yet (409).
