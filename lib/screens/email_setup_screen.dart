@@ -157,17 +157,32 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
       ),
     );
     if (sure != true) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = '';
+    });
+    // Unlinked only when the server says so. A failure used to show
+    // "disconnected" while the server kept the grant or the password and
+    // went on reading mail (audit, 2026-09-27).
+    var ok = false;
     try {
       if (isGoogle) {
-        await ApiService.disconnectGoogle();
+        ok = await ApiService.disconnectGoogle();
       } else {
-        await http
+        final r = await http
             .delete(Uri.parse('$_base/email/account'), headers: _headers)
             .timeout(const Duration(seconds: 15));
+        ok = r.statusCode == 200;
       }
     } catch (_) {}
     if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        _busy = false;
+        _error = "Couldn't disconnect — try again.";
+      });
+      return;
+    }
     setState(() {
       _busy = false;
       _connected = false;
@@ -175,6 +190,9 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
       _method = '';
       _connectedAddress = '';
     });
+    // Then what the server holds: a mail password and a Google link can
+    // both be set, and unlinking one leaves the other.
+    await _load();
   }
 
 
@@ -438,6 +456,12 @@ class _EmailSetupScreenState extends State<EmailSetupScreen> {
             ),
           ),
         ),
+        if (_error.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(_error,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Neon.errorInk, fontSize: 13)),
+        ],
       ],
     );
   }
