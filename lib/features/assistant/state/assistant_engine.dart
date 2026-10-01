@@ -2472,6 +2472,7 @@ class AssistantEngine extends ChangeNotifier {
           retryGapMinutes: (e['retry_gap_minutes'] as num?)?.toInt() ?? 0,
           tone: e['tone'] as String?,
           language: e['language'] as String?,
+          voice: e['voice'] as String?,
         );
         break;
 
@@ -3396,6 +3397,7 @@ class AssistantEngine extends ChangeNotifier {
   int _localCallRetryGap = 0;
   String? _localCallTone;
 
+  String? _localCallVoice;
   /// The language the relayed message is to be spoken in ('ml' for
   /// Malayalam…), as the server worked it out when the user confirmed the
   /// read-back (2026-09-26). Null: the usual.
@@ -3412,13 +3414,15 @@ class AssistantEngine extends ChangeNotifier {
       int retryTimes = 0,
       int retryGapMinutes = 0,
       String? tone,
-      String? language}) async {
+      String? language,
+      String? voice}) async {
     if (name.trim().isEmpty) return;
     // Whatever the user decided about a no-answer. Zero means one
     // attempt — the assistant never invents a retry.
     _localCallRetryTimes = retryTimes;
     _localCallRetryGap = retryGapMinutes;
     _localCallTone = tone;
+    _localCallVoice = voice;
     _localCallLanguage = language;
     _localCallTask = message;
     _localCallAgentAvailable = agentAvailable;
@@ -3582,6 +3586,7 @@ class AssistantEngine extends ChangeNotifier {
           retryTimes: _localCallRetryTimes,
           retryGapMinutes: _localCallRetryGap,
           tone: _localCallTone,
+          voice: _localCallVoice,
           lang: _localCallLanguage,
         );
       } catch (_) {

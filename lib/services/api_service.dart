@@ -675,6 +675,8 @@ class ApiService {
     // How the call should sound, when the user asked for something other
     // than ordinary courtesy. Null keeps the warm default.
     String? tone,
+    // Whose voice makes the call: 'woman' (default) or 'man', when asked.
+    String? voice,
   }) async {
     final r = await _client
         .post(
@@ -687,6 +689,7 @@ class ApiService {
             if (retryTimes > 0) 'retryTimes': retryTimes,
             if (retryGapMinutes > 0) 'retryGapMinutes': retryGapMinutes,
             if (tone != null && tone.isNotEmpty) 'tone': tone,
+            if (voice != null && voice.isNotEmpty) 'voice': voice,
             if (lang != null) 'lang': lang,
           }),
         )

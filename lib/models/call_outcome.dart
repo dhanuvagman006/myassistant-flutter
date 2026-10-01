@@ -11,6 +11,9 @@ class CallOutcome {
   final String status; // dialing | connected | completed | no_answer | failed…
   final String reason; // why it failed, when it did
   final String transcript; // "assistant: …\nuser: …"
+  final String recordingUrl; // the call's recording, when the service kept one
+  final List<String> notes; // what the caller noted for the user mid-call
+  final String voice; // 'woman' | 'man'
   final int createdAt;
   final int updatedAt;
 
@@ -21,6 +24,9 @@ class CallOutcome {
     required this.status,
     required this.reason,
     required this.transcript,
+    this.recordingUrl = '',
+    this.notes = const [],
+    this.voice = '',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -60,6 +66,11 @@ class CallOutcome {
         status: (j['status'] ?? '').toString(),
         reason: (j['reason'] ?? '').toString(),
         transcript: (j['transcript'] ?? '').toString(),
+        recordingUrl: (j['recordingUrl'] ?? '').toString(),
+        notes: (j['notes'] is List)
+            ? (j['notes'] as List).map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false)
+            : const [],
+        voice: (j['voice'] ?? '').toString(),
         createdAt: (j['createdAt'] as num?)?.toInt() ?? 0,
         updatedAt: (j['updatedAt'] as num?)?.toInt() ?? 0,
       );

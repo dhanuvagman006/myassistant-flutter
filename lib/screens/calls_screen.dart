@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
@@ -24,6 +25,36 @@ class CallsScreen extends StatefulWidget {
 }
 
 class _CallsScreenState extends State<CallsScreen> {
+  // One player for the screen: the call being heard, if any.
+  final AudioPlayer _player = AudioPlayer(playerId: 'agent_call_recording');
+  int? _playingId;
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _togglePlay(CallOutcome c) async {
+    if (_playingId == c.id) {
+      await _player.stop();
+      if (mounted) setState(() => _playingId = null);
+      return;
+    }
+    try {
+      await _player.stop();
+      await _player.play(UrlSource(c.recordingUrl));
+      if (mounted) setState(() => _playingId = c.id);
+      _player.onPlayerComplete.first.then((_) {
+        if (mounted && _playingId == c.id) setState(() => _playingId = null);
+      });
+    } catch (_) {
+      if (mounted) {
+        AppFeedback.show("Couldn't play the recording", context: context, tone: FeedbackTone.error);
+      }
+    }
+  }
+
   List<CallOutcome>? _calls;
   String? _error;
   final _expanded = <int>{};
@@ -193,6 +224,34 @@ class _CallsScreenState extends State<CallsScreen> {
                 Text(said.join('  ·  '),
                     style: TextStyle(
                         color: Neon.textHi, fontSize: NeonType.body, height: 1.4)),
+              ],
+            ),
+          ),
+        ],
+        // What the caller wrote down for the user during the call.
+        if (c.notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('Noted for you',
+              style: NeonType.manrope(NeonType.caption, FontWeight.w700)
+                  .copyWith(color: Neon.textDim, letterSpacing: 0.4)),
+          const SizedBox(height: 3),
+          Text(c.notes.join(' '),
+              style: TextStyle(color: Neon.textHi, fontSize: NeonType.body, height: 1.4)),
+        ],
+        // The recording itself, when the calling service kept one.
+        if (c.recordingUrl.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _togglePlay(c),
+            child: Row(
+              children: [
+                Icon(_playingId == c.id ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded,
+                    color: tint, size: 20),
+                const SizedBox(width: 6),
+                Text(_playingId == c.id ? 'Stop' : 'Hear the call',
+                    style: NeonType.manrope(NeonType.footnote, FontWeight.w600)
+                        .copyWith(color: tint)),
               ],
             ),
           ),

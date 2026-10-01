@@ -42,6 +42,9 @@ class FeaturesScreen extends StatelessWidget {
     ]),
     ('PHONE & PEOPLE', [
       ('Calls for you', "Dial anyone — or 'call Ravi and tell him I'm late': it speaks for you, retries if you ask"),
+      ('A voice that fits', "Woman's or man's voice; firm for dues, warm for wishes, gentle for bad news — or 'be firm'"),
+      ('Calls in six languages', 'English, Hindi, Kannada, Malayalam, Tamil, Telugu — and it follows the other person'),
+      ('What came of it', "What they promised is noted for you; hear the recording in Calls; 'connect me' hands the call to you"),
       ('Wake-up calls', "'Call me at 5 and wake me up' — it keeps calling until you answer"),
       ('Calls on any app', 'WhatsApp, Telegram, Signal calls by name'),
       ('Missed calls & call notes', "'Any missed calls?'; recorded calls analysed — ask what Ravi said"),
