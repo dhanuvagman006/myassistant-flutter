@@ -5,8 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
+import '../design/motion.dart';
+import '../widgets/chat_bubble.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
 ///  A GROUP, WITH THE ASSISTANT IN IT.
@@ -134,8 +137,14 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   void _toBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
-        _scroll.animateTo(_scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 240), curve: Curves.easeOut);
+        final end = _scroll.position.maxScrollExtent;
+        // Motion tokens (2026-09-30); a jump with animations off.
+        if (Motion.reduced(context)) {
+          _scroll.jumpTo(end);
+        } else {
+          _scroll.animateTo(end,
+              duration: Motion.pageBack, curve: Motion.easeMove);
+        }
       }
     });
   }
@@ -191,15 +200,11 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   }
 
   Future<bool> _confirm(String title, String body, String action) async {
-    final r = await showDialog<bool>(
+    final r = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: Neon.surface,
-        title: Text(title,
-            style: GoogleFonts.spaceGrotesk(
-                color: Neon.textHi, fontWeight: FontWeight.w700, fontSize: 17)),
-        content: Text(body,
-            style: TextStyle(color: Neon.textLo, height: 1.4, fontSize: 14)),
+        title: Text(title),
+        content: Text(body),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(c).pop(false),
@@ -221,12 +226,8 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   Future<void> _messageMenu(_Msg m) async {
     if (m.deleted || m.id == 0) return;
     HapticFeedback.selectionClick();
-    final choice = await showModalBottomSheet<String>(
+    final choice = await showAppSheet<String>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (c) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -279,24 +280,21 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // 2026-09-30: under the app's sky; the menu takes the theme's surface.
+    return NeonScaffold(
       appBar: AppBar(
-        backgroundColor: Neon.bg,
-        titleSpacing: 0,
         actions: [
           PopupMenuButton<String>(
-            color: Neon.surface,
+            popUpAnimationStyle: appMenuAnimation(context),
             onSelected: _onMenu,
             itemBuilder: (_) => [
               PopupMenuItem(
                 value: 'mute',
-                child: Text(_muted ? 'Unmute' : 'Mute notifications',
-                    style: TextStyle(color: Neon.textHi)),
+                child: Text(_muted ? 'Unmute' : 'Mute notifications'),
               ),
-              PopupMenuItem(
+              const PopupMenuItem(
                 value: 'clear',
-                child: Text('Clear chat', style: TextStyle(color: Neon.textHi)),
+                child: Text('Clear chat'),
               ),
               PopupMenuItem(
                 value: 'leave',
@@ -309,6 +307,8 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.spaceGrotesk(
                     fontWeight: FontWeight.w700, fontSize: 17)),
             Text(
@@ -323,51 +323,26 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
           _agentBar(),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                ? const NeonLoader.page()
                 : _failed && _messages.isEmpty
-                    ? Center(
-                        // Scrolls: with the keyboard up there is little room.
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.cloud_off_rounded,
-                                  size: 34, color: Neon.textLo),
-                              const SizedBox(height: 12),
-                              Text(
-                                "Couldn't load this group. Check your "
-                                'connection.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Neon.textLo, height: 1.45),
-                              ),
-                              const SizedBox(height: 10),
-                              TextButton.icon(
-                                onPressed: () {
-                                  setState(() {
-                                    _failed = false;
-                                    _loading = true;
-                                  });
-                                  _load();
-                                },
-                                icon: const Icon(Icons.refresh_rounded,
-                                    size: 18),
-                                label: const Text('Try again'),
-                              ),
-                            ],
-                          ),
-                        ),
+                    // Scrolls when the keyboard leaves little room.
+                    ? NeonErrorState(
+                        message: "Couldn't load this group",
+                        onRetry: () {
+                          setState(() {
+                            _failed = false;
+                            _loading = true;
+                          });
+                          _load();
+                        },
                       )
                 : _messages.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Text(
-                            'No messages yet. Say hello.',
-                            style: TextStyle(color: Neon.textLo),
-                          ),
-                        ),
+                    // The shared empty state (2026-09-30); the box below
+                    // is the next step.
+                    ? const NeonEmptyState(
+                        icon: Icons.forum_outlined,
+                        title: 'No messages yet',
+                        body: 'Say hello.',
                       )
                     : ListView.builder(
                         controller: _scroll,
@@ -383,105 +358,98 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   }
 
   /// The switch, and the sentence that makes the whole design honest.
-  Widget _agentBar() => Container(
-        width: double.infinity,
-        margin: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.support_agent_rounded,
-                size: 19, color: _agentReplies ? Neon.violet : Neon.textLo),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Let my assistant reply here',
-                    style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600),
+  /// LIT WHEN ON (2026-09-30): the room's one important state, so the
+  /// card glows while assistants may answer here and sits quiet when not.
+  Widget _agentBar() => Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+        child: GlowCard(
+          tone: NeonTone.brand,
+          radius: Neon.rMd,
+          rimWidth: _agentReplies ? 1.8 : 1.2,
+          halo: _agentReplies ? 0.6 : 0,
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+          // One node for a screen reader: the switch is named by the words
+          // beside it (it was an unlabelled toggle).
+          child: MergeSemantics(
+            child: Row(
+              children: [
+                Icon(Icons.support_agent_rounded,
+                    size: 19,
+                    color: _agentReplies ? Neon.violet : Neon.textLo),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Let my assistant reply here',
+                        style: TextStyle(
+                            color: Neon.textHi,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'In this group, members’ assistants may answer for '
+                        'them while they are away.',
+                        style: TextStyle(
+                            color: Neon.textLo, fontSize: 12, height: 1.35),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'In this group, members’ assistants may answer for '
-                    'them while they are away.',
-                    style: TextStyle(
-                        color: Neon.textLo, fontSize: 12, height: 1.35),
-                  ),
-                ],
-              ),
+                ),
+                Switch(
+                  value: _agentReplies,
+                  onChanged: _toggleAgent,
+                ),
+              ],
             ),
-            Switch(
-              value: _agentReplies,
-              activeThumbColor: Colors.white,
-              activeTrackColor: Neon.violet,
-              onChanged: _toggleAgent,
-            ),
-          ],
+          ),
         ),
       );
 
+  /// 2026-09-30: the shared bubble (lib/widgets/chat_bubble.dart) — yours
+  /// in the brand gradient with its halo, theirs on the raised surface
+  /// with a rim and the sender's first name in the accent.
   Widget _bubble(_Msg m) {
     final mine = m.mine;
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _messageMenu(m),
-        child: Container(
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.74),
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.fromLTRB(13, 9, 13, 9),
-        decoration: BoxDecoration(
-          color: mine ? Neon.violet.withValues(alpha: 0.22) : Neon.surface,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(mine ? 16 : 5),
-            bottomRight: Radius.circular(mine ? 5 : 16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!mine && m.name.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 3),
-                child: Text(
-                  m.name.split(' ').first,
-                  style: GoogleFonts.spaceGrotesk(
-                    color: Neon.violet,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+    final quiet = ChatBubble.quietInk(mine);
+    return ChatBubble(
+      mine: mine,
+      maxWidthFactor: 0.74,
+      onLongPress: m.deleted || m.id == 0 ? null : () => _messageMenu(m),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!mine && m.name.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                m.name.split(' ').first,
+                style: GoogleFonts.spaceGrotesk(
+                  color: Neon.cyanInk,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-            m.deleted
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.block_rounded,
-                          size: 14, color: Neon.textLo),
-                      const SizedBox(width: 6),
-                      Text('This message was deleted',
-                          style: TextStyle(
-                              color: Neon.textLo,
-                              fontSize: 14,
-                              fontStyle: FontStyle.italic)),
-                    ],
-                  )
-                : Text(m.text,
-                    style: TextStyle(
-                        color: Neon.textHi, fontSize: 15, height: 1.32)),
-          ],
-        ),
-      ),
+            ),
+          m.deleted
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.block_rounded, size: 14, color: quiet),
+                    const SizedBox(width: 6),
+                    Text('This message was deleted',
+                        style: TextStyle(
+                            color: quiet,
+                            fontSize: 14,
+                            fontStyle: FontStyle.italic)),
+                  ],
+                )
+              : Text(m.text,
+                  style: TextStyle(
+                      color: ChatBubble.ink(mine), fontSize: 15, height: 1.32)),
+        ],
       ),
     );
   }
@@ -493,44 +461,16 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   Widget _composer() => SafeArea(
         top: false,
         child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _c,
-                minLines: 1,
-                maxLines: 4,
-                // Single-line to the keyboard, so its Send key sends (a
-                // multi-line field makes Android type a newline instead).
-                keyboardType: TextInputType.text,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _send(),
-                onEditingComplete: () {},
-                style: TextStyle(color: Neon.textHi),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Message',
-                  hintStyle: TextStyle(color: Neon.textLo),
-                  filled: true,
-                  fillColor: Neon.surface,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: _send,
-              style: IconButton.styleFrom(backgroundColor: Neon.violet),
-              icon: Icon(Icons.arrow_upward_rounded, color: Neon.onAccent),
-            ),
-          ],
-        ),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          // The shared composer (2026-09-30): the rim lights while typing,
+          // the send button glows.
+          child: ChatComposer(
+            controller: _c,
+            onSend: _send,
+            hintText: 'Message',
+            sendIcon: Icons.arrow_upward_rounded,
+            textCapitalization: TextCapitalization.none,
+          ),
         ),
       );
 }

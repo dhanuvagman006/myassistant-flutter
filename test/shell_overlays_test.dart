@@ -39,6 +39,8 @@ void main() {
     expect(find.text('Monsoon arrives early'), findsOneWidget);
     final popped = await tester.binding.handlePopRoute();
     await tester.pump(const Duration(milliseconds: 300));
+    // It fades and sinks away in 120 ms (ExitPresence).
+    await tester.pump(const Duration(milliseconds: 200));
     expect(popped, isTrue, reason: 'Back was handled by the app');
     expect(engine.newsItems, isEmpty);
     expect(find.text('Monsoon arrives early'), findsNothing);
@@ -60,6 +62,7 @@ void main() {
     expect(card.top, greaterThan(0), reason: 'and not off the top of the screen');
     await tester.tap(find.byTooltip('Close sources'));
     await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 200)); // the card's exit
     expect(engine.searchResults, isEmpty);
     expect(find.text('Train times'), findsNothing);
     await teardown(tester);

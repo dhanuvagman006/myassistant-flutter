@@ -5,10 +5,9 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:myassistant/services/live_service.dart';
-import 'package:myassistant/services/playback_envelope.dart';
+import 'package:myassistant/services/audio/pcm_player.dart';
+import 'package:myassistant/services/audio/playback_envelope.dart';
 
 /// [ms] of a 440 Hz tone at [amp] (0..1 of full scale), PCM16 at 24 kHz.
 Uint8List _tone(int ms, double amp) {
@@ -68,17 +67,18 @@ void main() {
     expect(e.levelAt(190000), greaterThan(0));
   });
 
-  test('muted, she makes no sound, so the rings do not move', () {
-    // The recorder registers with its plugin when LiveService is built.
-    TestWidgetsFlutterBinding.ensureInitialized();
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            const MethodChannel('com.llfbandit.record/messages'),
-            (call) async => null);
-    final live = LiveService.instance;
-    live.speakerMuted = true;
-    expect(live.playbackLevelNow(), 0);
-    live.speakerMuted = false;
-    expect(live.playbackLevelNow(), 0, reason: 'nothing queued');
+  test('muted, she makes no sound, so the rings do not move', () async {
+    var now = 0;
+    final player = PcmPlayer(output: SilentOutput(), clockUs: () => now);
+    expect(player.levelNow(), 0, reason: 'nothing queued');
+    player.muted = true;
+    await player.play(_tone(400, 0.5), sampleRate: 24000);
+    now = 200000;
+    expect(player.levelNow(), 0);
+    player.muted = false;
+    await player.play(_tone(400, 0.5), sampleRate: 24000);
+    now = 600000;
+    expect(player.levelNow(), greaterThan(0), reason: 'heard, unmuted');
+    await player.stop();
   });
 }

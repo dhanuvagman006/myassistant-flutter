@@ -169,7 +169,7 @@ class SignaturePadState extends State<SignaturePadScreen> {
                       child: FilledButton(
                         onPressed: canSave && !_saving ? save : null,
                         style: FilledButton.styleFrom(
-                          backgroundColor: Neon.violet,
+                          backgroundColor: Neon.accentFill,
                           foregroundColor: Neon.onAccent,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),

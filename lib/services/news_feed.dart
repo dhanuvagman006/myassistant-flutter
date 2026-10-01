@@ -54,11 +54,19 @@ abstract final class NewsFeed {
 
   static bool _warming = false;
 
-  static List<NewsItem> parse(Object? raw) => (raw is List ? raw : const [])
-      .whereType<Map<String, dynamic>>()
-      .map(NewsItem.fromJson)
-      .where((n) => n.title.isNotEmpty)
-      .toList(growable: false);
+  /// One bad story is skipped and logged, never the whole feed.
+  static List<NewsItem> parse(Object? raw) {
+    final out = <NewsItem>[];
+    for (final m in (raw is List ? raw : const []).whereType<Map<String, dynamic>>()) {
+      try {
+        final n = NewsItem.fromJson(m);
+        if (n.title.isNotEmpty) out.add(n);
+      } catch (e) {
+        AppLog.add('news', 'story skipped: $e');
+      }
+    }
+    return List.unmodifiable(out);
+  }
 }
 
 /// The last feed per topic, as the server sent it.

@@ -15,7 +15,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:myassistant/design/accent_controller.dart';
@@ -25,7 +24,6 @@ import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/models/user_document.dart';
 import 'package:myassistant/screens/assistant_settings_screen.dart';
-import 'package:myassistant/screens/automation_setup_screen.dart';
 import 'package:myassistant/screens/home_dashboard.dart';
 import 'package:myassistant/screens/hub_screen.dart';
 import 'package:myassistant/theme/app_theme.dart';
@@ -286,7 +284,7 @@ void main() {
       expect(await glyph(), nightInk, reason: 'white on #3FE3FD was 1.4:1');
     });
 
-    testWidgets('the mic glyph is dark ink on the evening pastel accent',
+    testWidgets('the mic glyph is white on its deep-navy centre, whatever the accent',
         (t) async {
       Neon.setDark(true);
       Neon.setAccent(const Color(0xFF8B9CFF));
@@ -296,8 +294,10 @@ void main() {
               child: AssistantOrbButton(onTap: () {}, onLongPress: () {})),
         ),
       ));
-      expect(t.widget<Icon>(find.byIcon(Icons.mic_rounded)).color, nightInk,
-          reason: 'white measured 2.53:1 on #8B9CFF');
+      // The ring of light holds the accent now (2026-09-30); the glyph sits
+      // on #0A1142–#1B2A7A, where white is well over 4.5:1.
+      // 2026-09-30: the text white token (#F3F6FF), not a raw white.
+      expect(t.widget<Icon>(find.byIcon(Icons.mic_rounded)).color, Neon.textHi);
     });
   });
 
@@ -355,45 +355,28 @@ void main() {
     await closeApp(t);
   });
 
-  testWidgets('Do it for me: "Open settings" is in reach without scrolling',
-      (t) async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('hari/automation'),
-            (c) async {
-      if (c.method == 'status') return {'connected': false, 'enabled': false};
-      return true;
-    });
-    addTearDown(() => TestDefaultBinaryMessengerBinding
-        .instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-            const MethodChannel('hari/automation'), null));
-    // The owner's phone.
-    t.view.devicePixelRatio = 2.625;
-    t.view.physicalSize = const Size(1080, 2340);
-    addTearDown(t.view.reset);
-    await t.pumpWidget(const MaterialApp(home: AutomationSetupScreen()));
-    await t.pump();
-    final button = find.text('Open settings');
-    expect(button, findsOneWidget);
-    expect(find.descendant(of: find.byType(Scrollable), matching: button),
-        findsNothing,
-        reason: 'pinned under the page, not at the end of the list');
-    expect(t.getRect(button).bottom, lessThanOrEqualTo(2340 / 2.625));
-    expect(styleOf(t, 'One-time permission').fontFamily, 'Manrope_700');
-    await t.pumpWidget(const SizedBox());
-  });
-
   testWidgets('You: one Voice card, and Theme colour inside Appearance',
       (t) async {
     await pumpOffline(t, const AssistantSettingsScreen());
-    expect(find.text('VOICE'), findsOneWidget);
-    expect(find.text('ASSISTANT VOICE'), findsNothing);
-    expect(find.text('RECOGNISE MY VOICE'), findsNothing);
     GroupedCard cardOf(String text) => t.widget<GroupedCard>(find
         .ancestor(of: find.text(text), matching: find.byType(GroupedCard))
         .first);
-    expect(identical(cardOf('Theme colour'), cardOf('Adaptive')), isTrue);
-    expect(identical(cardOf('Voice ID'), cardOf('Assistant voice')), isTrue);
+    // One design in every theme (2026-09-30): Adaptive, Light and Dark are
+    // gone; Theme colour stays in Appearance.
+    expect(find.text('APPEARANCE'), findsOneWidget);
+    expect(find.text('Adaptive'), findsNothing);
+    expect(find.text('Theme colour'), findsOneWidget);
+    cardOf('Theme colour');
+    // Below Appearance and Home (News on Home, 2026-09-30).
+    await t.scrollUntilVisible(find.text('VOICE'), 200,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('VOICE'), findsOneWidget);
+    expect(find.text('ASSISTANT VOICE'), findsNothing);
+    expect(find.text('RECOGNISE MY VOICE'), findsNothing);
+    // Voice ID left with the live socket (2026-09-29): nothing heard the
+    // owner's audio to check it against any more.
+    expect(find.text('Voice ID'), findsNothing);
+    expect(find.text('Respond only to my voice'), findsNothing);
     await closeApp(t);
   });
 
@@ -487,8 +470,7 @@ void main() {
         if (red.hasMatch(src)) path,
     ];
     expect(hits, isEmpty, reason: '#EF4444 words are 3.8:1 on white');
-    final today = File('lib/features/assistant/widgets/today_panel.dart')
-        .readAsStringSync();
-    expect(today.contains('BackdropFilter('), isFalse);
+    final home = File('lib/features/home/home_cards.dart').readAsStringSync();
+    expect(home.contains('BackdropFilter('), isFalse);
   });
 }

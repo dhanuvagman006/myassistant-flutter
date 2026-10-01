@@ -2,8 +2,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:myassistant/services/barge_in.dart';
-import 'package:myassistant/services/echo_reference.dart';
+import 'package:myassistant/services/audio/barge_in.dart';
+import 'package:myassistant/services/audio/echo_reference.dart';
 
 /// Talking over her (owner, 2026-09-26: "interrupt should be there… a
 /// strong valid one interrupt… how we talk with a human"), without her

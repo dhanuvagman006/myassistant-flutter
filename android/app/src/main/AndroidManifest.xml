@@ -7,12 +7,7 @@
 <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
     tools:ignore="ProtectedPermissions"/>
 <uses-permission android:name="android.permission.RECORD_AUDIO"/>
-<!-- "Talk while it works" (owner, 2026-09-25: "start talk while it works").
-     Android lets an app keep the microphone after it leaves the screen only
-     inside a foreground service of type "microphone" (TaskVoiceService).
-     In this build only the mic test on the Diagnostics screen starts it. -->
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
 <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
 <uses-permission android:name="android.permission.CAMERA"/>
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -324,34 +319,6 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_task_info" />
         </receiver>
-
-        <!-- "DO IT FOR ME": the assistant's hands in other apps. Off until
-             the owner switches it on in Accessibility settings (the app
-             shows a plain-words disclosure first). Only the system can
-             bind it (BIND_ACCESSIBILITY_SERVICE). -->
-        <service
-            android:name=".HariAccessibilityService"
-            android:label="@string/automation_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/hari_automation" />
-        </service>
-
-        <!-- "TALK WHILE IT WORKS": holds the microphone while another app
-             is on screen (owner, 2026-09-25: "start talk while it works").
-             Not exported: only this app starts it, and only from the
-             resumed MainActivity. stopWithTask: swiping the app away lets
-             the microphone go. See TaskVoiceService. -->
-        <service
-            android:name=".TaskVoiceService"
-            android:exported="false"
-            android:foregroundServiceType="microphone"
-            android:stopWithTask="true" />
 
         <meta-data
             android:name="flutterEmbedding"

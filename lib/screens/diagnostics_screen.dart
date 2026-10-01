@@ -5,10 +5,10 @@ import 'package:http/http.dart' as http;
 import '../core/log.dart';
 import 'assistant_settings_screen.dart';
 import 'mcp_servers_screen.dart';
-import 'mic_probe_screen.dart';
 import '../design/apple_kit.dart';
 import '../design/gyro_motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
@@ -21,7 +21,6 @@ import '../services/app_feedback.dart';
 ///      the app at your laptop's LAN IP while developing)
 ///    • a live /health check with the raw failure text
 ///    • the assistant stream state
-///    • the mic test ("talk while it works", MicProbeScreen)
 ///    • the app log tail (every API/SSE/voice event, timestamped)
 /// ─────────────────────────────────────────────────────────────────────────
 class DiagnosticsScreen extends StatefulWidget {
@@ -44,9 +43,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     });
     final url = '${ApiService.baseUrl}/health';
     try {
-      final r = await http
-          .get(Uri.parse(url))
-          .timeout(const Duration(seconds: 8));
+      final r =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 8));
       _healthResult = 'HTTP ${r.statusCode} — ${r.body}';
       AppLog.add('diag', 'health: HTTP ${r.statusCode}');
     } catch (e) {
@@ -60,8 +58,10 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     final v = _url.text.trim();
     await ApiService.setServerOverride(v.isEmpty ? null : v);
     if (!mounted) return;
-    AppFeedback.show('Server set to ${ApiService.baseUrl}. '
-            'Restart the app to reconnect everything.', context: context);
+    AppFeedback.show(
+        'Server set to ${ApiService.baseUrl}. '
+        'Restart the app to reconnect everything.',
+        context: context);
     setState(() {});
   }
 
@@ -74,8 +74,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   @override
   Widget build(BuildContext context) {
     final engine = AssistantEngine.instance;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Connection & diagnostics'),
       body: ListView(
         padding: EdgeInsets.fromLTRB(
@@ -98,21 +97,13 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           const SizedBox(height: 8),
           // Wraps to a second line on narrow screens / large text.
           Wrap(spacing: 10, runSpacing: 8, children: [
+            // The theme's buttons (2026-09-30): Save the lit primary, the
+            // check a rim-only secondary.
             FilledButton(
-              style: FilledButton.styleFrom(
-                  backgroundColor: Neon.violet,
-                  foregroundColor: Neon.onAccent,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12))),
               onPressed: _saveUrl,
               child: const Text('Save'),
             ),
             OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                  foregroundColor: AppleColors.blue,
-                  side: BorderSide(color: Neon.line),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12))),
               onPressed: _checking ? null : _checkHealth,
               child: Text(_checking ? 'Checking…' : 'Test /health'),
             ),
@@ -122,8 +113,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             _panel(
               _healthResult!,
               color: _healthResult!.startsWith('HTTP 200')
-                  ? AppleColors.green
-                  : AppleColors.red,
+                  ? Neon.successInk
+                  : Neon.errorInk,
             ),
           ],
           const SizedBox(height: 24),
@@ -135,8 +126,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
               '${engine.connected ? 'CONNECTED' : 'NOT CONNECTED'}'
               '\nPhase: ${engine.phase.name}'
               '${engine.errorMessage != null ? '\nLast error: ${engine.errorMessage}' : ''}',
-              color:
-                  engine.connected ? AppleColors.green : AppleColors.orange,
+              color: engine.connected ? Neon.successInk : Neon.warningInk,
             ),
           ),
           const SizedBox(height: 10),
@@ -146,8 +136,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           _panel(
             'Motion sensor: ${GyroMotion.instance.sensorSource}',
             color: GyroMotion.instance.sensorSource == 'none'
-                ? AppleColors.orange
-                : AppleColors.green,
+                ? Neon.warningInk
+                : Neon.successInk,
           ),
           const SizedBox(height: 24),
           // MCP lives in settings, never on the live agent screen — the
@@ -157,38 +147,19 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             dividerInset: 60,
             children: [
               AppleRow(
-                leading: IconTile(
-                    Icons.face_retouching_natural, AppleColors.purple),
+                leading:
+                    IconTile(Icons.face_retouching_natural, AppleColors.purple),
                 title: 'Assistant',
                 subtitle: 'Voice, standing rules, app lock',
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const AssistantSettingsScreen())),
               ),
               AppleRow(
-                leading:
-                    IconTile(Icons.extension_rounded, AppleColors.teal),
-                title: 'MCP servers',
-                subtitle: 'Connect external tools (advanced)',
+                leading: IconTile(Icons.extension_rounded, AppleColors.teal),
+                title: 'Connected tools',
+                subtitle: 'Extra tools your assistant can use (advanced)',
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => const McpServersScreen())),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          // "Talk while it works" (owner, 2026-09-25: "start talk while it
-          // works"): first, a test on the phone that the microphone still
-          // hears while another app is on screen. It runs only from here,
-          // only when tapped.
-          const GroupLabel('Tests'),
-          GroupedCard(
-            dividerInset: 60,
-            children: [
-              AppleRow(
-                leading: IconTile(Icons.mic_rounded, AppleColors.orange),
-                title: 'Mic test',
-                subtitle: 'Does the mic still hear you in another app?',
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => const MicProbeScreen())),
               ),
             ],
           ),

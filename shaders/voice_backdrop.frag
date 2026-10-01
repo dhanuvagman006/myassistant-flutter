@@ -71,6 +71,13 @@ uniform vec4 uRibFar;
 uniform vec4 uRibAccent;
 uniform vec4 uSparkle;
 uniform vec4 uWash;
+// THE WORKING LIGHT (2026-09-30, the six states): while a tool runs, a
+// comet on the innermost ring. x: its head's angle (radians, as
+// atan(y, x) measures it, y down); y: its strength 0..1 (0: none, and in
+// the warm-up draw); z: the tail's length (radians); w: its radius (R).
+uniform vec4 uArc;
+uniform vec4 uArcHead;
+uniform vec4 uArcTail;
 
 out vec4 fragColor;
 
@@ -117,6 +124,19 @@ vec4 ring(vec4 acc, float rho, float al, float r0, float h, float e,
   float ts = clamp(1.0 - (al / side) * (al / side), 0.0, 1.0);
   float a = prof(d, h, e, g, a0, a1) * uState.x;
   return over(acc, vec4(mix(top, sideCol, ts) * a, a));
+}
+
+// The working light: bright at its head, fading along its tail, with the
+// rings' own profile across it (a core, an edge, a soft light).
+vec4 arcLight(vec4 acc, vec2 q, float rho) {
+  float d = abs(rho - uArc.w);
+  if (d >= 0.016 + 0.012 + 0.090) return acc;
+  float behind = mod(uArc.x - atan(q.y, q.x), TAU);
+  if (behind >= uArc.z) return acc;
+  float t = behind / uArc.z;
+  float a = prof(d, 0.016, 0.012, 0.090, 1.0, 0.70) * (1.0 - t * t) *
+            uArc.y * uState.x;
+  return over(acc, vec4(mix(uArcHead.rgb, uArcTail.rgb, t) * a, a));
 }
 
 // The ribbons' shape (OrbRings.ribbonMid / ribbonHalf / ribbonEnvelope /
@@ -233,6 +253,8 @@ void main() {
     acc = ring(acc, r3, a3, 1.460, 0.005, 0.007, 0.025, 1.0, 0.30, 36.0, uC11.rgb, uS11.rgb);
     acc = ring(acc, r4, a4, 1.637, 0.005, 0.007, 0.020, 1.0, 0.30, 38.0, uC12.rgb, uS12.rgb);
     acc = ring(acc, r5, a5, 1.815, 0.003, 0.007, 0.015, 1.0, 0.25, 40.0, uC13.rgb, uS13.rgb);
+    // The working light, over the rings (only while a tool runs).
+    if (uArc.y > 0.0) acc = arcLight(acc, q, rho0);
   }
 
   // THE RIBBONS — light-wave strands twisting out to both sides, swaying

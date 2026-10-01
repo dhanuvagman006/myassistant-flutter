@@ -6,11 +6,13 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
+import '../ai/types.dart' show AiAttachment;
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../features/poster/photo_source_sheet.dart';
 import '../features/poster/poster_controller.dart';
 import '../features/poster/poster_screen.dart';
+import '../features/shopping/shopping_share.dart';
 import '../models/user_document.dart' show DocumentUploadException;
 import 'avatar_message_service.dart';
 import 'api_service.dart';
@@ -67,6 +69,16 @@ class ShareIntakeService {
     // A share often arrives as "Some title https://example.com/x" — take
     // the URL when there is one, so read_webpage gets something usable.
     final url = RegExp(r'https?://\S+').firstMatch(text)?.group(0);
+    // ADD TO SHOPPING LIST, OR READ IT (build 124): a Myntra or Amazon link
+    // is usually something to buy, anything else usually something to
+    // read. Both are offered, the likelier first; closing the question
+    // keeps today's behaviour (it is read).
+    final ctx = AvatarMessageService.navigatorKey.currentContext;
+    if (ctx != null && ctx.mounted) {
+      final choice = await ShoppingShare.askAboutText(ctx,
+          isLink: url != null, shopFirst: ShoppingShare.looksLikeShop(url));
+      if (choice == 'shop') return _addToShoppingList(text: text);
+    }
     final ask = url != null
         ? 'Read this page and tell me what it says: $url'
         : 'Here is something I shared with you — summarise it for me:\n$text';
@@ -171,10 +183,11 @@ class ShareIntakeService {
       return;
     }
     // ONE PHOTO: maybe it is for a card (2026-09-26 — his daughter's old
-    // photo arrives on WhatsApp). Closing the question keeps today's
-    // behaviour: it is saved to My documents.
+    // photo arrives on WhatsApp), or something to buy (a dress, 2026-09-29).
+    // Closing the question keeps today's behaviour: it is saved to My
+    // documents.
     if (files.length == 1 && files.first.type == SharedMediaType.image) {
-      if (await _offerCard(files.first)) return;
+      if (await _offerPhotoChoices(files.first)) return;
     }
     var saved = 0;
     var failed = 0;
@@ -298,11 +311,42 @@ class ShareIntakeService {
     }
   }
 
-  Future<bool> _offerCard(SharedMediaFile f) async {
+  /// "Add to shopping list" for a shared link, text or photo: the
+  /// assistant adds it in one turn — the owner's instruction, with what
+  /// was shared marked as outside content (untrusted: nothing is sent,
+  /// paid or changed because it asks). Its answer is the result shown.
+  Future<bool> _addToShoppingList({String? text, SharedMediaFile? photo}) async {
+    AiAttachment? picture;
+    if (photo != null) {
+      try {
+        final usable = await PhotoSourceSheet.normalise(await File(photo.path).readAsBytes());
+        picture = AiAttachment(kind: 'image', mimeType: usable.mime, bytes: usable.bytes);
+      } catch (e) {
+        AppLog.add('share', 'shared photo for the list does not open: $e');
+        AppFeedback.toast("That photo doesn't open here — nothing was added.",
+            tone: FeedbackTone.error);
+        return true;
+      }
+    }
+    AppFeedback.toast('Adding it to your shopping list…', tone: FeedbackTone.progress);
+    try {
+      await AssistantEngine.instance.askAboutShared(
+          ShoppingShare.ask(text: text, picture: picture != null),
+          image: picture);
+    } catch (e) {
+      AppLog.add('share', 'shopping list add failed: $e');
+      AppFeedback.toast("Couldn't hand that to the assistant — nothing was added. Try again.",
+          tone: FeedbackTone.error);
+    }
+    return true;
+  }
+
+  Future<bool> _offerPhotoChoices(SharedMediaFile f) async {
     final ctx = AvatarMessageService.navigatorKey.currentContext;
     if (ctx == null || f.path.isEmpty) return false;
     try {
       final choice = await PhotoSourceSheet.askShared(ctx);
+      if (choice == 'shop') return await _addToShoppingList(photo: f);
       if (choice != 'card') return false;
       final raw = await File(f.path).readAsBytes();
       if (raw.isEmpty) return false;

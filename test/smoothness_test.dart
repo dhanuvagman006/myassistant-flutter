@@ -16,7 +16,7 @@
 //   * the voice screen's heaviest layer is not drawn on its first frames;
 //   * keyboard frames do not rebuild the shell or re-lay out the tabs the
 //     session covers;
-//   * pages move at one pace (240 ms in, 200 ms back).
+//   * pages move at one pace (280 ms in, 240 ms back).
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -33,6 +33,7 @@ import 'package:myassistant/widgets/call_led.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
 import 'package:myassistant/widgets/voice_orb.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:myassistant/design/tab_deck.dart';
 
 /// The owner's phone: 1080 x 2340 at 2.625 (411 x 891 dp).
 void _ownersPhone(WidgetTester tester) {
@@ -444,7 +445,7 @@ void main() {
       expect(InlineCaptionOverlay.covering.value, isTrue,
           reason: 'faded all the way in, the session covers the page');
 
-      final tabs = tester.renderObject<RenderBox>(find.byType(IndexedStack));
+      final tabs = tester.renderObject<RenderBox>(find.byType(TabDeck));
       final held = tabs.constraints;
       Scaffold? last;
       for (var i = 1; i <= 15; i++) {
@@ -480,7 +481,7 @@ void main() {
       _openSession();
       await _settle(tester, 3);
 
-      final page = _layerOf(tester.renderObject(find.byType(IndexedStack)));
+      final page = _layerOf(tester.renderObject(find.byType(TabDeck)));
       // The rings: the part of the orb that moves (2026-09-25; the disc
       // holds still).
       final rings = _layerOf(tester.renderObject(find.byType(VoiceOrbBackdrop)));
@@ -497,7 +498,7 @@ void main() {
       // Visible and painted again.
       expect(InlineCaptionOverlay.covering.value, isFalse);
       final vis = tester.widget<Visibility>(find
-          .ancestor(of: find.byType(IndexedStack), matching: find.byType(Visibility))
+          .ancestor(of: find.byType(TabDeck), matching: find.byType(Visibility))
           .first);
       expect(vis.visible, isTrue);
       await _teardownShell(tester);
@@ -505,10 +506,10 @@ void main() {
   });
 
   group('pages move at one pace', () {
-    test('240 ms in, 200 ms back, from the app theme', () {
+    test('280 ms in, 240 ms back, from the app theme', () {
       const b = AppPageTransitions();
-      expect(b.transitionDuration, const Duration(milliseconds: 240));
-      expect(b.reverseTransitionDuration, const Duration(milliseconds: 200));
+      expect(b.transitionDuration, const Duration(milliseconds: 280));
+      expect(b.reverseTransitionDuration, const Duration(milliseconds: 240));
     });
 
     testWidgets('every MaterialPageRoute takes its timing from the theme',
@@ -525,15 +526,15 @@ void main() {
       final route = MaterialPageRoute<void>(builder: (_) => const Text('page'));
       nav.currentState!.push(route);
       await tester.pump();
-      expect(route.transitionDuration, const Duration(milliseconds: 240));
-      await tester.pump(const Duration(milliseconds: 230));
+      expect(route.transitionDuration, const Duration(milliseconds: 280));
+      await tester.pump(const Duration(milliseconds: 270));
       expect(route.animation!.isCompleted, isFalse);
       await tester.pump(const Duration(milliseconds: 20));
       expect(route.animation!.isCompleted, isTrue);
       nav.currentState!.pop();
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 210));
-      expect(find.text('page'), findsNothing, reason: 'back in 200 ms');
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('page'), findsNothing, reason: 'back in 240 ms');
     });
   });
 }

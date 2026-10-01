@@ -5,6 +5,8 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/glow_cta.dart';
 import '../../services/call_history.dart';
 import '../../services/contacts_sync_service.dart';
 
@@ -20,7 +22,7 @@ import '../../services/contacts_sync_service.dart';
 ///  so turning the camera off in Settings locked a user out of an app they
 ///  talk to, which Android's guidelines (and Play review) reject. Denied
 ///  permissions no longer fail quietly either: the app reports what is
-///  granted (POST /assistant/:sid/capabilities), so the assistant explains
+///  granted (every turn carries it to /ai/context), so the assistant explains
 ///  a blocked feature instead of promising it.
 /// ─────────────────────────────────────────────────────────────────────────
 
@@ -88,13 +90,16 @@ final List<_PermItem> _kRecommended = [
   _PermItem(Permission.phone, Icons.call_rounded, AppleColors.green, 'Phone',
       'To place the calls you ask for.',
       check: _phoneStatus, ask: _phoneRequest),
-  _PermItem(Permission.notification, Icons.notifications_rounded,
-      AppleColors.red, 'Notifications',
+  _PermItem(
+      Permission.notification,
+      Icons.notifications_rounded,
+      AppleColors.red,
+      'Notifications',
       'Reminders and messages arrive on time.'),
   _PermItem(Permission.camera, Icons.photo_camera_rounded, AppleColors.indigo,
       'Camera', 'Scan documents, receipts and reports.'),
-  _PermItem(Permission.locationWhenInUse, Icons.place_rounded,
-      AppleColors.teal, 'Location', 'Weather and places near you.'),
+  _PermItem(Permission.locationWhenInUse, Icons.place_rounded, AppleColors.teal,
+      'Location', 'Weather and places near you.'),
 ];
 
 List<_PermItem> get _kAll => [..._kRequired, ..._kRecommended];
@@ -153,8 +158,7 @@ class _PermissionsScreenState extends State<PermissionsScreen>
   bool get _requiredGranted =>
       _kRequired.every((i) => _status[i.p]?.isGranted == true);
 
-  bool get _allGranted =>
-      _kAll.every((i) => _status[i.p]?.isGranted == true);
+  bool get _allGranted => _kAll.every((i) => _status[i.p]?.isGranted == true);
 
   Future<void> _refresh() async {
     for (final item in _kAll) {
@@ -191,7 +195,8 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       } catch (_) {}
     }
     if (!mounted) return;
-    final micBlocked = _kRequired.any((i) => _status[i.p]?.isPermanentlyDenied == true);
+    final micBlocked =
+        _kRequired.any((i) => _status[i.p]?.isPermanentlyDenied == true);
     setState(() {
       _busy = false;
       if (!_requiredGranted) {
@@ -210,8 +215,8 @@ class _PermissionsScreenState extends State<PermissionsScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky, the lit mark and one lit action (2026-09-30).
+    return NeonScaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -221,18 +226,9 @@ class _PermissionsScreenState extends State<PermissionsScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Align(
+                  const Align(
                     alignment: Alignment.centerLeft,
-                    child: Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        color: Neon.textHi,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(Icons.verified_user_rounded,
-                          color: Neon.onInk, size: 26),
-                    ),
+                    child: BrandMark(icon: Icons.verified_user_rounded),
                   ),
                   const SizedBox(height: 22),
                   Text(
@@ -279,34 +275,16 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                       ),
                       child: Text(_error!,
                           style: TextStyle(
-                              color: Neon.errorInk,
-                              fontSize: 13,
-                              height: 1.4)),
+                              color: Neon.errorInk, fontSize: 13, height: 1.4)),
                     ),
                   ],
                   const SizedBox(height: 18),
-                  _busy
-                      ? FilledButton(
-                          onPressed: null,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Neon.violet,
-                            foregroundColor: Neon.onAccent,
-                            minimumSize: const Size.fromHeight(50),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Colors.white),
-                          ),
-                        )
-                      : ApplePrimaryButton(
-                          label: _blocked ? 'Open Settings' : 'Allow all',
-                          onPressed:
-                              _blocked ? openAppSettings : _requestAll,
-                        ),
+                  GlowCta(
+                    label: _blocked ? 'Open Settings' : 'Allow all',
+                    busy: _busy,
+                    busyLabel: 'Asking Android',
+                    onPressed: _blocked ? openAppSettings : _requestAll,
+                  ),
                   // With the microphone allowed, the rest are a choice.
                   if (_requiredGranted && !_allGranted && !_busy) ...[
                     const SizedBox(height: 6),
@@ -323,7 +301,8 @@ class _PermissionsScreenState extends State<PermissionsScreen>
                     'Contacts stay on your phone — only names and numbers '
                     'sync, never photos or emails.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Neon.textDim, fontSize: 12),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.caption),
                   ),
                 ],
               ),
@@ -341,7 +320,8 @@ class _PermissionsScreenState extends State<PermissionsScreen>
       title: item.title,
       subtitle: item.why,
       trailing: granted
-          ? Icon(Icons.check_circle_rounded, color: Neon.success, size: 22)
+          ? Icon(Icons.check_circle_rounded,
+              color: Neon.success, size: 22, semanticLabel: 'Allowed')
           : Text('Allow',
               style: TextStyle(
                   color: Neon.violet,

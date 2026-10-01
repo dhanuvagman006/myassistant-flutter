@@ -5,10 +5,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/motion.dart';
+import '../../design/neon_widgets.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/glow_cta.dart';
 
 /// First screen of the app when signed out.
 ///
@@ -88,8 +90,8 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final auth = AuthService.instance;
 
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky from the very first page (2026-09-30).
+    return NeonScaffold(
       body: SafeArea(
         child: Stack(children: [
           Center(
@@ -102,20 +104,12 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Simple solid mark. No motion, no glow. Align keeps
-                      // it 54px — the stretched column would inflate it.
-                      Align(
+                      // The lit brand mark (2026-09-30; it was a flat white
+                      // square). Align keeps it 54px — the stretched column
+                      // would inflate it.
+                      const Align(
                         alignment: Alignment.centerLeft,
-                        child: Container(
-                          width: 54,
-                          height: 54,
-                          decoration: BoxDecoration(
-                            color: Neon.textHi,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Icon(Icons.auto_awesome_rounded,
-                              color: Neon.onInk, size: 26),
-                        ),
+                        child: BrandMark(),
                       ),
                       const SizedBox(height: 22),
                       Text(
@@ -137,77 +131,67 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       const SizedBox(height: 28),
 
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOutCubic,
-                        child: _isSignUp
-                            ? Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.stretch,
-                                children: [
-                                  TextFormField(
-                                    controller: _name,
-                                    textInputAction: TextInputAction.next,
-                                    textCapitalization:
-                                        TextCapitalization.words,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Your name',
-                                      prefixIcon:
-                                          Icon(Icons.person_outline_rounded),
-                                    ),
-                                    // Mandatory: the assistant addresses the
-                                    // user by name everywhere; a nameless
-                                    // account reads broken from minute one.
-                                    validator: (v) =>
-                                        (v == null || v.trim().length < 2)
-                                            ? 'Please enter your name'
-                                            : null,
+                      // The app's own expand (Collapse, Motion tokens; it
+                      // was a raw 200 ms AnimatedSize), and still with
+                      // "Remove animations" on.
+                      Collapse(
+                        open: _isSignUp,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            TextFormField(
+                              controller: _name,
+                              textInputAction: TextInputAction.next,
+                              textCapitalization: TextCapitalization.words,
+                              decoration: const InputDecoration(
+                                labelText: 'Your name',
+                                prefixIcon: Icon(Icons.person_outline_rounded),
+                              ),
+                              // Mandatory: the assistant addresses the
+                              // user by name everywhere; a nameless
+                              // account reads broken from minute one.
+                              validator: (v) =>
+                                  (v == null || v.trim().length < 2)
+                                      ? 'Please enter your name'
+                                      : null,
+                            ),
+                            const SizedBox(height: 14),
+                            // Gender — personalizes the assistant.
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (final g in const [
+                                  ('male', 'Male', Icons.male_rounded),
+                                  ('female', 'Female', Icons.female_rounded),
+                                  ('other', 'Other', Icons.transgender_rounded),
+                                ])
+                                  ChoiceChip(
+                                    avatar: Icon(g.$3,
+                                        size: 16,
+                                        color: _gender == g.$1
+                                            ? Neon.violet
+                                            : Neon.textLo),
+                                    label: Text(g.$2),
+                                    selected: _gender == g.$1,
+                                    // The theme's chip: lit rim when
+                                    // chosen (2026-09-30).
+                                    labelStyle: TextStyle(
+                                        fontWeight: _gender == g.$1
+                                            ? FontWeight.w600
+                                            : FontWeight.w500,
+                                        color: _gender == g.$1
+                                            ? Neon.textHi
+                                            : Neon.textLo),
+                                    showCheckmark: false,
+                                    onSelected: (_) => setState(() => _gender =
+                                        _gender == g.$1 ? null : g.$1),
                                   ),
-                                  const SizedBox(height: 14),
-                                  // Gender — personalizes the assistant.
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      for (final g in const [
-                                        ('male', 'Male', Icons.male_rounded),
-                                        ('female', 'Female',
-                                            Icons.female_rounded),
-                                        ('other', 'Other',
-                                            Icons.transgender_rounded),
-                                      ])
-                                        ChoiceChip(
-                                          avatar: Icon(g.$3,
-                                              size: 16,
-                                              color: _gender == g.$1
-                                                  ? Neon.violet
-                                                  : Neon.textLo),
-                                          label: Text(g.$2),
-                                          selected: _gender == g.$1,
-                                          selectedColor: Neon.violet
-                                              .withValues(alpha: 0.15),
-                                          backgroundColor: Neon.surface,
-                                          side: BorderSide(color: Neon.line),
-                                          labelStyle: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: _gender == g.$1
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w500,
-                                              color: _gender == g.$1
-                                                  ? Neon.violet
-                                                  : Neon.textLo),
-                                          showCheckmark: false,
-                                          onSelected: (_) => setState(() =>
-                                              _gender = _gender == g.$1
-                                                  ? null
-                                                  : g.$1),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 14),
-                                ],
-                              )
-                            : const SizedBox.shrink(),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                          ],
+                        ),
                       ),
                       TextFormField(
                         controller: _email,
@@ -238,6 +222,8 @@ class _AuthScreenState extends State<AuthScreen> {
                           labelText: 'Password',
                           prefixIcon: const Icon(Icons.lock_outline_rounded),
                           suffixIcon: IconButton(
+                            tooltip:
+                                _obscure ? 'Show password' : 'Hide password',
                             onPressed: () =>
                                 setState(() => _obscure = !_obscure),
                             icon: Icon(_obscure
@@ -293,15 +279,9 @@ class _AuthScreenState extends State<AuthScreen> {
                               SizedBox(
                                 width: 24,
                                 height: 24,
+                                // The theme's checkbox (2026-09-30).
                                 child: Checkbox(
                                   value: _agree,
-                                  activeColor: Neon.violet,
-                                  checkColor: Colors.white,
-                                  side: BorderSide(
-                                      color: Neon.textLo, width: 1.6),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(6)),
                                   onChanged: (v) => setState(() {
                                     _agree = v ?? false;
                                     if (_agree) _error = null;
@@ -357,44 +337,33 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                       ],
                       const SizedBox(height: 20),
-                      _busy
-                          ? FilledButton(
-                              onPressed: null,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Neon.violet,
-                                foregroundColor: Neon.onAccent,
-                                minimumSize: const Size.fromHeight(50),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
-                              ),
-                              child: const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2.2, color: Colors.white),
-                              ),
-                            )
-                          : ApplePrimaryButton(
-                              label:
-                                  _isSignUp ? 'Create account' : 'Log in',
-                              onPressed: _submitEmail,
-                            ),
+                      GlowCta(
+                        label: _isSignUp ? 'Create account' : 'Log in',
+                        busy: _busy,
+                        busyLabel: 'Signing in',
+                        onPressed: _submitEmail,
+                      ),
 
                       const SizedBox(height: 24),
                       Row(
                         children: [
                           const Expanded(child: Divider()),
-                          Flexible(
-                            flex: 3,
+                          // 2026-09-30 visual QA: a loose Flexible(flex: 3)
+                          // left its unused share empty at the end, so the
+                          // words sat left of centre and the right rule
+                          // stopped short. Capped instead of flexed.
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 240),
                             child: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
-                            child: Text('or continue with',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: Neon.textDim, fontSize: 13)),
-                          ),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              child: Text('or continue with',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: Neon.textLo,
+                                      fontSize: NeonType.footnote)),
+                            ),
                           ),
                           const Expanded(child: Divider()),
                         ],
@@ -404,15 +373,13 @@ class _AuthScreenState extends State<AuthScreen> {
                       OutlinedButton.icon(
                         onPressed: _busy
                             ? null
-                            : () =>
-                                _run(AuthService.instance.signInWithGoogle),
+                            : () => _run(AuthService.instance.signInWithGoogle),
                         icon: const _GoogleG(),
                         label: const Text('Continue with Google'),
+                        // Secondary: the theme's rim on the raised surface;
+                        // the G keeps Google's own blue.
                         style: OutlinedButton.styleFrom(
                           backgroundColor: Neon.surface,
-                          side: BorderSide(color: Neon.line),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                       ),
@@ -451,8 +418,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         TextSpan(
                           text: 'By continuing you agree to our ',
                           style: TextStyle(
-                            color: Neon.textDim,
-                            fontSize: 12,
+                            color: Neon.textLo,
+                            fontSize: NeonType.caption,
                             height: 1.5,
                           ),
                           children: [

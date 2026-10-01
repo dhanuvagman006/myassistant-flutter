@@ -153,16 +153,6 @@ class ShortcutsService extends ChangeNotifier {
     await transport('POST', '/runs/$runId/decline');
   }
 
-  /// "Save as shortcut" after a phone task. Null on success, else a line.
-  Future<String?> learn({required int runId, required String name}) async {
-    final r = await transport('POST', '/learn', body: {'run_id': runId, 'name': name.trim()});
-    if (r.ok) {
-      unawaited(refresh());
-      return null;
-    }
-    return lineFor(r.error, r.data);
-  }
-
   ShortcutRunReply _runReply(ShortcutsReply r) {
     if (!r.ok) {
       return ShortcutRunReply(

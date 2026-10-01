@@ -146,7 +146,9 @@ void main() {
   for (final gpu in [false, true]) {
     final tag = gpu ? 'gpu' : 'canvas';
 
-    testWidgets('idle: still, and exactly the picture ($tag)', (tester) async {
+    // 2026-09-30, the six states: idle is the picture in a dim cyan light,
+    // breathing slowly (a push of under 2%).
+    testWidgets('idle: calm, dim, a slow breath ($tag)', (tester) async {
       GpuProgram.enabled = gpu;
       await _open(tester);
       // Connecting: the session is up, nothing is heard yet.
@@ -154,7 +156,7 @@ void main() {
       _phase(AssistantPhase.idle);
       await _frames(tester, 60);
       expect(find.text('Connecting…'), findsWidgets);
-      expect(VoiceOrbBackdrop.debugPush, 0);
+      expect(VoiceOrbBackdrop.debugPush.abs(), lessThan(0.02));
       await _save(tester, '1_idle_$tag');
     });
 
@@ -215,6 +217,20 @@ void main() {
     await _frames(tester, 110); // near the top of a breath
     await _save(tester, '6_thinking_canvas');
   });
+
+  // 2026-09-30: a tool at work — magenta into orange, and the working
+  // light running round the inner ring.
+  for (final gpu in [false, true]) {
+    final tag = gpu ? 'gpu' : 'canvas';
+    testWidgets('responding ($tag)', (tester) async {
+      GpuProgram.enabled = gpu;
+      await _open(tester);
+      _phase(AssistantPhase.responding);
+      await _frames(tester, 60);
+      expect(VoiceOrbBackdrop.debugArc, greaterThan(0.95));
+      await _save(tester, '8_responding_$tag');
+    });
+  }
 
   testWidgets('Teal theme colour (canvas)', (tester) async {
     GpuProgram.enabled = false;

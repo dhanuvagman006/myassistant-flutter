@@ -363,6 +363,10 @@ void main() {
       testWidgets('looks the same drawn by the GPU program (${dark ? 'dark' : 'light'})',
           (tester) async {
         Neon.setDark(dark);
+        // The ribbons (dark only) are the program's own; the pools and the
+        // wash must match the layers exactly.
+        AmbientBackground.ribbons = false;
+        addTearDown(() => AmbientBackground.ribbons = true);
         await _pumpAmbient(tester);
         final gpu = await _pixels(tester, _ambientKey, 1);
         GpuProgram.enabled = false;
@@ -507,10 +511,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 250));
       }
       final page = _layerOf(tester.renderObject(find.text('MyAssistant')));
-      final rings = _layerOf(tester.renderObject(find
-          .descendant(
-              of: find.byType(SplashScreen), matching: find.byType(CustomPaint))
-          .first));
+      // By key (2026-09-30): the splash now stands on the shared sky,
+      // whose own CustomPaint comes first under it.
+      final rings =
+          _layerOf(tester.renderObject(find.byKey(SplashScreen.ringsKey)));
       expect(identical(page, rings), isFalse);
       page.debugResetMetrics();
       rings.debugResetMetrics();

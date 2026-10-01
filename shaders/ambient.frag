@@ -26,7 +26,7 @@ uniform vec4 uWash1;  // rgb: 42% down
 uniform vec4 uWash2;  // rgb: the page ground, at the bottom
 uniform vec4 uTint;   // rgb: the accent; a: top-left pool strength
 uniform vec4 uPartner; // rgb: its partner; a: bottom-right pool strength
-uniform vec4 uMiddle; // x: middle pool strength
+uniform vec4 uMiddle; // x: middle pool strength; y: ribbon strength (0: none)
 
 out vec4 fragColor;
 
@@ -42,6 +42,13 @@ float pool(vec2 p, vec2 centre, float radius, float a) {
   if (t < 0.34) return a * mix(1.0, 0.55, t / 0.34);
   if (t < 0.62) return a * mix(0.55, 0.18, (t - 0.34) / 0.28);
   return a * mix(0.18, 0.0, (t - 0.62) / 0.38);
+}
+
+// A soft ribbon of light along y = c + a*sin(k*x + ph): brightest on the
+// curve, gone a few widths away.
+float ribbon(vec2 p, float c, float a, float k, float ph, float width) {
+  float d = (p.y - (c + a * sin(k * p.x + ph))) / width;
+  return exp(-d * d);
 }
 
 float hash12(vec2 p) {
@@ -72,6 +79,34 @@ void main() {
       pool(p, vec2(0.625 * w, 0.34 * h + 0.525 * w), 0.525 * w, uMiddle.x));
 
   // Half a step of dither: a near-flat dark gradient bands without it.
+  // RIBBONS (2026-09-30, the client's reference): flowing bands of neon
+  // light — blue into purple into magenta across the lower screen, a
+  // bright crest along the top of the wave, and magenta into orange
+  // sweeping through the top-right corner. Same single pass: no extra cost
+  // per frame. Off (0) on the light theme and in the parity test.
+  float wave = uMiddle.y;
+  if (wave > 0.0) {
+    vec3 blue = vec3(0.16, 0.40, 1.0);
+    vec3 purple = vec3(0.52, 0.16, 1.0);
+    vec3 magenta = vec3(1.0, 0.16, 0.84);
+    vec3 orange = vec3(1.0, 0.50, 0.26);
+    float t = clamp(p.x / box.x, 0.0, 1.0);
+    vec3 band = mix(mix(blue, purple, smoothstep(0.0, 0.55, t)), magenta, smoothstep(0.45, 1.0, t));
+    float k = 6.2831853 / (1.2 * w);
+    // the wave's body, a wide soft glow under it, and its bright crest
+    float body = ribbon(p, 0.745 * h - 0.05 * h * t, 0.045 * h, k, 0.9, 0.040 * h);
+    float under = ribbon(p, 0.80 * h - 0.03 * h * t, 0.060 * h, k * 0.8, 2.4, 0.075 * h);
+    float crest = ribbon(p, 0.745 * h - 0.05 * h * t - 0.030 * h, 0.045 * h, k, 0.9, 0.006 * h);
+    col = over(col, band * 0.85, clamp(under * 0.55 * wave, 0.0, 0.8));
+    col = over(col, band, clamp(body * 0.80 * wave, 0.0, 0.9));
+    col = over(col, mix(band, vec3(1.0), 0.45), clamp(crest * 0.85 * wave, 0.0, 0.9));
+    // the top-right sweep: a band curving down the right edge
+    float s1 = ribbon(vec2(p.y, p.x), 0.97 * w, 0.10 * w, 6.2831853 / (1.1 * h), 1.6, 0.070 * w)
+             * (1.0 - smoothstep(0.02 * h, 0.34 * h, p.y));
+    vec3 sweep = mix(magenta, orange, smoothstep(0.80 * w, 1.0 * w, p.x));
+    col = over(col, sweep, clamp(s1 * 0.85 * wave, 0.0, 0.85));
+  }
+
   col += (hash12(p / uPx.x) - 0.5) / 255.0;
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }

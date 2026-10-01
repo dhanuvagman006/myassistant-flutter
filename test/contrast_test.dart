@@ -16,6 +16,8 @@ import 'package:myassistant/design/accent_controller.dart';
 import 'package:myassistant/design/neon_tokens.dart';
 import 'package:myassistant/widgets/month_calendar.dart';
 
+import 'palette_render_test.dart' show palettes;
+
 double contrast(Color a, Color b) {
   final la = a.computeLuminance(), lb = b.computeLuminance();
   final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
@@ -184,6 +186,61 @@ void main() {
       // Empty days have no fill: the number sits on the card itself.
       atLeast(contrast(Neon.textLo, Neon.surface), text,
           'empty day number ($where)');
+    });
+  });
+
+  // WORDS ON THE ACCENT (2026-09-29, UI pass): white on the light theme's
+  // violet #A855F7 was 3.95:1 on every primary button, FAB and selected
+  // chip, and on the dark theme's Indigo 3.78:1. Neon.accentFill is the
+  // accent deepened just enough; Neon.onAccent stays as it was.
+  group('words on the accent fill', () {
+    tearDown(() => Neon.usePalette(null));
+
+    void fillReads(String where) {
+      final fill = Neon.accentFill;
+      atLeast(contrast(Neon.onAccent, fill), text, 'onAccent on accentFill ($where)');
+      if (fill != Neon.violet) {
+        // Deepened only as far as needed: a little lighter fails again.
+        final h = HSLColor.fromColor(fill);
+        final lighter = h.withLightness(h.lightness + 0.02).toColor();
+        expect(contrast(Neon.onAccent, lighter), lessThan(text),
+            reason: 'deeper than the words need ($where)');
+      }
+    }
+
+    test('every accent, in both themes', () => everyTheme(fillReads));
+
+    test("the app's own violet, in both themes", () {
+      for (final dark in [false, true]) {
+        Neon.setDark(dark);
+        Neon.setAccent(null);
+        fillReads(dark ? 'dark, no accent' : 'light, no accent');
+      }
+    });
+
+    test('every Theme colour palette', () {
+      for (final p in palettes) {
+        Neon.usePalette(p);
+        fillReads('palette ${p.name}');
+      }
+    });
+
+    test('the measured case: white on the light violet', () {
+      Neon.setDark(false);
+      Neon.setAccent(null);
+      expect(contrast(Colors.white, Neon.violet), lessThan(text));
+      atLeast(contrast(Colors.white, Neon.accentFill), text, 'white on the light fill');
+    });
+
+    test('unchanged where the words already read', () {
+      // The dark theme's pastel violet takes near-black words (6:1+).
+      Neon.setDark(true);
+      Neon.setAccent(null);
+      expect(Neon.accentFill, Neon.violet);
+      // The default Indigo's deep day ink already carries white.
+      Neon.setDark(false);
+      Neon.setAccent(AccentController.defaultSeed);
+      expect(Neon.accentFill, Neon.violet);
     });
   });
 

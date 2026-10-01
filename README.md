@@ -84,6 +84,12 @@ lib/
   …" adds a dated note.
 - **Reminders, Gmail drafts + Calendar, biometric app lock, self-hosted OTA
   updates**, and Pro/Family gating.
+- **Fast Live voice (build 135)** — Gemini 3.8 Live via Firebase AI Logic,
+  ~0.6 s to first audio, voice picker (default Callirrhoe); the cascade stays
+  as fallback and for typed requests.
+- **Poster Studio, Play my morning, Meeting prep, photo edit by voice** — see
+  `docs/FEATURES.md`. Why things are built this way: `docs/DECISIONS.md`;
+  the neon widgets and orb states: `docs/DESIGN_SYSTEM.md`.
 
 ## First-time setup
 `android/` and `ios/` are already in the repo (release signing, biometric and

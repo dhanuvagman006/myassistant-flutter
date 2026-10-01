@@ -10,13 +10,14 @@ import 'package:permission_handler/permission_handler.dart' show openAppSettings
 import '../../core/log.dart';
 import '../../design/neon_tokens.dart';
 import 'poster_controller.dart';
+import '../../design/motion.dart';
 
 /// "From my photos" or "Take a picture of a printed photo" — two big
 /// choices, nothing else (an old print is usually in a drawer, not in the
 /// phone's gallery).
 abstract final class PhotoSourceSheet {
   /// 'gallery' | 'camera', or null when he closes it.
-  static Future<String?> ask(BuildContext context) => showModalBottomSheet<String>(
+  static Future<String?> ask(BuildContext context) => showAppSheet<String>(
         context: context,
         useRootNavigator: true,
         backgroundColor: Neon.surface,
@@ -55,19 +56,25 @@ abstract final class PhotoSourceSheet {
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Text(label,
                 style: NeonType.manrope(NeonType.rowTitle + 2, FontWeight.w700),
-                textAlign: TextAlign.center),
+                textAlign: TextAlign.start),
           ),
+          // 2026-09-30 visual QA: icon and words from the left on both
+          // choices; centred, a label that wraps pushed its icon to the
+          // far edge while the other's sat beside its words.
           style: FilledButton.styleFrom(
-            backgroundColor: Neon.violet,
+            backgroundColor: Neon.accentFill,
             foregroundColor: Neon.onAccent,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 22),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
         ),
       );
 
   /// A single photo shared into the app from WhatsApp or the gallery:
-  /// "Make a birthday card" or "Just save it" ('card' | 'save' | null).
-  static Future<String?> askShared(BuildContext context) => showModalBottomSheet<String>(
+  /// "Make a birthday card", "Add to shopping list" (a dress, a gadget —
+  /// build 124) or "Just save it" ('card' | 'shop' | 'save' | null).
+  static Future<String?> askShared(BuildContext context) => showAppSheet<String>(
         context: context,
         useRootNavigator: true,
         backgroundColor: Neon.surface,
@@ -84,6 +91,8 @@ abstract final class PhotoSourceSheet {
                         .copyWith(color: Neon.textHi)),
                 const SizedBox(height: 14),
                 _choice(ctx, Icons.card_giftcard_rounded, 'Make a birthday card', 'card'),
+                const SizedBox(height: 12),
+                _choice(ctx, Icons.add_shopping_cart_rounded, 'Add to shopping list', 'shop'),
                 const SizedBox(height: 12),
                 _choice(ctx, Icons.save_alt_rounded, 'Just save it', 'save'),
               ],
@@ -137,7 +146,7 @@ abstract final class PhotoSourceSheet {
   /// app's page in Settings, where he (or his daughter) can allow it.
   static Future<void> _accessHelp(BuildContext context, String from) {
     final camera = from == 'camera';
-    return showDialog<void>(
+    return showAppDialog<void>(
       context: context,
       useRootNavigator: true,
       builder: (ctx) => AlertDialog(

@@ -7,6 +7,4 @@
          it asks which screen it was, and "Gallery" is the form's button
          for attaching a different picture. -->
     <string name="feedback_prompt">Tell us what happened, or what you would like improved. Mention the screen you were on, or add a screenshot of it from Gallery.</string>
-    <string name="automation_service_label">MyAssistant — do it for me</string>
-    <string name="automation_service_description">Lets your assistant use your phone for you — open any app, read what is on the screen, tap, type, scroll and switch between apps — only while it is doing a task you asked for. A small bar with a Stop button shows whenever it is working. It never pays, moves money, types passwords, PINs or OTPs, sends messages, deletes anything, changes security settings, ticks declarations or solves CAPTCHAs: at those steps it stops and hands the phone back to you. When no task is running it reads nothing.</string>
 </resources>

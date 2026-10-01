@@ -6,6 +6,7 @@ import '../design/neon_tokens.dart';
 import '../services/app_lock.dart';
 import '../services/app_feedback.dart';
 import 'help_improve_row.dart';
+import '../design/motion.dart';
 
 /// PRIVACY & SECURITY — the app lock's switch.
 ///
@@ -45,7 +46,7 @@ class _AppLockSectionState extends State<AppLockSection> {
 
   /// Asks for a 4-digit PIN. [confirm] asks twice (setting a new one).
   Future<String?> _askPin({required String title, bool confirm = false}) async {
-    Future<String?> once(String heading) => showDialog<String>(
+    Future<String?> once(String heading) => showAppDialog<String>(
           context: context,
           builder: (c) => _PinDialog(title: heading),
         );
@@ -107,8 +108,6 @@ class _AppLockSectionState extends State<AppLockSection> {
               subtitle: 'Fingerprint or PIN to open the app',
               trailing: Switch(
                 value: _lock.enabled,
-                activeThumbColor: Colors.white,
-                activeTrackColor: AppleColors.green,
                 onChanged: (v) {
                   HapticFeedback.selectionClick();
                   v ? _turnOn() : _turnOff();
@@ -126,7 +125,8 @@ class _AppLockSectionState extends State<AppLockSection> {
             'stays on this phone.\n'
             "When off, voice recordings aren't kept and your chats stay "
             'private. The assistant works the same.',
-            style: TextStyle(color: Neon.textDim, fontSize: 12),
+            // textLo (2026-09-30): textDim fell under 4.5:1 on the sky.
+            style: TextStyle(color: Neon.textLo, fontSize: NeonType.caption),
           ),
         ),
       ],

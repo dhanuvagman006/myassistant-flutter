@@ -6,9 +6,11 @@ import 'package:flutter/services.dart';
 
 import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
 import '../../services/app_feedback.dart';
 import '../../services/avatar_message_service.dart';
 import '../assistant/state/assistant_engine.dart';
+import '../poster_studio/studio_actions.dart';
 import 'photo_source_sheet.dart';
 import 'poster_controller.dart';
 import 'poster_fonts.dart';
@@ -19,6 +21,7 @@ import 'poster_palettes.dart';
 import 'poster_share.dart';
 import 'poster_templates.dart';
 import 'signature/signature_pad.dart';
+import '../../design/motion.dart';
 
 /// Opens the card screen from anywhere (the Hub, a device action), never
 /// stacking a second copy.
@@ -76,7 +79,9 @@ class PosterScreen extends StatefulWidget {
   State<PosterScreen> createState() => _PosterScreenState();
 }
 
-const _sendGreen = Color(0xFF0E7A43);
+// 2026-09-30 visual QA: the hard-coded WhatsApp green (0xFF0E7A43) is gone;
+// the page's one filled button takes the app's primary fill, as Poster
+// Studio's "Share on WhatsApp" and every other primary action do.
 
 class _PosterScreenState extends State<PosterScreen> {
   late final PosterController c = widget.controller ?? PosterController.instance;
@@ -153,7 +158,7 @@ class _PosterScreenState extends State<PosterScreen> {
     // it untouched must not freeze "Happy 25th Birthday" when she turns 26
     // (review, 2026-09-26).
     final auto = field == 'headline' && !spec.headlineCustom;
-    final result = await showDialog<String>(
+    final result = await showAppDialog<String>(
       context: context,
       builder: (_) => _LineEditor(
         field: field,
@@ -207,8 +212,8 @@ class _PosterScreenState extends State<PosterScreen> {
   @override
   Widget build(BuildContext context) {
     final photoMode = c.mode == 'photo';
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // The night sky behind the card, like every pushed page (2026-09-30).
+    return NeonScaffold(
       appBar: appleAppBar(context, photoMode ? 'Your photo' : 'Your card'),
       body: SafeArea(
         child: Column(
@@ -242,9 +247,7 @@ class _PosterScreenState extends State<PosterScreen> {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
-                      boxShadow: const [
-                        BoxShadow(color: Color(0x33000000), blurRadius: 18, offset: Offset(0, 8)),
-                      ],
+                      boxShadow: Neon.cardShadow,
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
@@ -256,7 +259,7 @@ class _PosterScreenState extends State<PosterScreen> {
             );
           })
         else
-          const SizedBox(height: 320, child: Center(child: CircularProgressIndicator())),
+          const SizedBox(height: 320, child: NeonLoader.page(label: 'Opening your card…')),
         const SizedBox(height: 10),
         if (c.photoLoading || c.addingPhoto)
           const _Chip(icon: Icons.hourglass_top_rounded, text: 'Adding your photo…'),
@@ -285,26 +288,28 @@ class _PosterScreenState extends State<PosterScreen> {
         BigButton(
           icon: Icons.send_rounded,
           label: 'Send on WhatsApp',
-          color: _sendGreen,
           onPressed: c.busy || c.poster == null ? null : () => _send(),
         ),
         const SizedBox(height: 10),
-        _wrap([
-          BigButton(icon: Icons.download_rounded, label: 'Save to my photos', onPressed: c.busy ? null : _save, outlined: true),
+        // 2026-09-30 visual QA: an even grid — the wrap left them ragged
+        // (one long button alone, then two short ones hugging the left).
+        BigButton(icon: Icons.download_rounded, label: 'Save to my photos', onPressed: c.busy ? null : _save, outlined: true),
+        const SizedBox(height: 10),
+        _pair(
           BigButton(icon: Icons.ios_share_rounded, label: 'Other apps', onPressed: c.busy ? null : () => _send(app: 'any'), outlined: true),
           // Undo sits with the big buttons, not as a small app-bar icon.
           BigButton(icon: Icons.undo_rounded, label: 'Undo', onPressed: c.canUndo ? c.undo : null, outlined: true),
-        ]),
+        ),
         _section('The words'),
         for (final f in ['headline', 'name', if (spec.occasion == 'birthday' || spec.occasion == 'anniversary') 'age', 'message', 'from', 'date'])
           _LineTile(field: f, value: _current(f), onTap: () => _edit(f)),
         const SizedBox(height: 8),
-        _wrap([
+        _pair(
           BigButton(icon: Icons.text_increase_rounded, label: 'Bigger words',
               onPressed: () => c.apply(const PosterChange(textSize: 'bigger')), outlined: true),
           BigButton(icon: Icons.text_decrease_rounded, label: 'Smaller words',
               onPressed: () => c.apply(const PosterChange(textSize: 'smaller')), outlined: true),
-        ]),
+        ),
         _section('Design'),
         _DesignCarousel(controller: c),
         _section('Colour'),
@@ -417,6 +422,37 @@ class _PosterScreenState extends State<PosterScreen> {
           onPressed: () => c.startNew(),
           outlined: true,
         ),
+        const SizedBox(height: 16),
+        // POSTER STUDIO (2026-09-30): an event poster (a party, a meeting,
+        // a sale) is its own studio — words set by the phone over an AI
+        // background. Reached from here until the Hub has its own row.
+        GlowCard(
+          tone: NeonTone.discovery,
+          halo: 0.35,
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          semanticLabel: 'Poster Studio: make a poster for an event',
+          onTap: () => PosterStudioNav.open(context),
+          child: Row(
+            children: [
+              IconTile(Icons.campaign_rounded, Neon.violet, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Poster Studio',
+                        style: NeonType.manrope(NeonType.rowTitle, FontWeight.w800)
+                            .copyWith(color: Neon.textHi)),
+                    Text('A poster for an event — party, meeting, festival',
+                        style: NeonType.manrope(NeonType.footnote, FontWeight.w500)
+                            .copyWith(color: Neon.textLo)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: Neon.textLo),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -437,7 +473,7 @@ class _PosterScreenState extends State<PosterScreen> {
                   child: img == null
                       ? ColoredBox(
                           color: Neon.surface,
-                          child: const Center(child: CircularProgressIndicator()))
+                          child: const Center(child: NeonLoader(size: 32)))
                       : RawImage(image: img, fit: BoxFit.cover),
                 ),
               ),
@@ -480,7 +516,6 @@ class _PosterScreenState extends State<PosterScreen> {
         BigButton(
           icon: Icons.cake_rounded,
           label: 'Make a birthday card with it',
-          color: _sendGreen,
           onPressed: ph == null ? null : () => c.cardFromLoosePhoto(),
         ),
         const SizedBox(height: 10),
@@ -507,6 +542,15 @@ class _PosterScreenState extends State<PosterScreen> {
       );
 
   Widget _wrap(List<Widget> children) => Wrap(spacing: 10, runSpacing: 10, children: children);
+
+  /// Two big buttons sharing a row, each half, the same height (a label
+  /// that wraps at large text makes both taller together).
+  Widget _pair(Widget a, Widget b) => IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [Expanded(child: a), const SizedBox(width: 10), Expanded(child: b)],
+        ),
+      );
 }
 
 // ───────────────────────────── the preview ──────────────────────────────
@@ -617,8 +661,8 @@ class BigButton extends StatelessWidget {
         : FilledButton(
             onPressed: onPressed,
             style: FilledButton.styleFrom(
-              backgroundColor: color ?? Neon.violet,
-              foregroundColor: color != null ? Colors.white : Neon.onAccent,
+              backgroundColor: color ?? Neon.accentFill,
+              foregroundColor: color != null ? Neon.textOn(color!) : Neon.onAccent,
               shape: shape,
               padding: pad,
               minimumSize: const Size.fromHeight(64),
@@ -700,7 +744,7 @@ class _ColourChip extends StatelessWidget {
                   gradient: LinearGradient(colors: [palette.swatch, palette.petal]),
                   border: Border.all(color: palette.foilMid, width: 2),
                 ),
-                child: selected ? const Icon(Icons.check_rounded, size: 18, color: Colors.white) : null,
+                child: selected ? Icon(Icons.check_rounded, size: 18, color: Neon.glyphOn(palette.swatch)) : null,
               ),
               const SizedBox(width: 10),
               Flexible(
@@ -1114,8 +1158,8 @@ class PosterVoiceBar extends StatelessWidget {
                   style: FilledButton.styleFrom(
                     shape: const CircleBorder(),
                     padding: EdgeInsets.zero,
-                    backgroundColor: on ? Neon.error : Neon.violet,
-                    foregroundColor: Colors.white,
+                    backgroundColor: on ? Neon.error : Neon.accentFill,
+                    foregroundColor: on ? Neon.glyphOn(Neon.error) : Neon.onAccent,
                   ),
                   child: Icon(on ? Icons.stop_rounded : Icons.mic_rounded, size: 34,
                       semanticLabel: on ? 'Stop talking' : 'Talk'),

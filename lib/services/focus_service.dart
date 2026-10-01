@@ -241,26 +241,43 @@ class FocusService extends ChangeNotifier {
 
   /// Starts a focus of [minutes] — or, when one is already counting, keeps
   /// that one (a second "start focus" must not throw away the first).
-  Future<void> start(int minutes, {String label = '', FocusKind kind = FocusKind.focus}) async {
+  ///
+  /// [waitForServer] false returns as soon as the session exists on the
+  /// phone (saved, every listener told) and lets the notification and the
+  /// server log finish on their own: the Focus screen waited for both, and
+  /// a focus started by the assistant opened on a blank page until the
+  /// server answered — seconds, offline (2026-09-29).
+  Future<void> start(int minutes,
+      {String label = '', FocusKind kind = FocusKind.focus, bool waitForServer = true}) async {
     await restore();
     if (active) return;
     // The server logs 5 to 180 minutes; a break is its own short thing.
     final m = kind == FocusKind.focus ? minutes.clamp(5, 180) : minutes.clamp(1, 60);
-    session = FocusSession(
+    final s = session = FocusSession(
       kind: kind,
       clock: FocusClock(startedAt: clock(), plannedMin: m),
       label: label.trim(),
     );
     await _save();
     notifyListeners();
+    final rest = _announce(s);
+    if (waitForServer) {
+      await rest;
+    } else {
+      unawaited(rest);
+    }
+  }
+
+  /// A new session into the shade, and onto the server's record. Neither
+  /// throws: the shade is a courtesy, and offline the server id stays
+  /// null (the log is tried again when the session ends).
+  Future<void> _announce(FocusSession s) async {
     await _arm();
-    if (kind == FocusKind.focus) {
-      final s = session!;
-      final id = await MomentumService.instance.startFocus(m, label: s.label);
-      if (identical(session, s) && id != null) {
-        s.serverId = id;
-        await _save();
-      }
+    if (s.kind != FocusKind.focus) return;
+    final id = await MomentumService.instance.startFocus(s.clock.plannedMin, label: s.label);
+    if (identical(session, s) && id != null) {
+      s.serverId = id;
+      await _save();
     }
   }
 

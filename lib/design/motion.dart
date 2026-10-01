@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart' show SpringSimulation;
+import 'package:flutter/services.dart' show HapticFeedback;
+
+import 'neon_tokens.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MOTION — one clock and one set of curves for the whole app
@@ -20,9 +25,17 @@ import 'package:flutter/material.dart';
 ///     nothing lingers at the end of a move.
 ///   * Things that simply CHANGE (a pill, a highlight, a size) use
 ///     [Motion.easeMove]. Fades use [Motion.easeFadeIn] / [Motion.easeFadeOut].
-///   * Navigation is at most 350 ms. Pages take 240 ms in, 200 ms back.
-///   * Nothing bounces. The one exception is the "connected" tick on the
-///     email setup screen, the app's single success moment.
+///   * Navigation is at most 350 ms. Pages push in from the side in
+///     280 ms and go back in 240 ms (theme/app_theme.dart); tabs open in a
+///     circle from the dock or follow a swipe (tab_deck.dart).
+///   * A surface opened from something comes FROM it: a sheet rises from
+///     the bottom edge, a dialog grows from 94% at the centre, a menu
+///     unfolds from its button, and the same object on two screens flies
+///     between them (a Hub row's title becomes the page's title).
+///   * Nothing bounces, with two exceptions: the "connected" tick on the
+///     email setup screen, the app's single success moment, and the sheet,
+///     which rises on a spring damped to 0.72 ([Motion.sheetRise]) — a
+///     3.8% lift and settle the owner asked to feel (2026-09-30).
 ///   * A stagger plays on FIRST APPEARANCE only, never on a rebuild or a
 ///     refresh — a page must not twitch because its data arrived again.
 ///   * Nothing keeps a ticker running once it has settled; an idle screen
@@ -60,14 +73,24 @@ abstract final class Motion {
   /// Something leaving: quicker than it arrived.
   static const Duration out = Duration(milliseconds: 120);
 
-  /// Switching tabs in the dock: a fade-through, no slide (tabs are peers).
+  /// A quick fade, where a switch needs one (reduced motion keeps it).
   static const Duration tab = Duration(milliseconds: 180);
 
-  /// A page opening.
-  static const Duration pageIn = Duration(milliseconds: 240);
+  /// A tab chosen in the dock COMING THROUGH (tab_deck.dart): a ring of
+  /// light bursts from the button, the new tab grows out of it and fades
+  /// in, the old one falls back and fades away. Compositor work and one
+  /// stroked circle, so it holds 60 fps on the owner's phone. It replaced a 560 ms circle grown from the button
+  /// (2026-09-30, the owner: "feels a bit laggy and old" — the circle
+  /// clipped and repainted the whole page every frame).
+  // 520 ms (owner, 2026-09-30, after 320: "too fast, fix it or remove
+  // it"): long enough to be seen, and a touch still ends it at once.
+  static const Duration tabSwitch = Duration(milliseconds: 520);
+
+  /// A page opening: pushed in from the right edge.
+  static const Duration pageIn = Duration(milliseconds: 280);
 
   /// A page closing (Back).
-  static const Duration pageBack = Duration(milliseconds: 200);
+  static const Duration pageBack = Duration(milliseconds: 240);
 
   /// A sheet, panel or card arriving over the page.
   static const Duration enter = Duration(milliseconds: 300);
@@ -97,6 +120,29 @@ abstract final class Motion {
 
   /// Fading out.
   static const Curve easeFadeOut = Curves.easeIn;
+
+  // ── Springs ────────────────────────────────────────────────────────────
+  /// What a swiped surface settles on after the finger lifts: critically
+  /// damped (no bounce, as the rules say), carrying the flick's speed, done
+  /// in about a quarter of a second.
+  static const SpringDescription swipeSpring =
+      SpringDescription(mass: 1, stiffness: 520, damping: 45.6);
+
+  /// A SHEET RISES ON A SPRING (2026-09-30, motion audit): the old 300 ms
+  /// on the arrival curve slid in like a drawer. The owner, same day:
+  /// "add some more delay to get real effect" — the first spring (0.9,
+  /// 360 ms) was too quick to feel. Now damping ratio 0.72
+  /// (21.4 / (2·√220)): 80% of the way in 150 ms, a visible 3.8% lift past
+  /// its rest at ~300 ms, settled by 600 ms.
+  static const SpringDescription sheetSpring =
+      SpringDescription(mass: 1, stiffness: 220, damping: 21.4);
+
+  /// How long a sheet takes to rise: [sheetSpring]'s settling time.
+  static const Duration sheetIn = Duration(milliseconds: 600);
+
+  /// [sheetSpring] as a curve over [sheetIn] ([showAppSheet]). One
+  /// instance: the SDK's sheet asserts its curve never changes.
+  static final Curve sheetRise = SpringCurve(sheetSpring, settle: sheetIn);
 
   /// Has the owner turned animations off (Samsung "Remove animations")?
   /// Flutter reports it but does not act on it — every animation here has
@@ -444,7 +490,25 @@ class _RevealState extends State<Reveal> {
   }
 }
 
-/// PRESS FEEDBACK: the child dips to 97% under a finger that RESTS on it.
+/// A SPRING AS A CURVE (2026-09-30): [spring] released at rest from 0
+/// towards 1, sampled over [settle], for anything that takes a [Curve]
+/// (an AnimationStyle, a CurvedAnimation). Starts at exactly 0 and ends at
+/// exactly 1 (the spring is within a pixel of 1 by then).
+class SpringCurve extends Curve {
+  SpringCurve(this.spring, {required Duration settle})
+      : _sim = SpringSimulation(spring, 0, 1, 0),
+        _seconds = settle.inMicroseconds / Duration.microsecondsPerSecond;
+
+  final SpringDescription spring;
+  final SpringSimulation _sim;
+  final double _seconds;
+
+  @override
+  double transformInternal(double t) => _sim.x(t * _seconds);
+}
+
+/// PRESS FEEDBACK: the child dips to [PressScale.scale] under a finger that
+/// RESTS on it.
 ///
 /// Uses a [Listener], so the child's own GestureDetector/InkWell still
 /// receives the tap — this only watches the pointer, it never claims it.
@@ -456,9 +520,20 @@ class _RevealState extends State<Reveal> {
 /// waits 80 ms (as InkWell does before it highlights) and gives up the
 /// moment the finger travels, so only a real press dips. A quick tap still
 /// gets a short dip, after the fact. Off with "Remove animations".
+///
+/// AT ONCE WHERE NOTHING SCROLLS (2026-09-30, motion audit): the 80 ms
+/// wait is only there so a scroll that starts on a tile does not make it
+/// flinch. A dock button, a sheet's button or a card on a still page has
+/// no scroll to protect, and there the wait made every tap feel late, so
+/// it dips on the finger's first touch. Inside a [Scrollable] it still
+/// waits.
 class PressScale extends StatefulWidget {
   final Widget child;
-  const PressScale({super.key, required this.child});
+
+  /// How far it dips: 0.97 for a card or a button; 0.985 for a full-width
+  /// row, where the same dip moves the edges three times as far.
+  final double scale;
+  const PressScale({super.key, required this.child, this.scale = 0.97});
 
   @override
   State<PressScale> createState() => _PressScaleState();
@@ -471,6 +546,15 @@ class _PressScaleState extends State<PressScale> {
   Timer? _hold;
   Timer? _blip;
 
+  /// Inside something that scrolls: wait before dipping (see above).
+  bool _inScroll = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _inScroll = Scrollable.maybeOf(context) != null;
+  }
+
   void _set(bool down) {
     if (mounted && _down != down) setState(() => _down = down);
   }
@@ -481,7 +565,11 @@ class _PressScaleState extends State<PressScale> {
     _origin = e.position;
     _blip?.cancel();
     _hold?.cancel();
-    _hold = Timer(Motion.pressDelay, () => _set(true));
+    if (_inScroll) {
+      _hold = Timer(Motion.pressDelay, () => _set(true));
+    } else {
+      _set(true);
+    }
   }
 
   void _onMove(PointerMoveEvent e) {
@@ -528,12 +616,78 @@ class _PressScaleState extends State<PressScale> {
         if (e.pointer == _pointer) _cancel();
       },
       child: AnimatedScale(
-        scale: _down ? 0.97 : 1.0,
+        scale: _down ? widget.scale : 1.0,
         duration: _down ? Motion.press : Motion.release,
         curve: _down ? Curves.easeOut : Motion.easeMove,
         // A snapshot while it moves (see the rules above).
         filterQuality: FilterQuality.medium,
         child: widget.child,
+      ),
+    );
+  }
+}
+
+/// THE APP'S TAPPABLE SURFACE (2026-09-30, promoted from Home's card tap):
+/// a card, tile or thumbnail that does something when touched. It dips
+/// under the finger ([PressScale], at [scale]), ticks once (a light
+/// selection haptic), and tells a screen reader it is a button and what a
+/// tap does ([semanticLabel], [tapHint]). Buttons inside it still win
+/// their own taps. With neither [onTap] nor [onLongPress] it is [child],
+/// untouched.
+class Tappable extends StatelessWidget {
+  const Tappable({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.onLongPress,
+    this.scale = 0.97,
+    this.semanticLabel,
+    this.tapHint = 'open',
+    this.haptic = true,
+  });
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+
+  /// How far it dips ([PressScale.scale]): 0.985 for a full-width row.
+  final double scale;
+
+  /// What it is, for a screen reader, when [child]'s own words do not say.
+  final String? semanticLabel;
+
+  /// What a tap does ("open", "play"), read after the label.
+  final String? tapHint;
+
+  /// The light tick on a tap (a firmer one on a long press).
+  final bool haptic;
+
+  @override
+  Widget build(BuildContext context) {
+    final tap = onTap, hold = onLongPress;
+    if (tap == null && hold == null) return child;
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      onTapHint: tap == null ? null : tapHint,
+      child: PressScale(
+        scale: scale,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: tap == null
+              ? null
+              : () {
+                  if (haptic) HapticFeedback.selectionClick();
+                  tap();
+                },
+          onLongPress: hold == null
+              ? null
+              : () {
+                  if (haptic) HapticFeedback.mediumImpact();
+                  hold();
+                },
+          child: child,
+        ),
       ),
     );
   }
@@ -552,6 +706,7 @@ class LoadSwitch extends StatefulWidget {
     required this.loading,
     required this.child,
     this.spinner = const Center(child: CircularProgressIndicator()),
+    this.state = 'loaded',
   });
 
   /// True while there is nothing to show yet.
@@ -559,6 +714,11 @@ class LoadSwitch extends StatefulWidget {
 
   /// What to show once loaded (the list, the empty state, the error).
   final Widget child;
+
+  /// Which of those [child] is ('list', 'empty', 'error'…): a change of
+  /// state is shown as one (the old fades and sinks, the new fades and
+  /// rises), where a list merely growing is not.
+  final Object state;
 
   /// What to show when loading is slow.
   final Widget spinner;
@@ -605,7 +765,7 @@ class _LoadSwitchState extends State<LoadSwitch> {
   @override
   Widget build(BuildContext context) {
     final Widget shown = !widget.loading
-        ? KeyedSubtree(key: const ValueKey('loaded'), child: widget.child)
+        ? KeyedSubtree(key: ValueKey<Object>(widget.state), child: widget.child)
         : _slow
             ? KeyedSubtree(key: const ValueKey('slow'), child: widget.spinner)
             : const SizedBox.shrink(key: ValueKey('wait'));
@@ -619,6 +779,7 @@ class _LoadSwitchState extends State<LoadSwitch> {
         alignment: Alignment.topCenter,
         children: [...previous, if (current != null) current],
       ),
+      transitionBuilder: stateTransition,
       child: shown,
     );
   }
@@ -626,8 +787,10 @@ class _LoadSwitchState extends State<LoadSwitch> {
 
 /// THE APP'S BOTTOM SHEET. The SDK's sheet is fine but belongs to another
 /// family (250 ms on a legacy curve) and ignores "Remove animations". Same
-/// signature as [showModalBottomSheet], on the app's clock: 300 ms in on
-/// the arrival curve, 200 ms out on the leaving one.
+/// signature as [showModalBottomSheet], on the app's clock: it rises in
+/// [Motion.sheetIn] (600 ms) on [Motion.sheetRise], a spring with a
+/// visible settle, and leaves in [Motion.pageBack] (240 ms) on the leaving
+/// curve. A sheet let go mid-drag carries on from where the finger left it.
 Future<T?> showAppSheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -669,15 +832,19 @@ AnimationStyle appSheetAnimation(BuildContext context) => Motion.reduced(context
     ? const AnimationStyle(
         duration: Motion.out, reverseDuration: Motion.out)
     : AnimationStyle(
-        duration: Motion.enter,
+        duration: Motion.sheetIn,
         reverseDuration: Motion.pageBack,
-        curve: Motion.easeEnter,
+        curve: Motion.sheetRise,
         // Reverse runs the clock backwards: flipped, it eases off and goes.
         reverseCurve: Motion.easeExit.flipped,
       );
 
-/// THE APP'S DIALOG. The SDK's 150 ms fade blinked in; this one takes
-/// 200 ms in and 150 ms out. Same signature as [showDialog].
+/// THE APP'S DIALOG. It grows from 94% at the centre as it fades in on the
+/// arrival curve and shrinks back as it fades out on the leaving one, over
+/// the night scrim — a surface that opens, not one that blinks in. Both
+/// ways take [Motion.short] (200 ms): showGeneralDialog has one duration,
+/// so the close is quicker only by its curve. Same signature as
+/// [showDialog].
 Future<T?> showAppDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -688,23 +855,337 @@ Future<T?> showAppDialog<T>({
   bool useRootNavigator = true,
   RouteSettings? routeSettings,
 }) {
-  return showDialog<T>(
+  final reduced = Motion.reduced(context);
+  final theme = Theme.of(context);
+  return showGeneralDialog<T>(
     context: context,
-    builder: builder,
     barrierDismissible: barrierDismissible,
-    barrierColor: barrierColor,
-    barrierLabel: barrierLabel,
-    useSafeArea: useSafeArea,
+    barrierColor: barrierColor ?? theme.dialogTheme.barrierColor ?? Colors.black54,
+    barrierLabel: barrierLabel ??
+        (barrierDismissible ? MaterialLocalizations.of(context).modalBarrierDismissLabel : null),
     useRootNavigator: useRootNavigator,
     routeSettings: routeSettings,
-    animationStyle: Motion.reduced(context)
-        ? const AnimationStyle(
-            duration: Motion.out, reverseDuration: Motion.out)
-        : const AnimationStyle(
-            duration: Motion.short,
-            reverseDuration: Motion.micro,
-            curve: Motion.easeFadeIn,
-            reverseCurve: Motion.easeFadeIn,
-          ),
+    transitionDuration: reduced ? Motion.out : Motion.short,
+    pageBuilder: (context, _, __) {
+      final dialog = Builder(builder: builder);
+      return useSafeArea ? SafeArea(child: dialog) : dialog;
+    },
+    transitionBuilder: (context, animation, _, child) {
+      final fade = CurvedAnimation(
+          parent: animation, curve: Motion.easeFadeIn, reverseCurve: Motion.easeFadeOut);
+      if (reduced) return FadeTransition(opacity: fade, child: child);
+      return FadeTransition(
+        opacity: fade,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.94, end: 1).animate(CurvedAnimation(
+              parent: animation, curve: Motion.easeEnter, reverseCurve: Motion.easeExit.flipped)),
+          child: child,
+        ),
+      );
+    },
   );
 }
+
+/// A popup menu's timing: it unfolds from its button on the arrival curve
+/// and folds away quicker.
+AnimationStyle appMenuAnimation(BuildContext context) => Motion.reduced(context)
+    ? const AnimationStyle(duration: Motion.out, reverseDuration: Motion.out)
+    : const AnimationStyle(
+        duration: Motion.short,
+        reverseDuration: Motion.out,
+        curve: Motion.easeEnter,
+        reverseCurve: Motion.easeExit,
+      );
+
+/// THE SAME OBJECT ON TWO SCREENS FLIES BETWEEN THEM. A page's title and
+/// the row that opened it (Hub) carry the same tag; the words travel from
+/// the row into the page's bar while the page pushes in, scaled whole
+/// rather than laid out again at every size.
+Object titleHeroTag(String title) => 'page-title:$title';
+
+Widget titleFlight(BuildContext flightContext, Animation<double> animation,
+    HeroFlightDirection direction, BuildContext fromContext, BuildContext toContext) {
+  final to = (direction == HeroFlightDirection.push ? toContext : fromContext).widget as Hero;
+  return Material(
+    type: MaterialType.transparency,
+    child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: to.child),
+  );
+}
+
+/// A CARD OPENS INTO ITS PAGE (2026-09-30, motion audit). The card
+/// (GlowCard(heroTag: cardHeroTag(id))) and the top of the page it opens
+/// (Hero(tag: cardHeroTag(id), flightShuttleBuilder: cardFlight, …)) carry
+/// the same tag; while the page pushes in, one surface grows from the
+/// card's place and size to the page's, its corners straightening as it
+/// goes, the card's content fading out as the page's fades in. Back runs
+/// it the other way. Tags must be unique on a screen: use the item's id.
+Object cardHeroTag(Object id) => ('card-hero', id);
+
+/// The shuttle for a [cardHeroTag] flight: a card with the app's radius
+/// ([Neon.rLg]) opening into a full-bleed block (radius 0). Give both
+/// Heroes the same builder; [cardFlightFor] for other radii.
+Widget cardFlight(BuildContext flightContext, Animation<double> animation,
+        HeroFlightDirection direction, BuildContext fromContext, BuildContext toContext) =>
+    _cardFlight(Neon.rLg, 0, animation, direction, fromContext, toContext);
+
+/// [cardFlight] for a card of [cardRadius] opening into a block of
+/// [pageRadius].
+HeroFlightShuttleBuilder cardFlightFor({double cardRadius = Neon.rLg, double pageRadius = 0}) =>
+    (flightContext, animation, direction, fromContext, toContext) =>
+        _cardFlight(cardRadius, pageRadius, animation, direction, fromContext, toContext);
+
+Widget _cardFlight(double cardRadius, double pageRadius, Animation<double> animation,
+    HeroFlightDirection direction, BuildContext fromContext, BuildContext toContext) {
+  // The flight's animation is the page's own: 0 is the card, 1 the page,
+  // whichever way it flies.
+  final push = direction == HeroFlightDirection.push;
+  final card = push ? fromContext : toContext;
+  final page = push ? toContext : fromContext;
+  Size? sizeOf(BuildContext c) {
+    final box = c.findRenderObject();
+    return box is RenderBox && box.hasSize ? box.size : null;
+  }
+
+  return _CardFlight(
+    animation: animation,
+    card: (card.widget as Hero).child,
+    page: (page.widget as Hero).child,
+    cardSize: sizeOf(card),
+    pageSize: sizeOf(page),
+    cardRadius: cardRadius,
+    pageRadius: pageRadius,
+  );
+}
+
+class _CardFlight extends AnimatedWidget {
+  const _CardFlight({
+    required Animation<double> animation,
+    required this.card,
+    required this.page,
+    required this.cardSize,
+    required this.pageSize,
+    required this.cardRadius,
+    required this.pageRadius,
+  }) : super(listenable: animation);
+
+  final Widget card, page;
+  final Size? cardSize, pageSize;
+  final double cardRadius, pageRadius;
+
+  // The card's words are gone by 45% of the way; the page's arrive from 35%.
+  static const Curve _cardOut = Interval(0, 0.45, curve: Motion.easeFadeOut);
+  static const Curve _pageIn = Interval(0.35, 1, curve: Motion.easeFadeIn);
+
+  /// [child] laid out at its own [size] and drawn scaled to the flying
+  /// surface's width, as a snapshot (the rules above): never laid out
+  /// again at every size in between.
+  static Widget _fit(Widget child, Size? size, double width) {
+    if (size == null || size.isEmpty || !width.isFinite) return child;
+    return OverflowBox(
+      alignment: Alignment.topLeft,
+      minWidth: size.width,
+      maxWidth: size.width,
+      minHeight: size.height,
+      maxHeight: size.height,
+      child: Transform.scale(
+        scale: width / size.width,
+        alignment: Alignment.topLeft,
+        filterQuality: FilterQuality.medium,
+        child: child,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = (listenable as Animation<double>).value.clamp(0.0, 1.0);
+    return Material(
+      type: MaterialType.transparency,
+      child: LayoutBuilder(
+        builder: (context, box) => Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.none,
+          children: [
+            // The surface that grows: size and place from the Hero, the
+            // corners here, the ground from the card's to the page's.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(lerpDouble(cardRadius, pageRadius, t)!),
+              child: ColoredBox(
+                color: Color.lerp(Neon.surface, Neon.bg, t)!,
+                child: Opacity(opacity: _pageIn.transform(t), child: _fit(page, pageSize, box.maxWidth)),
+              ),
+            ),
+            // The card itself, unclipped so its lit rim and halo are seen
+            // leaving rather than cut off on the first frame.
+            Opacity(opacity: 1 - _cardOut.transform(t), child: _fit(card, cardSize, box.maxWidth)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// EXPAND / COLLAPSE — a section that opens grows to its height where it
+/// is and fades in; closing, it fades and shrinks away. What is below moves
+/// with it instead of jumping. Pair it with [ExpandChevron] on its toggle.
+class Collapse extends StatelessWidget {
+  const Collapse({super.key, required this.open, required this.child});
+
+  final bool open;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    const closed = SizedBox(key: ValueKey<bool>(false), width: double.infinity);
+    if (Motion.reduced(context)) return open ? child : closed;
+    return AnimatedSize(
+      duration: Motion.short,
+      curve: Motion.easeMove,
+      alignment: Alignment.topCenter,
+      child: AnimatedSwitcher(
+        duration: Motion.micro,
+        switchInCurve: Motion.easeFadeIn,
+        switchOutCurve: Motion.easeFadeOut,
+        layoutBuilder: (current, previous) => Stack(
+          alignment: Alignment.topCenter,
+          children: [...previous, if (current != null) current],
+        ),
+        child: open ? KeyedSubtree(key: const ValueKey<bool>(true), child: child) : closed,
+      ),
+    );
+  }
+}
+
+/// The chevron of an expanding section: it turns to point the way the
+/// section will go, rather than swapping for another icon.
+class ExpandChevron extends StatelessWidget {
+  const ExpandChevron({super.key, required this.open, this.color, this.size});
+
+  final bool open;
+  final Color? color;
+  final double? size;
+
+  @override
+  Widget build(BuildContext context) => AnimatedRotation(
+        turns: open ? 0.5 : 0,
+        duration: Motion.reduced(context) ? Duration.zero : Motion.short,
+        curve: Motion.easeMove,
+        child: Icon(Icons.expand_more_rounded, color: color, size: size),
+      );
+}
+
+/// A state replaced by another (loading → the list, the list → an error):
+/// the new one fades in as it rises the last 8 dp into place; the old one
+/// fades as it sinks. For [AnimatedSwitcher.transitionBuilder].
+Widget stateTransition(Widget child, Animation<double> animation) => FadeTransition(
+      opacity: animation,
+      child: AnimatedBuilder(
+        animation: animation,
+        builder: (context, child) =>
+            Transform.translate(offset: Offset(0, 8 * (1 - animation.value)), child: child),
+        child: child,
+      ),
+    );
+
+/// STATE SWITCH — [LoadSwitch]'s motion for a screen that already knows
+/// its state: [state] names what [child] is ('loading', 'error', 'list'…),
+/// and a new state replaces the old with [stateTransition].
+class StateSwitch extends StatelessWidget {
+  const StateSwitch({super.key, required this.state, required this.child});
+
+  /// For a screen whose body is a different kind of widget in each state
+  /// (a loader, an error, the list): the kind is the state.
+  StateSwitch.of(Widget child, {Key? key}) : this(key: key, state: child.runtimeType, child: child);
+
+  final Object state;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = KeyedSubtree(key: ValueKey<Object>(state), child: child);
+    if (Motion.reduced(context)) return shown;
+    return AnimatedSwitcher(
+      duration: Motion.short,
+      reverseDuration: Motion.out,
+      switchInCurve: Motion.easeEnter,
+      switchOutCurve: Motion.easeFadeOut,
+      layoutBuilder: (current, previous) => Stack(
+        alignment: Alignment.topCenter,
+        children: [...previous, if (current != null) current],
+      ),
+      transitionBuilder: stateTransition,
+      child: shown,
+    );
+  }
+}
+
+/// A SURFACE THAT LEAVES, NOT VANISHES. Panels and cards arrive with their
+/// own entrance ([EnterOnce]) but used to disappear in one frame when their
+/// content went away. Give [child] null to take it away: the last one stays
+/// for [Motion.out] while it fades and sinks [sink] dp, then is gone —
+/// quick, so a Back or a ✕ still feels instant. It never takes taps once
+/// leaving.
+class ExitPresence extends StatefulWidget {
+  const ExitPresence({super.key, required this.child, this.sink = 16});
+
+  final Widget? child;
+  final double sink;
+
+  @override
+  State<ExitPresence> createState() => _ExitPresenceState();
+}
+
+class _ExitPresenceState extends State<ExitPresence> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: Motion.out, value: 1);
+  Widget? _last;
+
+  @override
+  void initState() {
+    super.initState();
+    _last = widget.child;
+  }
+
+  @override
+  void didUpdateWidget(ExitPresence old) {
+    super.didUpdateWidget(old);
+    if (widget.child != null) {
+      _last = widget.child;
+      _c.value = 1;
+    } else if (old.child != null) {
+      if (Motion.reduced(context)) {
+        _last = null;
+      } else {
+        _c.reverse(from: 1).whenCompleteOrCancel(() {
+          if (mounted && widget.child == null) setState(() => _last = null);
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final present = widget.child;
+    if (present != null) return present;
+    final last = _last;
+    if (last == null) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: FadeTransition(
+        opacity: CurvedAnimation(parent: _c, curve: Motion.easeFadeOut),
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (context, child) =>
+              Transform.translate(offset: Offset(0, widget.sink * (1 - _c.value)), child: child),
+          child: last,
+        ),
+      ),
+    );
+  }
+}
+

@@ -74,11 +74,6 @@ class ShortcutRunner {
         await ports.perform(s.action);
         continue;
       }
-      if (s.cls == 'app_task') {
-        // The task engine takes the phone from here; it reports as today.
-        await ports.perform(s.action);
-        continue;
-      }
       if (leftApp) {
         if (await ports.canLaunchFromBackground()) {
           await ports.wait(gap);

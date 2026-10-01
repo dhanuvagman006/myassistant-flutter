@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../design/neon_tokens.dart';
+import '../../design/motion.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/glow_cta.dart';
 import '../../services/assistant_identity.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -29,29 +32,25 @@ class _GuideScreenState extends State<GuideScreen> {
       (
         icon: Icons.graphic_eq_rounded,
         title: 'Talk, don\'t tap',
-        body:
-            'Tap the orb at the bottom of the home screen and just speak. '
+        body: 'Tap the orb at the bottom of the home screen and just speak. '
             '$a listens, answers out loud, and keeps the conversation going.',
       ),
       (
         icon: Icons.task_alt_rounded,
         title: '$a actually gets things done',
-        body:
-            'Place calls, deliver messages, set reminders, plan your money, '
+        body: 'Place calls, deliver messages, set reminders, plan your money, '
             'create images and speeches — say it, and it happens.',
       ),
       (
         icon: Icons.space_dashboard_rounded,
         title: 'Your day, at a glance',
-        body:
-            'Home shows your agenda, promises, messages and headlines. '
+        body: 'Home shows your agenda, promises, messages and headlines. '
             'The Hub holds finance, markets, clients and more.',
       ),
       (
         icon: Icons.tune_rounded,
         title: 'Make it yours',
-        body:
-            'Pick a voice under the You tab, add your own '
+        body: 'Pick a voice under the You tab, add your own '
             'rules — or just say "your name is Nova now" and $a renames '
             'itself.',
       ),
@@ -81,8 +80,10 @@ class _GuideScreenState extends State<GuideScreen> {
     final pages = _pages;
     final last = _index == pages.length - 1;
 
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky, each page's icon in the lit brand tile and the
+    // one action lit (2026-09-30).
+    final reduced = Motion.reduced(context);
+    return NeonScaffold(
       body: SafeArea(
         child: Column(
           children: [
@@ -94,8 +95,7 @@ class _GuideScreenState extends State<GuideScreen> {
                 padding: const EdgeInsets.only(top: 4, right: 8),
                 child: TextButton(
                   onPressed: widget.onDone,
-                  child: Text('Skip',
-                      style: TextStyle(color: Neon.textLo)),
+                  child: Text('Skip', style: TextStyle(color: Neon.textLo)),
                 ),
               ),
             ),
@@ -109,48 +109,39 @@ class _GuideScreenState extends State<GuideScreen> {
                   return Center(
                     // Scrolls when short on room instead of overflowing.
                     child: SingleChildScrollView(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 64,
-                              height: 64,
-                              decoration: BoxDecoration(
-                                color: Neon.textHi,
-                                borderRadius: BorderRadius.circular(18),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              BrandMark(size: 64, icon: p.icon),
+                              const SizedBox(height: 26),
+                              Text(
+                                p.title,
+                                style: GoogleFonts.spaceGrotesk(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w700,
+                                  color: Neon.textHi,
+                                  letterSpacing: -0.5,
+                                  height: 1.15,
+                                ),
                               ),
-                              child: Icon(p.icon,
-                                  color: Neon.onInk, size: 30),
-                            ),
-                            const SizedBox(height: 26),
-                            Text(
-                              p.title,
-                              style: GoogleFonts.spaceGrotesk(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                color: Neon.textHi,
-                                letterSpacing: -0.5,
-                                height: 1.15,
+                              const SizedBox(height: 12),
+                              Text(
+                                p.body,
+                                style: TextStyle(
+                                  color: Neon.textLo,
+                                  fontSize: 16,
+                                  height: 1.55,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              p.body,
-                              style: TextStyle(
-                                color: Neon.textLo,
-                                fontSize: 16,
-                                height: 1.55,
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                     ),
                   );
                 },
@@ -165,8 +156,9 @@ class _GuideScreenState extends State<GuideScreen> {
                     // Progress dots — the current one stretches.
                     for (var i = 0; i < pages.length; i++) ...[
                       AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
+                        // Motion tokens (2026-09-30; a raw 220 ms).
+                        duration: reduced ? Duration.zero : Motion.short,
+                        curve: Motion.easeMove,
                         width: i == _index ? 22 : 7,
                         height: 7,
                         decoration: BoxDecoration(
@@ -174,24 +166,31 @@ class _GuideScreenState extends State<GuideScreen> {
                               ? Neon.violet
                               : Neon.violet.withValues(alpha: 0.18),
                           borderRadius: BorderRadius.circular(4),
+                          boxShadow: i == _index
+                              ? Neon.halo(Neon.violet, strength: 0.6)
+                              : null,
                         ),
                       ),
                       const SizedBox(width: 6),
                     ],
                     const Spacer(),
-                    FilledButton(
-                      onPressed: _next,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Neon.violet,
-                        foregroundColor: Neon.onAccent,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        textStyle: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 28, vertical: 14),
+                    // The theme's lit button with the brand's halo under it
+                    // (a bare TextStyle here drew the phone's own font).
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: Neon.halo(Neon.violet),
                       ),
-                      child: Text(last ? 'Get started' : 'Next'),
+                      child: FilledButton(
+                        onPressed: _next,
+                        style: FilledButton.styleFrom(
+                          textStyle: NeonType.manrope(
+                              NeonType.rowTitle, FontWeight.w600),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 28, vertical: 14),
+                        ),
+                        child: Text(last ? 'Get started' : 'Next'),
+                      ),
                     ),
                   ],
                 ),

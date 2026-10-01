@@ -42,8 +42,11 @@ class ThemeController {
   static final ValueNotifier<bool> dark = ValueNotifier(false);
 
   /// The chosen mode, for settings to render.
+  // DARK UNLESS CHOSEN (2026-09-30): the product is a night-sky design
+  // (the client's reference). Adaptive and Light stay one tap away in
+  // You → Appearance; a saved choice is kept.
   static final ValueNotifier<ThemeMode3> mode =
-      ValueNotifier(ThemeMode3.adaptive);
+      ValueNotifier(ThemeMode3.dark);
 
   static Timer? _clock;
 
@@ -100,16 +103,10 @@ class ThemeController {
     if (mode.value == ThemeMode3.adaptive) _applyForMode();
   }
 
-  static void _applyForMode() {
-    switch (mode.value) {
-      case ThemeMode3.light:
-        _apply(false);
-      case ThemeMode3.dark:
-        _apply(true);
-      case ThemeMode3.adaptive:
-        _apply(darkHourNow());
-    }
-  }
+  /// ONE DESIGN (owner, 2026-09-30: "need exact same design even in light
+  /// and dark theme"). The product is the client's night-sky neon; there
+  /// is no pale version of it, so every mode draws it.
+  static void _applyForMode() => _apply(true);
 
   /// In adaptive mode the theme must change AT dusk and dawn even if
   /// nobody touches the phone, so tick at the top of each hour.

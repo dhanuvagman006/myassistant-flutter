@@ -2,12 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/neon_cards.dart';
 import '../../services/api_service.dart';
 import '../../services/call_service.dart';
 import '../../services/app_feedback.dart';
@@ -20,8 +22,12 @@ import '../../services/app_feedback.dart';
 class CallDetailScreen extends StatefulWidget {
   final int callId;
   final String peerLabel;
+
+  /// The list's own row for this call (Call notes), shown in the header
+  /// while the full call loads — and what the row flies into.
+  final Map<String, dynamic>? preview;
   const CallDetailScreen(
-      {super.key, required this.callId, required this.peerLabel});
+      {super.key, required this.callId, required this.peerLabel, this.preview});
 
   @override
   State<CallDetailScreen> createState() => _CallDetailScreenState();
@@ -168,9 +174,11 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
     }
   }
 
-  String get _when {
+  String get _when => _whenOf(_call ?? const {});
+
+  String _whenOf(Map<String, dynamic> c) {
     final at = DateTime.fromMillisecondsSinceEpoch(
-        (_call?['started_at'] as num?)?.toInt() ?? 0);
+        (c['started_at'] as num?)?.toInt() ?? 0);
     const mo = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
@@ -202,50 +210,60 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = _call;
-    return Scaffold(
-      backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        elevation: 0,
-        iconTheme: IconThemeData(color: Neon.textHi),
-        title: Text(widget.peerLabel,
-            style: GoogleFonts.spaceGrotesk(
-                color: Neon.textHi,
-                fontWeight: FontWeight.w700,
-                fontSize: 19)),
-        actions: [
-          if (c != null)
-            IconButton(
-              onPressed: _share,
-              icon: Icon(Icons.share_rounded, color: Neon.cyan, size: 20),
-            ),
-        ],
-      ),
+    // The header shows from the first frame when the list handed over its
+    // row, so the row has somewhere to fly to (2026-09-30).
+    final head = c ?? widget.preview;
+    return NeonScaffold(
+      appBar: appleAppBar(context, widget.peerLabel, actions: [
+        if (c != null)
+          IconButton(
+            tooltip: 'Share call notes',
+            onPressed: _share,
+            icon: Icon(Icons.share_rounded, color: Neon.cyan, size: 20),
+          ),
+      ]),
       body: SafeArea(
-        child: _loading
-            ? Center(
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Neon.textLo))
-            : c == null
-                ? Center(
-                    child: Text("Couldn't load this call.",
-                        style: TextStyle(color: Neon.textDim, fontSize: 13)))
-                : ListView(
+        child: c == null
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (head != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                      child: _headerCard(head),
+                    ),
+                  Expanded(
+                    child: StateSwitch(
+                      state: _loading,
+                      child: _loading
+                          ? const NeonLoader.page()
+                          : NeonErrorState(
+                              message: "Couldn't load this call",
+                              onRetry: () {
+                                setState(() => _loading = true);
+                                _load();
+                              },
+                            ),
+                    ),
+                  ),
+                ],
+              )
+            : ListView(
                     padding: const EdgeInsets.fromLTRB(16, 6, 16, 30),
                     children: [
-                      Reveal(child: _headerCard(c)),
+                      _headerCard(c),
                       const SizedBox(height: 12),
                       if ((c['summary'] ?? '').toString().isNotEmpty)
                         Reveal(
                             delayMs: 60,
-                            child: _section(
-                              Icons.subject_rounded,
-                              'What the call was about',
-                              Neon.violet,
-                              Text((c['summary'] ?? '').toString(),
+                            child: NeonSection(
+                              icon: Icons.subject_rounded,
+                              title: 'What the call was about',
+                              tone: NeonTone.info,
+                              child: Text((c['summary'] ?? '').toString(),
                                   style: TextStyle(
                                       color: Neon.textLo,
-                                      fontSize: 14,
+                                      fontSize: NeonType.body,
                                       height: 1.5)),
                             )),
                       const SizedBox(height: 12),
@@ -254,11 +272,11 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                         const SizedBox(height: 12),
                         Reveal(
                             delayMs: 120,
-                            child: _section(
-                              Icons.fact_check_rounded,
-                              'Key points',
-                              Neon.cyan,
-                              Column(
+                            child: NeonSection(
+                              icon: Icons.fact_check_rounded,
+                              title: 'Key points',
+                              tone: NeonTone.tip,
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   for (final f in _facts)
@@ -284,7 +302,8 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                                             child: Text(f,
                                                 style: TextStyle(
                                                     color: Neon.textLo,
-                                                    fontSize: 13,
+                                                    fontSize:
+                                                        NeonType.footnote,
                                                     height: 1.45)),
                                           ),
                                         ],
@@ -298,11 +317,11 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                         const SizedBox(height: 12),
                         Reveal(
                             delayMs: 180,
-                            child: _section(
-                              Icons.event_available_rounded,
-                              'Added to your agenda',
-                              Neon.success,
-                              Column(
+                            child: NeonSection(
+                              icon: Icons.event_available_rounded,
+                              title: 'Added to your agenda',
+                              tone: NeonTone.success,
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   for (final a in _actions)
@@ -324,7 +343,8 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                                               (a['text'] ?? '').toString(),
                                               style: TextStyle(
                                                   color: Neon.textLo,
-                                                  fontSize: 13)),
+                                                  fontSize:
+                                                      NeonType.footnote)),
                                         ),
                                       ]),
                                     ),
@@ -335,44 +355,45 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                       const SizedBox(height: 12),
                       Reveal(
                         delayMs: 220,
-                        child: _section(
-                          Icons.notes_rounded,
-                          'Transcript',
-                          Neon.pink,
-                          Column(
+                        child: NeonSection(
+                          icon: Icons.notes_rounded,
+                          title: 'Transcript',
+                          tone: NeonTone.discovery,
+                          child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              AnimatedCrossFade(
-                                duration: const Duration(milliseconds: 220),
-                                crossFadeState: _showTranscript
-                                    ? CrossFadeState.showSecond
-                                    : CrossFadeState.showFirst,
-                                firstChild: const SizedBox(width: double.infinity),
-                                secondChild: Padding(
+                              // Opens in place on the app's clock
+                              // (2026-09-30; was a 220 ms cross-fade).
+                              Collapse(
+                                open: _showTranscript,
+                                child: Padding(
                                   padding: const EdgeInsets.only(bottom: 8),
                                   child: Text(
                                       (c['transcript'] ?? '').toString(),
                                       style: TextStyle(
                                           color: Neon.textLo,
-                                          fontSize: 13,
+                                          fontSize: NeonType.footnote,
                                           height: 1.5)),
                                 ),
                               ),
-                              InkWell(
-                                onTap: () => setState(
+                              TextButton.icon(
+                                onPressed: () => setState(
                                     () => _showTranscript = !_showTranscript),
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 4),
-                                  child: Text(
-                                      _showTranscript
-                                          ? 'Hide transcript'
-                                          : 'Show full transcript',
-                                      style: TextStyle(
-                                          color: Neon.pink,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600)),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Neon.pink,
+                                  minimumSize: const Size(48, 48),
+                                  padding: EdgeInsets.zero,
                                 ),
+                                icon: ExpandChevron(
+                                    open: _showTranscript,
+                                    color: Neon.pink,
+                                    size: 18),
+                                label: Text(
+                                    _showTranscript
+                                        ? 'Hide transcript'
+                                        : 'Show full transcript',
+                                    style: NeonType.manrope(
+                                        NeonType.footnote, FontWeight.w600)),
                               ),
                             ],
                           ),
@@ -386,45 +407,36 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
 
   Widget _followUpCard(Map<String, dynamic> c) {
     final has = _followUp.text.trim().isNotEmpty;
-    return _section(
-      Icons.send_rounded,
-      'Follow up with ${widget.peerLabel}',
-      Neon.success,
-      !has
+    // THE PAGE'S NEXT STEP (2026-09-30): lit in the action tone, and its
+    // buttons are the lit pills.
+    return NeonSection(
+      icon: Icons.send_rounded,
+      title: 'Follow up with ${widget.peerLabel}',
+      tone: NeonTone.action,
+      lit: true,
+      child: !has
           ? Align(
               alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
+              child: NeonPill(
+                label: _drafting ? 'Drafting…' : 'Draft a follow-up message',
+                icon: Icons.auto_awesome_rounded,
+                tone: NeonTone.action,
+                busy: _drafting,
                 onPressed: _drafting ? null : _draftFollowUp,
-                icon: _drafting
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 1.8, color: Neon.success))
-                    : Icon(Icons.auto_awesome_rounded,
-                        size: 16, color: Neon.success),
-                label: Text(
-                    _drafting ? 'Drafting…' : 'Draft a follow-up message',
-                    style: TextStyle(color: Neon.textHi, fontSize: 13)),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(
-                      color: Neon.success.withValues(alpha: 0.45)),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
               ),
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('What you agreed, ready to send. Edit it if you like.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 12)),
+                    style: TextStyle(
+                        color: Neon.textDim, fontSize: NeonType.caption)),
                 const SizedBox(height: 8),
                 Container(
                   decoration: BoxDecoration(
                     color: Neon.bg,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Neon.line),
+                    border: Border.all(color: Neon.lineBright),
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: TextField(
@@ -432,7 +444,9 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                     minLines: 2,
                     maxLines: 6,
                     style: TextStyle(
-                        color: Neon.textHi, fontSize: 14, height: 1.45),
+                        color: Neon.textHi,
+                        fontSize: NeonType.body,
+                        height: 1.45),
                     decoration: const InputDecoration(
                       filled: false,
                       border: InputBorder.none,
@@ -442,130 +456,69 @@ class _CallDetailScreenState extends State<CallDetailScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                    child: _sendButton(Icons.chat_rounded, 'Chat app',
-                        Neon.success, () => _sendVia('whatsapp')),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _sendButton(Icons.sms_rounded, 'SMS', Neon.cyan,
-                        () => _sendVia('sms')),
-                  ),
-                  const SizedBox(width: 8),
-                  _sendButton(Icons.copy_rounded, '', Neon.textLo,
-                      () => _sendVia('copy')),
-                ]),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    NeonPill(
+                        label: 'Chat app',
+                        icon: Icons.chat_rounded,
+                        tone: NeonTone.success,
+                        onPressed: () => _sendVia('whatsapp')),
+                    NeonPill(
+                        label: 'SMS',
+                        icon: Icons.sms_rounded,
+                        tone: NeonTone.tip,
+                        onPressed: () => _sendVia('sms')),
+                    // Named at last: it was a bare icon a screen reader
+                    // could not say.
+                    NeonPill(
+                        label: 'Copy',
+                        icon: Icons.copy_rounded,
+                        tone: NeonTone.info,
+                        onPressed: () => _sendVia('copy')),
+                  ],
+                ),
               ],
             ),
-    );
-  }
-
-  Widget _sendButton(
-      IconData icon, String label, Color tint, VoidCallback onTap) {
-    return Material(
-      color: tint.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-              horizontal: label.isEmpty ? 14 : 10, vertical: 11),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 16, color: tint),
-              if (label.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text(label,
-                    style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 
   Widget _headerCard(Map<String, dynamic> c) {
     final dur = (c['duration_s'] as num?)?.toInt() ?? 0;
     final inc = c['direction'] == 'incoming';
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(Neon.rLg),
-        border: Border.all(color: Neon.line),
-      ),
-      child: Row(children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Neon.success.withValues(alpha: 0.16),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
+    return cardHero(
+      context,
+      callHeroTag(widget.callId),
+      RimCard(
+        radius: Neon.rLg,
+        tone: NeonTone.success,
+        child: Row(children: [
+          ToneTile(
               inc ? Icons.call_received_rounded : Icons.call_made_rounded,
-              color: Neon.success,
-              size: 20),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_when,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600)),
-            if (dur > 0)
-              Text(
-                  '${dur ~/ 60} min ${dur % 60} sec',
-                  style: TextStyle(color: Neon.textDim, fontSize: 12)),
-          ]),
-        ),
-      ]),
-    );
-  }
-
-  Widget _section(IconData icon, String title, Color tint, Widget body) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(Neon.rLg),
-        border: Border.all(color: Neon.line),
+              NeonTone.success,
+              size: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_whenOf(c),
+                      style: NeonType.manrope(NeonType.body, FontWeight.w600)
+                          .copyWith(color: Neon.textHi)),
+                  if (dur > 0)
+                    Text('${dur ~/ 60} min ${dur % 60} sec',
+                        style: TextStyle(
+                            color: Neon.textDim, fontSize: NeonType.caption)),
+                ]),
+          ),
+        ]),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, size: 15, color: tint),
-            ),
-            const SizedBox(width: 9),
-            Text(title,
-                style: TextStyle(
-                    color: Neon.textHi,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700)),
-          ]),
-          const SizedBox(height: 10),
-          body,
-        ],
-      ),
+      cardRadius: Neon.rMd,
+      pageRadius: Neon.rLg,
     );
   }
 }
+
+/// The tag a Call notes row and its call's header card fly under.
+Object callHeroTag(int id) => cardHeroTag(('call', id));

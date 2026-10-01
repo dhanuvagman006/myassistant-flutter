@@ -4,8 +4,11 @@ import 'package:flutter/services.dart';
 
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
-import '../services/api_service.dart';
+import '../design/neon_widgets.dart' show NeonEmptyState, NeonLoader;
+import '../features/calendar/calendar_models.dart';
+import '../features/calendar/calendar_service.dart';
 import '../services/brief_service.dart';
+import 'neon_cards.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MONTH CALENDAR — the home screen's commitment heat-map.
@@ -17,7 +20,31 @@ import '../services/brief_service.dart';
 ///  GET /brief/calendar, which aggregates every source server-side.
 /// ─────────────────────────────────────────────────────────────────────────
 class MonthCalendar extends StatefulWidget {
-  const MonthCalendar({super.key});
+  const MonthCalendar({
+    super.key,
+    this.extrasFor,
+    this.onDaySelected,
+    this.onMonthChanged,
+    this.onMonthItems,
+    this.refreshToken = 0,
+  });
+
+  /// THE CALENDAR SCREEN'S MODE (2026-09-30). Holidays, festivals, world
+  /// days and events for a shown month, by day: each adds its kind's dot,
+  /// and a holiday's number is drawn in the holiday colour. Null on Home.
+  final Map<int, List<CalendarEntry>> Function(int year, int month)? extrasFor;
+
+  /// Set, a tap on any day picks it and tells the screen (which shows the
+  /// day's agenda itself): no inline list, no day sheet.
+  final ValueChanged<DateTime>? onDaySelected;
+  final void Function(int year, int month)? onMonthChanged;
+
+  /// The shown month's own items as they arrive (the screen's agenda).
+  final void Function(int year, int month, Map<int, List<CalendarEntry>> days)?
+      onMonthItems;
+
+  /// Bump to fetch the shown month again (after the screen deletes).
+  final int refreshToken;
 
   /// THE BUSY SCALE, IN THE BRAND'S OWN COLOURS: one, two, three or more
   /// things on a day.
@@ -70,24 +97,11 @@ class MonthCalendar extends StatefulWidget {
   State<MonthCalendar> createState() => _MonthCalendarState();
 }
 
-class _CalItem {
-  final String kind; // meeting | payment | income | reminder | promise
-  final String title;
-
-  /// REST collection + id for deletion ("reminders", "commitments",
-  /// "finance"); null for Google meetings, which we don't own.
-  final String? del;
-  final int? id;
-  const _CalItem(this.kind, this.title, {this.del, this.id});
-
-  bool get deletable => del != null && id != null;
-}
-
 class _MonthCalendarState extends State<MonthCalendar> {
   late int _year;
   late int _month; // 1-12
   int? _selected; // day of month
-  Map<int, List<_CalItem>> _days = {};
+  Map<int, List<CalendarEntry>> _days = {};
   bool _loading = true;
   DateTime _lastFetch = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -100,6 +114,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
   // every call site below is untouched.
   static List<Color> get _greens => MonthCalendar.heatColors;
 
+  /// The calendar screen owns the day's agenda (see [MonthCalendar.onDaySelected]).
+  bool get _screenMode => widget.onDaySelected != null;
+
   @override
   void initState() {
     super.initState();
@@ -111,6 +128,15 @@ class _MonthCalendarState extends State<MonthCalendar> {
     // The agent adds meetings/payments mid-conversation; when the brief
     // refreshes, quietly re-pull the month too (throttled).
     BriefService.instance.addListener(_onBriefChanged);
+  }
+
+  @override
+  void didUpdateWidget(MonthCalendar old) {
+    super.didUpdateWidget(old);
+    if (old.refreshToken != widget.refreshToken) {
+      CalendarService.forget(_year, _month);
+      _fetch();
+    }
   }
 
   @override
@@ -131,54 +157,32 @@ class _MonthCalendarState extends State<MonthCalendar> {
     return _year == now.year && _month == now.month;
   }
 
-  /// Months already seen this app-run — painting these is instant, and the
-  /// network fetch that follows quietly replaces them.
-  static final Map<String, Map<String, dynamic>> _memCache = {};
-
   String get _cacheKey => '$_year-$_month';
 
-  Map<int, List<_CalItem>> _parse(Map<String, dynamic>? j) {
-    final out = <int, List<_CalItem>>{};
-    final raw = (j?['days'] as Map?) ?? {};
-    raw.forEach((k, v) {
-      final day = int.tryParse(k.toString());
-      if (day == null || v is! List) return;
-      out[day] = v
-          .whereType<Map>()
-          .map((e) => _CalItem(
-                (e['kind'] as String?) ?? 'reminder',
-                (e['title'] as String?) ?? '',
-                del: e['del'] as String?,
-                id: (e['id'] as num?)?.toInt(),
-              ))
-          .toList();
+  void _setDays(Map<int, List<CalendarEntry>> d) {
+    setState(() {
+      _days = {for (final e in d.entries) e.key: List.of(e.value)};
+      _loading = false;
     });
-    return out;
+    widget.onMonthItems?.call(_year, _month, _days);
   }
 
   Future<void> _fetch() async {
     _lastFetch = DateTime.now();
-    // Instant paint from this run's cache while the fresh copy loads.
-    final cached = _memCache[_cacheKey];
-    if (cached != null && _days.isEmpty) {
-      setState(() {
-        _days = _parse(cached);
-        _loading = false;
-      });
-    }
+    // Months already seen this app-run paint at once; the network fetch
+    // that follows quietly replaces them.
+    final cached = CalendarService.cachedMonth(_year, _month);
+    if (cached != null && _days.isEmpty) _setDays(cached);
     final wanted = _cacheKey; // guard against a month switch mid-flight
-    final j = await ApiService.getJson('/brief/calendar?y=$_year&m=$_month');
+    final fresh = await CalendarService.month(_year, _month);
     if (!mounted || wanted != _cacheKey) return;
-    if (j == null) {
+    if (fresh == null) {
       // Network blip: keep whatever is on screen rather than blanking it.
       if (_loading) setState(() => _loading = false);
+      widget.onMonthItems?.call(_year, _month, _days);
       return;
     }
-    _memCache[_cacheKey] = j;
-    setState(() {
-      _days = _parse(j);
-      _loading = false;
-    });
+    _setDays(fresh);
   }
 
   /// Which way the last month change went (-1 back, 1 forward): the new
@@ -191,14 +195,19 @@ class _MonthCalendarState extends State<MonthCalendar> {
     var y = _year, m = _month + delta;
     if (m < 1) { m = 12; y--; }
     if (m > 12) { m = 1; y++; }
+    final now = DateTime.now();
+    final isNow = y == now.year && m == now.month;
     setState(() {
       _year = y;
       _month = m;
       _loading = true;
-      final now = DateTime.now();
-      _selected = (y == now.year && m == now.month) ? now.day : null;
+      // On the screen a day is always picked (its agenda is below): today,
+      // or the 1st of another month.
+      _selected = isNow ? now.day : (_screenMode ? 1 : null);
       _days = {};
     });
+    widget.onMonthChanged?.call(y, m);
+    if (_screenMode) widget.onDaySelected!(DateTime(y, m, _selected!));
     _fetch();
   }
 
@@ -213,13 +222,8 @@ class _MonthCalendarState extends State<MonthCalendar> {
     return _greens[2];
   }
 
-  (IconData, Color) _kindBadge(String kind) => switch (kind) {
-        'meeting' => (Icons.event_rounded, Neon.cyan),
-        'payment' => (Icons.currency_rupee_rounded, Neon.error),
-        'income' => (Icons.south_west_rounded, _greens[1]),
-        'promise' => (Icons.handshake_rounded, Neon.pink),
-        _ => (Icons.alarm_rounded, Neon.violet),
-      };
+  (IconData, NeonTone) _kindBadge(String kind) =>
+      (calendarKindIcon(kind), calendarTone(kind));
 
   @override
   Widget build(BuildContext context) {
@@ -244,16 +248,20 @@ class _MonthCalendarState extends State<MonthCalendar> {
               decoration: BoxDecoration(
                 gradient: Neon.tile(Neon.violet),
                 borderRadius: BorderRadius.circular(9),
+                boxShadow: Neon.halo(Neon.violet, strength: 0.5),
               ),
               child: Icon(Icons.calendar_month_rounded,
                   size: 15, color: Neon.onTile(Neon.violet)),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text('${_mo[_month - 1]} $_year',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: NeonType.sectionTitle.copyWith(color: Neon.textHi)),
+              child: Semantics(
+                header: true,
+                child: Text('${_mo[_month - 1]} $_year',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: NeonType.sectionTitle.copyWith(color: Neon.textHi)),
+              ),
             ),
             _chev(Icons.chevron_left_rounded, 'Previous month',
                 () => _shiftMonth(-1)),
@@ -262,13 +270,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
           ],
         ),
         const SizedBox(height: 4),
-        Container(
+        // The month on the raised night card (2026-09-30): a soft rim, so
+        // the one glowing thing inside it is the picked day.
+        RimCard(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Neon.line),
-          ),
           child: Column(
             children: [
               Row(
@@ -318,14 +323,11 @@ class _MonthCalendarState extends State<MonthCalendar> {
                 child: KeyedSubtree(
                   key: ValueKey('$_year-$_month'),
                   child: _loading
-                      ? Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 30),
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 30),
                           child: Center(
-                              child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Neon.textLo))),
+                              child: NeonLoader.inline(
+                                  semanticLabel: 'Loading the month')),
                         )
                       : Column(
                           children: [
@@ -342,7 +344,12 @@ class _MonthCalendarState extends State<MonthCalendar> {
                 ),
               ),
               const SizedBox(height: 6),
-              // GitHub-style legend, so the shading explains itself.
+              // GitHub-style legend, so the shading explains itself. On the
+              // calendar screen the dots say more than the shade, so the
+              // legend names the kinds instead.
+              if (widget.extrasFor != null)
+                _kindLegend()
+              else
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -372,8 +379,8 @@ class _MonthCalendarState extends State<MonthCalendar> {
             ],
           ),
         ),
-        // What's on the selected day.
-        if (_selected != null && !_loading) ...[
+        // What's on the selected day (the screen shows its own agenda).
+        if (_selected != null && !_loading && !_screenMode) ...[
           const SizedBox(height: 10),
           ..._selectedItems(),
         ],
@@ -381,23 +388,84 @@ class _MonthCalendarState extends State<MonthCalendar> {
     );
   }
 
+  /// What each dot means, in words (the calendar screen).
+  Widget _kindLegend() {
+    const keys = [
+      ('Holiday', NeonTone.danger),
+      ('Festival', NeonTone.discovery),
+      ('Meeting', NeonTone.info),
+      ('To do', NeonTone.action),
+      ('Money', NeonTone.warning),
+      ('World', NeonTone.tip),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 4,
+        alignment: WrapAlignment.center,
+        children: [
+          for (final (label, tone) in keys)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: tone.rim.first),
+              ),
+              const SizedBox(width: 5),
+              Text(label,
+                  style: TextStyle(
+                      color: Neon.textDim, fontSize: NeonType.caption)),
+            ]),
+        ],
+      ),
+    );
+  }
+
   Widget _dayCell(int day, int daysInMonth, DateTime today) {
+    // 48 dp to the finger on the calendar screen (the tile and its margin).
+    final cellH = _screenMode ? 44.0 : 38.0;
     if (day < 1 || day > daysInMonth) {
-      return const Expanded(child: SizedBox(height: 42));
+      return Expanded(child: SizedBox(height: cellH + 4));
     }
-    final count = _days[day]?.length ?? 0;
+    final items = _days[day] ?? const <CalendarEntry>[];
+    final count = items.length;
+    // The world's days (holidays, festivals, UN days) add dots but never
+    // shade the tile: the shade is how busy YOUR day is.
+    final world = widget.extrasFor?.call(_year, _month)[day] ??
+        const <CalendarEntry>[];
+    final holiday = world.where((e) => e.kind == 'holiday').firstOrNull;
     final isToday =
         _isCurrentMonth && day == today.day;
     final isSelected = day == _selected;
     final filled = count > 0;
+    // One dot per KIND of thing on the day, in its meaning's colour
+    // (2026-09-30): blue a meeting, magenta-orange something to do, amber
+    // money going out, green money coming in. Three at most.
+    final tones = <NeonTone>{
+      for (final it in world) calendarTone(it.kind),
+      for (final it in items) calendarTone(it.kind),
+    }.toList()
+      ..sort((a, b) => a.index.compareTo(b.index));
+    final words = [
+      '$day ${_mo[_month - 1]}',
+      if (isToday) 'today',
+      if (holiday != null) holiday.title,
+      if (count > 0) '$count thing${count == 1 ? '' : 's'} on',
+    ].join(', ');
 
     return Expanded(
-      child: PressScale(
-          child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      child: Tappable(
+        scale: 0.92,
+        semanticLabel: words,
+        tapHint: isToday || _screenMode ? 'show' : 'open',
         onTap: () {
-          HapticFeedback.selectionClick();
-          if (isToday) {
+          if (_screenMode) {
+            HapticFeedback.selectionClick();
+            setState(() => _selected = day);
+            widget.onDaySelected!(DateTime(_year, _month, day));
+          } else if (isToday) {
             // Today reads inline, right under the grid — same place the
             // agenda lives.
             setState(() => _selected = day);
@@ -407,48 +475,84 @@ class _MonthCalendarState extends State<MonthCalendar> {
           }
         },
         // The highlight moves to the tapped day instead of jumping.
-        child: AnimatedContainer(
-          duration: Motion.micro,
-          curve: Motion.easeMove,
-          height: 38,
-          margin: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            color: _tileColor(count),
-            borderRadius: BorderRadius.circular(8),
-            // Violet, the app's primary accent — a white ring on a grid
-            // of gray tiles never read as "today". Empty days have no
-            // border at all (see _tileColor).
-            border: isSelected
-                ? Border.all(color: Neon.violet, width: 1.6)
-                : isToday
-                    ? Border.all(
-                        color: Neon.violet.withValues(alpha: 0.55),
-                        width: 1.2)
-                    : null,
-          ),
-          child: Center(
-            // 13 sp (was 11.5), in its real weight: today and the picked
-            // day are now genuinely heavier, not only asked to be.
-            child: Text(
-              '$day',
-              style: NeonType.manrope(
-                      NeonType.footnote,
-                      isToday || isSelected
-                          ? FontWeight.w800
-                          : FontWeight.w500)
-                  .copyWith(
-                color: filled ? Neon.textOn(_tileColor(count)) : Neon.textLo,
-              ),
+        child: ExcludeSemantics(
+          child: AnimatedContainer(
+            duration: Motion.micro,
+            curve: Motion.easeMove,
+            height: cellH,
+            margin: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              // THE PICKED DAY IS LIT (2026-09-30): the brand gradient and
+              // its halo — the one glowing thing on the month.
+              color: isSelected ? null : _tileColor(count),
+              gradient: isSelected ? Neon.gBrand : null,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow:
+                  isSelected ? Neon.halo(Neon.violet, strength: 0.8) : null,
+              // Today is a cyan ring, the assistant's own light. Empty days
+              // have no border at all (see _tileColor).
+              border: isToday && !isSelected
+                  ? Border.all(color: Neon.cyan, width: 1.6)
+                  : null,
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // 13 sp (was 11.5), in its real weight: today and the
+                // picked day are now genuinely heavier, not only asked to be.
+                Text(
+                  '$day',
+                  style: NeonType.manrope(
+                          NeonType.footnote,
+                          isToday || isSelected
+                              ? FontWeight.w800
+                              : FontWeight.w500)
+                      .copyWith(
+                    color: isSelected
+                        ? Neon.textOn(Color.lerp(Neon.violet, Neon.pink, 0.5)!)
+                        : filled
+                            ? Neon.textOn(_tileColor(count))
+                            // A holiday's number in the holiday colour, as
+                            // on a printed calendar.
+                            : holiday != null
+                                ? NeonTone.danger.ink
+                                : Neon.textLo,
+                  ),
+                ),
+                if (tones.isNotEmpty)
+                  Positioned(
+                    bottom: 3,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final t in tones.take(3))
+                          Container(
+                            width: 5,
+                            height: 5,
+                            margin: const EdgeInsets.symmetric(horizontal: 1),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: t.rim.first,
+                              // A dark edge so a dot reads on a busy or
+                              // lit tile as well as on the card.
+                              border: filled || isSelected
+                                  ? Border.all(color: Neon.bg, width: 0.8)
+                                  : null,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
-      ),
       ),
     );
   }
 
   List<Widget> _selectedItems() {
-    final items = _days[_selected] ?? const <_CalItem>[];
+    final items = _days[_selected] ?? const <CalendarEntry>[];
     const mo = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
@@ -456,12 +560,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
     final label = '$_selected ${mo[_month - 1]}';
     if (items.isEmpty) {
       return [
-        Padding(
-          padding: const EdgeInsets.only(left: 2),
-          // textLo: textDim fell to 3.6:1 on the ambient wash.
-          child: Text('Nothing on $label.',
-              style:
-                  TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
+        NeonEmptyState(
+          icon: Icons.event_available_rounded,
+          title: 'Nothing on $label.',
+          tone: NeonTone.tip,
         ),
       ];
     }
@@ -473,16 +575,8 @@ class _MonthCalendarState extends State<MonthCalendar> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Builder(builder: (_) {
-                final (icon, color) = _kindBadge(it.kind);
-                return Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, size: 14, color: color),
-                );
+                final (icon, tone) = _kindBadge(it.kind);
+                return ToneTile(icon, tone, size: 26);
               }),
               const SizedBox(width: 9),
               Expanded(
@@ -491,7 +585,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
                   child: Text(
                     it.title,
                     style: TextStyle(
-                        color: Neon.textHi, fontSize: 13, height: 1.3),
+                        color: Neon.textHi,
+                        fontSize: NeonType.footnote,
+                        height: 1.3),
                   ),
                 ),
               ),
@@ -512,11 +608,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
 
   /// Deletes [it] server-side and removes it from the month locally, so
   /// the tile shade updates the instant the row disappears.
-  Future<bool> _deleteItem(int day, _CalItem it) async {
+  Future<bool> _deleteItem(int day, CalendarEntry it) async {
     if (!it.deletable) return false;
-    final r =
-        await ApiService.sendJson('/${it.del}/${it.id}', method: 'DELETE');
-    if (r == null) return false;
+    if (!await CalendarService.remove(it)) return false;
     if (mounted) {
       setState(() {
         _days[day]?.remove(it);
@@ -534,9 +628,10 @@ class _MonthCalendarState extends State<MonthCalendar> {
     final title =
         '${wk[DateTime(_year, _month, day).weekday - 1]}, $day ${_mo[_month - 1]}';
 
+    // The theme's sheet (2026-09-30): its surface, lit rim and handle. The
+    // sheet drew its own on a clear ground, under the theme's handle.
     showAppSheet(
       context: context,
-      backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (sheetCtx) {
         // Said inside the sheet: a toast raised here would land on the
@@ -544,58 +639,40 @@ class _MonthCalendarState extends State<MonthCalendar> {
         String? problem;
         return StatefulBuilder(
         builder: (ctx, setSheet) {
-          final items = List<_CalItem>.of(_days[day] ?? const []);
-          return Container(
-            decoration: BoxDecoration(
-              color: Neon.surface,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(24)),
-              border: Border(top: BorderSide(color: Neon.lineBright)),
-            ),
+          final items = List<CalendarEntry>.of(_days[day] ?? const []);
+          return Padding(
             padding: EdgeInsets.only(
                 left: 20,
                 right: 20,
-                top: 10,
                 bottom: 24 + MediaQuery.of(ctx).viewPadding.bottom),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Neon.textDim.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
-                      child: Text(title,
-                          style: TextStyle(
-                              color: Neon.textHi,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.2)),
+                      child: Semantics(
+                        header: true,
+                        child: Text(title,
+                            style: NeonType.cardTitle.copyWith(
+                                color: Neon.textHi, letterSpacing: -0.2)),
+                      ),
                     ),
                     if (items.isNotEmpty)
                       Text(
                           '${items.length} item${items.length == 1 ? '' : 's'}',
                           style: TextStyle(
-                              color: Neon.textDim, fontSize: 13)),
+                              color: Neon.textDim,
+                              fontSize: NeonType.footnote)),
                   ],
                 ),
                 const SizedBox(height: 14),
                 if (items.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text('Nothing on this day.',
-                        style: TextStyle(
-                            color: Neon.textDim, fontSize: 14)),
+                  const NeonEmptyState(
+                    icon: Icons.event_available_rounded,
+                    title: 'Nothing on this day.',
+                    tone: NeonTone.tip,
                   )
                 else
                   ConstrainedBox(
@@ -606,69 +683,56 @@ class _MonthCalendarState extends State<MonthCalendar> {
                       shrinkWrap: true,
                       children: [
                         for (final it in items)
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-                            decoration: BoxDecoration(
-                              color: Neon.surfaceHigh,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Neon.line),
-                            ),
-                            child: Row(
-                              children: [
-                                Builder(builder: (_) {
-                                  final (icon, color) = _kindBadge(it.kind);
-                                  return Container(
-                                    width: 30,
-                                    height: 30,
-                                    decoration: BoxDecoration(
-                                      color:
-                                          color.withValues(alpha: 0.12),
-                                      borderRadius:
-                                          BorderRadius.circular(9),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: RimCard(
+                              radius: Neon.rSm,
+                              padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                              child: Row(
+                                children: [
+                                  Builder(builder: (_) {
+                                    final (icon, tone) = _kindBadge(it.kind);
+                                    return ToneTile(icon, tone, size: 30);
+                                  }),
+                                  const SizedBox(width: 11),
+                                  Expanded(
+                                    child: Text(
+                                      it.title,
+                                      style: TextStyle(
+                                          color: Neon.textHi,
+                                          fontSize: NeonType.body,
+                                          height: 1.3),
                                     ),
-                                    child:
-                                        Icon(icon, size: 15, color: color),
-                                  );
-                                }),
-                                const SizedBox(width: 11),
-                                Expanded(
-                                  child: Text(
-                                    it.title,
-                                    style: TextStyle(
-                                        color: Neon.textHi,
-                                        fontSize: 14,
-                                        height: 1.3),
                                   ),
-                                ),
-                                if (it.deletable)
-                                  IconButton(
-                                    tooltip: 'Delete',
-                                    icon: Icon(Icons.delete_outline_rounded,
-                                        size: 19, color: Neon.textDim),
-                                    onPressed: () async {
-                                      HapticFeedback.mediumImpact();
-                                      final ok =
-                                          await _deleteItem(day, it);
-                                      if (!ctx.mounted) return;
-                                      setSheet(() => problem = ok
-                                          ? null
-                                          : "Couldn't delete that — check "
-                                              'your connection.');
-                                    },
-                                  )
-                                else
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(right: 10),
-                                    // From the linked calendar: removed
-                                    // there, not here.
-                                    child: Text('Calendar',
-                                        style: TextStyle(
-                                            color: Neon.textDim,
-                                            fontSize: 12)),
-                                  ),
-                              ],
+                                  if (it.deletable)
+                                    IconButton(
+                                      tooltip: 'Delete',
+                                      icon: Icon(Icons.delete_outline_rounded,
+                                          size: 19, color: Neon.textDim),
+                                      onPressed: () async {
+                                        HapticFeedback.mediumImpact();
+                                        final ok =
+                                            await _deleteItem(day, it);
+                                        if (!ctx.mounted) return;
+                                        setSheet(() => problem = ok
+                                            ? null
+                                            : "Couldn't delete that — check "
+                                                'your connection.');
+                                      },
+                                    )
+                                  else
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(right: 10),
+                                      // From the linked calendar: removed
+                                      // there, not here.
+                                      child: Text('Calendar',
+                                          style: TextStyle(
+                                              color: Neon.textDim,
+                                              fontSize: NeonType.caption)),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -683,8 +747,9 @@ class _MonthCalendarState extends State<MonthCalendar> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(problem!,
-                            style:
-                                TextStyle(color: Neon.errorInk, fontSize: 13)),
+                            style: TextStyle(
+                                color: Neon.errorInk,
+                                fontSize: NeonType.footnote)),
                       ),
                     ]),
                   ),
@@ -697,3 +762,24 @@ class _MonthCalendarState extends State<MonthCalendar> {
     );
   }
 }
+
+/// WHAT A DAY'S ITEM MEANS, AS LIGHT (2026-09-30) — the same tones as
+/// Home's cards: a meeting is information, a reminder or a promise is
+/// something to do, a bill is money going out, income is good news.
+/// Public for tests.
+NeonTone calendarTone(String kind) => switch (kind) {
+      'meeting' => NeonTone.info,
+      'payment' => NeonTone.warning,
+      'income' => NeonTone.success,
+      // The world's days (2026-09-30, the calendar screen): a holiday in
+      // red as on a printed calendar, a festival or a birthday is something
+      // to celebrate, a world day or a global event is the assistant's
+      // "worth knowing".
+      'holiday' => NeonTone.danger,
+      'festival' || 'birthday' || 'anniversary' => NeonTone.discovery,
+      // Lectures (2026-09-30, students): the app's own light, the one tone
+      // no other kind uses, so a class is never mistaken for a meeting.
+      'class' => NeonTone.brand,
+      'event' || 'world_day' => NeonTone.tip,
+      _ => NeonTone.action, // reminder, promise
+    };

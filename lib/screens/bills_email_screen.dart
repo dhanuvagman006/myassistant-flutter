@@ -6,12 +6,14 @@ import 'package:share_plus/share_plus.dart';
 
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../models/mail_inbox.dart';
 import '../services/app_feedback.dart';
 import '../services/auth_service.dart';
 import '../services/avatar_message_service.dart';
 import '../services/mail_inbox_service.dart';
 import 'documents_screen.dart';
+import '../design/motion.dart';
 
 /// Opens Bills by email from a notification tap, once the app has a
 /// navigator and a signed-in user (the MomentumNav pattern).
@@ -101,7 +103,7 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
   }
 
   Future<void> _confirmRotate() async {
-    final yes = await showDialog<bool>(
+    final yes = await showAppDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Get a new address?'),
@@ -120,15 +122,29 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // 2026-09-30: under the app's sky, with the shared loader, error and
+    // empty states.
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Bills by email'),
       body: ValueListenableBuilder<MailInboxState?>(
         valueListenable: _svc.state,
         builder: (context, s, _) {
-          if (_loading) return const Center(child: CircularProgressIndicator());
-          if (_failed || s == null) return _message("Couldn't load this. Check your connection and try again.", retry: true);
-          if (!s.available) return _message('Bills by email is not available yet.');
+          if (_loading) return const NeonLoader.page();
+          if (_failed || s == null) {
+            return NeonErrorState(
+              message: "Couldn't load Bills by email",
+              onRetry: () {
+                setState(() => _loading = true);
+                unawaited(_load());
+              },
+            );
+          }
+          if (!s.available) {
+            return const NeonEmptyState(
+              icon: Icons.forward_to_inbox_rounded,
+              title: 'Bills by email is not available yet.',
+            );
+          }
           return RefreshIndicator(
             onRefresh: _load,
             child: ListView(
@@ -140,28 +156,6 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
       ),
     );
   }
-
-  Widget _message(String text, {bool retry = false}) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(text, textAlign: TextAlign.center, style: TextStyle(color: Neon.textLo, fontSize: 15)),
-              if (retry) ...[
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () {
-                    setState(() => _loading = true);
-                    unawaited(_load());
-                  },
-                  child: const Text('Try again'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
 
   List<Widget> _off() => [
         Text(
@@ -182,41 +176,51 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
   List<Widget> _on(MailInboxState s) {
     final a = s.address!;
     return [
-      GroupedCard(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Your address', style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
+      // THE ADDRESS IS THE SCREEN (2026-09-30): its one lit card — tip
+      // light while it receives, warning light while it is switched off.
+      GlowCard(
+        tone: a.on ? NeonTone.tip : NeonTone.warning,
+        radius: Neon.rMd,
+        rimWidth: 1.8,
+        halo: 0.6,
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Your address', style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
+            const SizedBox(height: 4),
+            SelectableText(
+              a.address,
+              key: const ValueKey('bills-address'),
+              style: TextStyle(color: Neon.textHi, fontSize: 18, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+            ),
+            if (!a.on) ...[
               const SizedBox(height: 4),
-              SelectableText(
-                a.address,
-                key: const ValueKey('bills-address'),
-                style: TextStyle(color: Neon.textHi, fontSize: 18, fontFamily: 'monospace', fontWeight: FontWeight.w600),
-              ),
-              if (!a.on) ...[
-                const SizedBox(height: 4),
-                Text('Switched off — emails to it bounce back to the sender.',
-                    style: TextStyle(color: Neon.warningInk, fontSize: NeonType.footnote)),
-              ],
-              const SizedBox(height: 4),
-              Wrap(spacing: 8, children: [
-                TextButton.icon(
-                  onPressed: () => _copy(a.address),
-                  icon: const Icon(Icons.copy_rounded, size: 18),
-                  label: const Text('Copy'),
-                ),
-                TextButton.icon(
-                  onPressed: () => Share.share('My bills address: ${a.address}'),
-                  icon: const Icon(Icons.share_rounded, size: 18),
-                  label: const Text('Share'),
-                ),
-              ]),
+              Text('Switched off — emails to it bounce back to the sender.',
+                  style: TextStyle(color: Neon.warningInk, fontSize: NeonType.footnote)),
             ],
-          ),
+            const SizedBox(height: 6),
+            // Copy is the next step, so it is the lit pill; Share sits
+            // beside it as a plain secondary.
+            Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              NeonPill(
+                label: 'Copy',
+                icon: Icons.copy_rounded,
+                tone: NeonTone.tip,
+                onPressed: () => _copy(a.address),
+              ),
+              TextButton.icon(
+                onPressed: () => Share.share('My bills address: ${a.address}'),
+                icon: const Icon(Icons.share_rounded, size: 18),
+                label: const Text('Share'),
+              ),
+            ]),
+          ],
         ),
-        if (s.trustedFrom.isNotEmpty)
+      ),
+      if (s.trustedFrom.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        GroupedCard(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
             child: Column(
@@ -237,7 +241,8 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
               ],
             ),
           ),
-      ]),
+        ]),
+      ],
       const SizedBox(height: 16),
       GroupedCard(children: [
         AppleRow(
@@ -275,10 +280,15 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
       const SizedBox(height: 24),
       const GroupLabel('Recent'),
       if (_items.isEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-          child: Text('Nothing yet. Forward a bill to try it.', style: TextStyle(color: Neon.textLo, fontSize: 14)),
-        )
+        // Empty, in the group's own place (2026-09-30): the page's list
+        // already scrolls, so not the full-page empty state.
+        GroupedCard(children: [
+          AppleRow(
+            leading: IconTile(Icons.inbox_rounded, Neon.cyan),
+            title: 'Nothing yet. Forward a bill to try it.',
+            titleMaxLines: 2,
+          ),
+        ])
       else
         GroupedCard(children: [for (final m in _items) _row(m)]),
       const SizedBox(height: 20),
@@ -315,10 +325,12 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
   Widget _row(MailItem m) {
     final (label, color) = _chip(m);
     final opens = m.status == 'saved' || m.status == 'couldnt_read';
-    return InkWell(
+    // Opens My documents: it dips and ticks (Tappable, 2026-09-30).
+    return Tappable(
       onTap: opens
           ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DocumentsScreen()))
           : null,
+      scale: 0.985,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
         child: Column(
@@ -329,11 +341,20 @@ class _BillsEmailScreenState extends State<BillsEmailScreen> {
             const SizedBox(height: 2),
             Text([m.from, _when(m.receivedAt)].where((x) => x.isNotEmpty).join(' · '),
                 style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
-            const SizedBox(height: 4),
-            Text(
-              m.status == 'not_saved' && m.reason.isNotEmpty ? '$label — ${m.reason}' : label,
-              key: ValueKey('bills-chip-${m.id}'),
-              style: TextStyle(color: color, fontSize: NeonType.footnote, fontWeight: FontWeight.w600),
+            const SizedBox(height: 6),
+            // The status as a chip in its own colour (2026-09-30).
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(Neon.rPill),
+                border: Border.all(color: color.withValues(alpha: 0.45)),
+              ),
+              child: Text(
+                m.status == 'not_saved' && m.reason.isNotEmpty ? '$label — ${m.reason}' : label,
+                key: ValueKey('bills-chip-${m.id}'),
+                style: TextStyle(color: color, fontSize: NeonType.footnote, fontWeight: FontWeight.w600),
+              ),
             ),
             if (m.confirmCode != null)
               Row(children: [

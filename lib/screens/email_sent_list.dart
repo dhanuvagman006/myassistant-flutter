@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import '../design/apple_kit.dart' show GroupedCard, IconTile;
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart' show NeonLoader;
 import '../services/api_service.dart';
 
 /// SENT MAIL — the Email screen's whole content.
@@ -52,10 +53,9 @@ class EmailSentListState extends State<EmailSentList> {
   @override
   Widget build(BuildContext context) {
     if (_sent == null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        child: Center(
-            child: CircularProgressIndicator(strokeWidth: 2, color: Neon.violet)),
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 40),
+        child: NeonLoader.page(label: 'Loading your sent mail…'),
       );
     }
     final sent = _sent!;
@@ -64,69 +64,62 @@ class EmailSentListState extends State<EmailSentList> {
       children: [
         Row(
           children: [
-            Text('SENT',
-                style: TextStyle(
-                    color: Neon.violet,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.1)),
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Text('SENT',
+                  style: NeonType.sectionLabel.copyWith(color: Neon.textLo)),
+            ),
             const Spacer(),
-            PressScale(
-              child: GestureDetector(
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  setState(() => _sent = null);
-                  load();
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  child:
-                      Icon(Icons.refresh_rounded, size: 18, color: Neon.textDim),
-                ),
-              ),
+            // 48 dp to the finger (2026-09-30): it was an 18 dp glyph.
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: () {
+                setState(() => _sent = null);
+                load();
+              },
+              icon: Icon(Icons.refresh_rounded, size: 20, color: Neon.textLo),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 4),
         if (sent.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
-            decoration: BoxDecoration(
-              color: Neon.surface,
-              borderRadius: BorderRadius.circular(Neon.rXl),
-              border: Border.all(color: Neon.line),
-            ),
-            child: Column(
-              children: [
-                Icon(Icons.mic_rounded, size: 26, color: Neon.violet),
-                const SizedBox(height: 10),
-                Text('Nothing sent yet',
+          // In the lit group, the mic on its tile (2026-09-30). Not the
+          // page's NeonEmptyState: that one scrolls, and this sits inside
+          // the Email page's own list.
+          GroupedCard(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+              child: Column(
+                children: [
+                  IconTile(Icons.mic_rounded, Neon.violet, size: 44),
+                  const SizedBox(height: 12),
+                  Text('Nothing sent yet',
+                      style: TextStyle(
+                          color: Neon.textHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Go back, tap the mic and say "send a mail to ravi@example.com '
+                    'saying I\'ll be there by six". Ask again later and just '
+                    'say "the same address" — I remember who you write to.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700)),
-                const SizedBox(height: 6),
-                Text(
-                  'Go back, tap the mic and say "send a mail to ravi@example.com '
-                  'saying I\'ll be there by six". Ask again later and just '
-                  'say "the same address" — I remember who you write to.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: Neon.textLo, fontSize: 13, height: 1.45),
-                ),
-              ],
-            ),
-          )
-        else
-          for (var i = 0; i < sent.length; i++)
-            Reveal(
-              delayMs: 30 * i,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _row(sent[i]),
+                        color: Neon.textLo, fontSize: 13, height: 1.45),
+                  ),
+                ],
               ),
             ),
+          ])
+        else
+          // One lit group, like every list in the app (2026-09-30).
+          GroupedCard(
+            dividerInset: 62,
+            children: [
+              for (var i = 0; i < sent.length; i++)
+                Reveal(delayMs: 30 * i, child: _row(sent[i])),
+            ],
+          ),
       ],
     );
   }
@@ -136,74 +129,59 @@ class EmailSentListState extends State<EmailSentList> {
     final to = (m['to'] ?? '').toString();
     final subject = (m['subject'] ?? '(no subject)').toString();
     final preview = (m['preview'] ?? '').toString();
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-          decoration: BoxDecoration(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(Neon.rLg),
-            border: Border.all(color: Neon.line),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: IconTile(Icons.north_east_rounded, Neon.violet),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                margin: const EdgeInsets.only(top: 2),
-                decoration: BoxDecoration(
-                  gradient: Neon.gBrand,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: const Icon(Icons.north_east_rounded,
-                    size: 17, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            label.isNotEmpty ? '$label · $to' : to,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: Neon.textHi,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(_when((m['at'] as num?)?.toInt() ?? 0),
-                            style: TextStyle(
-                                color: Neon.textDim, fontSize: 12)),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(subject,
+                    Expanded(
+                      child: Text(
+                        label.isNotEmpty ? '$label · $to' : to,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: Neon.textLo,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
-                    if (preview.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(preview,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: Neon.textDim,
-                              fontSize: 12,
-                              height: 1.3)),
-                    ],
+                            color: Neon.textHi,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(_when((m['at'] as num?)?.toInt() ?? 0),
+                        style: TextStyle(color: Neon.textDim, fontSize: 12)),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 3),
+                Text(subject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Neon.textLo,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                if (preview.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: Neon.textLo, fontSize: 12, height: 1.3)),
+                ],
+              ],
+            ),
           ),
-        );
+        ],
+      ),
+    );
   }
 }

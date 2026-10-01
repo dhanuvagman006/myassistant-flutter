@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/app_lock.dart';
+import '../design/motion.dart';
+import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 
 /// THE LOCK SITS ABOVE EVERY SCREEN (audit, 2026-09-27). It used to be the
 /// first route's child, so relocking covered only that route: Email, a
@@ -43,6 +46,8 @@ class LockLayer extends StatelessWidget {
               ),
             ),
             AnimatedSwitcher(
+              switchInCurve: Motion.easeEnter,
+              switchOutCurve: Motion.easeFadeOut,
               duration: Duration.zero,
               reverseDuration: const Duration(milliseconds: 160),
               layoutBuilder: (current, previous) => Stack(
@@ -133,96 +138,117 @@ class _LockScreenState extends State<LockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Scaffold(
+    // Under the app's sky, the lock lit in the brand's light and the dots
+    // glowing as they fill (2026-09-30); it was a plain theme page.
+    return NeonScaffold(
       body: SafeArea(
         child: Center(
           // Scrolls when the keyboard (left up by another app) leaves too
           // little room for the pad.
           child: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.lock_outline_rounded, size: 44, color: cs.primary),
-                const SizedBox(height: 12),
-                Text('MyAssistant is locked',
-                    style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 20),
-                // PIN dots
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(4, (i) {
-                    final filled = i < _pin.length;
-                    return Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 8),
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: filled ? cs.primary : Colors.transparent,
-                        border: Border.all(color: cs.primary, width: 1.5),
-                      ),
-                    );
-                  }),
-                ),
-                SizedBox(
-                  height: 28,
-                  child: _error == null
-                      ? null
-                      : Center(
-                          child: Text(_error!,
-                              style: TextStyle(color: cs.error))),
-                ),
-                // Pad
-                for (final row in const [
-                  ['1', '2', '3'],
-                  ['4', '5', '6'],
-                  ['7', '8', '9'],
-                  ['', '0', '<'],
-                ])
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: Neon.halo(Neon.violet, strength: 0.8),
+                    ),
+                    child: Icon(Icons.lock_outline_rounded,
+                        size: 44, color: Neon.violet),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('MyAssistant is locked',
+                      style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 20),
+                  // PIN dots
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      for (final key in row)
-                        Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: SizedBox(
-                            width: 72,
-                            height: 56,
-                            child: key.isEmpty
-                                ? null
-                                : key == '<'
-                                    ? IconButton(
-                                        onPressed: () => setState(() => _pin =
-                                            _pin.isEmpty
-                                                ? _pin
-                                                : _pin.substring(
-                                                    0, _pin.length - 1)),
-                                        icon: const Icon(
-                                            Icons.backspace_outlined),
-                                      )
-                                    : OutlinedButton(
-                                        onPressed: () => _tap(key),
-                                        child: Text(key,
-                                            style:
-                                                const TextStyle(fontSize: 20)),
-                                      ),
-                          ),
+                    children: List.generate(4, (i) {
+                      final filled = i < _pin.length;
+                      return Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 8),
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: filled ? Neon.cyan : Colors.transparent,
+                          border: Border.all(color: Neon.cyan, width: 1.5),
+                          boxShadow: filled
+                              ? Neon.halo(Neon.cyan, strength: 0.6)
+                              : null,
                         ),
-                    ],
+                      );
+                    }),
                   ),
-                if (_bioAvailable)
-                  TextButton.icon(
-                    onPressed: _startBiometric,
-                    icon: const Icon(Icons.fingerprint_rounded),
-                    label: const Text('Use fingerprint / face'),
+                  SizedBox(
+                    height: 28,
+                    child: _error == null
+                        ? null
+                        : Center(
+                            child: Text(_error!,
+                                style: TextStyle(color: Neon.errorInk))),
                   ),
-              ],
+                  // Pad
+                  for (final row in const [
+                    ['1', '2', '3'],
+                    ['4', '5', '6'],
+                    ['7', '8', '9'],
+                    ['', '0', '<'],
+                  ])
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (final key in row)
+                          Padding(
+                            padding: const EdgeInsets.all(6),
+                            child: SizedBox(
+                              width: 72,
+                              height: 56,
+                              child: key.isEmpty
+                                  ? null
+                                  : key == '<'
+                                      // Named for a screen reader through
+                                      // the icon, not a tooltip: the lock
+                                      // is drawn over the app, where there
+                                      // is no Overlay for a tooltip.
+                                      ? IconButton(
+                                          onPressed: () => setState(() => _pin =
+                                              _pin.isEmpty
+                                                  ? _pin
+                                                  : _pin.substring(
+                                                      0, _pin.length - 1)),
+                                          icon: const Icon(
+                                              Icons.backspace_outlined,
+                                              semanticLabel:
+                                                  'Delete last digit'),
+                                        )
+                                      : OutlinedButton(
+                                          onPressed: () => _tap(key),
+                                          child: Text(key,
+                                              style: const TextStyle(
+                                                  fontSize: 20)),
+                                        ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  if (_bioAvailable) ...[
+                    const SizedBox(height: 8),
+                    // The quick way in, lit as the cyan of a suggestion.
+                    NeonPill(
+                      onPressed: _startBiometric,
+                      icon: Icons.fingerprint_rounded,
+                      label: 'Use fingerprint / face',
+                      tone: NeonTone.tip,
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
           ),
         ),
       ),

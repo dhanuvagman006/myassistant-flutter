@@ -17,6 +17,10 @@ import '../services/assistant_identity.dart';
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
+  /// The washing rings' painter, found by key (a test checks they repaint
+  /// on their own layer; the sky under the splash paints too).
+  static const ringsKey = ValueKey('splash-rings');
+
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
@@ -33,8 +37,7 @@ class _SplashScreenState extends State<SplashScreen>
       vsync: this, duration: const Duration(milliseconds: 900))
     ..forward();
   late final Animation<double> _orbIn = CurvedAnimation(
-      parent: _in,
-      curve: const Interval(0.0, 0.55, curve: Curves.easeOutBack));
+      parent: _in, curve: const Interval(0.0, 0.55, curve: Curves.easeOutBack));
   late final Animation<double> _nameIn = CurvedAnimation(
       parent: _in,
       curve: const Interval(0.30, 0.80, curve: Curves.easeOutCubic));
@@ -70,98 +73,99 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: NeonBackdrop(
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // The orb, already breathing — the same one the user will
-              // talk to two seconds from now, with soft rings washing
-              // outward while the session restores.
-              ScaleTransition(
-                scale: _orbIn,
-                child: SizedBox(
-                  width: 190,
-                  height: 190,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // ITS OWN LAYER, repainted straight from the
-                      // controller (2026-09-24, GPU pass). Each ring frame
-                      // used to rebuild this and re-record the whole
-                      // splash with it — name, tagline, backdrop and
-                      // loader — for as long as the session took to
-                      // restore.
-                      RepaintBoundary(
-                        child: CustomPaint(
-                          size: const Size(190, 190),
-                          painter: _SplashRings(_rings),
-                        ),
-                      ),
-                      const SiriOrb(
-                        size: 128,
-                        phase: AssistantPhase.idle,
-                        connected: false, // the waking violet breath
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: Neon.s6),
-              // The name the USER chose — their assistant, not our brand.
-              // Falls back to the product name before first sign-in.
-              AnimatedBuilder(
-                animation: _nameIn,
-                builder: (_, child) => Opacity(
-                  opacity: _nameIn.value,
-                  child: Transform.translate(
-                      offset: Offset(0, 16 * (1 - _nameIn.value)),
-                      child: child),
-                ),
-                child: ValueListenableBuilder<String>(
-                  valueListenable: AssistantIdentity.notifier,
-                  builder: (_, name, __) => Text(
-                    name == AssistantIdentity.fallback ? 'MyAssistant' : name,
-                    style: GoogleFonts.spaceGrotesk(
-                      color: Neon.textHi,
-                      fontSize: 26,
-                      letterSpacing: -0.4,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: Neon.s2),
-              AnimatedBuilder(
-                animation: _restIn,
-                builder: (_, child) =>
-                    Opacity(opacity: _restIn.value, child: child),
-                child: Column(
+    // THE SAME SKY AS HOME (2026-09-30): the splash stood on its own two
+    // radial washes, and the hand-off to Home swapped one sky for
+    // another; now the orb wakes under the sky it will live in.
+    return NeonScaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // The orb, already breathing — the same one the user will
+            // talk to two seconds from now, with soft rings washing
+            // outward while the session restores.
+            ScaleTransition(
+              scale: _orbIn,
+              child: SizedBox(
+                width: 190,
+                height: 190,
+                child: Stack(
+                  alignment: Alignment.center,
                   children: [
-                    // One rotating truth about what it does.
-                    SizedBox(
-                      height: 20,
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 350),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        child: Text(
-                          _lines[_line],
-                          key: ValueKey(_line),
-                          style:
-                              TextStyle(color: Neon.textLo, fontSize: 14),
-                        ),
+                    // ITS OWN LAYER, repainted straight from the
+                    // controller (2026-09-24, GPU pass). Each ring frame
+                    // used to rebuild this and re-record the whole
+                    // splash with it — name, tagline, backdrop and
+                    // loader — for as long as the session took to
+                    // restore.
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        // Named: the sky under the page paints too.
+                        key: SplashScreen.ringsKey,
+                        size: const Size(190, 190),
+                        painter: _SplashRings(_rings),
                       ),
                     ),
-                    const SizedBox(height: Neon.s7),
-                    // Its own layer too: it spins for the whole splash.
-                    const RepaintBoundary(child: NeonLoader(size: 26)),
+                    const SiriOrb(
+                      size: 128,
+                      phase: AssistantPhase.idle,
+                      connected: false, // the waking violet breath
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: Neon.s6),
+            // The name the USER chose — their assistant, not our brand.
+            // Falls back to the product name before first sign-in.
+            AnimatedBuilder(
+              animation: _nameIn,
+              builder: (_, child) => Opacity(
+                opacity: _nameIn.value,
+                child: Transform.translate(
+                    offset: Offset(0, 16 * (1 - _nameIn.value)), child: child),
+              ),
+              child: ValueListenableBuilder<String>(
+                valueListenable: AssistantIdentity.notifier,
+                builder: (_, name, __) => Text(
+                  name == AssistantIdentity.fallback ? 'MyAssistant' : name,
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Neon.textHi,
+                    fontSize: 26,
+                    letterSpacing: -0.4,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: Neon.s2),
+            AnimatedBuilder(
+              animation: _restIn,
+              builder: (_, child) =>
+                  Opacity(opacity: _restIn.value, child: child),
+              child: Column(
+                children: [
+                  // One rotating truth about what it does.
+                  SizedBox(
+                    height: 20,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 350),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      child: Text(
+                        _lines[_line],
+                        key: ValueKey(_line),
+                        style: TextStyle(color: Neon.textLo, fontSize: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: Neon.s7),
+                  // Its own layer too: it spins for the whole splash.
+                  const RepaintBoundary(child: NeonLoader(size: 26)),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

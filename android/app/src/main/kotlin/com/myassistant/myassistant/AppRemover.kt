@@ -19,9 +19,8 @@ import io.flutter.plugin.common.MethodChannel
  * confirmation as the owner's permission.
  *
  * The assistant finds the app and opens the system's "Do you want to
- * uninstall this app?" dialog. It never taps that dialog — the installer
- * is on the accessibility service's never-act list — so an app leaves the
- * phone only when the owner presses OK themselves. What it reports is what
+ * uninstall this app?" dialog. It never taps that dialog — an app leaves
+ * the phone only when the owner presses OK themselves. What it reports is what
  * the phone shows afterwards (is the package still there?), not the
  * dialog's result code alone.
  *
@@ -178,4 +177,36 @@ object AppRemover {
             Log.w(TAG, "reply failed: ${e.javaClass.simpleName}")
         }
     }
+}
+
+/**
+ * An installed launcher app by spoken name — exact > prefix > contains, as
+ * (pkg, label). [strict] refuses a contains-only match: for removing an
+ * app, a loose match could name the wrong one. The launcher list is read
+ * fresh each call: this runs once per "uninstall X", never in a loop.
+ */
+internal fun matchLauncherApp(pm: PackageManager, name: String, strict: Boolean = false): Pair<String, String>? {
+    val want = name.lowercase().replace(Regex("[^a-z0-9]"), "")
+    if (want.isEmpty()) return null
+    var best: Pair<String, String>? = null
+    var bestScore = -1
+    val launchers = pm.queryIntentActivities(
+        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+    for (ri in launchers) {
+        val label = ri.loadLabel(pm).toString()
+        val norm = label.lowercase().replace(Regex("[^a-z0-9]"), "")
+        if (norm.isEmpty()) continue
+        val score = when {
+            norm == want -> 1000
+            norm.startsWith(want) -> 700 - label.length
+            want.startsWith(norm) -> 600 - label.length
+            norm.contains(want) -> 400 - label.length
+            else -> -1
+        }
+        if (score > bestScore) {
+            bestScore = score
+            best = ri.activityInfo.packageName to label
+        }
+    }
+    return best?.takeIf { bestScore >= (if (strict) 500 else 0) }
 }

@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/log.dart';
 import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart' show NeonScaffold;
 import '../features/assistant/state/assistant_engine.dart';
 import '../models/news_item.dart';
 import '../services/app_feedback.dart';
@@ -12,9 +14,15 @@ import '../widgets/news_deck.dart';
 
 /// Opens [item] full screen, grown from [from] (where the card was
 /// tapped) rather than slid in from the side: the story is the card,
-/// opened up (2026-09-25).
+/// opened up (2026-09-25). With [heroTag] ([newsHeroTag]) the card's
+/// picture flies to the top of the story, which shows the card's decoded
+/// copy ([previewWidth]) until its own sharper one arrives (2026-09-30).
 Future<void> openNewsStory(BuildContext context, NewsItem item,
-    {Offset? from, ValueChanged<NewsItem>? onListen, DateTime? now}) {
+    {Offset? from,
+    ValueChanged<NewsItem>? onListen,
+    DateTime? now,
+    Object? heroTag,
+    int? previewWidth}) {
   final size = MediaQuery.sizeOf(context);
   final at = from ?? size.center(Offset.zero);
   final origin = Alignment(
@@ -25,8 +33,12 @@ Future<void> openNewsStory(BuildContext context, NewsItem item,
   return Navigator.of(context).push(PageRouteBuilder<void>(
     transitionDuration: still ? Motion.out : Motion.pageIn,
     reverseTransitionDuration: still ? Motion.out : Motion.pageBack,
-    pageBuilder: (_, __, ___) =>
-        NewsStoryScreen(item: item, onListen: onListen, now: now),
+    pageBuilder: (_, __, ___) => NewsStoryScreen(
+        item: item,
+        onListen: onListen,
+        now: now,
+        heroTag: heroTag,
+        previewWidth: previewWidth),
     transitionsBuilder: (context, animation, _, child) {
       final fade = CurvedAnimation(
         parent: animation,
@@ -58,23 +70,57 @@ Future<void> openNewsStory(BuildContext context, NewsItem item,
 /// headline, its summary and the extra snippets — and Listen, Open
 /// article, Share.
 class NewsStoryScreen extends StatelessWidget {
-  const NewsStoryScreen({super.key, required this.item, this.onListen, this.now});
+  const NewsStoryScreen(
+      {super.key,
+      required this.item,
+      this.onListen,
+      this.now,
+      this.heroTag,
+      this.previewWidth});
 
   final NewsItem item;
+
+  /// The tag the card's picture flies in on ([newsHeroTag]); none from a
+  /// plain push.
+  final Object? heroTag;
+
+  /// The card's decoded width, drawn under the full picture while it loads.
+  final int? previewWidth;
 
   /// Listen. Default: the assistant reads the story out and explains it.
   final ValueChanged<NewsItem>? onListen;
 
   final DateTime? now;
 
-  void _listen(BuildContext context) {
+  Future<void> _listen(BuildContext context) async {
     final listen = onListen;
     if (listen != null) {
       listen(item);
       return;
     }
-    AssistantEngine.instance.askAssistant(listenRequest(item));
-    AppFeedback.toast('Reading it out…', tone: FeedbackTone.progress);
+    try {
+      // The turn runs until the reading ends, so the note goes up as it
+      // starts; a failure replaces it.
+      final turn = AssistantEngine.instance.askAssistant(listenRequest(item));
+      AppFeedback.toast('Reading it out…', tone: FeedbackTone.progress);
+      await turn;
+    } catch (e) {
+      AppLog.add('news', 'listen failed: $e');
+      AppFeedback.toast("Couldn't read that out. Try again.",
+          tone: FeedbackTone.error);
+    }
+  }
+
+  Future<void> _share() async {
+    try {
+      await Share.share(
+        item.url.isNotEmpty ? '${item.title}\n${item.url}' : item.title,
+        subject: item.title,
+      );
+    } catch (e) {
+      AppLog.add('news', 'share failed: $e');
+      AppFeedback.toast("Couldn't share that.", tone: FeedbackTone.error);
+    }
   }
 
   Future<void> _openArticle() async {
@@ -95,8 +141,14 @@ class NewsStoryScreen extends StatelessWidget {
     final meta = [item.source, item.ageLabel(now)].where((s) => s.isNotEmpty).join(' · ');
     final body = [item.snippet, ...item.extra].where((s) => s.isNotEmpty).toList();
     final canOpen = item.url.isNotEmpty;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    final picture = NewsImage(
+      item: item,
+      cacheWidth: (width * media.devicePixelRatio).round(),
+      previewWidth: previewWidth,
+    );
+    final tag = heroTag;
+    // 2026-09-30: under the app's sky, the words on the night ground.
+    return NeonScaffold(
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -105,19 +157,26 @@ class NewsStoryScreen extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  NewsImage(
-                    item: item,
-                    cacheWidth: (width * media.devicePixelRatio).round(),
-                  ),
+                  if (tag == null)
+                    picture
+                  else
+                    Hero(
+                      tag: tag,
+                      flightShuttleBuilder: newsPictureFlight,
+                      child: picture,
+                    ),
                   // A soft shade under the status bar so the back button
-                  // reads on any picture.
-                  const IgnorePointer(
+                  // reads on any picture: the night ground, not grey-black.
+                  IgnorePointer(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.center,
-                          colors: [Color(0x66000000), Color(0x00000000)],
+                          colors: [
+                            Neon.bg.withValues(alpha: 0.55),
+                            Neon.bg.withValues(alpha: 0),
+                          ],
                         ),
                       ),
                     ),
@@ -132,10 +191,11 @@ class NewsStoryScreen extends StatelessWidget {
                           tooltip: 'Back',
                           onPressed: () => Navigator.of(context).maybePop(),
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.black.withValues(alpha: 0.35),
+                            backgroundColor: Neon.bg.withValues(alpha: 0.55),
+                            side: BorderSide(color: Neon.lineBright),
                           ),
-                          icon: const Icon(Icons.arrow_back_rounded,
-                              color: Colors.white),
+                          icon: Icon(Icons.arrow_back_rounded,
+                              color: Neon.textHi),
                         ),
                       ),
                     ),
@@ -195,7 +255,7 @@ class NewsStoryScreen extends StatelessWidget {
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: Neon.bg,
-            border: Border(top: BorderSide(color: Neon.line)),
+            border: Border(top: BorderSide(color: Neon.lineBright)),
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -216,6 +276,7 @@ class NewsStoryScreen extends StatelessWidget {
                         label: 'Open article',
                         icon: Icons.open_in_new_rounded,
                         onPressed: canOpen ? _openArticle : null,
+                        tooltip: canOpen ? null : 'No link for this story',
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -223,10 +284,7 @@ class NewsStoryScreen extends StatelessWidget {
                       child: _SecondaryButton(
                         label: 'Share',
                         icon: Icons.ios_share_rounded,
-                        onPressed: () => Share.share(
-                          canOpen ? '${item.title}\n${item.url}' : item.title,
-                          subject: item.title,
-                        ),
+                        onPressed: _share,
                       ),
                     ),
                   ],
@@ -241,15 +299,22 @@ class NewsStoryScreen extends StatelessWidget {
 }
 
 class _SecondaryButton extends StatelessWidget {
-  const _SecondaryButton({required this.label, required this.icon, this.onPressed});
+  const _SecondaryButton(
+      {required this.label,
+      required this.icon,
+      this.onPressed,
+      this.tooltip});
 
   final String label;
   final IconData icon;
   final VoidCallback? onPressed;
 
+  /// Said on long-press; for a button that is off, why.
+  final String? tooltip;
+
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
+    final button = OutlinedButton.icon(
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         foregroundColor: Neon.textHi,
@@ -261,5 +326,6 @@ class _SecondaryButton extends StatelessWidget {
       icon: Icon(icon, size: 18),
       label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
   }
 }

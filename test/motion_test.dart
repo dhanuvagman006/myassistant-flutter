@@ -162,34 +162,35 @@ void main() {
       return nav.currentState!;
     }
 
-    testWidgets('a page slides in from the side and is solid half-way; the page under it steps back',
+    testWidgets('a page pushes in from the right edge, solid all the way; the page under it steps aside',
         (tester) async {
       final nav = await app(tester);
+      final width = tester.getSize(find.byType(Navigator)).width;
       nav.push(MaterialPageRoute<void>(
           builder: (_) => const Scaffold(body: Text('page'))));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 40));
       final page = tester.getTopLeft(find.text('page'));
-      expect(page.dx, greaterThan(0), reason: 'it comes in from the side');
-      expect(page.dy, 0, reason: 'it used to rise a quarter of the screen');
+      expect(page.dx, greaterThan(width * 0.1),
+          reason: 'it comes in from the edge, not 8% of the way (it read as a fade)');
+      expect(page.dy, 0);
+      expect(_opacityProduct(tester, find.text('page')), 1,
+          reason: 'navigation moves through space: nothing dissolves');
       expect(tester.getTopLeft(find.text('home')).dx, lessThan(0),
-          reason: 'the page underneath steps back');
+          reason: 'the page underneath steps aside to the left');
+      expect(_opacityProduct(tester, find.text('home')), 1);
 
-      await tester.pump(const Duration(milliseconds: 60)); // half-way
-      expect(_opacityProduct(tester, find.text('page')), greaterThan(0.99),
-          reason: 'it was a ghost, a third opaque, half-way in');
-
-      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 260));
       expect(tester.getTopLeft(find.text('page')), Offset.zero);
 
-      // Back: it leaves to the side it came from, in 200 ms.
+      // Back: it leaves to the right, the page under it comes back from
+      // the left, in 240 ms.
       nav.pop();
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 120));
       expect(tester.getTopLeft(find.text('page')).dx, greaterThan(0));
-      expect(tester.getTopLeft(find.text('page')).dy, 0,
-          reason: 'Back used to drop the page a quarter of the screen');
-      await tester.pump(const Duration(milliseconds: 60));
+      expect(tester.getTopLeft(find.text('home')).dx, lessThan(0));
+      await tester.pump(const Duration(milliseconds: 140));
       expect(find.text('page'), findsNothing);
       expect(tester.getTopLeft(find.text('home')), Offset.zero);
     });
@@ -303,7 +304,7 @@ void main() {
       }
 
       HomeShell.requestedTab.value = 2; // "open my chats"
-      await _settle(tester, 2);
+      await _settle(tester, 3); // the move is 320 ms; the first pump starts it
       expect(ticks(tester, ChatScreen), isTrue);
       expect(ticks(tester, HomeDashboard), isFalse);
 
@@ -325,23 +326,20 @@ void main() {
       await _teardownShell(tester);
     });
 
-    testWidgets('switching tabs fades the new tab in, then asks for no frames',
+    testWidgets('a tab chosen by voice comes through in place, then asks for no frames',
         (tester) async {
       await home(tester);
-      final fade = find.ancestor(
-          of: find.byType(IndexedStack), matching: find.byType(FadeTransition));
-      double opacity() => tester.widget<FadeTransition>(fade.first).opacity.value;
-      expect(opacity(), 1);
-
-      HomeShell.requestedTab.value = 1; // Hub
+      HomeShell.requestedTab.value = 1; // Hub, with no button to grow from
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 60));
-      expect(opacity(), greaterThan(0));
-      expect(opacity(), lessThan(1),
-          reason: 'switching tabs was a hard one-frame cut');
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(opacity(), 1);
-      await _settle(tester);
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(tester.getTopLeft(find.byType(HubScreen)).dx, closeTo(0, 40),
+          reason: 'no slide from the edge: it grows into place where it is');
+      final fading = tester
+          .widgetList<Opacity>(find.ancestor(of: find.byType(HubScreen), matching: find.byType(Opacity)))
+          .any((o) => o.opacity < 1);
+      expect(fading, isTrue, reason: 'still arriving');
+      await _settle(tester, 3);
+      expect(tester.getTopLeft(find.byType(HubScreen)).dx, 0);
       expect(SchedulerBinding.instance.transientCallbackCount, 0);
       expect(tester.binding.hasScheduledFrame, isFalse);
       await _teardownShell(tester);
@@ -627,7 +625,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
     }
 
-    testWidgets('a result card grows out of the mic, never crossing it, and leaves at once',
+    testWidgets('a result card grows out of the mic, never crossing it, and leaves quickly',
         (tester) async {
       await overlay(tester);
       final early = tester.getRect(find.byType(ScriptCard));
@@ -642,7 +640,11 @@ void main() {
 
       AssistantEngine.instance.dismissPresentedText();
       await tester.pump();
-      expect(find.byType(ScriptCard), findsNothing, reason: 'closing stays instant');
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(_opacityProduct(tester, find.byType(ScriptCard)), lessThan(1),
+          reason: 'it fades as it leaves, not gone in one frame');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(ScriptCard), findsNothing, reason: 'gone in 120 ms: closing still feels instant');
     });
 
     testWidgets('reduced: a card appears in place', (tester) async {

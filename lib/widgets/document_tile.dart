@@ -11,6 +11,7 @@ import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen, shareDocumentFile;
 import '../models/user_document.dart';
 import '../services/api_service.dart';
+import '../design/motion.dart';
 
 /// Shared document presentation for the two document areas (My documents,
 /// a client's case file). One look, one set of actions — open, share,
@@ -159,17 +160,14 @@ String documentTypeLabel(UserDocument d) {
 /// the account. Returns true when the user confirmed.
 Future<bool> confirmDeleteDocument(BuildContext context, UserDocument d,
     {String? where}) async {
-  final ok = await showDialog<bool>(
+  final ok = await showAppDialog<bool>(
     context: context,
+    // The theme's floating surface and words (2026-09-30).
     builder: (ctx) => AlertDialog(
-      backgroundColor: Neon.surface,
-      surfaceTintColor: Colors.transparent,
-      title: Text('Delete this document?',
-          style: TextStyle(color: Neon.textHi)),
+      title: const Text('Delete this document?'),
       content: Text(
         '"${d.title}" will be permanently removed from '
         '${where ?? 'your account'}. This cannot be undone.',
-        style: TextStyle(color: Neon.textLo, height: 1.4),
       ),
       actions: [
         TextButton(
@@ -203,8 +201,11 @@ class DocumentThumb extends StatelessWidget {
         child: !document.isImage
             ? Builder(builder: (_) {
                 final g = documentGlyph(document);
+                // The ground takes a breath of the type's colour
+                // (2026-09-30), so a PDF and a sheet differ at a glance.
                 return Container(
-                  color: Neon.surfaceHigh,
+                  color: Color.alphaBlend(
+                      g.color.withValues(alpha: 0.14), Neon.surfaceHigh),
                   child: Icon(g.icon, color: g.color, size: 28),
                 );
               })
@@ -236,7 +237,8 @@ Widget documentMenu({
   required VoidCallback onDelete,
   Color? iconColor,
 }) {
-  return PopupMenuButton<DocumentMenuAction>(
+  return Builder(builder: (context) => PopupMenuButton<DocumentMenuAction>(
+    popUpAnimationStyle: appMenuAnimation(context),
     tooltip: 'More',
     icon: Icon(Icons.more_vert_rounded, color: iconColor ?? Neon.textLo, size: 20),
     onSelected: (a) {
@@ -269,7 +271,7 @@ Widget documentMenu({
               leading: Icon(Icons.delete_outline_rounded, color: Neon.error),
               title: Text('Delete', style: TextStyle(color: Neon.errorInk)))),
     ],
-  );
+  ));
 }
 
 /// One row in a case file's document list.
@@ -297,18 +299,15 @@ class DocumentListTile extends StatelessWidget {
       if (cat.isNotEmpty) cat,
       if (cat.isEmpty && type.isNotEmpty) type,
     ].join(' · ');
-    return Material(
-      color: Neon.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onOpen,
-        child: Container(
+    // 2026-09-30: the raised surface with its thin rim; it dips and ticks
+    // under the finger (Tappable), and its ⋮ still takes its own taps.
+    return Tappable(
+      onTap: onOpen,
+      scale: 0.985,
+      child: DecoratedBox(
+        decoration: documentTileSurface,
+        child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Neon.line),
-          ),
           child: Row(
             children: [
               SizedBox(
@@ -345,6 +344,15 @@ class DocumentListTile extends StatelessWidget {
   }
 }
 
+/// The ground of a document tile (list row or grid cell): the raised,
+/// violet-cast surface every group in the app sits on, with a thin rim
+/// (2026-09-30).
+BoxDecoration get documentTileSurface => BoxDecoration(
+      color: Color.alphaBlend(Neon.violet.withValues(alpha: 0.06), Neon.surface),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Neon.lineBright),
+    );
+
 /// "20 Sept 2026" inside an automatic title.
 final _titleDate = RegExp(r'(\d{1,2}) ([A-Za-z]{3,4}) (\d{4})');
 
@@ -378,19 +386,15 @@ class DocumentGridTile extends StatelessWidget {
       if (type.isNotEmpty) type,
       if (!titleHasDate) documentDateLabel(d),
     ].where((s) => s.isNotEmpty).join(' · ');
-    return Material(
-      color: Neon.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onOpen,
-        onLongPress: onLongPress,
-        child: Container(
+    // 2026-09-30: dips, ticks and reads as a button (Tappable); a long
+    // press gives the firmer tick before its sheet.
+    return Tappable(
+      onTap: onOpen,
+      onLongPress: onLongPress,
+      child: DecoratedBox(
+        decoration: documentTileSurface,
+        child: Padding(
           padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Neon.line),
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -493,11 +497,8 @@ Future<void> showDocumentActions(
   required VoidCallback onOpen,
   required VoidCallback onDelete,
 }) async {
-  final action = await showModalBottomSheet<DocumentMenuAction>(
+  final action = await showAppSheet<DocumentMenuAction>(
     context: context,
-    backgroundColor: Neon.surface,
-    shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
     builder: (ctx) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,

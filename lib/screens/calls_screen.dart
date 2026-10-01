@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../models/call_outcome.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 import '../services/assistant_identity.dart';
+import '../widgets/neon_cards.dart';
 
 /// CALLS THE ASSISTANT MADE — and what the other person said back.
 ///
@@ -36,16 +39,22 @@ class _CallsScreenState extends State<CallsScreen> {
       final calls = await ApiService.fetchCallOutcomes();
       if (mounted) setState(() { _calls = calls; _error = null; });
     } catch (_) {
-      if (mounted) {
-        setState(() => _error = "Couldn't load your calls — pull down to try again.");
+      if (!mounted) return;
+      final have = _calls;
+      if (have != null && have.isNotEmpty) {
+        // The list on screen is still good: say the refresh missed.
+        AppFeedback.show("Couldn't refresh.",
+            context: context, tone: FeedbackTone.error);
+      } else {
+        setState(() => _error = "Couldn't load your calls");
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under the night sky (2026-09-30).
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Calls'),
       body: RefreshIndicator(
         onRefresh: _load,
@@ -54,7 +63,8 @@ class _CallsScreenState extends State<CallsScreen> {
         // No spinner flash on a quick load, and the list fades in.
         child: LoadSwitch(
           loading: _calls == null && _error == null,
-          child: _body(),
+          spinner: const NeonLoader.page(),
+          child: StateSwitch.of(_body()),
         ),
       ),
     );
@@ -62,29 +72,35 @@ class _CallsScreenState extends State<CallsScreen> {
 
   Widget _body() {
     if (_calls == null && _error == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const NeonLoader.page();
     }
     final calls = _calls ?? const <CallOutcome>[];
+    if (calls.isEmpty && _error != null) {
+      // In a list, so pulling down still retries too.
+      return ListView(
+        padding: const EdgeInsets.only(top: 32),
+        children: [
+          NeonErrorState(
+            message: _error!,
+            onRetry: () {
+              setState(() => _error = null);
+              _load();
+            },
+          ),
+        ],
+      );
+    }
     if (calls.isEmpty) {
       // A scrollable empty state, or pull-to-refresh cannot be reached.
       return ListView(
-        padding: const EdgeInsets.fromLTRB(20, 80, 20, 20),
-        children: [
-          Icon(Icons.phone_in_talk_rounded, size: 40, color: Neon.textDim),
-          const SizedBox(height: 14),
-          Text(
-            _error ?? 'No calls yet',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textHi, fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _error == null
-                ? 'Ask me to call someone and pass on a message — "call Ravi '
-                    'and tell him I\'ll be late". What they say back appears here.'
-                : '',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45),
+        padding: const EdgeInsets.only(top: 48),
+        children: const [
+          NeonEmptyState(
+            icon: Icons.phone_in_talk_rounded,
+            title: 'No calls yet',
+            body: 'Ask me to call someone and pass on a message — "call Ravi '
+                'and tell him I\'ll be late". What they say back appears here.',
+            tone: NeonTone.success,
           ),
         ],
       );
@@ -99,102 +115,107 @@ class _CallsScreenState extends State<CallsScreen> {
 
   Widget _card(CallOutcome c) {
     final open = _expanded.contains(c.id);
-    final tint = c.inProgress
-        ? Neon.cyan
-        : c.answered
-            ? Neon.success
-            : c.missed
-                ? Neon.violet
-                : Neon.error;
+    final tone = callTone(c);
+    final tint = tone.ink;
     final said = c.theirLines;
+    final canOpen = c.transcript.isNotEmpty;
+    final toggle = canOpen
+        ? () => setState(
+            () => open ? _expanded.remove(c.id) : _expanded.add(c.id))
+        : null;
 
-    return Material(
-      color: Neon.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: c.transcript.isEmpty
-            ? null
-            : () => setState(() =>
-                open ? _expanded.remove(c.id) : _expanded.add(c.id)),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Neon.line),
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            // The state's own light, a lit dot.
+            Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: tone.rim.first,
+                shape: BoxShape.circle,
+                boxShadow: Neon.halo(tone.rim.first, strength: 0.6),
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                c.contact.isEmpty ? 'Someone' : c.contact,
+                style: NeonType.manrope(NeonType.callout, FontWeight.w700)
+                    .copyWith(color: Neon.textHi),
+              ),
+            ),
+            Text(_when(c.createdAt),
+                style: TextStyle(color: Neon.textDim, fontSize: NeonType.caption)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _headline(c),
+          style: TextStyle(color: Neon.textLo, fontSize: NeonType.body, height: 1.4),
+        ),
+        // 2026-09-30 visual QA: a call that did not happen said so only
+        // with a red dot when it had a task line ("Ask if a table…"); the
+        // outcome is now written under it, in the dot's colour.
+        if (c.detail.isNotEmpty && !c.answered && !c.inProgress) ...[
+          const SizedBox(height: 4),
+          Text(
+            c.missed
+                ? 'They did not pick up.'
+                : c.reason.isNotEmpty
+                    ? c.reason
+                    : 'The call did not go through.',
+            style: NeonType.manrope(NeonType.footnote, FontWeight.w600)
+                .copyWith(color: tint, height: 1.35),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+        // THE ANSWER IS THE POINT OF THE SCREEN, so their words get
+        // their own block rather than being buried in the result line.
+        if (said.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
+            decoration: BoxDecoration(
+              color: Neon.surfaceHigh,
+              borderRadius: BorderRadius.circular(11),
+              border: Border(left: BorderSide(color: tone.rim.first, width: 2.5)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('They said',
+                    style: NeonType.manrope(NeonType.caption, FontWeight.w700)
+                        .copyWith(color: Neon.textDim, letterSpacing: 0.4)),
+                const SizedBox(height: 4),
+                Text(said.join('  ·  '),
+                    style: TextStyle(
+                        color: Neon.textHi, fontSize: NeonType.body, height: 1.4)),
+              ],
+            ),
+          ),
+        ],
+        if (canOpen) ...[
+          const SizedBox(height: 8),
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(color: tint, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Text(
-                      c.contact.isEmpty ? 'Someone' : c.contact,
-                      style: TextStyle(
-                          color: Neon.textHi,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  Text(_when(c.createdAt),
-                      style: TextStyle(color: Neon.textDim, fontSize: 12)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _headline(c),
-                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.4),
-              ),
-              // THE ANSWER IS THE POINT OF THE SCREEN, so their words get
-              // their own block rather than being buried in the result line.
-              if (said.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
-                  decoration: BoxDecoration(
-                    color: Neon.surfaceHigh,
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border(left: BorderSide(color: tint, width: 2.5)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('They said',
-                          style: TextStyle(
-                              color: Neon.textDim,
-                              fontSize: 12,
-                              letterSpacing: 0.4,
-                              fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 4),
-                      Text(said.join('  ·  '),
-                          style: TextStyle(
-                              color: Neon.textHi, fontSize: 14, height: 1.4)),
-                    ],
-                  ),
-                ),
-              ],
-              if (c.transcript.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(open ? 'Hide the call' : 'Read the whole call',
-                        style: TextStyle(
-                            color: tint, fontSize: 13, fontWeight: FontWeight.w600)),
-                    Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                        size: 17, color: tint),
-                  ],
-                ),
-              ],
-              if (open) ...[
-                const SizedBox(height: 6),
+              Text(open ? 'Hide the call' : 'Read the whole call',
+                  style: NeonType.manrope(NeonType.footnote, FontWeight.w600)
+                      .copyWith(color: tint)),
+              ExpandChevron(open: open, color: tint, size: 17),
+            ],
+          ),
+        ],
+        // The whole call opens in place, on the app's clock (2026-09-30).
+        Collapse(
+          open: open,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 for (final turn in c.exchange)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 7),
@@ -212,10 +233,8 @@ class _CallsScreenState extends State<CallsScreen> {
                             turn.them
                                 ? (c.contact.split(' ').first)
                                 : AssistantIdentity.name,
-                            style: TextStyle(
-                                color: turn.them ? tint : Neon.textDim,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700),
+                            style: NeonType.manrope(NeonType.caption, FontWeight.w700)
+                                .copyWith(color: turn.them ? tint : Neon.textDim),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -223,16 +242,36 @@ class _CallsScreenState extends State<CallsScreen> {
                         Expanded(
                           child: Text(turn.text,
                               style: TextStyle(
-                                  color: Neon.textLo, fontSize: 13, height: 1.4)),
+                                  color: Neon.textLo,
+                                  fontSize: NeonType.footnote,
+                                  height: 1.4)),
                         ),
                       ],
                     ),
                   ),
               ],
-            ],
+            ),
           ),
         ),
-      ),
+      ],
+    );
+
+    // A call on now is the one lit card on the page; a missed or failed
+    // call wears its tone on the rim; an answered one sits quiet.
+    if (c.inProgress) {
+      return GlowCard(
+        tone: tone,
+        radius: Neon.rMd,
+        padding: const EdgeInsets.all(14),
+        onTap: toggle,
+        child: body,
+      );
+    }
+    return RimCard(
+      tone: c.answered ? null : tone,
+      onTap: toggle,
+      tapHint: open ? 'hide the call' : 'read the whole call',
+      child: body,
     );
   }
 
@@ -259,3 +298,14 @@ class _CallsScreenState extends State<CallsScreen> {
     return '${d.day} ${months[d.month - 1]}';
   }
 }
+
+/// WHAT HAPPENED, AS LIGHT (2026-09-30): on the call now is the
+/// assistant's cyan, answered is green, a missed call is danger red, a
+/// call that did not go through is amber. Public for tests.
+NeonTone callTone(CallOutcome c) => c.inProgress
+    ? NeonTone.tip
+    : c.answered
+        ? NeonTone.success
+        : c.missed
+            ? NeonTone.danger
+            : NeonTone.warning;

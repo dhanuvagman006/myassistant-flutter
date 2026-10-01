@@ -7,9 +7,11 @@ import 'package:share_plus/share_plus.dart';
 
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/app_feedback.dart';
+import '../design/motion.dart';
 
 /// ACCOUNT — who is signed in, and the three things anyone must be able to
 /// do with their own account: take their data, leave, and erase it.
@@ -60,7 +62,7 @@ class _AccountSectionState extends State<AccountSection> {
   }
 
   Future<void> _signOut() async {
-    final ok = await showDialog<bool>(
+    final ok = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         backgroundColor: Neon.surface,
@@ -81,7 +83,7 @@ class _AccountSectionState extends State<AccountSection> {
   }
 
   Future<void> _delete() async {
-    final first = await showDialog<bool>(
+    final first = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         backgroundColor: Neon.surface,
@@ -103,7 +105,7 @@ class _AccountSectionState extends State<AccountSection> {
     if (first != true || !mounted) return;
     // A second, typed confirmation: this is the one irreversible action in
     // the app, and a mis-tap must not be enough.
-    final second = await showDialog<bool>(
+    final second = await showAppDialog<bool>(
       context: context,
       builder: (c) => const _TypeToConfirm(word: 'DELETE'),
     );
@@ -135,20 +137,14 @@ class _AccountSectionState extends State<AccountSection> {
               title: 'Signed in as',
               subtitle: who,
               trailing: _busy && !_exporting
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Neon.textLo))
+                  ? const NeonLoader.inline()
                   : null,
             ),
             AppleRow(
               title: 'Export my data',
               subtitle: 'Everything your assistant holds for you, as a file',
               trailing: _exporting
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Neon.textLo))
+                  ? const NeonLoader.inline()
                   : Icon(Icons.ios_share_rounded, size: 18, color: Neon.textDim),
               onTap: _busy ? null : _export,
             ),

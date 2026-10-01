@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../services/api_service.dart';
 
 /// WHAT'S NEW — a card at the top of Home, once per release.
 ///
@@ -14,14 +15,22 @@ class WhatsNewCard extends StatefulWidget {
   const WhatsNewCard({super.key});
 
   /// Bump with every release that has something worth telling.
-  static const release = '0.2.98';
-  static const items = <(IconData, String)>[
-    (Icons.touch_app_rounded, 'Do it for me: say "order veg biryani from a 4-star place" — I open your food app, pick the restaurant and fill your cart, then hand you the payment. One-time switch: You → Do it for me.'),
-    (Icons.phone_android_rounded, 'Any app, any setting: "turn on Bluetooth", "install an app", "find my last order" — I use your phone the way you would.'),
-    (Icons.edit_note_rounded, 'Forms too: "fill this form with my details" — your name, phone, email and address go in and it is submitted.'),
-    (Icons.shield_rounded, 'I never pay, move money, type passwords or OTPs, or send messages for you — I stop and tell you what is left. A bar with Stop shows while I work.'),
-    (Icons.groups_rounded, 'Record a meeting (Hub → Meetings, or say "record this meeting"): get minutes, decisions and action items — share them as a PDF.'),
+  /// The release this card describes: the one the server published last
+  /// (its changelog is what the user just installed). A baked-in list
+  /// used to describe 0.2.99 forever (2026-10-01).
+  static String get release => ApiService.config.latestVersionName;
+
+  static const _icons = [
+    Icons.auto_awesome_rounded,
+    Icons.record_voice_over_rounded,
+    Icons.photo_camera_rounded,
+    Icons.calendar_month_rounded,
   ];
+
+  static List<(IconData, String)> get items => [
+        for (final (i, line) in ApiService.config.changelog.indexed)
+          (_icons[i % _icons.length], line),
+      ];
 
   static String _key() => 'whats_new_seen_$release';
 
@@ -36,7 +45,10 @@ class _WhatsNewCardState extends State<WhatsNewCard> {
   void initState() {
     super.initState();
     SharedPreferences.getInstance().then((p) {
-      if (mounted && p.getBool(WhatsNewCard._key()) != true) setState(() => _show = true);
+      // Nothing to say (no changelog yet) is no card at all.
+      if (mounted && WhatsNewCard.items.isNotEmpty && p.getBool(WhatsNewCard._key()) != true) {
+        setState(() => _show = true);
+      }
     }).catchError((_) {});
   }
 

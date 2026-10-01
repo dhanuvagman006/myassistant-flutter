@@ -191,15 +191,13 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
   @override
   Widget build(BuildContext context) {
     final p = _profile;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Send messages as you'),
       body: LoadSwitch(
         loading: _loading,
         child: p == null
             ? NeonErrorState(
-                message: "Couldn't load your video settings. Check your "
-                    'connection and try again.',
+                message: "Couldn't load your video settings",
                 onRetry: _retry,
               )
             : _content(p),
@@ -262,8 +260,6 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
                   : 'Record your video first.',
               trailing: Switch(
                 value: p.enabled,
-                activeThumbColor: Colors.white,
-                activeTrackColor: AppleColors.green,
                 onChanged:
                     _busy || (!p.hasVideo && !p.enabled) ? null : _setEnabled,
               ),
@@ -273,8 +269,7 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
           const GroupLabel('Consent'),
           GroupedCard(dividerInset: 60, children: [
             AppleRow(
-              leading:
-                  IconTile(Icons.verified_user_rounded, AppleColors.green),
+              leading: IconTile(Icons.verified_user_rounded, AppleColors.green),
               title: 'Consent given',
               subtitle: p.consentedAt == null
                   ? 'Only for video notes you ask for.'
@@ -303,28 +298,30 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
     );
   }
 
-  Widget _consentCard() => Container(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Neon.line),
-        ),
+  // The page's one lit card before consent (2026-09-30): what they are
+  // agreeing to, in the brand's light, with the one lit action under it.
+  Widget _consentCard() => GlowCard(
+        halo: 0.6,
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _point(Icons.videocam_rounded,
+            _point(
+                Icons.videocam_rounded,
                 'We record a short video of you reading a script on screen — '
                 'about 30 seconds, live with the front camera.'),
             // Said plainly (review, 2026-09-26): for now a person on the
             // team makes each note from the video, by hand.
-            _point(Icons.cloud_done_rounded,
+            _point(
+                Icons.cloud_done_rounded,
                 "It's saved on our servers. Each note is made from it by our "
                 'team, only when you ask, so it can take a little while.'),
-            _point(Icons.lock_rounded,
+            _point(
+                Icons.lock_rounded,
                 'It is used only to make the video notes you ask for. '
                 'Nothing else.'),
-            _point(Icons.auto_awesome_rounded,
+            _point(
+                Icons.auto_awesome_rounded,
                 'Every clip made from it is marked as made by AI, so the '
                 'person watching knows.'),
             _point(Icons.delete_outline_rounded,
@@ -377,8 +374,20 @@ class _AvatarIdentityScreenState extends State<AvatarIdentityScreen> {
   }
 
   static String _date(int ms) {
-    const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mo = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     final d = DateTime.fromMillisecondsSinceEpoch(ms);
     return '${d.day} ${mo[d.month - 1]} ${d.year}';
   }
@@ -469,26 +478,30 @@ class _VideoThumbState extends State<_VideoThumb> {
     return Semantics(
       button: true,
       label: c.value.isPlaying ? 'Pause your video' : 'Play your video',
-      child: GestureDetector(
-        onTap: () => c.value.isPlaying ? c.pause() : c.play(),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            width: 44,
-            height: 58,
-            child: Stack(fit: StackFit.expand, children: [
-              FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                    width: 100 * a, height: 100, child: VideoPlayer(c)),
-              ),
-              if (!c.value.isPlaying)
-                ColoredBox(
-                  color: Colors.black.withValues(alpha: 0.25),
-                  child: const Icon(Icons.play_arrow_rounded,
-                      color: Colors.white, size: 24),
+      // Dips under the finger like every other thing that plays.
+      child: PressScale(
+        scale: 0.95,
+        child: GestureDetector(
+          onTap: () => c.value.isPlaying ? c.pause() : c.play(),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 44,
+              height: 58,
+              child: Stack(fit: StackFit.expand, children: [
+                FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                      width: 100 * a, height: 100, child: VideoPlayer(c)),
                 ),
-            ]),
+                if (!c.value.isPlaying)
+                  ColoredBox(
+                    color: Neon.scrim,
+                    child: Icon(Icons.play_arrow_rounded,
+                        color: Neon.textHi, size: 24),
+                  ),
+              ]),
+            ),
           ),
         ),
       ),

@@ -165,6 +165,7 @@ class AuthService extends ChangeNotifier {
       return;
     }
     ApiService.sessionToken = token;
+    _runSignInHooks(); // a restored session counts as signed in
     final cached = await _storage.read(key: _userCacheKey);
     if (cached != null) {
       try {
@@ -338,6 +339,18 @@ class AuthService extends ChangeNotifier {
   final List<Future<void> Function()> _signOutHooks = [];
   void onSignOut(Future<void> Function() hook) => _signOutHooks.add(hook);
 
+  /// The other side: run once there is a session — a restored one at
+  /// launch, or a fresh sign-in. The AI brain signs its Firebase identity
+  /// in here (lib/ai/identity.dart). Not awaited: nothing waits on them.
+  final List<Future<void> Function()> _signInHooks = [];
+  void onSignIn(Future<void> Function() hook) => _signInHooks.add(hook);
+
+  void _runSignInHooks() {
+    for (final hook in _signInHooks) {
+      hook().catchError((_) {});
+    }
+  }
+
   Future<void> _clear() async {
     user = null;
     ApiService.sessionToken = null;
@@ -396,6 +409,7 @@ class AuthService extends ChangeNotifier {
     // no notification at all. Not awaited — sign-in must not wait on a
     // permission prompt.
     PushService.instance.syncToken();
+    _runSignInHooks();
     notifyListeners();
   }
 }

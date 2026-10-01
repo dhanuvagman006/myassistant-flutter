@@ -1,50 +1,21 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/log.dart';
-import '../models/chat_message.dart';
 import '../models/client.dart';
 import '../models/memory_item.dart';
 import '../models/place.dart';
 import '../models/reminder.dart';
 import '../models/call_outcome.dart';
 import '../models/user_document.dart';
-import '../models/vision_result.dart';
 import '../models/remote_config.dart';
 import 'document_events.dart';
-import 'style_prefs.dart';
 
 /// All network traffic goes app → backend → AI providers.
 /// The app never holds AI provider keys.
-/// Thrown when /vision returns a non-200 so screens can show the REAL
-/// reason (server not configured, signed out, file too big…) instead of
-/// a generic "check your connection".
-class VisionException implements Exception {
-  final int status;
-
-  /// The backend's `{"error": "..."}` message, if it sent one.
-  final String serverMessage;
-
-  VisionException(this.status, String rawBody)
-      : serverMessage = _extract(rawBody);
-
-  static String _extract(String body) {
-    try {
-      final j = jsonDecode(body);
-      if (j is Map && j['error'] is String) return j['error'] as String;
-    } catch (_) {}
-    return '';
-  }
-
-  @override
-  String toString() => 'VisionException($status, $serverMessage)';
-}
-
 class ApiService {
   /// Compile-time BASE_URL wins when provided:
   ///   flutter run --dart-define=BASE_URL=http://192.168.1.5:3000
@@ -136,6 +107,8 @@ class ApiService {
       switch (method) {
         case 'PUT':
           r = await _client.put(uri, headers: headers, body: payload).timeout(timeout);
+        case 'PATCH':
+          r = await _client.patch(uri, headers: headers, body: payload).timeout(timeout);
         case 'DELETE':
           r = await _client.delete(uri, headers: headers, body: payload).timeout(timeout);
         default:
@@ -143,6 +116,7 @@ class ApiService {
       }
       if (r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);
+        AppLog.add('api', '$method $path -> ${r.statusCode}');
         // A REFUSAL THE USER CAN ACT ON IS NOT A NULL. 409 carries the
         // server's own explanation ("that is a female name and a male
         // voice…"); swallowing it left the app saying "couldn't save",
@@ -157,7 +131,8 @@ class ApiService {
       }
       final decoded = r.body.isEmpty ? {} : jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
-    } catch (_) {
+    } catch (e) {
+      AppLog.add('api', '$method $path -> $e');
       return null;
     }
   }
@@ -193,11 +168,13 @@ class ApiService {
           .timeout(timeout);
       if (r.statusCode != 200) {
         _flagAuthFailure(r.statusCode);
+        AppLog.add('api', '$path -> ${r.statusCode}');
         return null;
       }
       final body = jsonDecode(r.body);
       return body is Map<String, dynamic> ? body : null;
-    } catch (_) {
+    } catch (e) {
+      AppLog.add('api', '$path -> $e');
       return null;
     }
   }
@@ -214,12 +191,14 @@ class ApiService {
           .timeout(timeout);
       if (r.statusCode < 200 || r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);
+        AppLog.add('api', '$path -> ${r.statusCode}');
         return null;
       }
       if (r.body.isEmpty) return const {};
       final decoded = jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : null;
-    } catch (_) {
+    } catch (e) {
+      AppLog.add('api', '$path -> $e');
       return null;
     }
   }
@@ -236,12 +215,14 @@ class ApiService {
           .timeout(timeout);
       if (r.statusCode < 200 || r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);
+        AppLog.add('api', '$path -> ${r.statusCode}');
         return null;
       }
       if (r.body.isEmpty) return const {};
       final decoded = jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : null;
-    } catch (_) {
+    } catch (e) {
+      AppLog.add('api', '$path -> $e');
       return null;
     }
   }
@@ -358,105 +339,6 @@ class ApiService {
     }
   }
 
-  /// Sends a recorded question to /stt (Whisper). Returns the
-  /// transcript; the language is auto-detected server-side.
-  static Future<String> transcribe(
-    String filePath, {
-    String? forceLanguage, // ISO-639-1, e.g. 'kn' — user picked it: lock it
-    String? hintLanguage, // ISO-639-1 — bias detection, others still work
-  }) async {
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/stt'));
-    // Multipart sets its own Content-Type; add only auth.
-    if (sessionToken != null) {
-      req.headers['Authorization'] = 'Bearer $sessionToken';
-    } else if (_appApiKey.isNotEmpty) {
-      req.headers['X-App-Key'] = _appApiKey;
-    }
-    if (forceLanguage != null) req.fields['language'] = forceLanguage;
-    if (hintLanguage != null) req.fields['hint'] = hintLanguage;
-    req.files.add(await http.MultipartFile.fromPath('audio', filePath));
-
-    final streamed = await req.send().timeout(const Duration(seconds: 40));
-    final r = await http.Response.fromStream(streamed);
-    try {
-      File(filePath).delete().ignore();
-    } catch (_) {}
-    if (r.statusCode != 200) {
-      throw Exception('stt ${r.statusCode}');
-    }
-    return (jsonDecode(r.body)['text'] as String?)?.trim() ?? '';
-  }
-
-  /// Synthesizes [text] to a natural neural voice via the backend /tts
-  /// endpoint (Gemini TTS). Writes the returned WAV to a temp file and
-  /// returns its path, or null on any failure so the caller can fall back
-  /// to the on-device voice. [language] is an ISO-639-1 hint for accent.
-  static Future<String?> synthesizeSpeech(
-    String text, {
-    String? language, // 'kn', 'hi', 'en'…
-    String? voice, // optional Gemini voice name override
-  }) async {
-    final say = text.trim();
-    if (say.isEmpty) return null;
-    try {
-      final r = await _client
-          .post(
-            Uri.parse('$baseUrl/tts'),
-            headers: _authHeaders,
-            body: jsonEncode({
-              'text': say,
-              if (language != null && language.isNotEmpty) 'language': language,
-              if (voice != null && voice.isNotEmpty) 'voice': voice,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
-      if (r.statusCode != 200 || r.bodyBytes.isEmpty) return null;
-      final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/hari_tts_${DateTime.now().microsecondsSinceEpoch}.wav';
-      await File(path).writeAsBytes(r.bodyBytes, flush: true);
-      return path;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Returns the assistant reply with any live-information sources (A5).
-  /// Style preferences (A4) ride as headers — zero extra round-trips.
-  static Future<ChatMessage> sendChat(List<ChatMessage> history) async {
-    // (402 → QuotaExceeded is raised below, after the response arrives)
-    final prefs = StylePrefs.instance;
-    final r = await _client
-        .post(
-          Uri.parse('$baseUrl/chat'),
-          headers: {
-            ..._chatHeaders,
-            'X-Style-Tone': prefs.tone,
-            'X-Style-Length': prefs.answerLength,
-          },
-          body: jsonEncode({
-            'messages': history.map((m) => m.toJson()).toList(),
-            'language': 'auto',
-          }),
-        )
-        .timeout(const Duration(seconds: 60));
-
-    if (r.statusCode == 401) {
-      throw Exception('Sign-in required — check APP_API_KEY or Google sign-in.');
-    }
-    checkQuota(r.statusCode, r.body); // 402 → QuotaExceeded (upsell)
-    if (r.statusCode != 200) {
-      throw Exception('Server error ${r.statusCode}');
-    }
-    final j = jsonDecode(r.body) as Map<String, dynamic>;
-    return ChatMessage(
-      role: 'assistant',
-      content: (j['reply'] as String?) ?? '',
-      sources: ChatSource.listFromJson(j['sources']),
-      documents: UserDocument.listFromJson(j['documents']),
-    );
-  }
-
   /// C3 — nearby places search; geo rides on the standard headers.
   static Future<List<Place>> fetchPlaces(String q) async {
     final r = await _client
@@ -465,7 +347,10 @@ class ApiService {
           headers: _chatHeaders, // includes X-Geo-Lat/Lng when known
         )
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('places ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('places ${r.statusCode}');
+    }
     return ((jsonDecode(r.body)['places'] as List?) ?? [])
         .map((j) => Place.fromJson(j as Map<String, dynamic>))
         .toList();
@@ -478,37 +363,6 @@ class ApiService {
   /// Auth headers for Image.network on protected endpoints (place photos).
   static Map<String, String> get imageHeaders => Map.of(_authHeaders)
     ..remove('Content-Type');
-
-  /// Group B — vision: photo Q&A (B1), document reading (B2), OCR (B3),
-  /// screenshot helper (B4). One multipart call; [history] lets
-  /// follow-up questions reuse the same uploaded file.
-  static Future<VisionResult> visionAsk({
-    required List<int> bytes,
-    required String filename,
-    required String mimeType,
-    String mode = 'ask', // ask | ocr | screenshot
-    String question = '',
-    List<ChatMessage> history = const [],
-  }) async {
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/vision'))
-      ..headers.addAll(
-          Map.of(_authHeaders)..remove('Content-Type')) // multipart sets its own
-      ..fields['mode'] = mode
-      ..fields['question'] = question
-      ..fields['history'] =
-          jsonEncode(history.map((m) => m.toJson()).toList())
-      ..files.add(http.MultipartFile.fromBytes('file', bytes,
-          filename: filename, contentType: MediaType.parse(mimeType)));
-
-    final resp = await _client.send(req).timeout(const Duration(seconds: 90));
-    final body = await resp.stream.bytesToString();
-    if (resp.statusCode != 200) {
-      throw VisionException(resp.statusCode, body);
-    }
-    final j = jsonDecode(body) as Map<String, dynamic>;
-    return VisionResult.fromJson(j);
-  }
-
 
   // ---------------------------------------------------------------------
   // SAVED DOCUMENTS — Hari's long-term document memory. Upload once; the
@@ -590,7 +444,10 @@ class ApiService {
         .get(Uri.parse('$baseUrl/outcomes?kind=agent_call&limit=$limit'),
             headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('outcomes ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('outcomes ${r.statusCode}');
+    }
     return CallOutcome.listFromJson(jsonDecode(r.body)['outcomes']);
   }
 
@@ -599,7 +456,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/docs?scope=$scope'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('docs ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('docs ${r.statusCode}');
+    }
     return UserDocument.listFromJson(jsonDecode(r.body)['documents']);
   }
 
@@ -611,6 +471,7 @@ class ApiService {
         .delete(Uri.parse('$baseUrl/docs/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200 && r.statusCode != 404) {
+      _flagAuthFailure(r.statusCode);
       throw Exception('docs ${r.statusCode}');
     }
     DocumentEvents.bump();
@@ -626,7 +487,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/docs/$id/file'), headers: _authHeaders)
         .timeout(const Duration(seconds: 30));
-    if (r.statusCode != 200) throw Exception('docs ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('docs ${r.statusCode}');
+    }
     final mime = r.headers['content-type']?.split(';').first.trim() ??
         'application/octet-stream';
     return (bytes: r.bodyBytes, mime: mime);
@@ -642,7 +506,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/clients'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
     return Client.listFromJson(jsonDecode(r.body)['clients']);
   }
 
@@ -666,7 +533,10 @@ class ApiService {
               'tags': tags,
             }))
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
     return Client.fromJson(
         (jsonDecode(r.body) as Map<String, dynamic>)['client']
             as Map<String, dynamic>);
@@ -684,7 +554,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     return (
       client: Client.fromJson(j['client'] as Map<String, dynamic>),
@@ -700,7 +573,10 @@ class ApiService {
         .patch(Uri.parse('$baseUrl/clients/$id'),
             headers: _authHeaders, body: jsonEncode(patch))
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
     return Client.fromJson(
         (jsonDecode(r.body) as Map<String, dynamic>)['client']
             as Map<String, dynamic>);
@@ -715,6 +591,7 @@ class ApiService {
         .delete(Uri.parse('$baseUrl/clients/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 30));
     if (r.statusCode != 200 && r.statusCode != 404) {
+      _flagAuthFailure(r.statusCode);
       throw Exception('clients ${r.statusCode}');
     }
     DocumentEvents.bump();
@@ -725,17 +602,25 @@ class ApiService {
         .post(Uri.parse('$baseUrl/clients/$clientId/notes'),
             headers: _authHeaders, body: jsonEncode({'text': text}))
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
     return ClientNote.fromJson(
         (jsonDecode(r.body) as Map<String, dynamic>)['note']
             as Map<String, dynamic>);
   }
 
+  /// Throws unless the server confirmed (404 = already gone).
   static Future<void> deleteClientNote(int clientId, int noteId) async {
-    await _client
+    final r = await _client
         .delete(Uri.parse('$baseUrl/clients/$clientId/notes/$noteId'),
             headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200 && r.statusCode != 404) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
   }
 
   // ----------------------------------------------------------------------
@@ -746,7 +631,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/stocks'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('stocks ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('stocks ${r.statusCode}');
+    }
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
@@ -758,7 +646,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/finance'), headers: _authHeaders)
         .timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) throw Exception('finance ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('finance ${r.statusCode}');
+    }
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
@@ -767,6 +658,7 @@ class ApiService {
         .post(Uri.parse('$baseUrl/finance'),
             headers: _authHeaders, body: jsonEncode(item))
         .timeout(const Duration(seconds: 12));
+    _flagAuthFailure(r.statusCode);
     return r.statusCode == 200;
   }
 
@@ -774,6 +666,7 @@ class ApiService {
     final r = await _client
         .delete(Uri.parse('$baseUrl/finance/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 12));
+    _flagAuthFailure(r.statusCode);
     return r.statusCode == 200;
   }
 
@@ -785,7 +678,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/analytics'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('analytics ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('analytics ${r.statusCode}');
+    }
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
@@ -795,91 +691,20 @@ class ApiService {
         .post(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
             headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
+    }
   }
 
   static Future<void> unlinkDocumentFromClient(int clientId, int docId) async {
-    await _client
+    final r = await _client
         .delete(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
             headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-  }
-
-  /// STREAMING chat for the voice loop (Gemini-Live-style latency).
-  /// Calls [onDelta] with each text fragment the moment the model writes
-  /// it; returns the complete reply with sources when the stream ends.
-  /// Throws if the stream can't start — caller falls back to [sendChat].
-  static Future<ChatMessage> sendChatStream(
-    List<ChatMessage> history, {
-    required void Function(String delta) onDelta,
-  }) async {
-    final prefs = StylePrefs.instance;
-    final req = http.Request('POST', Uri.parse('$baseUrl/chat/stream'))
-      ..headers.addAll({
-        ..._chatHeaders,
-        'X-Style-Tone': prefs.tone,
-        'X-Style-Length': prefs.answerLength,
-      })
-      ..body = jsonEncode({
-        'messages': history.map((m) => m.toJson()).toList(),
-        'language': 'auto',
-      });
-
-    // 20 s to first byte; 30 s max gap between chunks mid-stream.
-    final resp = await _client.send(req).timeout(const Duration(seconds: 20));
-    if (resp.statusCode == 402) {
-      final body = await resp.stream.bytesToString();
-      checkQuota(402, body); // always throws QuotaExceeded
-    }
-    if (resp.statusCode != 200) throw Exception('stream ${resp.statusCode}');
-
-    final full = StringBuffer();
-    var sources = const <ChatSource>[];
-    var documents = const <UserDocument>[];
-    var lineBuf = '';
-    await for (final chunk in resp.stream
-        .transform(utf8.decoder)
-        .timeout(const Duration(seconds: 30))) {
-      lineBuf += chunk;
-      int nl;
-      while ((nl = lineBuf.indexOf('\n')) >= 0) {
-        final line = lineBuf.substring(0, nl).trim();
-        lineBuf = lineBuf.substring(nl + 1);
-        if (line.isEmpty) continue;
-        final j = jsonDecode(line) as Map<String, dynamic>;
-        final d = j['d'] as String?;
-        if (d != null && d.isNotEmpty) {
-          full.write(d);
-          onDelta(d);
-        }
-        if (j['done'] == true) {
-          sources = ChatSource.listFromJson(j['sources']);
-          documents = UserDocument.listFromJson(j['documents']);
-        }
-        if (j['error'] != null) throw Exception('assistant unavailable');
-      }
-    }
-    if (full.isEmpty) throw Exception('empty stream');
-    return ChatMessage(
-        role: 'assistant',
-        content: full.toString(),
-        sources: sources,
-        documents: documents);
-  }
-
-  /// Personalized spoken greeting for app open / sign-in. The backend
-  /// builds it from the user's memory; if Hari barely knows them, the
-  /// greeting includes one get-to-know-you question.
-  static Future<String?> fetchGreeting() async {
-    try {
-      final r = await http
-          .post(Uri.parse('$baseUrl/chat/greeting'), headers: _authHeaders)
-          .timeout(const Duration(seconds: 15));
-      if (r.statusCode != 200) return null;
-      final g = (jsonDecode(r.body)['greeting'] as String?)?.trim();
-      return (g == null || g.isEmpty) ? null : g;
-    } catch (_) {
-      return null;
+    if (r.statusCode != 200 && r.statusCode != 404) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('clients ${r.statusCode}');
     }
   }
 
@@ -925,6 +750,7 @@ class ApiService {
     if (r.statusCode == 503) throw AgentCallUnavailable();
     checkQuota(r.statusCode, r.body); // 402 → QuotaExceeded (upsell)
     if (r.statusCode != 202 && r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception('agent call failed: ${r.statusCode}');
     }
     return jsonDecode(r.body)['id'] as String;
@@ -951,7 +777,10 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) throw Exception('preview ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('preview ${r.statusCode}');
+    }
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     return (
       opening: j['opening'] as String? ?? '',
@@ -968,7 +797,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/privacy/export'), headers: _authHeaders)
         .timeout(const Duration(seconds: 20));
-    if (r.statusCode != 200) throw Exception('export failed ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('export failed ${r.statusCode}');
+    }
     return const JsonEncoder.withIndent('  ')
         .convert(jsonDecode(r.body));
   }
@@ -979,7 +811,10 @@ class ApiService {
     final r = await _client
         .delete(Uri.parse('$baseUrl/privacy/account'), headers: _authHeaders)
         .timeout(const Duration(seconds: 20));
-    if (r.statusCode != 200) throw Exception('delete failed ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('delete failed ${r.statusCode}');
+    }
   }
 
   /// One poll of an agent call. Terminal states:
@@ -989,7 +824,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/agent-call/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 10));
-    if (r.statusCode != 200) throw Exception('status ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('status ${r.statusCode}');
+    }
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     return (state: j['state'] as String, result: j['result'] as String?);
   }
@@ -1002,7 +840,10 @@ class ApiService {
     final r = await _client
         .get(Uri.parse('$baseUrl/billing'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('billing ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('billing ${r.statusCode}');
+    }
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
@@ -1013,6 +854,7 @@ class ApiService {
             headers: _authHeaders, body: jsonEncode({'plan': plan}))
         .timeout(const Duration(seconds: 20));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'checkout failed');
     }
@@ -1025,6 +867,7 @@ class ApiService {
             headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'invite failed');
     }
@@ -1037,6 +880,7 @@ class ApiService {
             headers: _authHeaders, body: jsonEncode({'code': code}))
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'could not join');
     }
@@ -1062,6 +906,7 @@ class ApiService {
         .get(Uri.parse('$baseUrl/memory'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception('Could not load memories (${r.statusCode})');
     }
     final list = (jsonDecode(r.body)['memories'] as List? ?? []);
@@ -1080,7 +925,10 @@ class ApiService {
           body: jsonEncode({'key': key, 'value': value, 'category': category}),
         )
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('Could not save (${r.statusCode})');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('Could not save (${r.statusCode})');
+    }
   }
 
   /// Forget one fact — powers the per-row delete button.
@@ -1088,7 +936,10 @@ class ApiService {
     final r = await http
         .delete(Uri.parse('$baseUrl/memory/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('Could not delete (${r.statusCode})');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('Could not delete (${r.statusCode})');
+    }
   }
 
   // ---------------- SWIGGY (FOOD ORDERING) ----------------
@@ -1113,6 +964,7 @@ class ApiService {
         .get(Uri.parse('$baseUrl/swiggy/connect'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'Swiggy unavailable');
     }
@@ -1136,6 +988,7 @@ class ApiService {
         )
         .timeout(const Duration(seconds: 20));
     if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'link failed');
     }
@@ -1174,26 +1027,29 @@ class ApiService {
         .get(Uri.parse('$baseUrl/google/inbox'), headers: _authHeaders)
         .timeout(const Duration(seconds: 20));
     if (r.statusCode == 409) return null;
-    if (r.statusCode != 200) throw Exception('inbox ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('inbox ${r.statusCode}');
+    }
     return ((jsonDecode(r.body)['emails'] as List?) ?? [])
         .cast<Map<String, dynamic>>();
   }
 
-  /// null = Calendar not linked yet (409).
+  /// null = Calendar not linked yet (409). Throws when the fetch itself
+  /// failed, so "nothing today" is never a guess.
   static Future<List<Map<String, dynamic>>?> fetchCalendarEvents(
       {int days = 7}) async {
-    try {
-      final r = await http
-          .get(Uri.parse('$baseUrl/google/calendar?days=$days'),
-              headers: _authHeaders)
-          .timeout(const Duration(seconds: 20));
-      if (r.statusCode == 409) return null;
-      if (r.statusCode != 200) return const [];
-      return ((jsonDecode(r.body)['events'] as List?) ?? [])
-          .cast<Map<String, dynamic>>();
-    } catch (_) {
-      return const [];
+    final r = await http
+        .get(Uri.parse('$baseUrl/google/calendar?days=$days'),
+            headers: _authHeaders)
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode == 409) return null;
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('calendar ${r.statusCode}');
     }
+    return ((jsonDecode(r.body)['events'] as List?) ?? [])
+        .cast<Map<String, dynamic>>();
   }
 
   // ---------------- REMINDERS ----------------
@@ -1202,7 +1058,10 @@ class ApiService {
     final r = await http
         .get(Uri.parse('$baseUrl/reminders'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('reminders ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('reminders ${r.statusCode}');
+    }
     return ((jsonDecode(r.body)['reminders'] as List?) ?? [])
         .map((j) => Reminder.fromJson(j as Map<String, dynamic>))
         .toList();
@@ -1219,24 +1078,37 @@ class ApiService {
           }),
         )
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('reminders ${r.statusCode}');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('reminders ${r.statusCode}');
+    }
     return Reminder.fromJson(jsonDecode(r.body)['reminder']);
   }
 
+  /// Throws unless the server confirmed, so a screen never says "Done"
+  /// over a change that did not save.
   static Future<void> setReminderDone(int id, bool done) async {
-    await http
+    final r = await http
         .patch(
           Uri.parse('$baseUrl/reminders/$id'),
           headers: _authHeaders,
           body: jsonEncode({'done': done}),
         )
         .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('reminders ${r.statusCode}');
+    }
   }
 
   static Future<void> deleteReminder(int id) async {
-    await http
+    final r = await http
         .delete(Uri.parse('$baseUrl/reminders/$id'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
+    if (r.statusCode != 200 && r.statusCode != 404) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('reminders ${r.statusCode}');
+    }
   }
 
   // ---------------- TODAY-SCREEN LIVE DATA ----------------
@@ -1258,16 +1130,20 @@ class ApiService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> fetchNews() async {
+  /// null = the fetch failed; [] = a good answer with no headlines.
+  static Future<List<Map<String, dynamic>>?> fetchNews() async {
     try {
       final r = await http
           .get(Uri.parse('$baseUrl/tools/news'), headers: _authHeaders)
           .timeout(const Duration(seconds: 12));
-      if (r.statusCode != 200) return const [];
+      if (r.statusCode != 200) {
+        _flagAuthFailure(r.statusCode);
+        return null;
+      }
       return ((jsonDecode(r.body)['headlines'] as List?) ?? [])
           .cast<Map<String, dynamic>>();
     } catch (_) {
-      return const [];
+      return null;
     }
   }
 
@@ -1282,7 +1158,10 @@ class ApiService {
           body: jsonEncode({'question': question, 'answer': answer}),
         )
         .timeout(const Duration(seconds: 20));
-    if (r.statusCode != 200) throw Exception('Could not save (${r.statusCode})');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('Could not save (${r.statusCode})');
+    }
   }
 
   /// Forget everything — the nuclear "clear memory" button.
@@ -1290,7 +1169,10 @@ class ApiService {
     final r = await http
         .delete(Uri.parse('$baseUrl/memory'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) throw Exception('Could not clear (${r.statusCode})');
+    if (r.statusCode != 200) {
+      _flagAuthFailure(r.statusCode);
+      throw Exception('Could not clear (${r.statusCode})');
+    }
   }
 
 }

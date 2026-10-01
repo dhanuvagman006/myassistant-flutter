@@ -1,5 +1,5 @@
 // Hub → Shortcuts (build 120): the list, Run with its one question, Delete,
-// "Save as shortcut" for the last phone task, the service's plain lines,
+// the service's plain lines,
 // the sign-out reset, and the backend contract parsed here.
 import 'dart:convert';
 import 'dart:io';
@@ -42,7 +42,6 @@ class FakeServer {
       return ShortcutsReply(200, {...contract['run_dispatched'] as Map<String, dynamic>, 'directive': contract['directive']});
     }
     if (path.endsWith('/decline')) return const ShortcutsReply(200, {'ok': true, 'run': {'id': 32, 'status': 'cancelled'}});
-    if (path == '/learn') return const ShortcutsReply(201, {'ok': true, 'shortcut': {}});
     if (method == 'PATCH') return const ShortcutsReply(409, {'ok': false, 'error': 'stale'});
     return const ShortcutsReply(404, {'ok': false, 'error': 'not_found'});
   }
@@ -61,9 +60,8 @@ void main() {
     await ShortcutsService.instance.reset();
   });
 
-  Future<void> open(WidgetTester tester, {({int runId, String goal})? task}) async {
-    await tester.pumpWidget(MaterialApp(
-        home: ShortcutsScreen(ports: ports, lastTask: ValueNotifier(task))));
+  Future<void> open(WidgetTester tester) async {
+    await tester.pumpWidget(MaterialApp(home: ShortcutsScreen(ports: ports)));
     await tester.pumpAndSettle();
   }
 
@@ -133,18 +131,6 @@ void main() {
     expect(find.textContaining('No shortcuts yet'), findsOneWidget);
   });
 
-  testWidgets('the last phone task can be saved, with a suggested name', (tester) async {
-    await open(tester, task: (runId: 88, goal: 'add milk, bread and eggs to my grocery cart'));
-    await tester.tap(find.byKey(const Key('save_task_as_shortcut')));
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextField, 'Milk bread eggs'), findsOneWidget);
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(server.calls, contains('POST /learn'));
-    expect(server.bodies[server.calls.indexOf('POST /learn')], {'run_id': 88, 'name': 'Milk bread eggs'});
-    expect(find.byKey(const Key('save_task_as_shortcut')), findsNothing);
-  });
-
   test('server codes become plain lines; a stale rename refreshes', () async {
     expect(ShortcutsService.lineFor('reserved_name'), contains('my own commands'));
     expect(ShortcutsService.lineFor('needs_detail', {'question': 'Who should the message go to?'}),
@@ -165,11 +151,6 @@ void main() {
     await ShortcutsService.instance.reset();
     expect(prefs.getString(ShortcutsService.cacheKey), isNull);
     expect(ShortcutsService.instance.shortcuts, isEmpty);
-  });
-
-  test('suggested names come from the goal', () {
-    expect(ShortcutsScreenNames.suggest('add milk, bread and eggs to my grocery cart'), 'Milk bread eggs');
-    expect(ShortcutsScreenNames.suggest(''), '');
   });
 }
 

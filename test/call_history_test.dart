@@ -1,8 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/services/call_history.dart';
 import 'package:myassistant/services/missed_calls_service.dart';
-import 'package:myassistant/widgets/missed_calls_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Calls (owner, 2026-09-24): "the calls should be connected — it should
@@ -266,47 +264,6 @@ void main() {
       svc.debugReset();
     });
   });
-
-  group('the Home card', () {
-    setUp(() {
-      SharedPreferences.setMockInitialValues({});
-      MissedCallsService.instance.debugReset();
-    });
-    tearDown(() => MissedCallsService.instance.debugReset());
-
-    Widget host(void Function(CallEntry) onCallBack) => MaterialApp(
-          home: Scaffold(
-            body: MissedCallsCard(onCallBack: onCallBack, now: () => now),
-          ),
-        );
-
-    testWidgets('nothing at all when nothing was missed', (tester) async {
-      await tester.pumpWidget(host((_) {}));
-      expect(find.text('Missed calls'), findsNothing);
-    });
-
-    testWidgets('who, when, how many, and Call back', (tester) async {
-      MissedCallsService.instance.pending.value = [stranger, ravi1, ravi0];
-      CallEntry? dialled;
-      await tester.pumpWidget(host((c) => dialled = c));
-      await tester.pumpAndSettle();
-      expect(find.text('Missed calls'), findsOneWidget);
-      expect(find.text('Ravi Kumar'), findsOneWidget);
-      expect(find.text('3:10 pm · 2 calls'), findsOneWidget);
-      expect(find.text('+91 98765 45678'), findsOneWidget);
-      expect(find.text('Call back'), findsNWidgets(2));
-      await tester.tap(find.text('Call back').last);
-      expect(dialled?.name, 'Ravi Kumar');
-    });
-
-    testWidgets('the ✕ puts it away', (tester) async {
-      MissedCallsService.instance.pending.value = [ravi1];
-      await tester.pumpWidget(host((_) {}));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Dismiss missed calls'));
-      await tester.pumpAndSettle();
-      expect(find.text('Missed calls'), findsNothing);
-      expect(MissedCallsService.instance.pending.value, isEmpty);
-    });
-  });
+  // The Missed calls card became a card in Home's feed (2026-09-29):
+  // test/home_feed_test.dart and test/home_cards_test.dart.
 }

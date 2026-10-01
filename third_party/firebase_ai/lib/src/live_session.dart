@@ -1,0 +1,452 @@
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:developer';
+
+import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'content.dart';
+import 'error.dart';
+import 'live_api.dart';
+import 'tool.dart';
+
+/// Manages asynchronous communication with Gemini model over a WebSocket
+/// connection.
+class LiveSession {
+  // ignore: public_member_api_docs
+  LiveSession._(
+    this._ws, {
+    required String uri,
+    required Map<String, String> headers,
+    required String modelString,
+    Content? systemInstruction,
+    List<Tool>? tools,
+    LiveGenerationConfig? liveGenerationConfig,
+  })  : _uri = uri,
+        _headers = headers,
+        _modelString = modelString,
+        _systemInstruction = systemInstruction,
+        _tools = tools,
+        _liveGenerationConfig = liveGenerationConfig,
+        _messageController = StreamController<LiveServerResponse>.broadcast() {
+    _listenToWebSocket();
+  }
+
+  /// Internal constructor for testing.
+  @visibleForTesting
+  factory LiveSession.forTesting(WebSocketChannel ws) {
+    return LiveSession._(
+      ws,
+      uri: '',
+      headers: {},
+      modelString: '',
+    );
+  }
+
+  /// Establishes a connection to a live generation service.
+  ///
+  /// This function handles the WebSocket connection setup and returns an [LiveSession]
+  /// object that can be used to communicate with the service.
+  ///
+  /// Returns a [Future] that resolves to an [LiveSession] object upon successful
+  /// connection.
+  @internal
+  static Future<LiveSession> create({
+    required String uri,
+    required Map<String, String> headers,
+    required String modelString,
+    Content? systemInstruction,
+    List<Tool>? tools,
+    SessionResumptionConfig? sessionResumption,
+    LiveGenerationConfig? liveGenerationConfig,
+  }) async {
+    final ws = await _performWebSocketSetup(
+      uri: uri,
+      headers: headers,
+      modelString: modelString,
+      systemInstruction: systemInstruction,
+      tools: tools,
+      sessionResumption: sessionResumption,
+      liveGenerationConfig: liveGenerationConfig,
+    );
+    return LiveSession._(
+      ws,
+      uri: uri,
+      headers: headers,
+      modelString: modelString,
+      systemInstruction: systemInstruction,
+      tools: tools,
+      liveGenerationConfig: liveGenerationConfig,
+    );
+  }
+
+  // Persisted values for session resumption.
+  final String _uri;
+  final Map<String, String> _headers;
+  final String _modelString;
+  final Content? _systemInstruction;
+  final List<Tool>? _tools;
+  final LiveGenerationConfig? _liveGenerationConfig;
+
+  WebSocketChannel _ws;
+  StreamController<LiveServerResponse> _messageController;
+  late StreamSubscription _wsSubscription;
+
+  static Future<WebSocketChannel> _performWebSocketSetup({
+    required String uri,
+    required Map<String, String> headers,
+    required String modelString,
+    Content? systemInstruction,
+    List<Tool>? tools,
+    SessionResumptionConfig? sessionResumption,
+    LiveGenerationConfig? liveGenerationConfig,
+  }) async {
+    final setupJson = {
+      'setup': {
+        'model': modelString,
+        if (systemInstruction != null)
+          'system_instruction': systemInstruction.toJson(),
+        if (tools != null) 'tools': tools.map((t) => t.toJson()).toList(),
+        if (sessionResumption != null)
+          'session_resumption': sessionResumption.toJson(),
+        if (liveGenerationConfig != null) ...{
+          'generation_config': liveGenerationConfig.toJson(),
+          if (liveGenerationConfig.inputAudioTranscription != null)
+            'input_audio_transcription':
+                liveGenerationConfig.inputAudioTranscription!.toJson(),
+          if (liveGenerationConfig.outputAudioTranscription != null)
+            'output_audio_transcription':
+                liveGenerationConfig.outputAudioTranscription!.toJson(),
+          if (liveGenerationConfig.contextWindowCompression
+              case final contextWindowCompression?)
+            'contextWindowCompression': contextWindowCompression.toJson(),
+          if (liveGenerationConfig.realtimeInputConfig
+              case final realtimeInputConfig?)
+            'realtime_input_config': realtimeInputConfig.toJson(),
+          // PATCHED (MYASSISTANT, 2026-09-30): affective dialog.
+          if (liveGenerationConfig.enableAffectiveDialog case final affective?)
+            'enable_affective_dialog': affective,
+        },
+      }
+    };
+
+    final request = jsonEncode(setupJson);
+    final ws = kIsWeb
+        ? WebSocketChannel.connect(Uri.parse(uri))
+        // PATCHED (MYASSISTANT, 2026-09-30): a ping every 30 s. A socket
+        // that stops answering (a Wi-Fi/mobile hand-off, a dead NAT) is
+        // closed within a minute instead of swallowing audio for good. The
+        // server answers pings (measured: 55 s at 10 s, none missed); 30 s,
+        // because dart:io needs the pong before the next ping, and on a slow
+        // network it queues behind her audio.
+        : IOWebSocketChannel.connect(Uri.parse(uri),
+            headers: headers, pingInterval: const Duration(seconds: 30));
+    await ws.ready;
+
+    ws.sink.add(request);
+    return ws;
+  }
+
+  /// PATCHED (MYASSISTANT, 2026-09-30): called for EVERY frame the server
+  /// sends, understood or not — the session is alive.
+  void Function()? onFrame;
+
+  void _listenToWebSocket() {
+    _wsSubscription = _ws.stream.listen(
+      (message) {
+        onFrame?.call();
+        Object? response;
+        try {
+          final String jsonString =
+              message is String ? message : utf8.decode(message as List<int>);
+          response = json.decode(jsonString);
+
+          if (!_messageController.isClosed) {
+            _messageController.add(parseServerResponse(response!));
+          }
+        } on FirebaseAISdkException catch (e) {
+          // PATCHED (MYASSISTANT, 2026-09-30): a KIND of message this SDK
+          // does not know (gemini-3.8-live's voiceActivity, usageMetadata,
+          // an empty keep-alive) is skipped. Upstream it became a stream
+          // error, which ENDS receive() — and the toolCall, turnComplete or
+          // audio queued behind it in the same read was dropped with it. A
+          // known kind that fails to parse is still an error.
+          if (_unknownKind(response)) {
+            log('live_session: skipped a message it does not know', error: e);
+          } else if (!_messageController.isClosed && _messageController.hasListener) {
+            _messageController.addError(e);
+          }
+        } catch (e) {
+          if (!_messageController.isClosed && _messageController.hasListener) {
+            _messageController.addError(e);
+          } else {
+            log('live_session: Dropped parse error because no listeners',
+                error: e);
+          }
+        }
+      },
+      onError: (error) {
+        if (!_messageController.isClosed && _messageController.hasListener) {
+          _messageController.addError(error);
+        } else {
+          log('live_session: Dropped stream error because no listeners',
+              error: error);
+        }
+      },
+      onDone: () {
+        if (!_messageController.isClosed) {
+          _messageController.close();
+        }
+      },
+    );
+  }
+
+  /// PATCHED (MYASSISTANT): none of the kinds this SDK parses.
+  static bool _unknownKind(Object? json) =>
+      json is Map &&
+      !const [
+        'serverContent',
+        'toolCall',
+        'toolCallCancellation',
+        'setupComplete',
+        'goAway',
+        'sessionResumptionUpdate',
+        'error',
+      ].any(json.containsKey);
+
+  /// Resumes an existing live session with the server.
+  ///
+  /// This closes the current WebSocket connection and establishes a new one using
+  /// the same configuration (URI, headers, model, system instruction, tools, etc.)
+  /// as the original session.
+  ///
+  /// [sessionResumption] (optional): The configuration for session resumption,
+  /// such as the handle to the previous session state to restore.
+  Future<void> resumeSession(
+      {SessionResumptionConfig? sessionResumption}) async {
+    try {
+      await _wsSubscription.cancel().timeout(const Duration(seconds: 2),
+          onTimeout: () {
+        log('live_session.resumeSession: WebSocket subscription cancel timed out.',
+            error: TimeoutException('Cancel timed out'));
+      });
+      await _ws.sink.close().timeout(const Duration(seconds: 2), onTimeout: () {
+        log('live_session.resumeSession: WebSocket close timed out.',
+            error: TimeoutException('Close timed out'));
+      });
+
+      _ws = await _performWebSocketSetup(
+        uri: _uri,
+        headers: _headers,
+        modelString: _modelString,
+        systemInstruction: _systemInstruction,
+        tools: _tools,
+        sessionResumption: sessionResumption,
+        liveGenerationConfig: _liveGenerationConfig,
+      );
+    } catch (e) {
+      log('live_session.resumeSession: WebSocket setup failed', error: e);
+      rethrow;
+    }
+
+    _listenToWebSocket();
+  }
+
+  /// Sends content to the server.
+  ///
+  /// [input] (optional): The content to send.
+  /// [turnComplete] (optional): Indicates if the turn is complete. Defaults to false.
+  Future<void> send({
+    Content? input,
+    bool turnComplete = false,
+  }) async {
+    _checkWsStatus();
+    var clientMessage = input != null
+        ? LiveClientContent(turns: [input], turnComplete: turnComplete)
+        : LiveClientContent(turnComplete: turnComplete);
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Sends tool responses for function calling to the server.
+  ///
+  /// [functionResponses] (optional): The list of function responses.
+  Future<void> sendToolResponse(
+      List<FunctionResponse>? functionResponses) async {
+    final toolResponse =
+        LiveClientToolResponse(functionResponses: functionResponses);
+    _checkWsStatus();
+    var clientJson = jsonEncode(toolResponse.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Sends audio data to the server in realtime.
+  ///
+  /// Check https://ai.google.dev/api/live#bidigeneratecontentrealtimeinput for
+  /// details about the realtime input usage.
+  /// [audio]: The audio data to send.
+  Future<void> sendAudioRealtime(InlineDataPart audio) async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput.audio(audio);
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Sends video data to the server in realtime.
+  ///
+  /// Check https://ai.google.dev/api/live#bidigeneratecontentrealtimeinput for
+  /// details about the realtime input usage.
+  /// [video]: The video data to send.
+  Future<void> sendVideoRealtime(InlineDataPart video) async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput.video(video);
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Sends text data to the server in realtime.
+  ///
+  /// Check https://ai.google.dev/api/live#bidigeneratecontentrealtimeinput for
+  /// details about the realtime input usage.
+  /// [text]: The text data to send.
+  Future<void> sendTextRealtime(String text) async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput.text(text);
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Manually marks the start of user activity, using the realtime API.
+  ///
+  /// The start of user activity is effectively the start of a user's turn, but
+  /// depending on the configuration defined in [RealtimeInputConfig], it may not
+  /// be interpreted as an interruption. An example of the start of user activity
+  /// could be the user speaking (not silence).
+  ///
+  /// Should be followed with a call to [sendStopActivityRealtime]; after all the
+  /// data has been sent for the user's turn.
+  ///
+  /// Only required when automatic activity detection is disabled via [RealtimeInputConfig].
+  Future<void> sendStartActivityRealtime() async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput.activityStart();
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Manually marks the end of user activity, using the realtime API.
+  ///
+  /// The end of user activity is effectively the end of a user's turn, and
+  /// signals that the model can start sending responses.
+  ///
+  /// Should follow after a previous call to [sendStartActivityRealtime].
+  ///
+  /// Only required when automatic activity detection is disabled via [RealtimeInputConfig].
+  Future<void> sendStopActivityRealtime() async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput.activityEnd();
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Sends realtime input (media chunks) to the server.
+  ///
+  /// [mediaChunks]: The list of media chunks to send.
+  @Deprecated(
+      'Use sendAudioRealtime, sendVideoRealtime, or sendTextRealtime instead')
+  Future<void> sendMediaChunks({
+    required List<InlineDataPart> mediaChunks,
+  }) async {
+    _checkWsStatus();
+    var clientMessage = LiveClientRealtimeInput(mediaChunks: mediaChunks);
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Starts streaming media chunks to the server from the provided [mediaChunkStream].
+  ///
+  /// This function asynchronously processes each [InlineDataPart] from the given
+  /// [mediaChunkStream] and sends it to the server via the WebSocket connection.
+  ///
+  /// Parameters:
+  /// - [mediaChunkStream]: The stream of [InlineDataPart] objects to send to the server.
+  @Deprecated('Use sendAudio, sendVideo, or sendText with a stream instead')
+  Future<void> sendMediaStream(Stream<InlineDataPart> mediaChunkStream) async {
+    _checkWsStatus();
+
+    try {
+      await for (final chunk in mediaChunkStream) {
+        await _sendMediaChunk(chunk);
+      }
+    } catch (e) {
+      throw FirebaseAISdkException(e.toString());
+    } finally {
+      log('Stream processing completed.');
+    }
+  }
+
+  Future<void> _sendMediaChunk(InlineDataPart chunk) async {
+    var clientMessage = LiveClientRealtimeInput(
+        // ignore: deprecated_member_use_from_same_package
+        mediaChunks: [chunk]); // Create a list with the single chunk
+    var clientJson = jsonEncode(clientMessage.toJson());
+    _ws.sink.add(clientJson);
+  }
+
+  /// Receives messages from the server.
+  ///
+  /// Returns a [Stream] of [LiveServerResponse] objects representing the
+  /// messages received from the server. The stream will stops once the server
+  /// sends turn complete message.
+  Stream<LiveServerResponse> receive() async* {
+    _checkWsStatus();
+
+    await for (final result in _messageController.stream) {
+      yield result;
+    }
+  }
+
+  /// Closes the WebSocket connection.
+  Future<void> close() async {
+    try {
+      await _wsSubscription.cancel().timeout(const Duration(seconds: 1),
+          onTimeout: () {
+        log('live_session.close: cancel timed out',
+            error: TimeoutException('Cancel timed out'));
+      });
+      if (!_messageController.isClosed) {
+        await _messageController.close();
+      }
+      await _ws.sink.close().timeout(const Duration(seconds: 1), onTimeout: () {
+        log('live_session.close: sink close timed out',
+            error: TimeoutException('Sink close timed out'));
+      });
+    } catch (e) {
+      log('live_session.close: error during close', error: e);
+    }
+  }
+
+  void _checkWsStatus() {
+    if (_ws.closeCode != null) {
+      var message =
+          'WebSocket Closed, closeCode: ${_ws.closeCode}, closeReason: ${_ws.closeReason}';
+
+      throw LiveWebSocketClosedException(message);
+    }
+  }
+}

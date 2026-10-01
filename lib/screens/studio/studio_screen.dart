@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/glow_cta.dart';
 import '../../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../../models/user_document.dart';
@@ -17,6 +19,7 @@ import '../../features/poster/photo_source_sheet.dart';
 import '../../features/poster/poster_controller.dart';
 import '../../features/poster/poster_screen.dart';
 import '../../services/app_feedback.dart';
+import '../../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  STYLE STUDIO — the front door.
@@ -71,7 +74,7 @@ class _StudioScreenState extends State<StudioScreen> {
         _loading = false;
         _error = e is StudioException && e.message.isNotEmpty
             ? e.message
-            : "Couldn't load Style Studio. Check your connection.";
+            : _offline;
       });
     }
   }
@@ -100,7 +103,7 @@ class _StudioScreenState extends State<StudioScreen> {
   }
 
   Future<void> _withdraw() async {
-    final yes = await showDialog<bool>(
+    final yes = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('Remove your photos?'),
@@ -165,11 +168,9 @@ class _StudioScreenState extends State<StudioScreen> {
     }
   }
 
-  Future<ImageSource?> _pickSource(String title) => showModalBottomSheet<ImageSource>(
+  // The theme's sheet and the app's rows (2026-09-30).
+  Future<ImageSource?> _pickSource(String title) => showAppSheet<ImageSource>(
         context: context,
-        backgroundColor: Neon.surface,
-        shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
         builder: (c) => SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -185,14 +186,16 @@ class _StudioScreenState extends State<StudioScreen> {
                           fontWeight: FontWeight.w700)),
                 ),
               ),
-              ListTile(
-                leading: Icon(Icons.photo_camera_rounded, color: Neon.textHi),
-                title: const Text('Take a photo'),
+              AppleRow(
+                leading: IconTile(Icons.photo_camera_rounded, Neon.accentA),
+                title: 'Take a photo',
+                trailing: const SizedBox.shrink(),
                 onTap: () => Navigator.pop(c, ImageSource.camera),
               ),
-              ListTile(
-                leading: Icon(Icons.photo_library_rounded, color: Neon.textHi),
-                title: const Text('Choose from gallery'),
+              AppleRow(
+                leading: IconTile(Icons.photo_library_rounded, Neon.accentC),
+                title: 'Choose from gallery',
+                trailing: const SizedBox.shrink(),
                 onTap: () => Navigator.pop(c, ImageSource.gallery),
               ),
               const SizedBox(height: 8),
@@ -202,25 +205,25 @@ class _StudioScreenState extends State<StudioScreen> {
       );
 
   Future<void> _photoActions(StudioPhoto p) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showAppSheet<String>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (c) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (!p.isDefault)
-              ListTile(
+              AppleRow(
                 leading: Icon(Icons.check_circle_outline_rounded,
                     color: Neon.textHi),
-                title: const Text('Use this one for my looks'),
+                title: 'Use this one for my looks',
+                trailing: const SizedBox.shrink(),
                 onTap: () => Navigator.pop(c, 'default'),
               ),
-            ListTile(
+            AppleRow(
               leading: Icon(Icons.delete_outline_rounded, color: Neon.error),
-              title: Text('Delete', style: TextStyle(color: Neon.errorInk)),
+              title: 'Delete',
+              titleColor: Neon.errorInk,
+              trailing: const SizedBox.shrink(),
               onTap: () => Navigator.pop(c, 'delete'),
             ),
             const SizedBox(height: 8),
@@ -317,54 +320,38 @@ class _StudioScreenState extends State<StudioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        foregroundColor: Neon.textHi,
-        title: Text('Style Studio',
-            style: GoogleFonts.spaceGrotesk(
-                fontSize: 21, fontWeight: FontWeight.w700, letterSpacing: -0.4)),
-        actions: [
+    // Under Home's sky, with the app's detail bar (2026-09-30): Hub's
+    // "Style Studio" now flies into this title as it does for every
+    // other page.
+    return NeonScaffold(
+      appBar: appleAppBar(context, 'Style Studio', actions: [
           if (_state?.consented == true)
             IconButton(
               tooltip: 'Privacy',
               icon: const Icon(Icons.privacy_tip_outlined, size: 21),
               onPressed: _busy ? null : _withdraw,
             ),
-        ],
-      ),
+      ]),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const NeonLoader.page(semanticLabel: 'Loading Style Studio')
           : _error.isNotEmpty
               ? _errorView()
               // Silent: the pull-to-refresh control draws its own spinner,
               // so blanking the list underneath it would show two at once
               // and throw away the user's scroll position.
               : RefreshIndicator(
-                  onRefresh: () => _load(silent: true), child: _body()),
+                  onRefresh: () => _load(silent: true), child: StateSwitch.of(_body())),
     );
   }
 
-  Widget _errorView() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.cloud_off_rounded, size: 42, color: Neon.textDim),
-              const SizedBox(height: 14),
-              Text(_error,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Neon.textLo, fontSize: 15)),
-              const SizedBox(height: 18),
-              FilledButton(onPressed: _load, child: const Text('Try again')),
-            ],
-          ),
-        ),
+  // The server's own reason, when it gave one, is the next step to read.
+  Widget _errorView() => NeonErrorState(
+        message: "Couldn't load Style Studio",
+        hint: _error == _offline ? null : _error,
+        onRetry: _load,
       );
+
+  static const _offline = "Couldn't load Style Studio. Check your connection.";
 
   Widget _body() {
     final s = _state!;
@@ -404,7 +391,10 @@ class _StudioScreenState extends State<StudioScreen> {
             20, 8, 20, 40 + MediaQuery.paddingOf(context).bottom),
         children: [
           const SizedBox(height: 10),
-          Icon(Icons.auto_awesome_rounded, size: 46, color: Neon.violet),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: BrandMark(size: 58),
+          ),
           const SizedBox(height: 18),
           Text('See yourself in it first',
               style: GoogleFonts.spaceGrotesk(
@@ -420,13 +410,10 @@ class _StudioScreenState extends State<StudioScreen> {
             style: TextStyle(color: Neon.textLo, fontSize: 15, height: 1.45),
           ),
           const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Neon.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Neon.line),
-            ),
+          // What they agree to, lit as the page's one card.
+          GlowCard(
+            halo: 0.5,
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -448,19 +435,11 @@ class _StudioScreenState extends State<StudioScreen> {
             ),
           ),
           const SizedBox(height: 26),
-          FilledButton(
-            onPressed: _busy ? null : _accept,
-            style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(50),
-                backgroundColor: Neon.textHi,
-                foregroundColor: Neon.onInk),
-            child: _busy
-                ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('I understand — continue',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+          // The one lit action (it was a flat white slab).
+          GlowCta(
+            label: 'I understand — continue',
+            busy: _busy,
+            onPressed: _accept,
           ),
         ],
       );
@@ -470,7 +449,7 @@ class _StudioScreenState extends State<StudioScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(i, size: 17, color: Neon.textDim),
+            Icon(i, size: 17, color: Neon.violet),
             const SizedBox(width: 11),
             Expanded(
               child: Text(text,
@@ -481,14 +460,15 @@ class _StudioScreenState extends State<StudioScreen> {
         ),
       );
 
-  Widget _notConfiguredBanner() => Container(
-        margin: const EdgeInsets.only(bottom: 18),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Neon.warning.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Neon.warning.withValues(alpha: 0.3)),
-        ),
+  // An amber rim, unlit: a state to notice, not the page's news.
+  Widget _notConfiguredBanner() => Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: GlowCard(
+        tone: NeonTone.warning,
+        halo: 0,
+        rimWidth: 1.2,
+        radius: Neon.rSm,
+        padding: const EdgeInsets.all(12.8),
         child: Row(
           children: [
             Icon(Icons.build_circle_outlined, size: 19, color: Neon.warning),
@@ -501,6 +481,7 @@ class _StudioScreenState extends State<StudioScreen> {
               ),
             ),
           ],
+        ),
         ),
       );
 
@@ -515,7 +496,7 @@ class _StudioScreenState extends State<StudioScreen> {
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              _addTile(),
+              _addTile(first: mine.isEmpty),
               for (final p in mine) _photoTile(p),
             ],
           ),
@@ -533,26 +514,33 @@ class _StudioScreenState extends State<StudioScreen> {
     );
   }
 
-  Widget _addTile() => Padding(
+  // Tappable (2026-09-30): the dip, the tick, and a name to hear.
+  // 2026-09-30 visual QA: with no photo yet this is the page's one first
+  // step ("Start here"), so it wears the lit cyan rim; it was a plain grey
+  // box that read as disabled.
+  Widget _addTile({bool first = false}) => Padding(
         padding: const EdgeInsets.only(right: 10),
-        child: InkWell(
+        child: Tappable(
           onTap: _busy ? null : _addMyPhoto,
-          borderRadius: BorderRadius.circular(12),
+          semanticLabel: 'Add a photo of you',
           child: Container(
             width: 82,
             decoration: BoxDecoration(
-              color: Neon.surface,
+              color: first ? NeonTone.tip.fill : Neon.surface,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Neon.lineBright),
+              border: Border.all(
+                  color: first ? Neon.cyan : Neon.lineBright,
+                  width: first ? 1.6 : 1),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.add_a_photo_outlined, size: 22, color: Neon.textLo),
+                Icon(Icons.add_a_photo_outlined,
+                    size: 22, color: first ? NeonTone.tip.ink : Neon.textLo),
                 const SizedBox(height: 7),
                 Text('Add',
                     style: TextStyle(
-                        color: Neon.textLo,
+                        color: first ? NeonTone.tip.ink : Neon.textLo,
                         fontSize: 12,
                         fontWeight: FontWeight.w600)),
               ],
@@ -561,18 +549,41 @@ class _StudioScreenState extends State<StudioScreen> {
         ),
       );
 
+  // THE CHOSEN PHOTO IS LIT (2026-09-30): the one every look uses
+  // wears a cyan rim and its glow; the tick sits in the same light.
   Widget _photoTile(StudioPhoto p) => Padding(
         padding: const EdgeInsets.only(right: 10),
-        child: GestureDetector(
+        child: Tappable(
           onTap: _busy ? null : () => _photoActions(p),
+          semanticLabel: p.isDefault
+              ? 'Your photo, used for your looks'
+              : 'Your photo',
+          tapHint: 'show options',
           child: Stack(
             children: [
+              // The glow under the photo, the rim over its edge.
+              Container(
+                width: 82,
+                height: 108,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: p.isDefault
+                      ? Neon.halo(Neon.cyan, strength: 0.8)
+                      : null,
+                ),
+              ),
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   width: 82,
                   height: 108,
                   color: Neon.surfaceHigh,
+                  foregroundDecoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: p.isDefault ? Neon.cyan : Neon.line,
+                        width: p.isDefault ? 2 : 1),
+                  ),
                   child: Image.network(
                     p.imageUrl,
                     headers: ApiService.imageHeaders,
@@ -595,9 +606,9 @@ class _StudioScreenState extends State<StudioScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
-                        color: Neon.textHi, shape: BoxShape.circle),
+                        color: Neon.cyan, shape: BoxShape.circle),
                     child: Icon(Icons.check_rounded,
-                        size: 12, color: Neon.onInk),
+                        size: 12, color: Neon.glyphOn(Neon.cyan)),
                   ),
                 ),
             ],
@@ -605,15 +616,9 @@ class _StudioScreenState extends State<StudioScreen> {
         ),
       );
 
-  Widget _groupHeader(String t) => Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 9, top: 2),
-        child: Text(t.toUpperCase(),
-            style: TextStyle(
-                color: Neon.textDim,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5)),
-      );
+  // The app's one section label (2026-09-30; textDim was under 4.5:1
+  // on the sky).
+  Widget _groupHeader(String t) => GroupLabel(t);
 
   static const _icons = <String, IconData>{
     'outfit': Icons.dry_cleaning_rounded,
@@ -643,41 +648,29 @@ class _StudioScreenState extends State<StudioScreen> {
         'occasion': AppleColors.gray,
       };
 
-  Widget _group(List<StudioRecipe> rows) => Material(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(14),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            for (var i = 0; i < rows.length; i++) ...[
-              if (i > 0)
-                Padding(
-                  padding: const EdgeInsets.only(left: 60),
-                  child: Divider(
-                      height: 1, thickness: 0.5, color: Neon.line),
-                ),
-              _recipeRow(rows[i]),
-            ],
-          ],
-        ),
+  // The app's lit group (GroupedCard), as on every other list.
+  Widget _group(List<StudioRecipe> rows) => GroupedCard(
+        dividerInset: 58,
+        children: [for (final r in rows) _recipeRow(r)],
       );
 
-  Widget _recipeRow(StudioRecipe r) => InkWell(
-        onTap: _busy ? null : () => _openRecipe(r),
+  // The row dips like every AppleRow; its tile is the shared lit one.
+  Widget _recipeRow(StudioRecipe r) => PressScale(
+        scale: 0.985,
+        child: InkWell(
+        onTap: _busy
+            ? null
+            : () {
+                HapticFeedback.selectionClick();
+                _openRecipe(r);
+              },
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
           child: Row(
             children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: _colors[r.icon] ?? Neon.violet,
-                  borderRadius: BorderRadius.circular(7),
-                ),
-                child: Icon(_icons[r.icon] ?? Icons.auto_awesome_rounded,
-                    color: Colors.white, size: 18),
-              ),
+              IconTile(_icons[r.icon] ?? Icons.auto_awesome_rounded,
+                  _colors[r.icon] ?? Neon.violet,
+                  size: 30),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -701,6 +694,7 @@ class _StudioScreenState extends State<StudioScreen> {
             ],
           ),
         ),
+        ),
       );
 
   Widget _looksGrid(StudioState s) => GridView.builder(
@@ -715,11 +709,16 @@ class _StudioScreenState extends State<StudioScreen> {
         itemCount: s.looks.length,
         itemBuilder: (_, i) {
           final l = s.looks[i];
-          return GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              _openLooks(i);
-            },
+          // Each made look framed in the purple of something to
+          // discover (2026-09-30): a rim, no glow — a grid where every
+          // tile glowed would have no focus.
+          return GlowCard(
+            tone: NeonTone.discovery,
+            halo: 0,
+            rimWidth: 1.2,
+            radius: 11.2,
+            onTap: () => _openLooks(i),
+            semanticLabel: 'Look ${i + 1}',
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: Container(
@@ -748,7 +747,8 @@ class _StudioScreenState extends State<StudioScreen> {
         child: Text(
           '${s.remaining} of ${s.limit} looks left today · '
           'Results are AI-generated from your own photo and saved to your files.',
-          style: TextStyle(color: Neon.textDim, fontSize: 12, height: 1.4),
+          style: TextStyle(
+              color: Neon.textLo, fontSize: NeonType.caption, height: 1.4),
         ),
       );
 }

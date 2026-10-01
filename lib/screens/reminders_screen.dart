@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/log.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
@@ -11,6 +12,8 @@ import '../services/api_service.dart';
 import '../services/app_feedback.dart';
 import '../services/brief_service.dart';
 import '../services/notification_service.dart';
+import '../design/motion.dart';
+import '../widgets/neon_cards.dart';
 
 /// REMINDERS — every reminder in one place.
 ///
@@ -50,7 +53,10 @@ class _RemindersScreenState extends State<RemindersScreen> {
     } catch (_) {
       if (!mounted) return;
       if (_items == null) {
-        setState(() => _error = "Couldn't load your reminders.");
+        setState(() => _error = "Couldn't load your reminders");
+      } else {
+        AppFeedback.show("Couldn't refresh.",
+            context: context, tone: FeedbackTone.error);
       }
     }
   }
@@ -64,16 +70,28 @@ class _RemindersScreenState extends State<RemindersScreen> {
   /// The change is shown at once and SENT when the Undo toast closes — it
   /// now closes on its own after 4 s (an action toast used to stay until
   /// swiped, holding the change back and every later toast behind it).
-  void _snack(String text, {VoidCallback? undo, Future<void> Function()? commit}) {
+  ///
+  /// [commit] throws when the server did not confirm: the list is put back
+  /// (via [undo]) and the toast offers [retry].
+  void _snack(String text,
+      {VoidCallback? undo,
+      Future<void> Function()? commit,
+      String? failed,
+      VoidCallback? retry}) {
+    void send() => commit!().then((_) => _afterChange()).catchError((Object e) {
+          AppLog.add('reminders', '$text -> $e');
+          if (!mounted) return;
+          undo?.call();
+          AppFeedback.showRetry('${failed ?? "Couldn't save that."} Check your connection.',
+              context: context, onRetry: retry ?? () {});
+        });
     if (undo == null) {
       AppFeedback.show(text, context: context, tone: FeedbackTone.success);
-      if (commit != null) commit().then((_) => _afterChange());
+      if (commit != null) send();
       return;
     }
     AppFeedback.showUndo(context, text, onUndo: undo).then((r) {
-      if (r != SnackBarClosedReason.action && commit != null) {
-        commit().then((_) => _afterChange());
-      }
+      if (r != SnackBarClosedReason.action && commit != null) send();
     });
   }
 
@@ -91,7 +109,12 @@ class _RemindersScreenState extends State<RemindersScreen> {
               final j = items.indexWhere((x) => x.id == r.id);
               if (j >= 0) items[j] = r;
             }),
-        commit: () => ApiService.setReminderDone(r.id, nowDone).catchError((_) {}));
+        failed: "Couldn't update that reminder.",
+        retry: () {
+          final j = items.indexWhere((x) => x.id == r.id);
+          if (j >= 0) _toggleDone(items[j]);
+        },
+        commit: () => ApiService.setReminderDone(r.id, nowDone));
   }
 
   void _delete(Reminder r) {
@@ -101,16 +124,19 @@ class _RemindersScreenState extends State<RemindersScreen> {
     setState(() => items.removeAt(i));
     _snack('Reminder removed',
         undo: () => setState(() => items.insert(i.clamp(0, items.length), r)),
-        commit: () => ApiService.deleteReminder(r.id).catchError((_) {}));
+        failed: "Couldn't remove that reminder.",
+        retry: () {
+          if (mounted && _items != null && _items!.contains(r)) _delete(r);
+        },
+        commit: () => ApiService.deleteReminder(r.id));
   }
 
   Future<void> _create() async {
-    final made = await showModalBottomSheet<bool>(
+    // The theme's sheet (2026-09-30): the lit rim, the night scrim and the
+    // handle, instead of a flat 20 dp local shape.
+    final made = await showAppSheet<bool>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => const _NewReminderSheet(),
     );
     if (made == true) {
@@ -122,24 +148,23 @@ class _RemindersScreenState extends State<RemindersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // The night sky under the list (2026-09-30), and the theme's lit FAB:
+    // the page's one primary action glows.
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Reminders'),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _create,
-        backgroundColor: Neon.violet,
-        foregroundColor: Neon.onAccent,
         icon: const Icon(Icons.add_rounded),
         label: const Text('New reminder'),
       ),
-      body: SafeArea(child: _body()),
+      body: SafeArea(child: StateSwitch.of(_body())),
     );
   }
 
   Widget _body() {
     if (_error != null) {
       return NeonErrorState(
-        message: '$_error Check your connection.',
+        message: _error!,
         onRetry: () {
           setState(() => _error = null);
           _load();
@@ -147,20 +172,24 @@ class _RemindersScreenState extends State<RemindersScreen> {
       );
     }
     final items = _items;
-    if (items == null) return const Center(child: NeonLoader());
+    if (items == null) return const NeonLoader.page();
 
     final groups = groupReminders(items, DateTime.now());
     final open = groups.entries.where((e) => e.key != 'Done' && e.value.isNotEmpty);
     final done = groups['Done'] ?? const [];
     if (open.isEmpty && done.isEmpty) {
       return RefreshIndicator(
+        color: Neon.violet,
         onRefresh: _load,
-        child: ListView(children: const [
-          SizedBox(height: 80),
+        child: ListView(children: [
+          const SizedBox(height: 80),
           NeonEmptyState(
             icon: Icons.notifications_none_rounded,
             title: 'No reminders yet',
             body: 'Say "remind me to call the bank at 5", or tap New reminder.',
+            actionLabel: 'New reminder',
+            actionIcon: Icons.add_rounded,
+            onAction: _create,
           ),
         ]),
       );
@@ -179,12 +208,14 @@ class _RemindersScreenState extends State<RemindersScreen> {
           if (done.isNotEmpty) ...[
             TextButton.icon(
               onPressed: () => setState(() => _showDone = !_showDone),
-              icon: Icon(_showDone ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                  color: Neon.textLo),
+              icon: ExpandChevron(open: _showDone, color: Neon.textLo),
               label: Text('${_showDone ? 'Hide' : 'Show'} done (${done.length})',
                   style: TextStyle(color: Neon.textLo)),
             ),
-            if (_showDone) ...done.take(30).map(_tile),
+            Collapse(
+              open: _showDone,
+              child: Column(children: [...done.take(30).map(_tile)]),
+            ),
           ],
         ],
       ),
@@ -192,19 +223,15 @@ class _RemindersScreenState extends State<RemindersScreen> {
   }
 
   Widget _tile(Reminder r) {
-    final overdue = !r.done && r.dueAt != null && r.dueAt!.isBefore(DateTime.now());
-    final tile = Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(Neon.rMd),
-        border: Border.all(color: Neon.line),
-      ),
-      child: Row(
-        children: [
-          Semantics(
-            button: true,
-            label: r.done ? 'Mark not done' : 'Mark done',
+    final now = DateTime.now();
+    final overdue = !r.done && r.dueAt != null && r.dueAt!.isBefore(now);
+    final content = Row(
+      children: [
+        Semantics(
+          button: true,
+          label: r.done ? 'Mark not done' : 'Mark done',
+          child: PressScale(
+            scale: 0.9,
             child: InkResponse(
               onTap: () => _toggleDone(r),
               radius: 26,
@@ -219,64 +246,74 @@ class _RemindersScreenState extends State<RemindersScreen> {
               ),
             ),
           ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r.text,
+                  style: NeonType.manrope(NeonType.callout, FontWeight.w500).copyWith(
+                    color: r.done ? Neon.textDim : Neon.textHi,
+                    height: 1.3,
+                    decoration: r.done ? TextDecoration.lineThrough : null,
+                  ),
+                ),
+                if (r.dueAt != null) ...[
+                  const SizedBox(height: 3),
                   Text(
-                    r.text,
-                    style: TextStyle(
-                      color: r.done ? Neon.textDim : Neon.textHi,
-                      fontSize: 15,
-                      height: 1.3,
-                      decoration: r.done ? TextDecoration.lineThrough : null,
+                    dueLabel(r.dueAt!, now),
+                    // warningInk: amber words were 3.19:1 on white — the
+                    // most urgent line on the page, and the faintest.
+                    style: NeonType.manrope(NeonType.footnote,
+                            overdue ? FontWeight.w600 : FontWeight.w400)
+                        .copyWith(
+                      color: overdue ? Neon.warningInk : Neon.textLo,
                     ),
                   ),
-                  if (r.dueAt != null) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      dueLabel(r.dueAt!, DateTime.now()),
-                      // warningInk: amber words were 3.19:1 on white — the
-                      // most urgent line on the page, and the faintest.
-                      style: NeonType.manrope(NeonType.footnote,
-                              overdue ? FontWeight.w600 : FontWeight.w400)
-                          .copyWith(
-                        color: overdue ? Neon.warningInk : Neon.textLo,
-                      ),
-                    ),
-                  ],
                 ],
-              ),
+              ],
             ),
           ),
-          if (r.calls && !r.done)
-            Tooltip(
-              message: 'Your assistant will call you',
-              child: Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: Icon(Icons.phone_in_talk_rounded, size: 18, color: Neon.cyan),
-              ),
+        ),
+        if (r.calls && !r.done)
+          Tooltip(
+            message: 'Your assistant will call you',
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Icon(Icons.phone_in_talk_rounded, size: 18, color: Neon.cyan),
             ),
-          if (r.isAlarm && !r.done)
-            Tooltip(
-              message: 'Rings like an alarm',
-              child: Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: Icon(Icons.alarm_rounded, size: 18, color: Neon.pink),
-              ),
+          ),
+        if (r.isAlarm && !r.done)
+          Tooltip(
+            message: 'Rings like an alarm',
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Icon(Icons.alarm_rounded, size: 18, color: Neon.pink),
             ),
-          const SizedBox(width: 14),
-        ],
-      ),
+          ),
+        const SizedBox(width: 14),
+      ],
     );
+    // DUE NOW GLOWS (2026-09-30, the client's neon direction): a reminder
+    // whose time has come is the thing to act on, so it is lit in the
+    // action tone; the rest sit on the quiet raised card.
+    final Widget card = isDueNow(r, now)
+        ? GlowCard(
+            tone: NeonTone.action,
+            radius: Neon.rMd,
+            halo: 0.6,
+            rimWidth: 1.8,
+            child: content)
+        : RimCard(padding: EdgeInsets.zero, child: content);
     return Dismissible(
       key: ValueKey('reminder-${r.id}-${r.done}'),
       background: _swipe(Alignment.centerLeft),
       secondaryBackground: _swipe(Alignment.centerRight),
       onDismissed: (_) => _delete(r),
-      child: tile,
+      child: Padding(padding: const EdgeInsets.only(bottom: 8), child: card),
     );
   }
 
@@ -291,6 +328,13 @@ class _RemindersScreenState extends State<RemindersScreen> {
         child: Icon(Icons.delete_outline_rounded, color: Neon.error, size: 20),
       );
 }
+
+/// Due now: not done, and its time has come or comes within 15 minutes —
+/// the reminders lit on the list. Public for tests.
+bool isDueNow(Reminder r, DateTime now) =>
+    !r.done &&
+    r.dueAt != null &&
+    r.dueAt!.isBefore(now.add(const Duration(minutes: 15)));
 
 /// Sections, in the order a busy day reads them. Public for tests.
 Map<String, List<Reminder>> groupReminders(List<Reminder> all, DateTime now) {
@@ -415,8 +459,7 @@ class _NewReminderSheetState extends State<_NewReminderSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('New reminder',
-              style: TextStyle(color: Neon.textHi, fontSize: 18, fontWeight: FontWeight.w700)),
+          Text('New reminder', style: NeonType.cardTitle.copyWith(color: Neon.textHi)),
           const SizedBox(height: 12),
           TextField(
             controller: _text,
@@ -456,24 +499,20 @@ class _NewReminderSheetState extends State<_NewReminderSheet> {
           if (_when != null) ...[
             const SizedBox(height: 10),
             Text('Reminds you ${dueLabel(_when!, now).replaceFirst(',', ' at')}',
-                style: TextStyle(color: Neon.textLo, fontSize: 13)),
+                style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
           ],
           if (_error != null) ...[
             const SizedBox(height: 10),
-            Text(_error!, style: TextStyle(color: Neon.errorInk, fontSize: 13)),
+            Text(_error!, style: TextStyle(color: Neon.errorInk, fontSize: NeonType.footnote)),
           ],
           const SizedBox(height: 16),
+          // The theme's lit primary button (2026-09-30): the sheet's one
+          // strong glow.
           FilledButton(
             onPressed: _text.text.trim().isEmpty || _saving ? null : _save,
-            style: FilledButton.styleFrom(
-              backgroundColor: Neon.violet,
-              minimumSize: const Size.fromHeight(50),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
             child: _saving
-                ? const SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+                ? const NeonLoader.inline(size: 20, semanticLabel: 'Saving')
                 : const Text('Save reminder'),
           ),
         ],

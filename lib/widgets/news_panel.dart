@@ -139,90 +139,97 @@ class _NewsPanelState extends State<NewsPanel> {
   @override
   Widget build(BuildContext context) {
     final items = _items;
-    if (items.isEmpty) return const SizedBox.shrink();
     final media = MediaQuery.of(context);
 
     // IT OPENS LIKE A SHEET, NOT IN ONE FRAME (2026-09-24). The scrim fades
     // in and the sheet fades in as it grows from 96%, anchored where its
     // content ends — the dock's top edge, which the deck must never cross,
-    // not even mid-animation. Closing stays instant: Back and ✕ take it
-    // away at once.
+    // not even mid-animation. It LEAVES the same way (2026-09-29): Back and
+    // ✕ fade it out as it sinks, in 120 ms (ExitPresence).
     return Positioned.fill(
-      child: LayoutBuilder(builder: (context, c) {
-        // A fixed share of the screen for the deck (the cards need a
-        // height to lay out in), never more than the room there is.
-        final height = (media.size.height * 0.78)
-            .clamp(0.0, c.maxHeight - media.padding.top - 8)
-            .toDouble();
-        return Stack(
-          children: [
-            // Tap anywhere outside to dismiss — the panel is an answer,
-            // not a task, and should never trap anyone.
-            GestureDetector(
-              onTap: _close,
-              child: EnterOnce(
-                duration: Motion.short,
-                child: Container(color: Colors.black.withValues(alpha: 0.55)),
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: EnterOnce(
-                duration: const Duration(milliseconds: 280),
-                scaleFrom: 0.96,
-                alignment: Alignment.bottomCenter,
-                origin: Offset(0, -media.padding.bottom),
-                child: Container(
-                  height: height,
-                  // The deck ends at the dock's top edge; below it is plain
-                  // ground, so nothing shows through the ring around the mic.
-                  padding: EdgeInsets.only(bottom: media.padding.bottom),
-                  decoration: BoxDecoration(
-                    color: Neon.bg,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(22)),
-                    border: Border.all(color: Neon.line),
-                  ),
-                  child: Column(
-                    children: [
-                      _header(),
-                      Expanded(
-                        child: NewsDeck(
-                          key: ObjectKey(items),
-                          items: items,
-                          controller: _deck,
-                          // The ‹ 3 of 10 › row sits clear above the mic,
-                          // which rises over the dock's top edge.
-                          padding: const EdgeInsets.fromLTRB(
-                              16, 4, 16, Dock.orbRise + 12),
-                          onUserMove: () => _holdFor(NewsPanel.followPause),
-                          // Listen goes back to the deck, where the words
-                          // are shown as the assistant reads them.
-                          onListen: (item) {
-                            Navigator.of(context).maybePop();
-                            engine.askAssistant(listenRequest(item));
-                          },
-                          onRefresh: _refresh,
+      child: ExitPresence(
+        child: items.isEmpty
+            ? null
+            : LayoutBuilder(builder: (context, c) {
+                // A fixed share of the screen for the deck (the cards need a
+                // height to lay out in), never more than the room there is.
+                final height = (media.size.height * 0.78)
+                    .clamp(0.0, c.maxHeight - media.padding.top - 8)
+                    .toDouble();
+                return Stack(
+                  children: [
+                    // Tap anywhere outside to dismiss — the panel is an answer,
+                    // not a task, and should never trap anyone. Out of the
+                    // screen reader's way: a whole-screen unlabelled button, when
+                    // the header's ✕ (and Back) already close it.
+                    ExcludeSemantics(
+                      child: GestureDetector(
+                        onTap: _close,
+                        child: EnterOnce(
+                          duration: Motion.short,
+                          // The app's scrim (2026-09-30), not grey-black.
+                          child: ColoredBox(color: Neon.scrim),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      }),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: EnterOnce(
+                        duration: Motion.reveal,
+                        scaleFrom: 0.96,
+                        alignment: Alignment.bottomCenter,
+                        origin: Offset(0, -media.padding.bottom),
+                        child: Container(
+                          height: height,
+                          // The deck ends at the dock's top edge; below it is plain
+                          // ground, so nothing shows through the ring around the mic.
+                          padding: EdgeInsets.only(bottom: media.padding.bottom),
+                          // Lit glass (2026-09-30): the brand's rim and
+                          // a soft halo, as every sheet in the app.
+                          decoration: BoxDecoration(
+                            color: Neon.bg,
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+                            border: Border.all(color: Neon.violet.withValues(alpha: 0.45)),
+                            boxShadow: Neon.halo(Neon.violet, strength: 0.5),
+                          ),
+                          child: Column(
+                            children: [
+                              _header(),
+                              Expanded(
+                                child: NewsDeck(
+                                  key: ObjectKey(items),
+                                  items: items,
+                                  controller: _deck,
+                                  // The ‹ 3 of 10 › row sits clear above the mic,
+                                  // which rises over the dock's top edge.
+                                  padding: const EdgeInsets.fromLTRB(16, 4, 16, Dock.orbRise + 12),
+                                  onUserMove: () => _holdFor(NewsPanel.followPause),
+                                  // Listen goes back to the deck, where the words
+                                  // are shown as the assistant reads them.
+                                  onListen: (item) {
+                                    Navigator.of(context).maybePop();
+                                    engine.askAssistant(listenRequest(item));
+                                  },
+                                  onRefresh: _refresh,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+      ),
     );
   }
 
   Widget _header() {
     final topic = engine.newsTopic;
-    final title = topic.isEmpty || topic == 'today'
-        ? "Today's headlines"
-        : 'News · $topic';
+    final title = topic.isEmpty || topic == 'today' ? "Today's headlines" : 'News · $topic';
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 10, 8, 2),
       child: Row(
@@ -230,7 +237,12 @@ class _NewsPanelState extends State<NewsPanel> {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: Neon.pink, shape: BoxShape.circle),
+            // A live dot: it glows (2026-09-30).
+            decoration: BoxDecoration(
+              color: Neon.pink,
+              shape: BoxShape.circle,
+              boxShadow: Neon.halo(Neon.pink, strength: 0.9),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(

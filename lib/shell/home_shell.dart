@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
+import '../design/tab_deck.dart';
 import '../design/neon_tokens.dart';
 import '../design/theme_controller.dart';
 import '../widgets/contact_picker_sheet.dart';
@@ -22,12 +24,11 @@ import '../features/assistant/state/assistant_state.dart';
 import '../services/call_notes_service.dart';
 import '../services/call_recording_watcher.dart';
 import '../services/focus_service.dart';
-import '../services/momentum_service.dart';
 import '../services/news_feed.dart';
 import '../services/notification_service.dart';
 import '../services/avatar_message_service.dart';
 import '../services/push_service.dart';
-import '../screens/momentum_screen.dart';
+import 'focus_nav.dart';
 import '../screens/bills_email_screen.dart' show BillsEmailNav;
 import '../core/log.dart';
 import '../services/auth_service.dart';
@@ -37,6 +38,7 @@ import '../screens/home_dashboard.dart';
 import '../screens/chat_screen.dart';
 import '../screens/hub_screen.dart';
 import '../features/poster/poster_screen.dart';
+import '../features/shopping/shopping_list_screen.dart' show ShoppingNav;
 import '../screens/quick_task_screen.dart';
 import '../services/app_feedback.dart';
 import '../services/app_update_service.dart';
@@ -48,18 +50,30 @@ import '../services/usage_service.dart';
 import '../services/api_service.dart';
 import '../services/device_control_service.dart';
 import '../services/greeting_voice.dart';
+import '../features/reminders/reminder_popup.dart';
 
 /// Where a tapped notification goes, by its payload: a video note left in
 /// the tray opens the notes again, a Bills by email one opens that screen
-/// (build 120), anything else is a Momentum screen. [billsEmail] is for
-/// tests.
+/// (build 120), a focus one opens Focus; anything else just opens the app.
+/// [billsEmail] is for tests.
 Future<void> openNotificationPayload(String what,
     {Future<void> Function()? billsEmail}) {
   if (what == AvatarMessageService.videoNotePayload) {
     return PushService.instance.openVideoNotes();
   }
   if (what == 'bills_email') return (billsEmail ?? BillsEmailNav.open)();
-  return MomentumNav.open(what);
+  // The shopping trip's notification and its Next / Done (build 124).
+  if (what == ReminderNotifications.shoppingPayload ||
+      what.startsWith('${ReminderNotifications.shoppingPayload}:')) {
+    return ShoppingNav.fromNotification(what);
+  }
+  if (what == 'focus') return FocusNav.open();
+  // A reminder's own notification (2026-09-30): its pop-up.
+  if (what.startsWith(ReminderNotifications.reminderPayload)) {
+    return ReminderPopup.openFromPayload(what);
+  }
+  // Momentum is gone (2026-09-29): an old 'momentum' tap opens the app.
+  return Future<void>.value();
 }
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -100,7 +114,11 @@ class _HomeShellState extends State<HomeShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshBattery();
+    if (state == AppLifecycleState.resumed) {
+      _refreshBattery();
+      // The fast voice connects now, so the orb's tap listens at once.
+      AssistantEngine.instance.prewarmVoice();
+    }
     // Returning to the foreground re-checks for a published update (the
     // service throttles to every 30 min) — a phone that keeps the app in
     // memory for days used to miss releases entirely.
@@ -124,9 +142,6 @@ class _HomeShellState extends State<HomeShell>
       // Coming back from a phone call is exactly when a fresh system
       // call recording exists — pick it up for analysis now.
       CallRecordingWatcher.instance.scan();
-      // Momentum: a new day may have begun, and a focus may have run out
-      // while the app was away.
-      unawaited(MomentumService.instance.refresh());
       // News: the saved copy is refreshed quietly if it has gone stale.
       unawaited(NewsFeed.warm());
       unawaited(FocusService.instance.tick());
@@ -180,7 +195,6 @@ class _HomeShellState extends State<HomeShell>
     AssistantEngine.instance.removeListener(_onEngineForToast);
     _cancelToastLift();
     _tabChanges.dispose();
-    _tabFade.dispose();
     // Only if it is still ours: a rebuilt shell (theme flip) has set its own.
     if (AppFeedback.sessionVisible == _sessionVisible) {
       AppFeedback.sessionVisible = null;
@@ -220,31 +234,25 @@ class _HomeShellState extends State<HomeShell>
   }
 
   /// Moving to another tab takes the old tab's toast and the lingering
-  /// answer card with it — they were about the screen being left.
-  void _switchTab(int i) {
+  /// answer card with it — they were about the screen being left. [from]
+  /// is where the dock tap landed: the tab opens in a circle from there
+  /// (tab_deck.dart); without it, it slides in from its side.
+  void _switchTab(int i, {Offset? from}) {
     AppFeedback.dismiss();
     HomeShell.lastTab = i;
     _tabChanges.value++;
-    setState(() => _tab = i);
-    // The new tab fades in over the ground (see [_tabFade]).
-    if (!Motion.reduced(context)) _tabFade.forward(from: 0);
+    setState(() {
+      _tab = i;
+      _tabFrom = from;
+    });
+    // Back on Home the orb is a tap away: the fast voice connects now
+    // (it closes itself when nobody talks to it).
+    if (i == 0) AssistantEngine.instance.prewarmVoice();
   }
 
-  /// TABS FADE THROUGH, THEY DO NOT CUT (2026-09-24).
-  ///
-  /// Switching tabs is the most frequent move in the app, and it was the
-  /// only one with no transition: the whole page swapped in one frame
-  /// while the dock's pill was still animating beside it. The new tab now
-  /// fades in over the ground in 180 ms — no slide, because tabs are peers,
-  /// not steps deeper. Nothing is rebuilt: the same IndexedStack keeps
-  /// every tab's state, scroll and half-typed message exactly as before.
-  ///
-  /// It rests at 1 (fully shown) and only runs for those 180 ms, so launch
-  /// and an idle Home still ask the phone for no frames.
-  late final AnimationController _tabFade =
-      AnimationController(vsync: this, duration: Motion.tab, value: 1.0);
-  late final Animation<double> _tabOpacity =
-      _tabFade.drive(CurveTween(curve: Motion.easeFadeIn));
+  /// Where the last dock tap landed (the circle's centre).
+  Offset? _tabFrom;
+  Offset? _tapDown;
 
   /// Ticks on every tab switch (the answer card listens).
   final ValueNotifier<int> _tabChanges = ValueNotifier<int>(0);
@@ -301,6 +309,7 @@ class _HomeShellState extends State<HomeShell>
       e.scheduleItems.isNotEmpty ||
       voiceSessionOnScreen(e) ||
       e.searchResults.isNotEmpty ||
+      e.searchSuggestions.isNotEmpty ||
       e.presentedText != null ||
       e.generatedImage != null;
 
@@ -316,7 +325,7 @@ class _HomeShellState extends State<HomeShell>
       e.dismissPresentedText();
     } else if (e.generatedImage != null) {
       e.dismissGeneratedImage();
-    } else if (e.searchResults.isNotEmpty) {
+    } else if (e.searchResults.isNotEmpty || e.searchSuggestions.isNotEmpty) {
       e.dismissSearchResults();
     }
   }
@@ -420,7 +429,10 @@ class _HomeShellState extends State<HomeShell>
     // One /tts call in the app's lifetime; every later tap plays from
     // disk. Deliberately after the first frame — it must never delay
     // launch.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _warmGreeting());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _warmGreeting();
+      AssistantEngine.instance.prewarmVoice();
+    });
     // (The app-open streak that was counted here is gone: the streak is
     // Momentum's now, on the server — days something got done.)
     // A tapped message notification opens the conversation through the
@@ -435,6 +447,10 @@ class _HomeShellState extends State<HomeShell>
     // conversation keeps running underneath, mic stays hot.
     engine.onShowDocuments = (docs) {
       if (!mounted || docs.isEmpty) return false;
+      // The keyboard goes down first (tester run, 2026-10-01): it came back
+      // over the voice screen when the picture closed, hiding the dock orb
+      // — so the one tap that stops the session had nothing to land on.
+      FocusManager.instance.primaryFocus?.unfocus();
       final nav = Navigator.of(context, rootNavigator: true);
       if (_galleryShowing) nav.pop();
       _galleryShowing = true;
@@ -518,15 +534,14 @@ class _HomeShellState extends State<HomeShell>
     // The assistant's user-chosen name — every visible mention reads this.
     AssistantIdentity.load();
     BriefService.instance.start();
-    // Momentum (2026-09-25): the day's list and streak, a focus that was
-    // running when the app closed, and taps on its notifications.
-    MomentumService.instance.start();
     // Hub → News opens from a saved copy: fetch it once the launch has
     // settled, never in the way of the first frames.
     _newsWarm = Timer(const Duration(seconds: 8), () => unawaited(NewsFeed.warm()));
     unawaited(FocusService.instance.restore());
     // A tapped notification: see openNotificationPayload.
     ReminderNotifications.onOpen = (what) => unawaited(openNotificationPayload(what));
+    // A reminder due while the app is open pops up by itself.
+    ReminderPopup.startWatching();
     // Deliberately NO message announcing here: launching the app must be
     // SILENT. Unread messages sit in the Home feed and are spoken when
     // the user starts a conversation or taps the message notification.
@@ -733,29 +748,25 @@ class _HomeShellState extends State<HomeShell>
         children: [
           _UnderSession(
             engine: engine,
-            child: FadeTransition(
-              opacity: _tabOpacity,
-              child: IndexedStack(
-                index: _tab,
-                // ONLY THE TAB ON SCREEN MAY ANIMATE (2026-09-24). An
-                // IndexedStack hides the other tabs but leaves their
-                // animations running: a spinner on a hidden Chat (a first
-                // load, or forever if a request hangs) kept the phone
-                // redrawing the visible screen 60 times a second, which
-                // quietly undid "an idle Home asks for no frames". Hidden
-                // tabs now pause their animations and pick them up when
-                // shown; nothing in them depends on those animations
-                // (Chat's poll already checks the tab is visible).
-                children: [
-                  for (final (i, tab) in const [
-                    HomeDashboard(),
-                    HubScreen(),
-                    ChatScreen(),
-                    AssistantSettingsScreen(),
-                  ].indexed)
-                    TickerMode(enabled: i == _tab, child: tab),
-                ],
-              ),
+            // Tabs are siblings in space: a dock tap brings the new one
+            // through (a fade, a lift, pivoting on the button), a sideways
+            // swipe moves between them with the finger (tab_deck.dart).
+            // Every tab stays built; only the one on screen paints or ticks
+            // (a spinner on a hidden Chat once kept the phone redrawing 60
+            // times a second).
+            child: TabDeck(
+              index: _tab,
+              origin: _tabFrom,
+              onSwipe: (i) {
+                _endConversationOnNavigate();
+                _switchTab(i);
+              },
+              children: const [
+                HomeDashboard(),
+                HubScreen(),
+                ChatScreen(),
+                AssistantSettingsScreen(),
+              ],
             ),
           ),
           // CONTENT MUST NOT END MID-LETTER. Every tab is a scrolling
@@ -887,10 +898,13 @@ class _HomeShellState extends State<HomeShell>
         onTap: () async {
           HapticFeedback.mediumImpact();
           final engine = AssistantEngine.instance;
-          // Decide by what is actually RUNNING, not by a flag that may lag:
-          // a live session, a connect in flight, or a busy classic turn all
-          // mean "tap = stop"; a resting engine means "tap = talk".
-          final running = engine.liveActive ||
+          // ONE TAP STOPS, ALWAYS (client, 1 Oct: two taps to get out, and
+          // "Listening" on screen when it was not). A connect in flight, a
+          // conversation still marked open, a live session or a busy turn
+          // all mean "tap = stop"; only a resting engine means "tap = talk".
+          final running = engine.starting ||
+              engine.inlineVoice ||
+              engine.liveActive ||
               (engine.phase != AssistantPhase.idle &&
                   engine.phase != AssistantPhase.completed);
           AppLog.add('orb', running ? 'tap → stop' : 'tap → start');
@@ -916,8 +930,10 @@ class _HomeShellState extends State<HomeShell>
         },
       ),
       ),
-      bottomNavigationBar: BottomAppBar(
-        color: Neon.surface,
+      bottomNavigationBar: _DockRim(child: BottomAppBar(
+        color: Neon.isDark
+            ? Color.alphaBlend(Neon.violet.withValues(alpha: 0.07), Neon.surface)
+            : Neon.surface,
         elevation: 0,
         height: Dock.barHeight,
         shape: const CircularNotchedRectangle(),
@@ -941,7 +957,7 @@ class _HomeShellState extends State<HomeShell>
             _navItem(3, Icons.person_outline, Icons.person_rounded, 'You'),
           ],
         ),
-      ),
+      )),
     ),
     );
   }
@@ -949,12 +965,17 @@ class _HomeShellState extends State<HomeShell>
   Widget _navItem(int i, IconData icon, IconData active, String label) {
     final selected = _tab == i;
     return Expanded(
-      child: InkWell(
+      // The button dips under the finger at once (2026-09-30): nothing
+      // scrolls in the dock, so there is no scroll to wait out (PressScale).
+      child: PressScale(
+        scale: 0.94,
+        child: InkWell(
+        onTapDown: (d) => _tapDown = d.globalPosition,
         onTap: () {
           HapticFeedback.selectionClick();
           if (i == _tab) return;
           _endConversationOnNavigate();
-          _switchTab(i);
+          _switchTab(i, from: _tapDown);
         },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -983,11 +1004,21 @@ class _HomeShellState extends State<HomeShell>
                 curve: Motion.easeMove,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                // At night the pill is lit (2026-09-30, the client's
+                // reference): cyan glass with its own glow.
                 decoration: BoxDecoration(
                   color: selected
-                      ? Neon.violet.withValues(alpha: 0.16)
+                      ? (Neon.isDark
+                          ? Neon.cyan.withValues(alpha: 0.16)
+                          : Neon.violet.withValues(alpha: 0.16))
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(Neon.rPill),
+                  border: selected && Neon.isDark
+                      ? Border.all(color: Neon.cyan.withValues(alpha: 0.55))
+                      : null,
+                  boxShadow: selected && Neon.isDark
+                      ? Neon.halo(Neon.cyan, strength: 0.45)
+                      : null,
                 ),
                 child: AnimatedSwitcher(
                   duration: Motion.micro,
@@ -996,7 +1027,9 @@ class _HomeShellState extends State<HomeShell>
                   child: Icon(selected ? active : icon,
                       key: ValueKey(selected),
                       size: 22,
-                      color: selected ? Neon.violet : Neon.textDim),
+                      color: selected
+                          ? (Neon.isDark ? Neon.cyan : Neon.violet)
+                          : Neon.textDim),
                 ),
               ),
             ),
@@ -1009,7 +1042,10 @@ class _HomeShellState extends State<HomeShell>
             MediaQuery.withClampedTextScaling(
               maxScaleFactor: 1.3,
               child: TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: selected ? Neon.violet : Neon.textDim),
+                tween: ColorTween(
+                    end: selected
+                        ? (Neon.isDark ? Neon.cyan : Neon.violet)
+                        : Neon.textDim),
                 duration: Motion.micro,
                 curve: Motion.easeMove,
                 builder: (_, color, __) => Text(label,
@@ -1024,6 +1060,7 @@ class _HomeShellState extends State<HomeShell>
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1118,4 +1155,67 @@ class _RenderHoldLayout extends RenderProxyBox {
     kid.layout(_held!, parentUsesSize: true);
     size = constraints.constrain(kid.size);
   }
+}
+
+/// THE DOCK'S LIT EDGE (2026-09-30, the client's reference): the brand's
+/// light traced along the bar's top and around the mic's cradle, with a
+/// soft glow — the same notched outline the bar is cut to.
+class _DockRim extends StatelessWidget {
+  const _DockRim({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!Neon.isDark) return child;
+    return CustomPaint(
+      foregroundPainter: _DockRimPainter(
+        geometry: Scaffold.geometryOf(context),
+        colors: [Neon.cyan, Neon.violet, Neon.pink],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _DockRimPainter extends CustomPainter {
+  _DockRimPainter({required this.geometry, required this.colors})
+      : super(repaint: geometry);
+
+  final ValueListenable<ScaffoldGeometry> geometry;
+  final List<Color> colors;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = geometry.value;
+    final top = g.bottomNavigationBarTop;
+    final fab = g.floatingActionButtonArea;
+    // As BottomAppBar cuts itself: the mic's box, moved into the bar's
+    // coordinates, widened by the notch margin (4).
+    final guest = top == null || fab == null ? null : fab.translate(0, -top).inflate(4);
+    final outline = const CircularNotchedRectangle()
+        .getOuterPath(Offset.zero & size, guest);
+    final shader = LinearGradient(colors: colors).createShader(Offset.zero & size);
+    canvas.save();
+    // Only the top edge and the cradle: the sides and bottom are off the
+    // screen's edge or under the system bar.
+    canvas.clipRect(Rect.fromLTWH(0, -40, size.width, 46));
+    canvas.drawPath(
+        outline,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 7
+          ..shader = shader
+          ..color = Colors.white.withValues(alpha: 0.22)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5));
+    canvas.drawPath(
+        outline,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..shader = shader);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_DockRimPainter old) => old.colors != colors;
 }

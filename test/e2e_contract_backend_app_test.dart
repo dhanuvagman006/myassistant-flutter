@@ -13,7 +13,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
-import 'package:myassistant/services/automation_runner.dart';
+import 'package:myassistant/features/shopping/shopping_models.dart';
 
 final String _app = Directory.current.path;
 // A feature pair (ft-<name>-app beside ft-<name>) is checked against its
@@ -47,15 +47,11 @@ Set<String> _cases(String src, String from, String to) {
       .toSet();
 }
 
-/// Everything the phone's event dispatcher (both voice paths) acts on.
+/// Every device action the phone performs (the brain hands them over).
 Set<String> _engineCases() => _cases(
     _appSrc('lib/features/assistant/state/assistant_engine.dart'),
-    'void _onEvent(Map<String, dynamic> e) {',
+    'Future<void> _onEvent(Map<String, dynamic> e) async {',
     'Future<void> _analyzeCamera(');
-
-/// The live socket's own wire protocol (not device actions).
-Set<String> _liveProtocolCases() => _cases(_appSrc('lib/services/live_service.dart'),
-    'void _onFrame(dynamic frame) {', '// ---------------- playback');
 
 /// The app build this checkout produces (pubspec `version: x.y.z+BUILD`).
 int _appBuild() => int.parse(RegExp(r'^version:\s*[\d.]+\+(\d+)', multiLine: true)
@@ -74,36 +70,42 @@ String _slice(String src, String start, String end) {
 Set<String> _quoted(String s) =>
     RegExp(r'"([a-z_]+)"').allMatches(s).map((m) => m.group(1)!).toSet();
 
-/// Every source the backend builds phone-bound directives in: the tools,
-/// the classic voice loop's event stream and the live socket.
+/// Every source the backend builds phone-bound directives in: the tools
+/// (/ai/tool hands their deviceAction to the app's brain). The classic voice
+/// loop's stream and the live socket are gone (2026-09-29).
 const _directiveSources = [
   'src/tools/builtins.js',
   'src/tools/knowledge.js',
   'src/posters/tools.js',
   'src/momentum/tools.js',
-  'src/automation/service.js',
-  'src/assistant/routes.js',
-  'src/live/proxy.js',
+  // The shopping list (build 124): the list notice, open_app_screen,
+  // shop_from_list's shop_handoff and share_shopping_list's open_url.
+  'src/shopping/tools.js',
+  'src/shopping/handoff.js',
+  'src/shopping/share.js',
+  // Poster Studio, photo edits, the spoken brief and meeting prep (build 135).
+  'src/posters/studioTools.js',
+  'src/meetings/tools.js',
 ];
 
 /// `type:` literals in those files that are not phone directives: JSON-schema
-/// types in tool declarations, the automation step action "wait" (a reply to
-/// POST /automation/:id/step, handled by the runner, not the engine), and
-/// "location", which travels the other way (the phone's own live frame —
-/// checked in the test below).
+/// types in tool declarations.
 const _notDirectives = {
   'object', 'string', 'number', 'integer', 'boolean', 'array', 'wait', 'location'
 };
 
+/// Screens the server may open that arrive with the NEXT feature's app
+/// work (the build gate is this build, the screen is not in it yet).
+/// None today: the shopping list's screen arrived in build 124.
+const _screensComingNext = <String, String>{};
+
 /// Directives the phone deliberately ignores, and why that is safe.
 const _serverOnly = {
-  // The server follows the business call itself and streams call_status.
+  // The server places and follows the business call itself. (Its progress
+  // used to stream to the phone as call_status over the live socket, which
+  // is gone.)
   'fulfillment_call': 'server-followed call',
   'scheduling_call': 'server-followed call',
-  // Classic path only; the same outcome is spoken as assistant_message.
-  'task_update': 'narrated by assistant_message',
-  // Avatar-room readiness; the room itself is LiveKit's (avatar_service).
-  'avatar': 'informational',
   // Its tools are hidden while no build handles it (checked below).
   'interpreter_mode': 'tools hidden',
 };
@@ -122,46 +124,28 @@ class _Call {
   String toString() => '${method.toUpperCase()} $mount$sub ($appFile)';
 }
 
-const _asst = 'lib/core/network/assistant_api.dart';
-const _auto = 'lib/services/automation_runner.dart';
+const _ai = 'lib/ai/tool_server.dart';
 const _post = 'lib/features/poster/poster_service.dart';
 const _mom = 'lib/services/momentum_service.dart';
 const _avm = 'lib/services/avatar_message_service.dart';
 const _api = 'lib/services/api_service.dart';
 const _eng = 'lib/features/assistant/state/assistant_engine.dart';
+const _shop = 'lib/features/shopping/shopping_service.dart';
 
-/// The calls the working features make (voice loop, Do it for me, photo
-/// cards, Momentum, video notes, documents, vision, meetings, call notes,
-/// reminders, the brief, news, quick tasks).
+/// The calls the working features make (voice loop, photo cards, Momentum,
+/// video notes, documents, vision, meetings, call notes, reminders, the
+/// brief, news, quick tasks).
 const _calls = <_Call>[
-  // Classic voice loop (SSE) — session + every sub-post the app sends.
-  _Call('post', _asst, "/assistant/session'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/session'),
-  _Call('post', _asst, "/assistant/\$sid/audio'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/audio'),
-  _Call('post', _asst, "_post('message'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/message'),
-  _Call('post', _asst, "_post('contacts'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/contacts'),
-  _Call('post', _asst, "_post('choose'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/choose'),
-  _Call('post', _asst, "_post('confirm'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/confirm'),
-  _Call('post', _asst, "_post('call_result'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/call_result'),
-  _Call('post', _asst, "_post('device_result'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/device_result'),
-  _Call('post', _asst, "_post('capabilities'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/capabilities'),
-  _Call('post', _asst, "_post('cancel'", '/assistant', 'assistantRoutes',
-      'src/assistant/routes.js', '/:sid/cancel'),
-  // Do it for me.
-  _Call('post', _auto, "'/automation/\$runId/step'", '/automation',
-      'require("./automation/routes")', 'src/automation/routes.js', r'/:id(\\d+)/step'),
-  _Call('post', _auto, "'/automation/\$runId/finish'", '/automation',
-      'require("./automation/routes")', 'src/automation/routes.js', r'/:id(\\d+)/finish'),
-  _Call('post', _auto, "'/automation/\$runId/owner_done'", '/automation',
-      'require("./automation/routes")', 'src/automation/routes.js', r'/:id(\\d+)/owner_done'),
+  // The brain's tool server (2026-09-29): context, tools, the record, the
+  // Firebase identity, and the config — no model runs on these routes.
+  _Call('get', 'lib/ai/config.dart', "'/ai/config'", '/ai', 'require("./ai/routes")',
+      'src/ai/routes.js', '/config'),
+  _Call('post', _ai, "'/ai/context'", '/ai', 'require("./ai/routes")', 'src/ai/routes.js',
+      '/context'),
+  _Call('post', _ai, "'/ai/tool'", '/ai', 'require("./ai/routes")', 'src/ai/routes.js', '/tool'),
+  _Call('post', _ai, "'/ai/turn'", '/ai', 'require("./ai/routes")', 'src/ai/routes.js', '/turn'),
+  _Call('post', _ai, "'/ai/firebase-token'", '/ai', 'require("./ai/routes")',
+      'src/ai/routes.js', '/firebase-token'),
   // Photo cards (build 119).
   _Call('post', _post, "'\$_base/photos'", '/posters', 'require("./routes/posters")',
       'src/routes/posters.js', '/photos'),
@@ -214,10 +198,6 @@ const _calls = <_Call>[
       'src/routes/docs.js', '/:id/file'),
   _Call('get', 'lib/services/share_intake_service.dart', "/understanding'", '/docs',
       'require("./routes/docs")', 'src/routes/docs.js', r'/:id(\\d+)/understanding'),
-  _Call('post', _eng, "'\${ApiService.baseUrl}/vision'", '/vision',
-      'require("./routes/vision")', 'src/routes/vision.js', '/'),
-  _Call('post', _api, "'\$baseUrl/stt'", '/stt', 'sttRoute', 'src/routes/stt.js', '/'),
-  _Call('post', _api, "'\$baseUrl/tts'", '/tts', 'ttsRoute', 'src/routes/tts.js', '/'),
   _Call('post', 'lib/screens/business_card_flow.dart', '/clients/scan-card', '/clients',
       'require("./routes/clients")', 'src/routes/clients.js', '/scan-card'),
   // Meetings and call notes.
@@ -236,9 +216,12 @@ const _calls = <_Call>[
       'require("./reminders/routes")', 'src/reminders/routes.js', '/:id'),
   _Call('get', 'lib/services/brief_service.dart', "'/brief'", '/brief',
       'require("./routes/brief")', 'src/routes/brief.js', '/'),
-  _Call('post', 'lib/services/brief_service.dart', "'/commitments/\${p.id}/done'",
+  _Call('post', 'lib/services/brief_service.dart', "'/commitments/\$id/done'",
       '/commitments', 'require("./routes/commitments")', 'src/routes/commitments.js',
       '/:id/done'),
+  // Home's Done and Later (2026-09-29).
+  _Call('patch', 'lib/services/brief_service.dart', "'/reminders/\$id'", '/reminders',
+      'require("./reminders/routes")', 'src/reminders/routes.js', '/:id'),
   _Call('get', 'lib/services/news_feed.dart', '/news/feed', '/news', 'require("./routes/news")',
       'src/routes/news.js', '/feed'),
   _Call('post', _eng, "'/outcomes'", '/outcomes', 'require("./routes/outcomes")',
@@ -249,6 +232,21 @@ const _calls = <_Call>[
       'src/routes/contacts.js', '/resolve'),
   _Call('post', 'lib/services/contacts_sync_service.dart', "'/contacts/sync'", '/contacts',
       'require("./routes/contacts")', 'src/routes/contacts.js', '/sync'),
+  // The shopping list (build 124).
+  _Call('get', _shop, "transport('GET', '')", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/'),
+  _Call('post', _shop, "_write('POST', '/items'", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/items'),
+  _Call('patch', _shop, "_write('PATCH', '/items/\${item.id}'", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/items/:id'),
+  _Call('delete', _shop, "_write('DELETE', '/items/\${item.id}')", '/shopping',
+      'shopping.router', 'src/shopping/routes.js', '/items/:id'),
+  _Call('post', _shop, "_write('POST', '/clear'", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/clear'),
+  _Call('get', _shop, "transport('GET', '/share-text\$q')", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/share-text'),
+  _Call('post', _shop, "transport('POST', '/handoff'", '/shopping', 'shopping.router',
+      'src/shopping/routes.js', '/handoff'),
 ];
 
 /// Every `"name" ->` label in the Kotlin handler block of [channel].
@@ -284,24 +282,28 @@ void main() {
         }
       }
       sent.removeWhere((k, _) => _notDirectives.contains(k));
-      expect(sent.length, greaterThan(40), reason: 'the scan found the directives');
-      final handled = {..._engineCases(), ..._liveProtocolCases()};
+      expect(sent.length, greaterThan(35), reason: 'the scan found the directives');
+      final handled = _engineCases();
       final orphans = [
         for (final e in sent.entries)
           if (!handled.contains(e.key) && !_serverOnly.containsKey(e.key)) '${e.key} (${e.value})'
       ];
       expect(orphans, isEmpty,
-          reason: 'the server sends these, and neither AssistantEngine._onEvent nor '
-              'LiveService._onFrame handles them — the assistant would announce '
-              'something the phone never does');
+          reason: 'the server sends these, and AssistantEngine._onEvent does not '
+              'handle them — the assistant would announce something the phone '
+              'never does');
       // The ignore-list must not hide something the phone now handles, or
       // go stale after the server stops sending it.
       for (final k in _serverOnly.keys) {
         expect(sent.containsKey(k), isTrue, reason: '$k is no longer sent; drop it');
       }
-      // "location" is phone -> server: the app sends it, the proxy reads it.
-      expect(_appSrc('lib/services/live_service.dart'), contains("'type': 'location'"));
-      expect(_beSrc('src/live/proxy.js'), contains('m.type === "location"'));
+      // Where the owner is travels phone -> server on every turn now: the
+      // brain's deviceContext carries it, /ai/context reads it.
+      final engine = _appSrc('lib/features/assistant/state/assistant_engine.dart');
+      for (final k in ['lat', 'lng', 'acc']) {
+        expect(engine, contains("out['$k'] = "));
+        expect(_beSrc('src/ai/context.js'), contains('body.$k'));
+      }
     }, skip: _needsBackend);
 
     test('interpreter_mode has no handler, so both of its tools stay hidden', () {
@@ -327,17 +329,26 @@ void main() {
       const tabs = {'home', 'hub', 'chat', 'settings'};
       final missing = [
         for (final s in screens)
-          if (!tabs.contains(s) && !AssistantEngine.instance.canOpenAppScreen(s)) s
+          if (!tabs.contains(s) &&
+              !_screensComingNext.containsKey(s) &&
+              !AssistantEngine.instance.canOpenAppScreen(s))
+            s
       ];
       expect(missing, isEmpty,
           reason: 'open_app_screen targets with no screen builder report "not available"');
+      // The list of screens still to come must not go stale.
+      for (final s in _screensComingNext.keys) {
+        expect(screens, contains(s), reason: '$s is no longer offered; drop it');
+        expect(AssistantEngine.instance.canOpenAppScreen(s), isFalse,
+            reason: '$s has a screen now; drop it from _screensComingNext');
+      }
     }, skip: _needsBackend != null);
 
     test('the four tab names map to the shell\'s real tab order', () {
       final engine = _appSrc('lib/features/assistant/state/assistant_engine.dart');
       expect(engine, contains("const tabs = {'home': 0, 'hub': 1, 'chat': 2, 'settings': 3};"));
       final shell = _appSrc('lib/shell/home_shell.dart');
-      final stack = _slice(shell, 'IndexedStack(', ']');
+      final stack = _slice(shell, 'TabDeck(', ']');
       final order = ['HomeDashboard()', 'HubScreen()', 'ChatScreen()', 'AssistantSettingsScreen()']
           .map(stack.indexOf)
           .toList();
@@ -368,56 +379,6 @@ void main() {
         expect(openPanel, contains('"$p" ->'), reason: 'panel $p falls to plain Settings');
       }
     }, skip: _needsBackend);
-
-    test('the automate directive the server builds is read field for field', () {
-      final body = _slice(_beSrc('src/automation/service.js'), 'function directive(r', '\n}\n');
-      final keys = RegExp(r'^\s{4}([a-z_]+)\s*[:,]', multiLine: true)
-          .allMatches(body)
-          .map((m) => m.group(1)!)
-          .toSet()
-        ..remove('type');
-      expect(keys, containsAll(['run_id', 'goal', 'pkg', 'allowed', 'resume', 'seq']));
-      final reader = _slice(_appSrc('lib/services/automation_runner.dart'),
-          'static AutomationDirective? fromEvent(', '\n  }\n');
-      final unread = [for (final k in keys) if (!reader.contains("e['$k']")) k];
-      expect(unread, isEmpty, reason: 'fields the server sends that the phone drops');
-    }, skip: _needsBackend);
-
-    test('a server-shaped automate directive parses completely', () {
-      final d = AutomationDirective.fromEvent({
-        'type': 'automate',
-        'run_id': 42,
-        'goal': 'order a masala dosa',
-        'app': 'Swiggy',
-        'app_name': 'swiggy',
-        'category': 'food',
-        'named': true,
-        'no_install': false,
-        'pkg': 'in.swiggy.android',
-        'start_url': '',
-        'web': false,
-        'any': true,
-        'allowed': ['in.swiggy.android'],
-        'max_steps': 30,
-        'resume': false,
-        'may_install': true,
-        'install_app': 'Swiggy',
-        'seq': 3,
-      })!;
-      expect(d.runId, 42);
-      expect(d.pkg, 'in.swiggy.android');
-      expect(d.anyApp, isTrue);
-      expect(d.allowed, ['in.swiggy.android']);
-      expect(d.maxSteps, 30);
-      expect(d.mayInstall, isTrue);
-      expect(d.installApp, 'Swiggy');
-      expect(d.startSeq, 3);
-      expect(d.category, 'food');
-      expect(d.named, isTrue);
-      expect(d.noInstall, isFalse);
-      // A server that could not create the run sends no id: nothing starts.
-      expect(AutomationDirective.fromEvent({'type': 'automate'}), isNull);
-    });
   });
 
   group('build gates', () {
@@ -434,6 +395,7 @@ void main() {
       gates['POSTER_MIN_BUILD'] = constant('src/posters/tools.js', 'POSTER_MIN_BUILD');
       gates['VIDEO_NOTE_MIN_BUILD'] = constant('src/tools/builtins.js', 'VIDEO_NOTE_MIN_BUILD');
       gates['momentum APP_BUILD'] = constant('src/momentum/tools.js', 'APP_BUILD');
+      gates['shopping APP_BUILD'] = constant('src/shopping/tools.js', 'APP_BUILD');
       final tooNew = {
         for (final e in gates.entries)
           if (e.value > build) e.key: e.value
@@ -459,6 +421,12 @@ void main() {
       // … and an old phone that still reaches one gets an honest refusal.
       expect(tools, contains('b > 0 && b < POSTER_MIN_BUILD'));
     }, skip: _needsBackend);
+
+    // 2026-09-30: remember_address / show_address send `show_address`; the
+    // phone pops the address sheet (features/people/address_sheet.dart).
+    test('the address directive has a handler on the phone', () {
+      expect(_engineCases(), contains('show_address'));
+    });
 
     test('the video-note screen is only opened for builds that have it', () {
       final src = _beSrc('src/tools/builtins.js');
@@ -488,10 +456,42 @@ void main() {
       expect(problems, isEmpty);
     }, skip: _needsBackend);
 
-    test('the SSE stream route is public (token in the URL), the rest behind auth', () {
+    test('the old model routes: gone from the app, answered 426 by the server', () {
+      // The app talks to the models itself (Firebase AI Logic): no /live
+      // socket, no /assistant voice loop, no /chat model routes, no /stt,
+      // /tts or /vision (2026-09-29).
+      const needles = [
+        "'/assistant", '/assistant/\$', "baseUrl}/assistant", '/live/ws', '/chat/stream',
+        '/chat/greeting', "\$baseUrl/chat'", "/stt'", "/tts'", "/vision'",
+      ];
+      final offenders = <String>[];
+      for (final f in Directory('$_app/lib').listSync(recursive: true).whereType<File>()) {
+        if (!f.path.endsWith('.dart')) continue;
+        final lines = _read(f.path).split('\n');
+        for (var n = 0; n < lines.length; n++) {
+          final line = lines[n].trimLeft();
+          if (line.startsWith('//')) continue;
+          for (final x in needles) {
+            if (line.contains(x)) offenders.add('${f.path.substring(_app.length + 1)}:${n + 1} $x');
+          }
+        }
+      }
+      expect(offenders, isEmpty);
       final server = _beSrc('src/server.js');
-      expect(server, contains('app.get("/assistant/stream/:sid", assistantRoutes.streamHandler)'));
-      expect(_appSrc(_asst), contains("/assistant/stream/\$_sessionId?token=\$_streamToken"));
+      expect(server, contains('app.use("/assistant", gone);'));
+      expect(server, contains('app.use(["/stt", "/tts", "/vision"], gone);'));
+      final gone = _beSrc('src/ai/gone.js');
+      expect(gone, contains('res.status(426)'));
+      expect(gone, contains('path === "/live/ws"'));
+    }, skip: _needsBackend);
+
+    test("the shopping list's kinds are the server's, in its order and words", () {
+      final be = RegExp(r'\{ id: "([a-z_]+)", label: "([^"]+)", kind:')
+          .allMatches(_beSrc('src/shopping/normalize.js'))
+          .map((m) => '${m.group(1)}=${m.group(2)}')
+          .toList();
+      expect(be, hasLength(19), reason: 'the scan found the categories');
+      expect([for (final c in shoppingCategories) '${c.id}=${c.label}'], be);
     }, skip: _needsBackend);
 
     test('the photo-card contract fixture is the same file on both sides', () {
@@ -504,7 +504,7 @@ void main() {
   group('pushes', () {
     test('every push kind the phone reacts to is one the server sends, with its fields', () {
       final pushSrc = _appSrc('lib/services/push_service.dart');
-      for (final k in ['agent_message', 'scheduled_call', 'momentum', 'app_update']) {
+      for (final k in ['agent_message', 'scheduled_call', 'app_update']) {
         expect(pushSrc, contains("m.data['kind'] == '$k'"));
       }
       // Video notes open their popup on avatar '1'.
@@ -513,7 +513,7 @@ void main() {
       // A scheduled call dials the name it carries.
       expect(_beSrc('src/infra/handlers.js'), contains('{ kind: "scheduled_call", name, message }'));
       expect(pushSrc, contains("m.data['name']"));
-      expect(_beSrc('src/momentum/nudges.js'), contains('kind: "momentum"'));
+      expect(pushSrc, isNot(contains("'momentum'")), reason: 'Momentum is gone from the app');
       expect(_beSrc('src/routes/appUpdate.js'), contains('kind: "app_update"'));
       // The inbox the popup reads: media + a document URL the RECIPIENT owns.
       final inbox = _beSrc('src/routes/messages.js');
@@ -556,29 +556,14 @@ void main() {
         }
       }
       // The scan really covered the app's channels (not a vacuous pass).
-      expect(seenChannels.length, greaterThanOrEqualTo(11));
-      expect(checked, greaterThanOrEqualTo(50));
+      expect(seenChannels.length, greaterThanOrEqualTo(9));
+      expect(checked, greaterThanOrEqualTo(35));
       expect(problems, isEmpty, reason: 'MissingPluginException/notImplemented on the phone');
-    });
-
-    test('the task-voice event stream is registered natively', () {
-      expect(_appSrc('lib/services/task_voice.dart'), contains("EventChannel('hari/task_voice/events'"));
-      final kt = _read('$_app/android/app/src/main/kotlin/com/myassistant/myassistant/'
-          'TaskVoiceBridge.kt');
-      expect(kt, contains('"hari/task_voice/events"'));
     });
 
     test('the manifest declares every component and permission the features use', () {
       final m = _appSrc('android/app/src/main/AndroidManifest.xml');
       for (final s in [
-        // Do it for me: the accessibility service, bindable only by the system.
-        'android:name=".HariAccessibilityService"',
-        'android.permission.BIND_ACCESSIBILITY_SERVICE',
-        '@xml/hari_automation',
-        // Talk while it works: a microphone foreground service.
-        'android:name=".TaskVoiceService"',
-        'android:foregroundServiceType="microphone"',
-        'android.permission.FOREGROUND_SERVICE_MICROPHONE',
         // Widget, self-update, gift-card sharing.
         'android:name=".TaskWidgetProvider"',
         'android:name=".InstallResultReceiver"',

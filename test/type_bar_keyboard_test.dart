@@ -8,9 +8,24 @@ import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/widgets/inline_voice.dart';
 
+import 'package:myassistant/ai/config.dart';
+import 'package:myassistant/ai/listen.dart';
+
+import 'helpers/fake_brain.dart';
+
+/// What is in the text box right now.
+String _box(WidgetTester t) => t.widget<EditableText>(find.byType(EditableText)).controller.text;
+
 void main() {
+  // A sent message is a brain turn: scripted here, no model or server, and
+  // a recogniser that hears nothing.
+  setUp(() => AssistantEngine.instance.debugUse(
+        brain: FakeBrain(),
+        listener: VoiceListener(recognizer: DeafRecognizer(), config: () => const AiConfig()),
+      ));
   tearDown(() {
     AssistantEngine.instance
+      ..debugVoiceOn = false
       ..inlineVoice = false
       ..phase = AssistantPhase.idle;
   });
@@ -43,7 +58,9 @@ void main() {
 
     await tester.tap(arrow); // fatal if the tap would miss
     await tester.pump();
-    expect(find.text('what time is it'), findsNothing, reason: 'sent: the box is cleared');
+    // The typed words now stand in the caption as the owner's line; the
+    // box itself is empty.
+    expect(_box(tester), isEmpty, reason: 'sent: the box is cleared');
     await tester.pump(const Duration(seconds: 1));
   });
 
@@ -93,12 +110,21 @@ void main() {
     addTearDown(tester.view.reset);
     final engine = AssistantEngine.instance
       ..inlineVoice = true
+      ..debugVoiceOn = true
       ..phase = AssistantPhase.listening;
     await tester.pumpWidget(const MaterialApp(
       home: Scaffold(body: InlineCaptionOverlay()),
     ));
     engine.notifyListeners();
     await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  // The recogniser here never reports back, and a listen that never ends
+  // is let go after AssistantEngine.listenDeadline: the session ends in the
+  // test, so that timer does not outlive it.
+  Future<void> endSession(WidgetTester tester) async {
+    AssistantEngine.instance.debugVoiceOn = false;
+    await tester.pump();
   }
 
   testWidgets('the keyboard Send key sends, and the keyboard stays up', (tester) async {
@@ -110,10 +136,13 @@ void main() {
     await tester.enterText(field, 'what time is it');
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pump();
-    expect(find.text('what time is it'), findsNothing, reason: 'sent: the box is cleared');
+    // The typed words now stand in the caption as the owner's line; the
+    // box itself is empty.
+    expect(_box(tester), isEmpty, reason: 'sent: the box is cleared');
     final editable = tester.state<EditableTextState>(find.byType(EditableText));
     expect(editable.widget.focusNode.hasFocus, isTrue, reason: 'the keyboard stays up');
     await tester.pump(const Duration(seconds: 1));
+    await endSession(tester);
   });
 
   testWidgets('a newline that arrives anyway sends instead of wrapping', (tester) async {
@@ -126,13 +155,14 @@ void main() {
         selection: TextSelection.collapsed(offset: 20)));
     await tester.pump();
     await tester.pump();
-    expect(find.text('uninstall instagram'), findsNothing, reason: 'Enter sent it');
+    expect(_box(tester), isEmpty, reason: 'Enter sent it');
     expect(find.textContaining('\n'), findsNothing);
     // Pasted lines become one message, not a four-line box.
     await tester.enterText(field, 'first line\nsecond line');
     await tester.pump();
     expect(find.text('first line second line'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
+    await endSession(tester);
   });
 
   testWidgets('while typing, the screen says the mic is paused', (tester) async {
@@ -144,6 +174,7 @@ void main() {
     expect(find.text('Mic paused while you type'), findsOneWidget);
     expect(find.text('Listening…'), findsNothing);
     await tester.pump(const Duration(seconds: 1));
+    await endSession(tester);
   });
 
   testWidgets('the mic comes back when the session ends or the keyboard closes',
@@ -174,5 +205,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(editable.widget.focusNode.hasFocus, isFalse);
     expect(engine.micPausedForTyping, isFalse);
+    await endSession(tester);
   });
 }

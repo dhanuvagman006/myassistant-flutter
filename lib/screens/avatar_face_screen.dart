@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../design/motion.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
 
@@ -55,8 +57,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         name: 'Default',
         child: Container(
           color: Neon.surfaceHigh,
-          child: Icon(Icons.auto_awesome_rounded,
-              color: Neon.violet, size: 40),
+          child: Icon(Icons.auto_awesome_rounded, color: Neon.violet, size: 40),
         ),
       ),
       for (final f in widget.faces)
@@ -74,12 +75,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
                       : Container(
                           color: Neon.surfaceHigh,
                           alignment: Alignment.center,
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Neon.cyan),
-                          ),
+                          child: const NeonLoader.inline(),
                         ),
                   errorBuilder: (_, __, ___) => _initialBox(f['name']),
                 )
@@ -87,8 +83,7 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         ),
     ];
 
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Avatar face'),
       body: GridView.count(
         padding: EdgeInsets.fromLTRB(
@@ -112,58 +107,64 @@ class _AvatarFaceScreenState extends State<AvatarFaceScreen> {
         ),
       );
 
-  Widget _cell({required String id, required String name, required Widget child}) {
+  Widget _cell(
+      {required String id, required String name, required Widget child}) {
     final selected = _selected == id;
-    return GestureDetector(
-      onTap: () => _pick(id),
-      child: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: selected
-                          ? Neon.cyan
-                          : Neon.line,
-                      width: selected ? 2.5 : 1,
+    // Tappable (2026-09-30): the dip and tick, and read as a button
+    // with its selected state; the chosen face is lit, not only ringed.
+    return Semantics(
+      selected: selected,
+      child: Tappable(
+        tapHint: 'choose',
+        onTap: () => _pick(id),
+        child: Column(
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: selected ? Neon.cyan : Neon.line,
+                        width: selected ? 2.5 : 1,
+                      ),
+                      boxShadow: selected ? Neon.halo(Neon.cyan) : null,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: child,
                     ),
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: child,
-                  ),
-                ),
-                if (selected)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                          color: Neon.cyan, shape: BoxShape.circle),
-                      child: const Icon(Icons.check_rounded,
-                          size: 14, color: Colors.white),
+                  if (selected)
+                    Positioned(
+                      right: 6,
+                      top: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                            color: Neon.cyan, shape: BoxShape.circle),
+                        child: Icon(Icons.check_rounded,
+                            size: 14, color: Neon.glyphOn(Neon.cyan)),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: selected ? Neon.cyanInk : Neon.textLo,
-              fontSize: 13,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            const SizedBox(height: 6),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? Neon.cyanInk : Neon.textLo,
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

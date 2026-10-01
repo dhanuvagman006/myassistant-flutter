@@ -1,177 +1,179 @@
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_service.dart';
 import 'auth_service.dart';
 import '../core/log.dart';
 
-/// SMS verification of the user's own number, via Firebase Phone Auth.
+/// PROVING THE USER'S OWN NUMBER — Firebase Phone Number Verification.
 ///
-/// The number is what other people's agents address messages to, so it has
-/// to be PROVEN rather than typed. Firebase sends the code and, once it is
-/// entered on the handset that received it, mints an ID token carrying the
-/// number as a verified claim. That token — not the digits the user typed —
-/// is what goes to our backend, which re-verifies it with the Admin SDK
-/// before writing anything. A caller therefore cannot register a number
-/// they do not control, which is what stops one person receiving another's
-/// messages.
+/// The number is what other people's agents address messages to, so it
+/// has to be PROVEN rather than typed. Owner, 2026-09-29: the SMS code is
+/// gone "completely". Google now reads the number of the SIM in this phone
+/// from its carrier, after Android's own consent sheet, and signs it into a
+/// token for our Firebase project ("hari/phone_number",
+/// PhoneNumberVerificationBridge.kt). That token, not any digits, goes to
+/// POST /phone/verify, which checks it against Google's keys before
+/// writing anything. A caller therefore cannot register a number they do
+/// not control.
+///
+/// Google does this only where the carrier takes part: 12 countries in
+/// September 2026, India not among them. On such a SIM the only other way
+/// in is the server's TESTING switch (a typed number), and only while the
+/// server offers it.
 class PhoneVerifyService {
-  PhoneVerifyService._();
-  static final PhoneVerifyService instance = PhoneVerifyService._();
+  PhoneVerifyService({
+    SimNumberPort? sim,
+    Future<Map<String, dynamic>?> Function(String path)? getJson,
+    Future<http.Response> Function(String path, Map<String, dynamic> body)? post,
+    Future<void> Function()? refreshUser,
+  })  : _sim = sim ?? const SimNumberChannel(),
+        _getJson = getJson ?? ApiService.getJson,
+        _post = post ?? _httpPost,
+        _refreshUser = refreshUser ?? AuthService.instance.refreshUser;
 
-  final FirebaseAuth _fb = FirebaseAuth.instance;
+  static final PhoneVerifyService instance = PhoneVerifyService();
 
-  String? _verificationId;
-  int? _resendToken;
+  final SimNumberPort _sim;
+  final Future<Map<String, dynamic>?> Function(String path) _getJson;
+  final Future<http.Response> Function(String path, Map<String, dynamic> body) _post;
+  final Future<void> Function() _refreshUser;
 
-  /// The number the code was sent to, for display while confirming.
-  String? pendingNumber;
-
-  /// Ask Firebase to text a code to [e164].
-  ///
-  /// [onAutoVerified] fires when Android resolves the SMS by itself, which
-  /// is common on the sending handset — the user never sees a code, so the
-  /// UI must be ready to skip straight past the entry field.
-  Future<void> sendCode(
-    String e164, {
-    required void Function(String message) onError,
-    required void Function() onCodeSent,
-    required Future<void> Function(PhoneAuthCredential cred) onAutoVerified,
-  }) async {
-    pendingNumber = e164;
-    await _fb.verifyPhoneNumber(
-      phoneNumber: e164,
-      forceResendingToken: _resendToken,
-      verificationCompleted: onAutoVerified,
-      verificationFailed: (FirebaseAuthException e) {
-        AppLog.add('phone', 'verify failed: ${e.code}');
-        onError(_friendly(e));
-      },
-      codeSent: (String id, int? token) {
-        _verificationId = id;
-        _resendToken = token;
-        onCodeSent();
-      },
-      codeAutoRetrievalTimeout: (String id) => _verificationId = id,
-      timeout: const Duration(seconds: 60),
-    );
-  }
-
-  /// Confirm the typed code and register the number with our backend.
-  /// Returns null on success, or a message safe to show the user.
-  Future<String?> confirmCode(String smsCode) async {
-    final id = _verificationId;
-    if (id == null) return 'Request a code first.';
-    try {
-      return await submit(
-        PhoneAuthProvider.credential(verificationId: id, smsCode: smsCode.trim()),
+  static Future<http.Response> _httpPost(String path, Map<String, dynamic> body) =>
+      http.post(
+        Uri.parse('${ApiService.baseUrl}$path'),
+        headers: {'Content-Type': 'application/json', ...ApiService.authHeaders},
+        body: jsonEncode(body),
       );
-    } on FirebaseAuthException catch (e) {
-      return _friendly(e);
+
+  /// Which ways in this phone AND this server allow. Asked rather than
+  /// assumed, so no button appears that the other side would refuse.
+  Future<PhoneVerifyMethods> methods() async {
+    Map<String, dynamic>? server;
+    try {
+      server = await _getJson('/phone/methods');
+    } catch (_) {
+      server = null;
     }
+    if (server == null) return const PhoneVerifyMethods(sim: false, typed: false, reached: false);
+    final sim = server['sim'] == true && await _sim.supported();
+    return PhoneVerifyMethods(sim: sim, typed: server['typed'] == true);
   }
 
-  /// Shared tail of both paths (typed code and Android auto-retrieval).
-  Future<String?> submit(PhoneAuthCredential cred) async {
+  /// Android's consent sheet, then the server. Null on success, or words
+  /// safe to show the user.
+  Future<String?> verifyWithSim() async {
+    final got = await _sim.verify();
+    if (!got.ok) {
+      AppLog.add('phone', 'SIM check failed: ${got.code} ${got.message}');
+      return wordsFor(got.code);
+    }
+    return _register('/phone/verify', {'pnvToken': got.token});
+  }
+
+  /// TESTING ONLY — claim a typed number. The server enforces the same
+  /// normalisation and one-number-one-account rule as the real path, and
+  /// refuses it unless its switch is on.
+  Future<String?> devVerify(String e164) => _register('/phone/dev-verify', {'phone': e164});
+
+  Future<String?> _register(String path, Map<String, dynamic> body) async {
     try {
-      final result = await _fb.signInWithCredential(cred);
-      final idToken = await result.user?.getIdToken();
-      if (idToken == null) return 'Could not confirm the code. Try again.';
-
-      final r = await http.post(
-        Uri.parse('${ApiService.baseUrl}/phone/verify'),
-        headers: {
-          'Content-Type': 'application/json',
-          ...ApiService.authHeaders,
-        },
-        body: jsonEncode({'firebaseIdToken': idToken}),
-      );
-
+      final r = await _post(path, body);
       if (r.statusCode == 409) {
         // One number, one account — deliberately not silently reassigned.
         return 'This number is already registered to another account.';
       }
       if (r.statusCode >= 300) {
-        final body = jsonDecode(r.body);
-        return (body is Map ? body['error'] as String? : null) ??
+        Object? decoded;
+        try {
+          decoded = jsonDecode(r.body);
+        } catch (_) {}
+        return (decoded is Map ? decoded['error'] as String? : null) ??
             'Could not register this number.';
       }
-
       // Refresh so the gate sees phoneVerified and lets the user through.
-      await AuthService.instance.refreshUser();
-      AppLog.add('phone', 'verified ${pendingNumber ?? ""}');
+      await _refreshUser();
+      AppLog.add('phone', 'verified via $path');
       return null;
-    } on FirebaseAuthException catch (e) {
-      return _friendly(e);
-    } catch (e) {
+    } catch (_) {
       return 'Could not reach the server. Check your connection.';
-    } finally {
-      // The Firebase phone session has done its job. Leaving it signed in
-      // would leave a second identity on the device that nothing else uses.
-      try { await _fb.signOut(); } catch (_) {}
     }
   }
 
-  /// Whether the backend is offering the no-OTP path. Asked rather than
-  /// assumed, so the button cannot appear against a server that would
-  /// refuse it — and disappears the moment the flag is turned off.
-  Future<bool> devVerifyAvailable() async {
+  /// What the user reads when the phone's side did not finish.
+  static String wordsFor(String code) => switch (code) {
+        'cancelled' => 'You closed the confirmation. Tap Confirm to try again.',
+        'unsupported' => "Your network can't confirm numbers automatically yet.",
+        'not_enabled' => 'Number confirmation is not switched on for this app yet.',
+        'network' => 'No connection. Check your internet and try again.',
+        _ => 'Could not confirm your number. Try again.',
+      };
+}
+
+/// What the verify screen may offer.
+class PhoneVerifyMethods {
+  const PhoneVerifyMethods({required this.sim, required this.typed, this.reached = true});
+
+  /// Google can confirm this SIM's number, and the server takes its token.
+  final bool sim;
+
+  /// The server's testing switch: a typed number is accepted.
+  final bool typed;
+
+  /// False when the server did not answer at all.
+  final bool reached;
+}
+
+class SimNumberResult {
+  const SimNumberResult.ok(this.token)
+      : ok = true,
+        code = '',
+        message = '';
+  const SimNumberResult.failed(this.code, [this.message = ''])
+      : ok = false,
+        token = '';
+
+  final bool ok;
+  final String token;
+  final String code;
+  final String message;
+}
+
+/// The phone's side, replaceable in tests.
+abstract class SimNumberPort {
+  Future<bool> supported();
+  Future<SimNumberResult> verify();
+}
+
+class SimNumberChannel implements SimNumberPort {
+  const SimNumberChannel();
+
+  static const _ch = MethodChannel('hari/phone_number');
+
+  @override
+  Future<bool> supported() async {
     try {
-      final r = await ApiService.getJson('/phone/dev-available');
-      return r != null && r['available'] == true;
+      final r = await _ch.invokeMapMethod<String, dynamic>('support');
+      return r?['supported'] == true;
     } catch (_) {
+      // No channel (iOS, tests) or no answer: not available here.
       return false;
     }
   }
 
-  /// DEV ONLY — claim a number with no SMS. The server enforces the same
-  /// normalisation and one-number-one-account rule as the real path, so
-  /// everything downstream behaves identically.
-  Future<String?> devVerify(String e164) async {
+  @override
+  Future<SimNumberResult> verify() async {
     try {
-      final r = await http.post(
-        Uri.parse('${ApiService.baseUrl}/phone/dev-verify'),
-        headers: {'Content-Type': 'application/json', ...ApiService.authHeaders},
-        body: jsonEncode({'phone': e164}),
-      );
-      if (r.statusCode >= 300) {
-        final body = jsonDecode(r.body);
-        return (body is Map ? body['error'] as String? : null) ??
-            'Could not register this number.';
+      final r = await _ch.invokeMapMethod<String, dynamic>('verify');
+      if (r == null) return const SimNumberResult.failed('failed');
+      if (r['ok'] == true && (r['token'] as String? ?? '').isNotEmpty) {
+        return SimNumberResult.ok(r['token'] as String);
       }
-      await AuthService.instance.refreshUser();
-      AppLog.add('phone', 'DEV verified $e164 (no OTP)');
-      return null;
-    } catch (_) {
-      return 'Could not reach the server.';
+      return SimNumberResult.failed(r['code'] as String? ?? 'failed', r['message'] as String? ?? '');
+    } catch (e) {
+      return SimNumberResult.failed('failed', '$e');
     }
   }
-
-  String _friendly(FirebaseAuthException e) {
-    // Firebase reports project-level misconfiguration as code 'unknown'
-    // with the real reason buried in the message. CONFIGURATION_NOT_FOUND
-    // means Phone sign-in is not switched on for the project, which no
-    // amount of retrying fixes — say so instead of "try again".
-    final detail = e.message ?? '';
-    if (detail.contains('CONFIGURATION_NOT_FOUND')) {
-      return 'Phone sign-in is not enabled for this Firebase project. '
-          'Enable it under Authentication → Sign-in method → Phone.';
-    }
-    if (detail.contains('BILLING_NOT_ENABLED')) {
-      return 'Firebase Phone Auth needs billing enabled on the project.';
-    }
-    return _byCode(e);
-  }
-
-  String _byCode(FirebaseAuthException e) => switch (e.code) {
-        'invalid-phone-number' => 'That phone number does not look right.',
-        'invalid-verification-code' => 'That code is not correct.',
-        'session-expired' => 'The code expired. Request a new one.',
-        'too-many-requests' =>
-          'Too many attempts. Wait a few minutes and try again.',
-        'quota-exceeded' => 'SMS limit reached. Try again later.',
-        _ => e.message ?? 'Verification failed. Try again.',
-      };
 }

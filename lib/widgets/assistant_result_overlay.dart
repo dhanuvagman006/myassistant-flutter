@@ -76,56 +76,62 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
     // own MediaQuery no longer reports it, so ask the window).
     final view = View.of(context);
     final kb = view.viewInsets.bottom / view.devicePixelRatio;
-    final room = math.max(
-        0.0, m.size.height - kb - bottom - m.viewPadding.top - 64);
+    final room = math.max(0.0, m.size.height - kb - bottom - m.viewPadding.top - 64);
     final child = _card(room);
-    if (child == null) return const SizedBox.shrink();
+    // No card: a zero-size box that takes no taps (and a card leaving
+    // finishes its exit — rebuilds mid-exit must not cut it).
     return AnimatedPositioned(
       duration: Motion.short,
       curve: Motion.easeMove,
       left: 0,
       right: 0,
       bottom: bottom,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: room),
-          // CARDS COME OUT OF THE MIC (2026-09-24). The switcher below was
-          // created together with the first card, and a switcher never
-          // animates its first child — so every confirmation, script,
-          // sources and image card appeared at full size in one frame. The
-          // first card now fades in as it grows from 96% about its bottom
-          // edge (just above the mic, which it never crosses); leaving
-          // stays instant. A card replacing another fades and grows in on
-          // the same curve, anchored at the bottom, so a taller or shorter
-          // card no longer jumps its top edge (it was a linear cross-fade
-          // centred on both).
-          child: EnterOnce(
-            duration: const Duration(milliseconds: 240),
-            scaleFrom: 0.96,
-            alignment: Alignment.bottomCenter,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 240),
-              reverseDuration: Motion.out,
-              switchInCurve: Motion.easeEnter,
-              switchOutCurve: Motion.easeFadeOut,
-              transitionBuilder: (child, a) => FadeTransition(
-                opacity: a,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.96, end: 1.0).animate(a),
-                  alignment: Alignment.bottomCenter,
-                  filterQuality: FilterQuality.medium,
-                  child: child,
+      // Leaving, the card fades and sinks toward the mic in 120 ms instead
+      // of vanishing in one frame (2026-09-29).
+      child: ExitPresence(
+        child: child == null
+            ? null
+            : Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: room),
+                  // CARDS COME OUT OF THE MIC (2026-09-24). The switcher below was
+                  // created together with the first card, and a switcher never
+                  // animates its first child — so every confirmation, script,
+                  // sources and image card appeared at full size in one frame. The
+                  // first card now fades in as it grows from 96% about its bottom
+                  // edge (just above the mic, which it never crosses); leaving
+                  // stays instant. A card replacing another fades and grows in on
+                  // the same curve, anchored at the bottom, so a taller or shorter
+                  // card no longer jumps its top edge (it was a linear cross-fade
+                  // centred on both).
+                  child: EnterOnce(
+                    duration: const Duration(milliseconds: 240),
+                    scaleFrom: 0.96,
+                    alignment: Alignment.bottomCenter,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 240),
+                      reverseDuration: Motion.out,
+                      switchInCurve: Motion.easeEnter,
+                      switchOutCurve: Motion.easeFadeOut,
+                      transitionBuilder: (child, a) => FadeTransition(
+                        opacity: a,
+                        child: ScaleTransition(
+                          scale: Tween<double>(begin: 0.96, end: 1.0).animate(a),
+                          alignment: Alignment.bottomCenter,
+                          filterQuality: FilterQuality.medium,
+                          child: child,
+                        ),
+                      ),
+                      layoutBuilder: (current, previous) => Stack(
+                        alignment: Alignment.bottomCenter,
+                        children: [...previous, if (current != null) current],
+                      ),
+                      child: child,
+                    ),
+                  ),
                 ),
               ),
-              layoutBuilder: (current, previous) => Stack(
-                alignment: Alignment.bottomCenter,
-                children: [...previous, if (current != null) current],
-              ),
-              child: child,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -178,7 +184,7 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
     // WEB RESULTS: a labelled stack with its own ✕, capped in height and
     // scrollable — three bare cards with no way to close them used to sit
     // over the orb and the captions until the next question.
-    if (e.searchResults.isNotEmpty) {
+    if (e.searchResults.isNotEmpty || e.searchSuggestions.isNotEmpty) {
       final results = e.searchResults.take(3).toList(growable: false);
       final h = MediaQuery.of(context).size.height;
       return ConstrainedBox(
@@ -205,12 +211,10 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
                 ),
                 IconButton(
                   tooltip: 'Close sources',
-                  constraints:
-                      const BoxConstraints(minWidth: 48, minHeight: 48),
+                  constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                   padding: EdgeInsets.zero,
                   onPressed: e.dismissSearchResults,
-                  icon: Icon(Icons.close_rounded,
-                      size: 18, color: Neon.textHi),
+                  icon: Icon(Icons.close_rounded, size: 18, color: Neon.textHi),
                   style: IconButton.styleFrom(
                     backgroundColor: Neon.surfaceHigh,
                   ),
@@ -227,6 +231,13 @@ class _AssistantResultOverlayState extends State<AssistantResultOverlay> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: SearchResultCard(result: r),
+                      ),
+                    // Google's search suggestions, beside a grounded answer
+                    // (the grounding terms require them).
+                    if (e.searchSuggestions.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: SearchSuggestionChips(suggestions: e.searchSuggestions),
                       ),
                   ],
                 ),

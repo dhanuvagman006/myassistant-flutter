@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/motion.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/glow_cta.dart';
 import '../../services/api_service.dart';
 import '../../services/assistant_identity.dart';
 import '../../shell/home_shell.dart';
@@ -120,20 +122,17 @@ class _AssistantSetupGateState extends State<AssistantSetupGate> {
       null => const SplashScreen(),
       true => AssistantSetupScreen(onDone: _markDone),
       false => !_permsOk
-          ? PermissionsScreen(
-              onDone: () => setState(() => _permsOk = true))
+          ? PermissionsScreen(onDone: () => setState(() => _permsOk = true))
           : _celebrate
-              ? WelcomeScreen(
-                  onDone: () {
-                    _markWelcomed();
-                    setState(() {
-                      _celebrate = false;
-                      _guide = true;
-                    });
-                  })
+              ? WelcomeScreen(onDone: () {
+                  _markWelcomed();
+                  setState(() {
+                    _celebrate = false;
+                    _guide = true;
+                  });
+                })
               : _guide
-                  ? GuideScreen(
-                      onDone: () => setState(() => _guide = false))
+                  ? GuideScreen(onDone: () => setState(() => _guide = false))
                   : const HomeShell(),
     };
   }
@@ -209,8 +208,9 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
   Widget build(BuildContext context) {
     final n = _name.text.trim();
 
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky, with the lit mark and one lit action
+    // (2026-09-30).
+    return NeonScaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -220,18 +220,9 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Align(
+                  const Align(
                     alignment: Alignment.centerLeft,
-                    child: Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        color: Neon.textHi,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(Icons.auto_awesome_rounded,
-                          color: Neon.onInk, size: 26),
-                    ),
+                    child: BrandMark(),
                   ),
                   const SizedBox(height: 22),
                   Text(
@@ -274,12 +265,10 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                       for (final s in _suggestions)
                         ActionChip(
                           label: Text(s),
-                          backgroundColor: Neon.surface,
-                          side: BorderSide(color: Neon.line),
                           onPressed: () {
                             _name.text = s;
-                            _name.selection = TextSelection.collapsed(
-                                offset: s.length);
+                            _name.selection =
+                                TextSelection.collapsed(offset: s.length);
                             setState(() {});
                           },
                         ),
@@ -297,7 +286,8 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                   Text(
                     'Your assistant greets and talks in this language. '
                     'Change it any time by just asking.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 13),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.footnote),
                   ),
                   const SizedBox(height: 10),
                   Wrap(
@@ -306,89 +296,66 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                     children: [
                       for (final (id, native) in _languages)
                         ChoiceChip(
-                          label: Text(
-                              id == native ? id : '$native  $id'),
+                          label: Text(id == native ? id : '$native  $id'),
                           selected: _language == id,
-                          selectedColor:
-                              Neon.violet.withValues(alpha: 0.15),
-                          backgroundColor: Neon.surface,
-                          side: BorderSide(color: Neon.line),
+                          // The theme's chip: lit rim when chosen.
                           labelStyle: TextStyle(
                               fontWeight: _language == id
                                   ? FontWeight.w600
                                   : FontWeight.w500,
-                              color: _language == id
-                                  ? Neon.violet
-                                  : Neon.textLo),
+                              color:
+                                  _language == id ? Neon.textHi : Neon.textLo),
                           showCheckmark: false,
-                          onSelected: (_) =>
-                              setState(() => _language = id),
+                          onSelected: (_) => setState(() => _language = id),
                         ),
                     ],
                   ),
                   // A quiet preview so the choice feels real before saving.
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    child: n.isEmpty
-                        ? const SizedBox.shrink()
-                        : Padding(
-                            padding: const EdgeInsets.only(top: 20),
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Neon.surface,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Neon.line),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.graphic_eq_rounded,
-                                      color: Neon.textHi, size: 19),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      '“Hi, I\'m $n. How can I help you today?”',
-                                      style: TextStyle(
-                                          color: Neon.textLo,
-                                          fontSize: 14,
-                                          fontStyle: FontStyle.italic,
-                                          height: 1.35),
-                                    ),
-                                  ),
-                                ],
+                  // Collapse (2026-09-30): the app's expand, on Motion
+                  // tokens (a raw 180 ms AnimatedSize). The preview is
+                  // the assistant speaking: the cyan of a suggestion.
+                  Collapse(
+                    open: n.isNotEmpty,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 20),
+                      child: GlowCard(
+                        tone: NeonTone.tip,
+                        halo: 0.35,
+                        rimWidth: 1.4,
+                        radius: Neon.rMd,
+                        padding: const EdgeInsets.all(12.6),
+                        child: Row(
+                          children: [
+                            Icon(Icons.graphic_eq_rounded,
+                                color: Neon.textHi, size: 19),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '“Hi, I\'m $n. How can I help you today?”',
+                                style: TextStyle(
+                                    color: Neon.textLo,
+                                    fontSize: 14,
+                                    fontStyle: FontStyle.italic,
+                                    height: 1.35),
                               ),
                             ),
-                          ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 14),
                     Text(_error!,
-                        style:
-                            TextStyle(color: Neon.errorInk, fontSize: 13)),
+                        style: TextStyle(color: Neon.errorInk, fontSize: 13)),
                   ],
                   const SizedBox(height: 24),
-                  _busy
-                      ? FilledButton(
-                          onPressed: null,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Neon.violet,
-                            foregroundColor: Neon.onAccent,
-                            minimumSize: const Size.fromHeight(50),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Colors.white),
-                          ),
-                        )
-                      : ApplePrimaryButton(
-                          label: 'Continue',
-                          onPressed: n.isEmpty ? null : _save,
-                        ),
+                  GlowCta(
+                    label: 'Continue',
+                    busy: _busy,
+                    busyLabel: 'Saving',
+                    onPressed: n.isEmpty ? null : _save,
+                  ),
                   const SizedBox(height: 8),
                   // No skip: an unnamed assistant renders as "Assistant"
                   // everywhere and reads broken. Naming is mandatory —
@@ -396,7 +363,8 @@ class _AssistantSetupScreenState extends State<AssistantSetupScreen> {
                   Text(
                     'Required — you can rename it any time later.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Neon.textDim, fontSize: 12),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.caption),
                   ),
                 ],
               ),

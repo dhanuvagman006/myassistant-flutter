@@ -39,7 +39,11 @@ class PrivacyPrefsService extends ChangeNotifier {
   int recordingDays = 14;
   bool loaded = false;
 
-  bool get isOn => helpImprove == true;
+  /// The server's effective answer: a stored choice, else its policy
+  /// default (HELP_IMPROVE_DEFAULT=on treats never-asked as on).
+  bool? effective;
+
+  bool get isOn => effective ?? helpImprove == true;
 
   Future<void> load() async {
     // The last known answer paints the switch at once.
@@ -54,6 +58,7 @@ class PrivacyPrefsService extends ChangeNotifier {
     if (r == null) return;
     final v = r['helpImprove'];
     helpImprove = v is bool ? v : null;
+    effective = r['effective'] is bool ? r['effective'] as bool : null;
     ask = r['ask'] == true;
     final keeps = r['keeps'];
     if (keeps is Map && keeps['recordingDays'] is num) {
@@ -75,6 +80,7 @@ class PrivacyPrefsService extends ChangeNotifier {
     });
     if (r == null) return false;
     helpImprove = r['helpImprove'] is bool ? r['helpImprove'] as bool : on;
+    effective = r['effective'] is bool ? r['effective'] as bool : on;
     ask = false;
     await _cache();
     notifyListeners();

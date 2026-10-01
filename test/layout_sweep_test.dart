@@ -17,13 +17,11 @@
 // clear of the dock and the activity pill, and a long toast fits.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:myassistant/core/daily_quotes.dart';
 import 'package:myassistant/screens/assistant_settings_screen.dart';
 import 'package:myassistant/screens/business_card_flow.dart';
 import 'package:myassistant/screens/chat_group_screen.dart';
 import 'package:myassistant/services/app_feedback.dart';
 import 'package:myassistant/widgets/activity_pill.dart';
-import 'package:myassistant/screens/automation_setup_screen.dart';
 import 'package:myassistant/screens/calls_screen.dart';
 import 'package:myassistant/screens/chat_new_screen.dart';
 import 'package:myassistant/screens/chat_screen.dart';
@@ -56,13 +54,10 @@ import 'package:myassistant/screens/voice_picker_screen.dart';
 import 'package:myassistant/screens/meetings/meeting_recorder_screen.dart';
 import 'package:myassistant/screens/studio/studio_screen.dart';
 import 'package:myassistant/screens/diagnostics_screen.dart';
-import 'package:myassistant/screens/mic_probe_screen.dart';
 import 'package:myassistant/screens/avatar_identity_screen.dart';
 import 'package:myassistant/screens/identity_record_screen.dart';
 import 'package:myassistant/services/avatar_message_service.dart';
 import 'package:myassistant/screens/focus_screen.dart';
-import 'package:myassistant/screens/momentum_screen.dart';
-import 'package:myassistant/models/momentum.dart';
 import 'package:myassistant/services/momentum_service.dart';
 import 'package:myassistant/shell/home_shell.dart';
 import 'package:myassistant/features/assistant/state/assistant_engine.dart';
@@ -76,6 +71,10 @@ import 'package:myassistant/services/privacy_prefs_service.dart';
 import 'package:myassistant/screens/shortcuts_screen.dart';
 import 'package:myassistant/services/shortcuts_service.dart';
 import 'package:myassistant/models/shortcut.dart';
+import 'package:myassistant/features/shopping/shopping_list_screen.dart';
+import 'package:myassistant/features/shopping/shopping_models.dart';
+import 'package:myassistant/features/shopping/shopping_service.dart';
+import 'package:myassistant/design/tab_deck.dart';
 
 /// The server's answer for the Notion card in [status], with a long name.
 JsonTransport _connections(String status) => (method, path, [body]) async =>
@@ -285,7 +284,6 @@ Future<void> _teardownApp(WidgetTester tester) async {
 
 final screens = <String, Widget Function()>{
   'Settings (You)': () => const AssistantSettingsScreen(),
-  'Do it for me setup': () => const AutomationSetupScreen(pendingGoal: 'order veg biryani from a 4-star place'),
   'Calls': () => const CallsScreen(),
   'New chat': () => const ChatNewScreen(),
   'Chat': () => const ChatScreen(),
@@ -309,23 +307,42 @@ final screens = <String, Widget Function()>{
   'Search': () => const SearchScreen(),
   'Stocks': () => StocksScreen(loader: () async => const {}),
   'Theme colour': () => const ThemeColourScreen(),
-  // MOMENTUM (2026-09-25): full, with long titles, and the Focus page both
-  // before a session and while one runs.
-  'Momentum (filled in)': () {
-    MomentumService.instance.debugSeed(MomentumSummary.fromJson(_momentumJson()));
-    return const MomentumScreen();
-  },
+  // The Focus page both before a session and while one runs.
   'Focus (choose how long)': () => const FocusScreen(),
-  // SHORTCUTS (build 120): long names and steps, a learned one, and the
-  // "save your last task" card.
+  // SHORTCUTS (build 120): long names and steps.
   'Shortcuts (filled in)': () {
     ShortcutsService.instance.debugSeed(_shortcutsSeed());
-    return ShortcutsScreen(
-        lastTask: ValueNotifier((runId: 9, goal: 'add milk, bread and eggs to my grocery cart and stop at payment')));
+    return const ShortcutsScreen();
   },
   'Shortcuts (none yet)': () {
     ShortcutsService.instance.debugSeed(const []);
-    return ShortcutsScreen(lastTask: ValueNotifier(null));
+    return const ShortcutsScreen();
+  },
+  // SHOPPING LIST (build 124): none yet, and full — long names, details,
+  // shops and links, two amounts on one line, bought lines.
+  'Shopping list (none yet)': () {
+    ShoppingService.transport = (method, path, {body}) async =>
+        const ShoppingReply(200, {'items': [], 'updatedAt': null, 'categories': []});
+    ShoppingService.instance.debugSeed(const []);
+    return const ShoppingListScreen();
+  },
+  'Shopping list (filled in)': () {
+    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
+    return const ShoppingListScreen();
+  },
+  'Shopping list (one kind)': () {
+    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
+    return const ShoppingListScreen(category: 'clothing_footwear');
+  },
+  'Shopping list (offline, saved list)': () {
+    ShoppingService.transport = (method, path, {body}) async => const ShoppingReply(0, null);
+    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']), failed: true);
+    return const ShoppingListScreen();
+  },
+  'Shopping list (offline, nothing saved)': () {
+    ShoppingService.transport = (method, path, {body}) async => const ShoppingReply(0, null);
+    ShoppingService.instance.debugSeed(null, failed: true);
+    return const ShoppingListScreen();
   },
   'Focus (running)': () => const FocusScreen(
       minutes: 25, label: 'Quarterly report for the board meeting', autoStart: true),
@@ -343,7 +360,6 @@ final screens = <String, Widget Function()>{
   'Meeting recorder': () => const MeetingRecorderScreen(title: 'Quarterly review with the regional sales team'),
   'Studio': () => const StudioScreen(),
   'Diagnostics': () => const DiagnosticsScreen(),
-  'Mic test': () => const MicProbeScreen(),
   'Avatar identity': () => const AvatarIdentityScreen(),
   // SEND MESSAGES AS YOU (2026-09-26): before consent, and with a video.
   'Avatar identity (before consent)': () =>
@@ -379,7 +395,6 @@ final screens = <String, Widget Function()>{
         },
       ),
   'Voice screen (long reply)': () => const _VoiceScreen(),
-  'Do it for me (switched on)': () => const AutomationSetupScreen(),
   'Hub (with dock)': () => _shellAt(1),
   'Chat (with dock)': () => _shellAt(2),
   'You (with dock)': () => _shellAt(3),
@@ -408,13 +423,40 @@ List<Shortcut> _shortcutsSeed() => [
           {'i': 2, 'tool': 'start_navigation', 'label': 'Directions to 4th floor, Mangalore One, MG Road, Bengaluru', 'class': 'stays'},
         ],
       }),
-      Shortcut.fromJson({
-        'id': 2, 'name': 'Weekly groceries', 'version': 1, 'learned': true,
-        'steps': [{'i': 0, 'tool': 'do_task_in_app', 'label': 'In the grocery app: add milk, bread and eggs to my grocery cart', 'class': 'app_task'}],
-      }),
     ];
 
+/// A full shopping list, as GET /shopping sends it.
+Map<String, dynamic> _shoppingJson() {
+  Map<String, dynamic> line(int id, String name, String category,
+          {String amount = '', String details = '', String? store, String? link, bool checked = false}) =>
+      {
+        'id': id, 'name': name, 'quantity': null, 'unit': null, 'amountText': amount,
+        'details': details, 'link': link, 'store': store, 'note': '', 'category': category,
+        'recipe': null, 'source': 'manual', 'checked': checked, 'createdAt': id, 'updatedAt': id,
+      };
+  return {
+    'items': [
+      line(1, 'Onion', 'vegetables_fruit', amount: '1.5 kg + 2 pcs'),
+      line(2, 'Organic cold-pressed groundnut oil from the farm shop near Mysore', 'oils',
+          amount: '2 L'),
+      line(3, 'Kurti', 'clothing_footwear',
+          details: 'M, blue floral print, cotton, full sleeves — for Amma’s birthday next Sunday',
+          store: 'Myntra',
+          link: 'https://www.myntra.com/kurtas/biba/blue-floral-printed-cotton-kurta/123456/buy'),
+      line(4, 'USB-C fast charger 25W with a two-metre braided cable', 'electronics_accessories',
+          details: 'Samsung', store: 'Croma'),
+      line(5, 'Dolo 650', 'health_medicines', amount: '2 strips'),
+      line(6, 'Milk', 'dairy_eggs', amount: '2 L', checked: true),
+      line(7, 'Bread', 'bakery', checked: true),
+    ],
+    'updatedAt': 7,
+    'categories': [for (final c in shoppingCategories) c.toJson()],
+  };
+}
+
 /// A full Momentum summary for today, with titles long enough to wrap.
+Map<String, dynamic> momentumJsonForTests() => _momentumJson();
+
 Map<String, dynamic> _momentumJson() {
   final today = MomentumService.today;
   final d = DateTime.parse(today);
@@ -459,6 +501,9 @@ void main() {
     // numbers), so the card is swept at every text size too.
     MomentumService.transport =
         (method, path, {body}) async => MomentumReply(200, _momentumJson());
+    // Hub's Shopping list row shows its count; the list screen is full.
+    ShoppingService.transport =
+        (method, path, {body}) async => ShoppingReply(200, _shoppingJson());
   });
   tearDown(() {
     HomeShell.lastTab = 0;
@@ -531,7 +576,7 @@ void main() {
           expect(fade.bottom, screen.bottom);
           // The visible tab's list reserves room for the dock AND the mic.
           final lists = find
-              .descendant(of: find.byType(IndexedStack), matching: find.byType(ListView))
+              .descendant(of: find.byType(TabDeck), matching: find.byType(ListView))
               .hitTestable();
           if (tab == 3 && lists.evaluate().isEmpty) return; // still loading offline
           final list = tester.widget<ListView>(lists.first);
@@ -543,15 +588,17 @@ void main() {
       }
     }
 
-    testWidgets('Home: the greeting and quote scroll with the feed', (tester) async {
+    testWidgets('Home: the greeting scrolls with the feed', (tester) async {
       _applyPhone(tester, gesture);
       await tester.pumpWidget(MaterialApp(home: _shellAt(0)));
       await _settle(tester);
+      // The quote moved into the all-clear card (2026-09-29); the greeting
+      // is the top of the list either way.
       expect(
           find.descendant(
-              of: find.byType(Scrollable), matching: find.text(DailyQuotes.today())),
+              of: find.byType(Scrollable), matching: find.textContaining('Good ', findRichText: true)),
           findsOneWidget,
-          reason: 'a pinned header let the feed slide under the quote');
+          reason: 'a pinned header let the feed slide under the greeting');
       await _teardownApp(tester);
     });
   });

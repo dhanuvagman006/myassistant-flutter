@@ -12,8 +12,6 @@ import 'notification_service.dart';
 import 'avatar_message_service.dart';
 import 'brief_service.dart';
 import 'call_service.dart';
-import 'momentum_service.dart';
-import '../screens/momentum_screen.dart' show MomentumNav;
 import '../screens/bills_email_screen.dart' show BillsEmailNav;
 import 'document_events.dart';
 
@@ -88,10 +86,6 @@ class PushService {
           AppLog.add('push', 'scheduled call arrived (foreground)');
           _placeScheduledCall(m);
         }
-        // A Momentum nudge while the app is open: the card catches up.
-        if (m.data['kind'] == 'momentum') {
-          unawaited(MomentumService.instance.refresh(force: true));
-        }
         // Bills by email: a document arrived — open lists reload.
         final isMail = m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm';
         if (isMail) DocumentEvents.bump();
@@ -116,12 +110,7 @@ class PushService {
           ReminderNotifications.instance.showNow(
             n.title ?? 'MyAssistant',
             n.body ?? '',
-            // Tapped, a Momentum nudge opens Momentum.
-            payload: kind == 'momentum'
-                ? 'momentum'
-                : isMail
-                    ? 'bills_email'
-                    : null,
+            payload: isMail ? 'bills_email' : null,
           );
         }
       });
@@ -139,10 +128,6 @@ class PushService {
         if (m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call opened from notification');
           _placeScheduledCall(m);
-        }
-        if (m.data['kind'] == 'momentum') {
-          AppLog.add('push', 'momentum nudge opened');
-          unawaited(MomentumNav.open('momentum'));
         }
         if (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm') {
           AppLog.add('push', 'bills email opened');
@@ -162,10 +147,6 @@ class PushService {
         if (m != null && m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call launched the app');
           _placeScheduledCall(m);
-        }
-        if (m != null && m.data['kind'] == 'momentum') {
-          AppLog.add('push', 'momentum nudge launched the app');
-          unawaited(MomentumNav.open('momentum'));
         }
         if (m != null && (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm')) {
           AppLog.add('push', 'bills email launched the app');

@@ -6,6 +6,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../design/apple_kit.dart';
 import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/neon_cards.dart';
 import '../../services/call_notes_service.dart';
 import '../../services/call_recording_watcher.dart';
 import 'call_detail_screen.dart';
@@ -59,10 +61,9 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
       await svc.setAnalysis(false);
       return;
     }
-    final agreed = await showDialog<bool>(
+    final agreed = await showAppDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Neon.surface,
         title: Text('Analyse your calls?',
             style: TextStyle(color: Neon.textHi, fontSize: 17)),
         content: Text(
@@ -105,13 +106,11 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
   }
 
   void _showRecorderGuide() {
-    showModalBottomSheet<void>(
+    // The theme's sheet (2026-09-30): lit rim, night scrim, handle.
+    showAppSheet<void>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(22, 20, 22, 28),
+        padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,8 +158,9 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
         .expand((g) => g.calls)
         .where((c) => c['status'] == 'done')
         .length;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    final on = svc.analysisEnabled;
+    // Under the night sky (2026-09-30).
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Call notes'),
       body: SafeArea(
         child: RefreshIndicator(
@@ -172,72 +172,66 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
             children: [
-              // The toggle card — the single switch the user asked for.
-              Container(
+              // The toggle card — the single switch the user asked for, and
+              // the page's one lit card (2026-09-30): green while it works
+              // for him, the app's own light while it waits to be turned on.
+              GlowCard(
+                tone: on ? NeonTone.success : NeonTone.brand,
+                halo: 0.6,
                 padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Neon.surface,
-                  borderRadius: BorderRadius.circular(Neon.rLg),
-                  border: Border.all(color: Neon.line),
-                ),
                 child: Column(
                   children: [
                     Row(
                       children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: Neon.violet.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(Icons.graphic_eq_rounded,
-                              color: Neon.violet, size: 18),
-                        ),
+                        ToneTile(Icons.graphic_eq_rounded,
+                            on ? NeonTone.success : NeonTone.brand,
+                            size: 34),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('AI call analysis',
-                                  style: TextStyle(
-                                      color: Neon.textHi,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600)),
+                                  style: NeonType.manrope(
+                                          NeonType.callout, FontWeight.w700)
+                                      .copyWith(color: Neon.textHi)),
                               Text(
                                 'Reads your phone\'s call recordings and '
                                 'files what was agreed.',
                                 style: TextStyle(
-                                    color: Neon.textLo, fontSize: 12),
+                                    color: Neon.textLo,
+                                    fontSize: NeonType.caption),
                               ),
                             ],
                           ),
                         ),
                         Switch(
                           value: svc.analysisEnabled,
-                          activeThumbColor: Neon.violet,
                           onChanged: _toggle,
                         ),
                       ],
                     ),
-                    _statusLine(svc.analysisEnabled),
-                    if (svc.analysisEnabled) ...[
-                      const SizedBox(height: 10),
-                      InkWell(
+                    _statusLine(on),
+                    if (on) ...[
+                      const SizedBox(height: 4),
+                      // 48 dp to the finger, and it dips (2026-09-30).
+                      Tappable(
                         onTap: _showRecorderGuide,
-                        child: Row(
-                          children: [
-                            Icon(Icons.settings_phone_rounded,
-                                size: 15, color: Neon.cyan),
-                            const SizedBox(width: 7),
-                            Flexible(
-                              child: Text('Set up call recording',
-                                  style: TextStyle(
-                                      color: Neon.cyanInk,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                          ],
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(minHeight: 48),
+                          child: Row(
+                            children: [
+                              Icon(Icons.settings_phone_rounded,
+                                  size: 15, color: Neon.cyan),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text('Set up call recording',
+                                    style: NeonType.manrope(
+                                            NeonType.footnote, FontWeight.w600)
+                                        .copyWith(color: Neon.cyanInk)),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -248,43 +242,35 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text('Recent calls',
-                        style: GoogleFonts.spaceGrotesk(
-                            color: Neon.textHi,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700)),
+                    child: Semantics(
+                      header: true,
+                      child: Text('Recent calls',
+                          style: NeonType.sectionTitle
+                              .copyWith(color: Neon.textHi)),
+                    ),
                   ),
                   if (analysed > 0)
                     Text('$analysed analysed',
-                        style: TextStyle(color: Neon.textDim, fontSize: 12)),
+                        style: TextStyle(
+                            color: Neon.textDim, fontSize: NeonType.caption)),
                 ],
               ),
               const SizedBox(height: 4),
               if (groups.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 30),
-                  child: Text(
-                    svc.analysisEnabled
-                        ? 'No analysed calls yet. After your next recorded '
-                            'call, open the app and it will appear here.'
-                        : 'Turn on AI call analysis above to get notes, '
-                            'reminders and answers from your calls.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Neon.textDim, fontSize: 13, height: 1.5),
-                  ),
+                NeonEmptyState(
+                  icon: Icons.phone_callback_rounded,
+                  title: on ? 'No analysed calls yet' : 'No call notes yet',
+                  body: on
+                      ? 'After your next recorded call, open the app and it '
+                          'will appear here.'
+                      : 'Turn on AI call analysis above to get notes, '
+                          'reminders and answers from your calls.',
+                  tone: on ? NeonTone.success : NeonTone.brand,
                 )
               else
                 for (final g in groups) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
-                    child: Text(g.label.toUpperCase(),
-                        style: TextStyle(
-                            color: Neon.textDim,
-                            fontSize: 12,
-                            letterSpacing: 0.8,
-                            fontWeight: FontWeight.w600)),
-                  ),
+                  const SizedBox(height: 10),
+                  GroupLabel(g.label),
                   for (final c in g.calls) _callTile(c),
                 ],
             ],
@@ -305,6 +291,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
             decoration: BoxDecoration(
               color: on ? Neon.success : Neon.textDim,
               shape: BoxShape.circle,
+              boxShadow: on ? Neon.halo(Neon.success, strength: 0.6) : null,
             ),
           ),
           const SizedBox(width: 8),
@@ -313,7 +300,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               on
                   ? 'On — each new recorded call is analysed once.'
                   : 'Off — no recordings are read or uploaded.',
-              style: TextStyle(color: Neon.textLo, fontSize: 12),
+              style: TextStyle(color: Neon.textLo, fontSize: NeonType.caption),
             ),
           ),
         ],
@@ -331,21 +318,26 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
         (c['started_at'] as num?)?.toInt() ?? 0);
     final done = status == 'done';
     final tint = avatarTint(label);
-    return PressScale(
-        child: GestureDetector(
-      onTap: done
-          ? () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => CallDetailScreen(
-                  callId: (c['id'] as num).toInt(), peerLabel: label)))
-          : null,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
+    final id = (c['id'] as num?)?.toInt();
+    // The row grows into the call's page (2026-09-30): the page's header
+    // card carries the same tag.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RimCard(
+        // A call that could not be read says so in amber; one being read,
+        // in the assistant's cyan.
+        tone: status == 'processing'
+            ? NeonTone.tip
+            : status == 'failed'
+                ? NeonTone.warning
+                : null,
         padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(Neon.rMd),
-          border: Border.all(color: Neon.line),
-        ),
+        heroTag: done && id != null ? callHeroTag(id) : null,
+        onTap: done && id != null
+            ? () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => CallDetailScreen(
+                    callId: id, peerLabel: label, preview: c)))
+            : null,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -356,13 +348,13 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               decoration: BoxDecoration(
                 color: tint.withValues(alpha: 0.16),
                 shape: BoxShape.circle,
+                border: Border.all(color: tint.withValues(alpha: 0.5)),
               ),
               child: name.isNotEmpty
                   ? Text(name.characters.first.toUpperCase(),
-                      style: TextStyle(
-                          color: tint,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700))
+                      style: NeonType.manrope(
+                              NeonType.rowTitle, FontWeight.w700)
+                          .copyWith(color: tint))
                   : Icon(Icons.phone_rounded, color: tint, size: 18),
             ),
             const SizedBox(width: 12),
@@ -377,16 +369,16 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
                           label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: Neon.textHi,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600),
+                          style: NeonType.manrope(
+                                  NeonType.callout, FontWeight.w600)
+                              .copyWith(color: Neon.textHi),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(clockLabel(at),
-                          style:
-                              TextStyle(color: Neon.textDim, fontSize: 12)),
+                          style: TextStyle(
+                              color: Neon.textDim,
+                              fontSize: NeonType.caption)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -407,7 +399,7 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
           ],
         ),
       ),
-    ));
+    );
   }
 
   /// One line that says honestly where this call stands.
@@ -420,7 +412,8 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
               child: Text(text,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color, fontSize: 13, height: 1.35)),
+                  style: TextStyle(
+                      color: color, fontSize: NeonType.footnote, height: 1.35)),
             ),
           ],
         );
@@ -429,26 +422,23 @@ class _CallNotesScreenState extends State<CallNotesScreen> {
         return Text(sum.isEmpty ? 'Analysed — tap for details.' : sum,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.4));
+            style: TextStyle(
+                color: Neon.textLo, fontSize: NeonType.footnote, height: 1.4));
       case 'processing':
         return Row(
           children: [
-            SizedBox(
-              width: 11,
-              height: 11,
-              child: CircularProgressIndicator(
-                  strokeWidth: 1.6, color: Neon.cyan),
-            ),
+            const NeonLoader.inline(size: 13, semanticLabel: 'Analysing'),
             const SizedBox(width: 7),
             Text('Analysing…',
-                style: TextStyle(color: Neon.cyanInk, fontSize: 13)),
+                style: TextStyle(
+                    color: Neon.cyanInk, fontSize: NeonType.footnote)),
           ],
         );
       case 'skipped':
         return chip(Icons.do_not_disturb_on_outlined, Neon.textDim,
             sum.isEmpty ? 'Not analysed.' : sum);
       default: // failed
-        return chip(Icons.error_outline_rounded, Neon.warning,
+        return chip(Icons.error_outline_rounded, Neon.warningInk,
             sum.isEmpty ? "Couldn't analyse this call." : sum);
     }
   }

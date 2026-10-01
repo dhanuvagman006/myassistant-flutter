@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../design/apple_kit.dart';
 import '../design/accent_controller.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 
 /// THEME COLOUR — its own screen, reached from Settings → Appearance.
 ///
@@ -24,8 +24,7 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
       valueListenable: AccentController.seed,
-      builder: (_, seed, __) => Scaffold(
-        backgroundColor: Neon.bg,
+      builder: (_, seed, __) => NeonScaffold(
         appBar: appleAppBar(context, 'Theme colour'),
         body: ListView(
           padding: EdgeInsets.fromLTRB(
@@ -53,16 +52,18 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
                 borderRadius: BorderRadius.circular(Neon.rXl),
                 boxShadow: Neon.glow2(Neon.violet, Neon.pink, blur: 26),
               ),
-              child: const Row(
+              // The accent's own ink (2026-09-30), not a fixed white: a
+              // light pick (Mint, Sky) takes dark words, as its buttons do.
+              child: Row(
                 children: [
                   Icon(Icons.auto_awesome_rounded,
-                      color: Colors.white, size: 22),
-                  SizedBox(width: 12),
+                      color: Neon.onAccent, size: 22),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       'This is how your colour looks on buttons and the mic.',
                       style: TextStyle(
-                          color: Colors.white,
+                          color: Neon.onAccent,
                           fontSize: 14,
                           height: 1.4,
                           fontWeight: FontWeight.w600),
@@ -77,12 +78,13 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
     );
   }
 
-  Widget _swatch(String name, Color c, bool selected) => PressScale(
-        child: GestureDetector(
-          onTap: () {
-            HapticFeedback.selectionClick();
-            AccentController.set(c);
-          },
+  // Tappable (2026-09-30): the same dip and tick, and a screen reader now
+  // hears the colour's name, that it is a button and which one is chosen.
+  Widget _swatch(String name, Color c, bool selected) => Semantics(
+        selected: selected,
+        child: Tappable(
+          tapHint: 'choose',
+          onTap: () => AccentController.set(c),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -92,22 +94,15 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: Neon.tile(c),
-                  boxShadow: selected
-                      ? [
-                          BoxShadow(
-                              color: c.withValues(alpha: 0.55),
-                              blurRadius: 18,
-                              spreadRadius: 1)
-                        ]
-                      : null,
+                  // The chosen one lit in its own colour (Neon.halo).
+                  boxShadow: selected ? Neon.halo(c) : null,
                   border: Border.all(
                     color: selected ? Neon.textHi : Neon.line,
                     width: selected ? 3 : 1,
                   ),
                 ),
                 child: selected
-                    ? const Icon(Icons.check_rounded,
-                        size: 26, color: Colors.white)
+                    ? Icon(Icons.check_rounded, size: 26, color: Neon.onTile(c))
                     : null,
               ),
               const SizedBox(height: 6),
@@ -118,8 +113,8 @@ class _ThemeColourScreenState extends State<ThemeColourScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: selected ? Neon.textHi : Neon.textDim,
-                        fontSize: 12,
+                        color: selected ? Neon.textHi : Neon.textLo,
+                        fontSize: NeonType.caption,
                         fontWeight:
                             selected ? FontWeight.w700 : FontWeight.w500)),
               ),

@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../design/apple_kit.dart';
 import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import 'clients_screen.dart';
 import 'connected_apps_screen.dart';
+import 'calendar_screen.dart';
 import 'calls_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
-import 'momentum_screen.dart';
 import 'phone/call_notes_screen.dart';
 import 'reminders_screen.dart';
 import 'shortcuts_screen.dart';
@@ -19,6 +20,9 @@ import 'features_screen.dart';
 import 'stocks_screen.dart';
 import 'studio/studio_screen.dart';
 import '../features/poster/poster_screen.dart';
+import '../features/poster_studio/studio_screen.dart';
+import '../features/shopping/shopping_list_screen.dart';
+import '../design/motion.dart';
 
 /// HUB TAB — every feature as a front door.
 ///
@@ -41,6 +45,15 @@ class HubScreen extends StatelessWidget {
           // The same large title every tab uses.
           const LargeTitle('Hub'),
           _group(context, 'Your day', [
+            // The month, moved off Home (2026-09-29): Home shows what is
+            // next; everything with a date lives here.
+            _Row(
+              'Calendar',
+              'Everything with a date — reminders, promises, bills, birthdays',
+              Icons.calendar_month_rounded,
+              Neon.accentA,
+              (c) => const CalendarScreen(),
+            ),
             // "Office mode" (build 120): made by voice, run from here.
             _Row(
               'Shortcuts',
@@ -50,18 +63,21 @@ class HubScreen extends StatelessWidget {
               (c) => const ShortcutsScreen(),
             ),
             _Row(
-              'Momentum',
-              "Today's 3, habits, focus and your streak",
-              Icons.local_fire_department_rounded,
-              Neon.accentD,
-              (c) => const MomentumScreen(),
-            ),
-            _Row(
               'Reminders',
               'Everything you asked me to remember — add, tick off, remove',
               Icons.notifications_active_rounded,
               Neon.accentA,
               (c) => const RemindersScreen(),
+            ),
+            // One list for anything to buy (build 124): groceries, a dress,
+            // a charger — "add this to my shopping list" in any conversation.
+            _Row(
+              'Shopping list',
+              'Anything to buy — say “add this to my shopping list”',
+              Icons.shopping_basket_rounded,
+              Neon.accentE,
+              (c) => const ShoppingListScreen(),
+              trailing: const ShoppingCountBadge(),
             ),
             _Row(
               'Meetings',
@@ -130,6 +146,15 @@ class HubScreen extends StatelessWidget {
             ),
           ]),
           _group(context, 'Looks', [
+            // AI POSTER STUDIO (2026-09-30): "make a poster for our event
+            // tomorrow" — an AI picture with the words set exactly.
+            _Row(
+              'Poster Studio',
+              'Event posters and flyers, designed with AI',
+              Icons.auto_fix_high_rounded,
+              Neon.accentA,
+              (c) => const PosterStudioScreen(),
+            ),
             // Gift cards from his own photo (client, 2026-09-26: "make a
             // birthday card for my daughter… with my signature").
             _Row(
@@ -198,52 +223,60 @@ class HubScreen extends StatelessWidget {
     );
   }
 
-  // No press dip (2026-09-24): a full-width row inside its grouped card
-  // pulled 8 dp in from the card's edges under the finger. The ripple is
-  // the acknowledgement.
+  // THE ROW DIPS NOW (2026-09-30): the same 0.985 dip and light tick as
+  // every AppleRow — a full-width row moves its edges three times as far
+  // as a card, so the dip is a third of a card's. (2026-09-24 had no dip:
+  // the old 0.97 pulled the row 8 dp in from its card's edges.)
   Widget _rowTile(BuildContext context, _Row r) {
-    return InkWell(
-      onTap: () =>
-          Navigator.of(context).push(MaterialPageRoute(builder: r.builder)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                // One family, not a bag of app-store colours: every tile
-                // is built from the brand accents by the same rule.
-                gradient: Neon.tile(r.color),
-                borderRadius: BorderRadius.circular(11),
+    return PressScale(
+      scale: 0.985,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.of(context).push(MaterialPageRoute(builder: r.builder));
+        },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
+          child: Row(
+            children: [
+              // The shared lit tile (2026-09-30): the brand-built gradient
+              // plus the glass sheen every other tile in the app now has.
+              IconTile(r.icon, r.color, size: 36),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // The same words become the page's title: they fly into
+                    // its bar as it pushes in (motion.dart, titleHeroTag).
+                    Hero(
+                      tag: titleHeroTag(r.title),
+                      flightShuttleBuilder: titleFlight,
+                      child: Text(
+                        r.title,
+                        style: NeonType.row.copyWith(color: Neon.textHi),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      r.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: Neon.textLo,
+                          fontSize: NeonType.footnote,
+                          height: 1.3),
+                    ),
+                  ],
+                ),
               ),
-              child: Icon(r.icon, color: Neon.onTile(r.color), size: 19),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    r.title,
-                    style: NeonType.row.copyWith(color: Neon.textHi),
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    r.subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: Neon.textLo,
-                        fontSize: NeonType.footnote,
-                        height: 1.3),
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: Neon.textDim, size: 20),
-          ],
+              if (r.trailing != null) ...[
+                const SizedBox(width: 8),
+                r.trailing!
+              ],
+              Icon(Icons.chevron_right_rounded, color: Neon.textDim, size: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -256,5 +289,9 @@ class _Row {
   final IconData icon;
   final Color color;
   final Widget Function(BuildContext) builder;
-  const _Row(this.title, this.subtitle, this.icon, this.color, this.builder);
+
+  /// A live count beside the chevron (the shopping list's things to buy).
+  final Widget? trailing;
+  const _Row(this.title, this.subtitle, this.icon, this.color, this.builder,
+      {this.trailing});
 }

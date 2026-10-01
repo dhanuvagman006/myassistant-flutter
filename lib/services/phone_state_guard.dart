@@ -32,6 +32,12 @@ class PhoneStateGuard {
   /// reply that finishes streaming mid-call never plays over it.
   bool get inCall => _inCall;
 
+  /// True only while a call is CONNECTED (not while it rings). The meeting
+  /// recorder pauses on this: a call the owner declines should not cost
+  /// the meeting any audio, but one they take owns the microphone.
+  ValueListenable<bool> get callConnected => _connected;
+  final ValueNotifier<bool> _connected = ValueNotifier(false);
+
   VoidCallback? _onCallActive;
   VoidCallback? _onCallEnded;
 
@@ -73,6 +79,9 @@ class PhoneStateGuard {
   }
 
   void _onEvent(PhoneState event) {
+    // A second call ringing during one (call waiting) keeps it connected.
+    _connected.value = event.status == PhoneStateStatus.CALL_STARTED ||
+        (_connected.value && event.status == PhoneStateStatus.CALL_INCOMING);
     switch (event.status) {
       // CALL_INCOMING fires the instant the phone starts ringing;
       // CALL_STARTED when a call (in OR out) actually connects. Both
@@ -96,5 +105,6 @@ class PhoneStateGuard {
     await _sub?.cancel();
     _sub = null;
     _inCall = false;
+    _connected.value = false;
   }
 }

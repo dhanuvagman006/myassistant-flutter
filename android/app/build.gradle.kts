@@ -40,7 +40,9 @@ android {
         applicationId = "com.myassistant.myassistant"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Android 8 (API 26): the documented minimum for Firebase Phone
+        // Number Verification (2026-09-29). Flutter's default is 24.
+        minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -69,6 +71,15 @@ android {
                 signingConfigs.getByName("release")
             else
                 signingConfigs.getByName("debug")
+        }
+        // `flutter run` on the owner's phone (2026-09-30): the debug build
+        // is signed like the release, so it installs OVER the published app
+        // (keeping his sign-in and data) instead of being refused, which
+        // makes flutter run uninstall the app first.
+        debug {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -107,4 +118,9 @@ dependencies {
     // instead. We never call that update code (updateIfNewReleaseAvailable,
     // checkForNewRelease, updateApp) — our own updater stays the only one.
     implementation("com.google.firebase:firebase-appdistribution:16.0.0-beta20")
+
+    // PHONE NUMBER VERIFICATION (owner, 2026-09-29): the SIM's number, read
+    // from the carrier by Google after Android's consent sheet — it replaced
+    // the SMS code (firebase_auth). PhoneNumberVerificationBridge.
+    implementation("com.google.firebase:firebase-pnv:16.1.1")
 }

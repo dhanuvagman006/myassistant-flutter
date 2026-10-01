@@ -48,6 +48,11 @@ class AmbientBackground extends StatelessWidget {
   const AmbientBackground(
       {super.key, required this.child, this.covered = false});
 
+  /// The ribbons of light the GPU program adds at night. Off only in the
+  /// test that holds the program to the layered drawing it replaces.
+  @visibleForTesting
+  static bool ribbons = true;
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -55,15 +60,25 @@ class AmbientBackground extends StatelessWidget {
         Positioned.fill(
           child: Visibility.maintain(
             visible: !covered,
-            child: const IgnorePointer(
-              child: RepaintBoundary(child: _Light()),
-            ),
+            child: const AmbientLight(),
           ),
         ),
         child,
       ],
     );
   }
+}
+
+/// The light alone, on its own layer: the same pixels as the page behind
+/// it. A tab opening in a circle over another tab carries it inside the
+/// circle (TabDeck.ground) — the tabs themselves are transparent, and
+/// without it the tab being covered showed through the one coming in.
+class AmbientLight extends StatelessWidget {
+  const AmbientLight({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      const IgnorePointer(child: RepaintBoundary(child: _Light()));
 }
 
 /// The three layers themselves (see [AmbientBackground]).
@@ -88,10 +103,16 @@ class _Light extends StatelessWidget {
     final dark = Neon.isDark;
     final tint = Neon.violet;
     return (
-      top: Color.alphaBlend(tint.withValues(alpha: dark ? 0.13 : 0.07), Neon.bg),
-      middle: Color.alphaBlend(tint.withValues(alpha: dark ? 0.05 : 0.03), Neon.bg),
-      tintA: dark ? 0.26 : 0.13,
-      partnerA: dark ? 0.20 : 0.10,
+      // At night the wash is the reference's own sky (sampled): indigo at
+      // the top, navy through the middle, deep blue by the dock.
+      top: dark
+          ? const Color(0xFF150D48)
+          : Color.alphaBlend(tint.withValues(alpha: 0.07), Neon.bg),
+      middle: dark
+          ? const Color(0xFF0A1352)
+          : Color.alphaBlend(tint.withValues(alpha: 0.03), Neon.bg),
+      tintA: dark ? 0.30 : 0.13,
+      partnerA: dark ? 0.24 : 0.10,
       middleA: dark ? 0.10 : 0.05,
     );
   }
@@ -239,7 +260,9 @@ class _AmbientPainter extends CustomPainter {
     rgb(tint, tintA);
     rgb(partner, partnerA);
     f(middleA);
-    f(0);
+    // The ribbons of light (shaders/ambient.frag): the client's night-sky
+    // look, so dark only.
+    f(Neon.isDark && AmbientBackground.ribbons ? 1.0 : 0);
     f(0);
     f(0);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);

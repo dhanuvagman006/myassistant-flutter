@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'neon_tokens.dart';
+import 'motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  APPLE KIT — the app's shared iOS-style building blocks.
@@ -41,17 +42,27 @@ class LargeTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = Text(
+      text,
+      style: GoogleFonts.spaceGrotesk(
+        fontSize: 32,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.6,
+        color: Neon.isDark ? Colors.white : Neon.textHi,
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 20),
-      child: Text(
-        text,
-        style: GoogleFonts.spaceGrotesk(
-          fontSize: 32,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.6,
-          color: Neon.textHi,
-        ),
-      ),
+      // A TAB'S NAME IN THE APP'S LIGHT at night (2026-09-30, the client's
+      // neon reference): cyan into magenta, as Home's greeting name.
+      child: Neon.isDark
+          ? ShaderMask(
+              blendMode: BlendMode.srcIn,
+              shaderCallback: (r) =>
+                  LinearGradient(colors: [Neon.cyan, Neon.pink]).createShader(r),
+              child: title,
+            )
+          : title,
     );
   }
 }
@@ -60,7 +71,10 @@ class LargeTitle extends StatelessWidget {
 PreferredSizeWidget appleAppBar(BuildContext context, String title,
     {List<Widget>? actions, Widget? leading}) {
   return AppBar(
-    backgroundColor: Neon.bg,
+    // Clear (2026-09-30): on a NeonScaffold the sky runs up behind the
+    // title instead of stopping at a flat navy band; on a plain Neon.bg
+    // page it looks exactly as before.
+    backgroundColor: Colors.transparent,
     surfaceTintColor: Colors.transparent,
     elevation: 0,
     centerTitle: true,
@@ -73,15 +87,20 @@ PreferredSizeWidget appleAppBar(BuildContext context, String title,
     // colour and spacing are set here, so all 20 detail bars keep the one
     // app-bar face the plain AppBars and LargeTitle use. (The clarity pass
     // had switched it to Manrope SemiBold: a lighter, different face.)
-    title: Text(
-      title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        color: Neon.textHi,
-        fontSize: NeonType.headline,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -0.2,
+    // The row that opened this page (Hub) flies its title into this one.
+    title: Hero(
+      tag: titleHeroTag(title),
+      flightShuttleBuilder: titleFlight,
+      child: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: Neon.textHi,
+          fontSize: NeonType.headline,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+        ),
       ),
     ),
     actions: actions,
@@ -120,14 +139,16 @@ class GroupedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Neon.surface,
+    final group = Material(
+      color: Neon.isDark
+          ? Color.alphaBlend(Neon.violet.withValues(alpha: 0.06), Neon.surface)
+          : Neon.surface,
       // A hairline edge, as every other card in the app has: white on the
       // #F7F7FB detail ground is 1.07:1, so without it the group had no
       // visible edge (the "I never" card, 2026-09-24).
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Neon.line),
+        borderRadius: BorderRadius.circular(Neon.isDark ? 16.6 : 14),
+        side: Neon.isDark ? BorderSide.none : BorderSide(color: Neon.line),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -142,6 +163,24 @@ class GroupedCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+    if (!Neon.isDark) return group;
+    // LIT AT NIGHT (2026-09-30): the app's rim, softened so a screen of
+    // groups stays calm, and a faint halo — every list on every screen
+    // sits in the same light as Home's cards.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            for (final c in Neon.rim) c.withValues(alpha: 0.55),
+          ],
+        ),
+        boxShadow: Neon.halo(Neon.violet, strength: 0.22),
+      ),
+      child: Padding(padding: const EdgeInsets.all(1.4), child: group),
     );
   }
 }
@@ -163,6 +202,19 @@ class IconTile extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: Neon.tile(color),
         borderRadius: BorderRadius.circular(size * 0.3),
+      ),
+      // Lit glass: a sheen on the top half (2026-09-30).
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * 0.3),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: 0.24),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0, 0.55],
+        ),
       ),
       // White by day; dark ink on the evening theme's pastels, where
       // white fell to 1.4–2.3:1 (Neon.onTile).
@@ -245,12 +297,23 @@ class AppleRow extends StatelessWidget {
       ),
     );
     if (onTap == null) return row;
-    return InkWell(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap!();
-      },
-      child: row,
+    // The row dips a little under the finger as well as rippling
+    // (2026-09-30): 0.985, since a full-width row moves its edges three
+    // times as far as a card does for the same dip.
+    return PressScale(
+      scale: 0.985,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap!();
+        },
+        // 48 dp to the finger (2026-09-29): a one-line row with a small
+        // leading icon ("Add a habit") came out at 46.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: row,
+        ),
+      ),
     );
   }
 }
@@ -301,7 +364,7 @@ class ApplePrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = FilledButton.styleFrom(
-      backgroundColor: Neon.violet,
+      backgroundColor: Neon.accentFill,
       foregroundColor: Neon.onAccent,
       minimumSize: const Size.fromHeight(50),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

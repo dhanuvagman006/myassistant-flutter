@@ -1,19 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 // material re-exports foundation, and carries MaterialPageRoute /
 // WidgetBuilder for opening the app's own screens by voice.
 import 'package:flutter/material.dart';
-import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/network/assistant_api.dart';
+import '../../../ai/brain.dart';
+import '../../../ai/listen.dart';
+import '../../../ai/live_voice.dart';
+import '../../../ai/model_port.dart';
+import '../../../ai/search_suggestions.dart';
+import '../../../ai/speech.dart' show SpeechEngine;
+import '../../../ai/types.dart' show AiToolSpec;
 import '../../../core/log.dart';
 // Screens and settings reachable BY VOICE (open_app_screen / set_theme).
 import '../../../services/avatar_message_service.dart';
@@ -25,8 +27,6 @@ import '../../../screens/documents_screen.dart';
 import '../../../screens/phone/call_notes_screen.dart';
 import '../../../screens/reminders_screen.dart';
 import '../../../screens/business_card_flow.dart';
-import '../../../screens/automation_setup_screen.dart';
-import '../../../services/automation_runner.dart';
 import '../../../screens/meetings/meeting_recorder_screen.dart';
 import '../../../screens/meetings/meetings_screen.dart';
 import '../../../screens/clients_screen.dart';
@@ -35,22 +35,23 @@ import '../../../screens/stocks_screen.dart';
 import '../../../screens/diagnostics_screen.dart';
 import '../../../screens/mcp_servers_screen.dart';
 import '../../../screens/news_screen.dart';
+import '../../../screens/calendar_screen.dart';
 import '../../../screens/focus_screen.dart';
-import '../../../screens/momentum_screen.dart';
 import '../../../screens/avatar_identity_screen.dart';
 import '../../../screens/connected_apps_screen.dart';
 import '../../../screens/shortcuts_screen.dart';
 import '../../../models/shortcut.dart';
 import '../../../services/shortcut_runner.dart';
+import '../../../services/turn_audio_uploader.dart';
 import '../../../screens/bills_email_screen.dart';
-import '../../../services/momentum_service.dart';
 import '../../../models/user_document.dart';
 import '../../../models/vision_result.dart';
 import '../../../models/news_item.dart';
 import '../../../models/schedule_item.dart';
 import '../../../services/api_service.dart';
+import '../../../services/audio/mic_stream.dart' show BargeInWatch;
+import '../../../services/audio/pcm_player.dart';
 import '../../../services/document_events.dart';
-import '../../../services/device_capabilities.dart';
 import '../../../services/device_control_service.dart';
 import '../../../services/sms_service.dart';
 import '../widgets/action_cards.dart' show shareDocumentFile;
@@ -64,73 +65,218 @@ import '../../../services/location_service.dart';
 import '../../../services/missed_calls_service.dart';
 import '../../../services/phone_calendar.dart';
 import '../../../services/phone_state_guard.dart';
-import '../../../services/avatar_service.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/contacts_sync_service.dart';
 import '../../../services/listening_chime.dart';
-import '../../../services/live_service.dart';
-import '../../../services/voice_id_service.dart';
 import '../../../services/usage_service.dart';
-import '../../../services/voice_service.dart';
 import 'assistant_state.dart';
 import '../../../services/greeting_voice.dart';
 import '../../poster/poster_device_actions.dart';
 import '../../poster/poster_engine_host.dart';
+import '../../poster_studio/studio_actions.dart';
+// 2026-09-30: the spoken morning and Meeting Prep (features/briefing).
+import '../../briefing/briefing_directives.dart';
+import '../../people/address_sheet.dart';
+import '../../shopping/shop_handoff.dart';
+import '../../shopping/shopping_list_screen.dart';
+import '../../shopping/shopping_service.dart';
 
 /// The assistant experience's single source of truth (ChangeNotifier — the
 /// state-management style used across this codebase; the UI observes it
 /// with AnimatedBuilder/ListenableBuilder).
 ///
-/// Owns: session lifecycle, mic capture, backend event stream, the phase
-/// state machine, transcript, tool/search/contact/call cards, confirmation
-/// flow, cancellation, and speaking replies out loud.
+/// Owns: the voice conversation (listen -> the brain's turn -> her voice
+/// -> listen again), every typed and tapped request, the phase state
+/// machine, transcript and captions, tool/search/contact/call cards,
+/// confirmations, cancellation, and every device action the brain hands
+/// the phone.
 class AssistantEngine extends ChangeNotifier {
   AssistantEngine._() {
     AuthService.instance.onSignOut(_onSignedOut);
+    _player.playingListenable.addListener(_onPlayback);
   }
   static final AssistantEngine instance = AssistantEngine._();
 
-  final _api = AssistantApi.instance;
-  final _voice = VoiceService.instance;
+  // ---------------- THE BRAIN ----------------
+  // Owner, 2026-09-29: the app talks to the models itself, through Firebase
+  // AI Logic — Gemini in the cloud for every turn (Nano was removed the
+  // same night), Gemini TTS for the voice — and the server is the tool
+  // server (lib/ai/brain.dart). Every spoken, typed and tapped
+  // request is ONE brain turn: its words become the captions, its device
+  // actions run through [_onEvent] exactly as they always did (and are
+  // always answered), and its reply is spoken sentence by sentence through
+  // [_player]. There is no socket and no session to keep alive.
+
+  AssistantBrain? _brainMade;
+
+  /// The app's one brain (made on first use).
+  AssistantBrain get brain => _brainMade ??= AssistantBrain.standard(
+        sink: _player,
+        deviceContext: _deviceContext,
+      );
+
+  /// The assistant's voice out, and the brain's AudioSink: one gapless
+  /// 24 kHz PCM stream player, shared with the greeting.
+  PcmPlayer _player = PcmPlayer.instance;
+
+  VoiceListener? _listenerMade;
+  VoiceListener get _listener =>
+      _listenerMade ??= VoiceListener.standard(FirebaseModelPort());
+
+  /// Speech with no model behind it: a fixed line (someone's message read
+  /// out, a greeting) in the assistant's own voice.
+  SpeechEngine? _speechMade;
+  SpeechEngine get _speech => _speechMade ??= SpeechEngine(port: FirebaseModelPort());
+
+  /// Talking over her: the microphone listens while she speaks.
+  BargeInWatch? _bargeMade;
+  BargeInWatch get _barge => _bargeMade ??= BargeInWatch(player: _player);
+  bool _bargeWatchOn = true;
+
+  // ---------------- THE FAST VOICE (Gemini Live) ----------------
+  // 2026-09-30: a spoken conversation runs on ONE Gemini Live session
+  // (lib/ai/live_voice.dart) — her first sound ~0.6 s after the owner stops
+  // instead of 5-8 s. Its tools still go through the brain (the same
+  // approvals and device actions); the cascade (recogniser -> brain ->
+  // Fola) answers whatever Live cannot, and every typed message.
+
+  LiveVoice? _liveMade;
+  StreamSubscription<LiveEvent>? _liveSub;
+
+  /// Tests that hand the engine no Live voice run the cascade only.
+  bool _liveOff = false;
+
+  /// This conversation is running on Live now.
+  bool _liveMode = false;
+
+  /// Live failed in this conversation: the cascade carries it to the end.
+  bool _liveGaveUp = false;
+
+  LiveVoice get _live {
+    final made = _liveMade ??= LiveVoice.standard(
+      brain: brain,
+      player: _player,
+      deviceContext: _deviceContext,
+      // Testers who said yes to "help improve": the owner can hear the
+      // turn in the admin panel (2026-10-01).
+      onTurnAudio: (a) => unawaited(TurnAudioUploader.send(a)),
+    );
+    _liveSub ??= made.events.listen(_onLive);
+    made.onLevel ??= (l) => micLevel = l;
+    return made;
+  }
+
+  /// Live is wanted for the next listen: the owner's switch, the server's,
+  /// and no failure in this conversation.
+  bool get _liveWanted =>
+      !_liveOff &&
+      !_liveGaveUp &&
+      LiveVoicePrefs.enabled &&
+      AiConfigStore.instance.current.live.on;
+
+  /// The conversation is on the fast (Live) voice right now.
+  bool get fastVoice => _liveMode;
+
+  /// Test seam: a scripted brain, listener, player and voice. The barge-in
+  /// microphone stays off unless [bargeWatch]; the fast voice is off unless
+  /// a [live] one is given.
+  @visibleForTesting
+  void debugUse({
+    AssistantBrain? brain,
+    VoiceListener? listener,
+    PcmPlayer? player,
+    SpeechEngine? speech,
+    LiveVoice? live,
+    bool bargeWatch = false,
+  }) {
+    if (brain != null) _brainMade = brain;
+    if (listener != null) _listenerMade = listener;
+    if (speech != null) _speechMade = speech;
+    if (player != null && !identical(player, _player)) {
+      _player.playingListenable.removeListener(_onPlayback);
+      _player = player;
+      _player.playingListenable.addListener(_onPlayback);
+      _bargeMade = null;
+    }
+    _bargeWatchOn = bargeWatch;
+    if (!identical(live, _liveMade)) {
+      unawaited(_liveSub?.cancel());
+      _liveSub = null;
+      _liveMade = live;
+    }
+    _liveOff = live == null;
+  }
+
+  /// What every turn tells the server about this phone: what it may do
+  /// (the permissions, so only tools that can work are offered) and where
+  /// the owner is — the position that used to ride the live socket.
+  static Future<Map<String, Object?>> _deviceContext() async {
+    // The permissions take a dozen platform calls: read at most once a
+    // minute (a revoked one still counts within a minute).
+    final now = DateTime.now();
+    final cached = _caps;
+    if (cached == null || now.difference(_capsAt) > const Duration(minutes: 1)) {
+      _caps = await AssistantBrain.phoneContext();
+      _capsAt = now;
+    }
+    final out = <String, Object?>{...?_caps};
+    final lat = ApiService.geoLat;
+    final lng = ApiService.geoLng;
+    if (lat != null && lng != null) {
+      // Four decimals (~11 m): plenty for "near me".
+      double r4(double v) => (v * 10000).roundToDouble() / 10000;
+      out['lat'] = r4(lat);
+      out['lng'] = r4(lng);
+      final acc = LocationService.instance.accuracy;
+      if (acc != null && acc.isFinite) out['acc'] = acc.round();
+    }
+    return out;
+  }
+
+  /// What the next turn will tell the server about this phone (tests).
+  @visibleForTesting
+  static Future<Map<String, Object?>> debugDeviceContext() => _deviceContext();
+
+  static Map<String, Object?>? _caps;
+  static DateTime _capsAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // ---------------- observable state ----------------
 
   AssistantPhase phase = AssistantPhase.idle;
-  bool connected = false;
+
+  /// The assistant's services answered the last turn (false after one that
+  /// could not reach them).
+  bool connected = true;
   String? errorMessage;
 
   /// Live mic loudness 0..1 while listening — drives the hero animation.
   ///
   /// A ValueNotifier of its own, NOT part of notifyListeners: level updates
-  /// arrive ~8×/second for the whole conversation, and pushing each one
-  /// through the engine's main listener rebuilt the entire conversation
-  /// screen (video renderer included) on every mic frame. Only the orb
-  /// cares about this number, so only the orb listens to it.
+  /// arrive several times a second for the whole conversation, and pushing
+  /// each one through the engine's main listener rebuilt the entire
+  /// conversation screen on every mic frame. Only the orb cares about this
+  /// number, so only the orb listens to it.
   final ValueNotifier<double> micLevelListenable = ValueNotifier<double>(0);
   double get micLevel => micLevelListenable.value;
   set micLevel(double v) => micLevelListenable.value = v;
 
   /// HER VOICE'S LOUDNESS, 0..1, asked by the orb's rings on each frame
   /// while she speaks (2026-09-25: "only the speaker should move forward
-  /// and backwards" — while she talks too). Live mode: the reply audio's
-  /// own level at the moment it is heard. The fallback voice path: its
-  /// per-word pulse, which it already copies into [micLevel]. The mic's
-  /// gate is untouched, so her voice coming back in never moves them.
+  /// and backwards"): the reply audio's own level at the moment it is
+  /// heard; with none of hers playing here, the level the engine holds.
   double speakerLevelNow() {
-    if (_liveSvc.playing) return _liveSvc.playbackLevelNow();
+    if (_player.playing) return _player.levelNow();
     return phase == AssistantPhase.speaking ? micLevel : 0;
   }
 
-  /// True once the model has finished GENERATING the reply being spoken
-  /// (turn_complete): all its words and audio are here, though the speaker
-  /// may still be playing them. Cleared when the next reply starts to play
-  /// or the user speaks. The captions use it to land the last word with
-  /// the last of the voice (2026-09-25, streaming captions).
+  /// True once the reply being spoken has all been generated: its words
+  /// are all here, though the speaker may still be playing them. The
+  /// captions use it to land the last word with the last of the voice.
   bool replyComplete = false;
 
   /// How much of her reply, as received so far, is still to be heard.
   Duration get speakingRemaining =>
-      _liveSvc.playing ? _liveSvc.playbackRemaining : Duration.zero;
+      _player.playing ? _player.remaining : Duration.zero;
 
   /// Interim transcript while the user is still speaking (device-side).
   String partial = '';
@@ -140,101 +286,98 @@ class AssistantEngine extends ChangeNotifier {
   /// they are the only visual feedback the user gets.
   bool inlineVoice = false;
 
-  /// Starts the inline conversation from the Home orb: the EXACT same
-  /// lifecycle as opening the conversation screen — _conversationOpen
-  /// guards the greeting, the hot-mic check and live revival — just with
-  /// no navigation. Face mode is forced off (there is no surface on Home
-  /// to render the face, and a stale flag sent every inline tap through
-  /// the slow avatar-reservation path).
+  /// Starts the inline conversation from the Home orb.
   Future<void> beginInlineConversation({String? name}) async {
     // A second tap while a start is still running must not stack another
-    // one on top of it — that is how several half-started sessions used to
-    // fight over the microphone.
+    // one on top of it.
     if (_starting) {
       AppLog.add('orb', 'start already in progress — ignoring tap');
       return;
     }
     _starting = true;
     unawaited(ListeningChime.warm()); // decoded before it is needed
+    // THE FAST VOICE CONNECTS WHILE THE HELLO PLAYS (2026-09-30): the
+    // instruction, the tools and the Live session are ready by the time
+    // the microphone opens.
+    if (_liveWanted) unawaited(_live.warm().catchError((Object _) => false));
     inlineVoice = true;
-    faceMode = false;
     notifyListeners();
-    // GREET ON THE TAP, NEVER ON APP OPEN.
-    //
-    // Two of his calls, and they are not in conflict: "when I open the app
-    // we don't need any greeting" (2026-09-20 morning) and, later the same
-    // day, "I open the app and I click on that mic orb, it should greet".
-    // The orb tap IS the gesture — opening the app still says nothing, and
-    // greetingEnabled stays off so the live and classic connect paths add
-    // no second greeting of their own.
-    //
-    // Spoken on the DEVICE, not through the model: it lands instantly
-    // instead of after a round-trip, which is the whole point of greeting
-    // at the tap.
-    if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown &&
+    // GREET ON THE TAP, NEVER ON APP OPEN (his two calls, 2026-09-20: no
+    // greeting when the app opens; "I click on that mic orb, it should
+    // greet"). Spoken on the DEVICE from a cached recording of the
+    // assistant's own voice — instant, no model, no round trip.
+    final now = DateTime.now();
+    if (_liveWanted && now.difference(_lastGreetedAt) >= _greetCooldown) {
+      // ON THE FAST VOICE SHE SAYS IT HERSELF, in the voice she answers in,
+      // once her session is up (_greetOnLive) — with the missed calls in
+      // it. The recording below is for the classic voice only.
+      _lastGreetedAt = now;
+      _openingDue = true;
+    } else if (now.difference(_lastGreetedAt) >= _greetCooldown &&
         MissedCallsService.instance.hasUnmentioned) {
-      // CALLS WERE MISSED: the greeting is the one that mentions them
-      // ("Hello Sir! You missed 2 calls — Ravi at 3:10 pm."), spoken by
-      // the session once it is up. Playing the cached hello here as well
-      // would say hello twice.
-      _lastGreetedAt = DateTime.now();
+      // CALLS WERE MISSED: the greeting is the one that mentions them,
+      // said once the conversation is up. The cached hello as well would
+      // say hello twice.
+      _lastGreetedAt = now;
       _helloInMention = true;
-    } else if (DateTime.now().difference(_lastGreetedAt) >= _greetCooldown) {
-      _lastGreetedAt = DateTime.now();
+    } else if (now.difference(_lastGreetedAt) >= _greetCooldown) {
+      _lastGreetedAt = now;
       final hello = orbGreeting(
         name: name ?? greetingName ?? AuthService.instance.user?.name,
         gender: AuthService.instance.user?.gender,
       );
-      // THE ASSISTANT'S OWN VOICE, NOT THE PHONE'S. Synthesised once by
-      // the same endpoint the assistant speaks through and cached, so it
-      // is both instant and identical to the voice that answers a moment
-      // later. An uncached greeting is SILENT rather than spoken in the
-      // device voice — sounding wrong is the thing he asked to remove.
-      //
-      // The hold is applied only when something will actually play: that
-      // audio leaves the same loudspeaker the microphone is about to open
-      // on, and without it Google hears "Hi sir" as the user's first
-      // words and answers the app's own greeting.
-      unawaited(GreetingVoice.instance.play(hello).then((played) {
-        if (played) _liveSvc.holdMic(const Duration(milliseconds: 2200));
-      }).catchError((_) {/* a greeting that fails is simply silent */}));
+      // The microphone opens only once this has played: it comes out of
+      // the same loudspeaker, and heard, it would be the owner's first
+      // words.
+      _greeting = _sayGreeting(hello);
     }
+    _startCancelled = false;
     try {
-      // HARD CEILING. Any await inside the start path (recorder release, a
-      // socket that never answers, a wedged plugin) used to hang the tap
-      // forever: the orb sat white, every later tap logged "start" and
-      // nothing followed. 20 s is far longer than a healthy connect.
+      // HARD CEILING: a wedged plugin must never hang the tap.
       await beginConversation(name: name).timeout(
         const Duration(seconds: 20),
-        onTimeout: () {
-          AppLog.add('orb', 'start timed out after 20s');
-        },
+        onTimeout: () => AppLog.add('orb', 'start timed out after 20s'),
       );
     } catch (e) {
       AppLog.add('orb', 'start failed: $e');
     } finally {
       _starting = false;
+      _greeting = null;
     }
-    // If nothing came up — no live session and no listening turn — the tap
-    // achieved nothing. Reset so the orb is honestly idle and the next tap
-    // is a clean attempt, and tell the user rather than leaving a dead orb.
-    if (!liveActive && !phase.busy && phase != AssistantPhase.listening) {
+    // STOPPED WHILE CONNECTING (client, 1 Oct: "I have to tap twice, it
+    // looks stuck"). The tap that stopped it landed mid-connect; the
+    // session that finished connecting afterwards must not come back up.
+    if (_startCancelled) {
+      _startCancelled = false;
+      AppLog.add('orb', 'start cancelled by a tap');
+      await leaveConversation(chime: false);
+      return;
+    }
+    // Nothing came up: the tap achieved nothing. Reset so the orb is
+    // honestly idle and the next tap is a clean attempt, and say so.
+    if (!_voiceOn) {
       inlineVoice = false;
-      // Release anything the failed attempt may still be holding, so the
-      // NEXT tap begins from a clean slate rather than inheriting a half
-      // dead session.
-      try {
-        await _liveSvc.stop();
-      } catch (_) {}
-      try {
-        await _voice.cancelCapture();
-      } catch (_) {}
+      await _stopVoice();
       _setPhase(AssistantPhase.idle, silent: true);
       notifyListeners();
       AppLog.add('orb', 'start produced no session');
       AppFeedback.toast("Couldn't start the conversation — tap again.");
     }
   }
+
+  /// The orb's hello, in the assistant's own (cached) voice. An uncached
+  /// greeting is SILENT rather than spoken in another voice.
+  Future<void> _sayGreeting(String hello) async {
+    try {
+      if (await GreetingVoice.instance.play(hello)) {
+        replyComplete = true;
+        _captionLine('hari', hello);
+      }
+    } catch (_) {/* a greeting that fails is simply silent */}
+  }
+
+  /// The orb's hello while it is being started (the mic waits for it).
+  Future<void>? _greeting;
 
   /// True while a start is running, so taps cannot pile up.
   bool _starting = false;
@@ -248,45 +391,15 @@ class AssistantEngine extends ChangeNotifier {
   @visibleForTesting
   set debugStarting(bool v) => _starting = v;
 
-  /// Tap-again on the orb: full clean shutdown. Also safe mid-connect —
-  /// clearing _conversationOpen makes the in-flight start terminate itself
-  /// at the existing hot-mic guard instead of racing a second session.
+  /// A stop that arrived while [beginInlineConversation] was connecting.
+  bool _startCancelled = false;
+
+  /// Tap-again on the orb: full clean shutdown — at ANY point, including
+  /// mid-connect (the start sees [_startCancelled] and stands down).
   Future<void> endInlineConversation() async {
+    if (_starting) _startCancelled = true;
     inlineVoice = false;
     await leaveConversation();
-  }
-
-  /// Set when the assistant's voice changed mid-call. Consumed at the end
-  /// of the turn that announced it, because the new voice only takes
-  /// effect in a NEW live session.
-  bool _pendingVoiceRestart = false;
-
-  /// Rebuild the live session so a new voice is actually heard.
-  ///
-  /// Deliberately NOT a general-purpose restart: it keeps `inlineVoice`
-  /// set across the gap so the orb does not flick back to its resting
-  /// state, and it gives the loudspeaker a moment to drain so the last
-  /// word of the confirmation is not clipped.
-  Future<void> _rebuildLiveForVoice() async {
-    if (!_pendingVoiceRestart) return;
-    _pendingVoiceRestart = false;
-    if (!liveActive) return;
-    AppLog.add('live', 'rebuilding session for the new voice');
-    try {
-      // Let the tail of the spoken confirmation play out.
-      await Future.delayed(const Duration(milliseconds: 900));
-      await leaveConversation();
-      // leaveConversation clears inlineVoice; the user has not asked to
-      // stop talking, so put it back before starting again.
-      inlineVoice = true;
-      await beginInlineConversation();
-      AppLog.add('live', 'session rebuilt — new voice active');
-    } catch (e) {
-      AppLog.add('live', 'voice rebuild failed: $e');
-      // A failed rebuild must not leave the user in a dead session.
-      inlineVoice = false;
-      notifyListeners();
-    }
   }
 
   final List<TranscriptEntry> transcript = [];
@@ -294,6 +407,10 @@ class AssistantEngine extends ChangeNotifier {
 
   String? searchQuery;
   List<SearchResult> searchResults = const [];
+
+  /// Google's search suggestions for a grounded answer, shown as chips
+  /// beside its sources (the grounding terms require them).
+  List<SearchSuggestion> searchSuggestions = const [];
 
   /// Saved documents recalled by this turn ("pull up patient Ramesh's
   /// file") — shown as cards while the reply is spoken.
@@ -308,9 +425,6 @@ class AssistantEngine extends ChangeNotifier {
   /// The name the current call lookup is resolving ("Manish").
   String _pendingLookupName = '';
 
-  /// Server-side id of the call outcome row awaiting the phone's verdict.
-  int? _pendingCallOutcomeId;
-
   /// UI hook (registered by HomeShell): present recalled documents as the
   /// full-screen swipe gallery, over whatever screen the user is on.
   bool Function(List<UserDocument> documents)? onShowDocuments;
@@ -320,9 +434,9 @@ class AssistantEngine extends ChangeNotifier {
   /// no screen to push it on.
   bool Function()? onShowPoster;
 
-  /// Live interpreter mode ("be my translator") — while true the speaker
-  /// gate is open to everyone and the live model translates instead of
-  /// assisting. Never survives the session it was asked in.
+  /// Interpreter mode ("be my translator") — while true the model
+  /// translates what it hears instead of assisting. Never survives the
+  /// conversation it was asked in.
   bool translatorActive = false;
 
   /// Live captions (Settings toggle): the line currently being spoken by
@@ -350,33 +464,17 @@ class AssistantEngine extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // Per-turn transcript accumulators — Gemini streams fragments, and a
-  // caption of half a word at a time is unreadable.
-  String _capUser = '';
-  String _capHari = '';
-  bool _capLastWasUser = true;
-
-  void _captionFrom(String speaker, String fragment) {
+  /// The whole line [speaker] has said so far this turn (the recogniser and
+  /// the brain both hand over everything so far, not just what is new).
+  void _captionLine(String speaker, String text) {
     if (!captionsEnabled && !inlineVoice) return;
     // Anything being said, by either side, is activity — the idle-stop
-    // clock starts over (a long monologue must never be cut at 30 s).
+    // clock starts over (a long monologue must never be cut short).
     _armIdleStop(phase);
-    if (speaker == 'you') {
-      if (!_capLastWasUser) {
-        _capUser = '';
-        _capHari = '';
-      }
-      _capLastWasUser = true;
-      _capUser += fragment;
-    } else {
-      if (_capLastWasUser) _capHari = '';
-      _capLastWasUser = false;
-      _capHari += fragment;
-    }
-    var t = (speaker == 'you' ? _capUser : _capHari).trim();
+    var t = text.trim();
     if (t.isEmpty) return;
     // The whole turn, lyrics-style — the bar scrolls, it never elides.
-    // A hard cap only guards against a runaway session.
+    // A hard cap only guards against a runaway reply.
     if (t.length > 6000) t = t.substring(t.length - 6000);
     caption.value = CaptionLine(speaker, t);
   }
@@ -384,88 +482,62 @@ class AssistantEngine extends ChangeNotifier {
   /// SPEAKER MUTED — the assistant keeps working, it just stops talking.
   ///
   /// His ask, 2026-09-21: "in the top add a btn to mute and unmute when
-  /// agent speaks, bcs some will just read the caption". This is NOT
-  /// ending the session and NOT muting the microphone: the conversation
-  /// continues, the captions keep arriving, the answer is simply read
-  /// rather than heard — which is what you want in a meeting, on a bus,
-  /// or next to someone sleeping.
+  /// agent speaks, bcs some will just read the caption". NOT ending the
+  /// session and NOT muting the microphone: the conversation continues,
+  /// the captions keep arriving, the answer is read rather than heard.
   bool speakerMuted = false;
 
   void setSpeakerMuted(bool v) {
     if (speakerMuted == v) return;
     speakerMuted = v;
-    // Live replies are PCM chunks fed to a stream player; dropping them
-    // at the player is the only place that catches BOTH paths without
-    // touching the session.
-    _liveSvc.speakerMuted = v;
+    // Dropped at the player: the clock runs as if she spoke, so the turn
+    // opens and closes exactly as it does out loud.
+    _player.muted = v || !_foreground;
     if (v) {
-      // Whatever is mid-sentence right now stops mid-sentence. Waiting
-      // for it to finish is the opposite of what the button is for.
-      _speakQueue.clear();
-      unawaited(_voice.stopSpeaking().catchError((_) {}));
-      _ttsActive = false;
-      // The mic gate is held closed while she is audible; with nothing
-      // audible it must not stay shut or the user cannot interrupt.
-      _liveSvc.remoteSpeaking = false;
-      if (phase == AssistantPhase.speaking) {
-        _setPhase(AssistantPhase.listening, silent: true);
-      }
+      // Whatever is mid-sentence right now stops mid-sentence.
+      unawaited(_player.stop());
+      unawaited(_bargeMade?.stop());
     }
     AppLog.add('voice', v ? 'speaker muted' : 'speaker unmuted');
     notifyListeners();
   }
 
-  /// SOMETHING TYPED INSTEAD OF SPOKEN, mid-session.
-  ///
-  /// "add a beautiful text bar where user can type and send instead of
-  /// speaking into the app" — for a name the mic keeps mishearing, a
-  /// long number, or a room where you cannot talk.
-  ///
-  /// A live session already accepts text (the proxy turns it into a user
-  /// turn), so this goes down the SAME socket rather than starting a
-  /// second, classic conversation beside it — two engines answering one
-  /// question is how you get two answers.
-  /// The text box has focus: typed means typed — the microphone stops
-  /// listening until the keyboard closes.
+  /// SOMETHING TYPED INSTEAD OF SPOKEN, mid-session ("add a beautiful text
+  /// bar where user can type and send instead of speaking"): the text box
+  /// has focus, so typed means typed — the microphone stops listening
+  /// until the keyboard closes.
+  bool _typing = false;
+
   void setTyping(bool on) {
-    if (_liveSvc.typingMute == on) return;
-    _liveSvc.typingMute = on;
-    AppLog.add('live', on ? 'typing: mic paused' : 'typing done: mic back');
+    if (_typing == on) return;
+    _typing = on;
+    AppLog.add('voice', on ? 'typing: mic paused' : 'typing done: mic back');
+    if (on) {
+      if (_listening) unawaited(_stopListening());
+      _idleStop?.cancel();
+      _idleStop = null;
+    } else {
+      _maybeListen();
+      _armIdleStop(phase); // the quiet clock starts only once they stop typing
+    }
     // The voice screen says so: "Listening…" while the mic is paused was
     // the screen contradicting what was happening (2026-09-24, s5.png).
     notifyListeners();
   }
 
   /// The microphone is paused because the user is typing.
-  bool get micPausedForTyping => _liveSvc.typingMute;
+  bool get micPausedForTyping => _typing;
 
+  /// A message typed in the conversation: its own turn (a chat turn — the
+  /// server never lets the model stay silent on typed words), answered out
+  /// loud while the conversation is running.
   Future<void> sendTypedMessage(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
-    if (liveActive) {
-      // Their own words belong on screen: the server transcribes SPEECH,
-      // so nothing else would ever show what they typed. A typed message
-      // is its own turn — glued onto the previous caption it read as
-      // "uninstall instagramyes do it".
-      _capLastWasUser = false;
-      _captionFrom('you', t);
-      _maybeAskLocationFor(t);
-      _liveSvc.sendText(t);
-      _conversationEnded = isFarewell(t);
-      _armIdleStop(phase);
-      _setPhase(AssistantPhase.thinking, silent: true);
-      notifyListeners();
-      return;
-    }
-    await sendText(t);
+    await _runTurn(t, mode: BrainMode.chat, speak: _voiceOn || inlineVoice);
   }
 
-  void _clearCaption() {
-    _capUser = '';
-    _capHari = '';
-    _capLastWasUser = true;
-    caption.value = null;
-  }
+  void _clearCaption() => caption.value = null;
 
   /// What the assistant is doing RIGHT NOW ("Searching the web…") — a
   /// small chip on the conversation screen, so background work never
@@ -520,17 +592,26 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// One server event through the dispatcher, as the socket delivers it.
+  /// One device action through the dispatcher, as the brain hands it over.
   @visibleForTesting
-  void debugEvent(Map<String, dynamic> e) => _onEvent(e);
+  void debugEvent(Map<String, dynamic> e) => unawaited(_onEvent(e));
 
   final ValueNotifier<String?> activityLabel = ValueNotifier(null);
+
+  /// The status line's words for the phase: while a tool runs
+  /// (RESPONDING) the tool's own ("Checking your calendar…").
+  String get phaseLabel => phase == AssistantPhase.responding
+      ? (activityLabel.value ?? phase.label)
+      : phase.label;
 
   /// Friendly present-tense labels per tool; anything unknown says
   /// "Working on it…" rather than leaking an internal tool name.
   static String _labelForTool(String tool) {
     if (tool.startsWith('web_search') || tool.startsWith('search_')) {
       return 'Searching…';
+    }
+    if (tool.contains('calendar') || tool.contains('event')) {
+      return 'Checking your calendar…';
     }
     if (tool.startsWith('find_') || tool.startsWith('list_')) {
       return 'Looking that up…';
@@ -610,9 +691,6 @@ class AssistantEngine extends ChangeNotifier {
           CallStatusInfo? s, DateTime changedAt, DateTime now) =>
       s != null && !s.done && now.difference(changedAt) < _callStatusCap;
 
-  String? readyAudioUrl; // cloned-voice preview from audio_ready
-  bool usedClonedVoice = false;
-
   bool get micBusy => phase == AssistantPhase.listening;
 
   /// Set by HomeShell: opens the conversation screen (same navigation as
@@ -630,165 +708,70 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
-  /// True while the local TTS is reading a reply — the avatar's mouth and
-  /// the "Speaking…" pill follow THIS, because the backend has already
-  /// moved to `completed` by the time audio actually plays on-device.
-  bool _ttsActive = false;
-
   /// True while a DEVICE FLOW owns the screen (camera capture, gallery
-  /// pick). The continuous loop must NOT reopen the mic then — it recorded
-  /// shutter clicks and camera-app silence, and the server answered every
-  /// empty transcript with "I couldn't hear that clearly".
+  /// pick, a signature). The microphone must NOT listen then — it recorded
+  /// shutter clicks and camera-app silence, and every empty transcript was
+  /// answered with "I couldn't hear that clearly".
   bool _deviceFlowActive = false;
 
   Timer? _stuckWatchdog;
 
-  // ---------------- BARGE-IN (talk over Hari to interrupt) ----------------
-  // The mic-monitor lives in VoiceService; the engine turns it on while any
-  // reply is being spoken. If the user talks over Hari, we stop the reply
-  // and immediately capture what they're saying as the next turn — no tap.
-  bool _bargeMonitorOn = false;
-  bool _bargedIn = false;
+  // ---------------- HER VOICE ----------------
 
-  void _beginBargeWatch() {
-    if (_bargeMonitorOn) return;
-    _bargedIn = false;
-    _bargeMonitorOn = true;
-    _voice.startBargeInMonitor(() {
-      _bargedIn = true;
-      _voice.stopSpeaking(); // cut the current sentence mid-word
-      _speakQueue.clear(); // drop the rest of the reply
-    });
-  }
+  /// Bumped to silence a fixed line mid-way (barge-in, leaving, pausing).
+  int _sayEpoch = 0;
 
-  /// Stops the barge-in monitor. Returns true if the user interrupted and a
-  /// fresh capture was therefore started — the caller must NOT then also
-  /// re-open the mic via the continuous-conversation loop.
-  Future<bool> _endBargeWatch() async {
-    if (!_bargeMonitorOn) return false;
-    _bargeMonitorOn = false;
-    await _voice.stopBargeInMonitor(); // frees the mic for a new capture
-    if (_bargedIn) {
-      _bargedIn = false;
-      // The user interrupted — start listening for their new question at
-      // once (fire-and-forget so we don't nest inside the speak finally).
-      Future.microtask(pressMic);
-      return true;
-    }
-    return false;
-  }
-
-  /// Speaks [text] with the phase machine wrapped around the audio:
-  /// speaking while the voice plays, completed when it ends.
-  ///
-  /// The reply is split into sentences and fed through the SAME pipelined
-  /// queue the streamed path uses, so playback begins after the FIRST
-  /// sentence's synthesis instead of after the whole reply's — a long
-  /// answer used to cost one huge synthesis wait before any audio at all.
-  Future<void> _speakReply(String text) async {
-    final parts = _splitSentences(text);
-    if (parts.isEmpty) return;
-    _speakQueue.addAll(parts);
-    await _drainSpeech();
-  }
-
-  /// Sentence split for speech pipelining: . ! ? and the Devanagari danda ।.
-  static List<String> _splitSentences(String text) {
-    final t = text.trim();
-    if (t.isEmpty) return const [];
-    final parts = t
-        .split(RegExp(r'(?<=[.!?।])\s+'))
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    return parts.isEmpty ? [t] : parts;
-  }
-
-  // ---------------- STREAMED SENTENCES (latency path) ----------------
-  // The backend now streams conversation replies sentence-by-sentence;
-  // we speak each the moment it arrives — the user hears sentence 1
-  // while sentence 2 is still being generated server-side.
-
-  final List<String> _speakQueue = [];
-  bool _draining = false;
-  TranscriptEntry? _liveEntry; // the assistant bubble being built live
-
-  void _enqueueSentence(String sentence) {
-    if (_liveEntry == null) {
-      _liveEntry = TranscriptEntry(TranscriptRole.assistant, sentence);
-      transcript.add(_liveEntry!);
-    } else {
-      final merged = '${_liveEntry!.text} $sentence';
-      transcript[transcript.length - 1] =
-          TranscriptEntry(TranscriptRole.assistant, merged);
-      _liveEntry = transcript.last;
-    }
-    notifyListeners();
-    _speakQueue.add(sentence);
-    _drainSpeech();
-  }
-
-  Future<void> _drainSpeech() async {
-    // Muted means muted, whatever queued up before the button was hit.
-    if (speakerMuted) {
-      _speakQueue.clear();
+  /// Says [text] in the assistant's own voice with NO model behind it:
+  /// Gemini TTS through the speech engine, into the player. For words that
+  /// are fixed — someone's message read out when no conversation is
+  /// running, the greeting.
+  Future<void> _speakDirect(String text) async {
+    final line = text.trim();
+    if (line.isEmpty || speakerMuted || !_foreground) {
+      // Nothing is said (muted: the caption says it), and the conversation
+      // listens on — or a hand-over left it on "Thinking" for good.
+      _maybeListen();
       return;
     }
-    if (_draining) return;
-    _draining = true;
-    _ttsActive = true;
-    _setPhase(AssistantPhase.speaking, silent: true);
-    void feed() {
-      // Level-only update — the orb listens to micLevelListenable directly.
-      micLevel = _voice.ttsLevel.value;
-    }
-
-    _voice.ttsLevel.addListener(feed);
-    _beginBargeWatch();
-    String? pendingPath;
+    if (PhoneStateGuard.instance.inCall) return; // never over a phone call
+    // Never into an open microphone: it would hear her as the owner.
+    if (_listening) await _stopListening();
+    final epoch = _sayEpoch;
     try {
-      // PIPELINE: keep one sentence's synthesis running AHEAD of playback so
-      // there's no synthesis gap between spoken sentences. We pre-synthesize
-      // the first, then while each sentence plays we synthesize the next.
-      AppLog.add('latency', 'first sentence ${_turnClock?.elapsedMilliseconds}ms');
-      String? nextPath = _speakQueue.isNotEmpty
-          ? await _voice.prefetchSpeech(_speakQueue.first)
-          : null;
-      var firstAudio = true;
-      while (_speakQueue.isNotEmpty) {
-        final s = _speakQueue.removeAt(0);
-        final path = nextPath;
-        if (firstAudio) {
-          firstAudio = false;
-          AppLog.add(
-              'latency', 'first audio ready ${_turnClock?.elapsedMilliseconds}ms');
-        }
-        // Start synthesizing the NEXT sentence while THIS one plays.
-        final Future<String?> upcoming = _speakQueue.isNotEmpty
-            ? _voice.prefetchSpeech(_speakQueue.first)
-            : Future<String?>.value(null);
-        await _voice.speakPrefetched(s, path);
-        nextPath = await upcoming;
+      await for (final c in _speech.synthesizeChunks(line)) {
+        if (epoch != _sayEpoch) break;
+        await _player.play(c.pcm, sampleRate: c.sampleRate);
       }
-      // A barge-in / cancel can drain the queue mid-flight; drop any
-      // prefetched-but-unplayed audio so temp files don't accumulate.
-      pendingPath = nextPath;
-    } finally {
-      if (pendingPath != null) _voice.discardPrefetched(pendingPath);
-      _voice.ttsLevel.removeListener(feed);
-      micLevel = 0;
-      _draining = false;
-      _ttsActive = false;
-      if (phase == AssistantPhase.speaking) {
-        _setPhase(AssistantPhase.completed, silent: true);
-      }
-      notifyListeners();
-      // If the user barged in, a capture is already starting — don't also
-      // re-open the mic from the continuous loop.
-      final resumed = await _endBargeWatch();
-      if (!resumed) _maybeContinueListening();
-      _refreshBriefSoon();
+      if (epoch == _sayEpoch) await _player.drained();
+    } catch (e) {
+      AppLog.add('voice', 'could not speak a line: $e');
     }
+    _maybeListen();
+  }
+
+  /// The player started or stopped sounding: the orb follows her voice,
+  /// the barge-in microphone listens only while she is audible, and the
+  /// conversation listens again once she has finished.
+  void _onPlayback() {
+    if (_player.playing) {
+      if (phase != AssistantPhase.speaking) {
+        _setPhase(AssistantPhase.speaking, silent: true);
+      }
+      // The fast voice watches for barge-in on its own microphone.
+      if (_voiceOn && _bargeWatchOn && !speakerMuted && _foreground && !_liveMode) {
+        unawaited(_barge.start(_onBargeIn));
+      }
+    } else {
+      micLevel = 0;
+      _lastLifeAt = DateTime.now(); // her answer was the last sign of life
+      if (_bargeWatchOn) unawaited(_bargeMade?.stop());
+      if (phase == AssistantPhase.speaking && !_turnRunning) {
+        _setPhase(_voiceOn ? AssistantPhase.listening : AssistantPhase.completed,
+            silent: true);
+      }
+      _maybeListen();
+    }
+    notifyListeners();
   }
 
   /// Tools that change what should be ringing on this phone. Anything
@@ -823,15 +806,27 @@ class AssistantEngine extends ChangeNotifier {
     });
   }
 
-  /// If the backend stream dies mid-turn the app used to sit on
-  /// "Transcribing…" forever. Any busy phase that lasts 35 s without a
-  /// new event now surfaces a retryable error instead.
+  /// A busy phase that lasts 35 s without a new event surfaces a retryable
+  /// error instead of a spinner forever. Listening and speaking are not
+  /// "stuck": the listener and the player end those themselves.
   void _armWatchdog() {
     _stuckWatchdog?.cancel();
-    if (!phase.busy || phase == AssistantPhase.listening || _ttsActive) return;
+    _stuckWatchdog = null;
+    // A Live turn has its own watch (LiveVoice hands a stalled turn to the
+    // cascade), and must not be cancelled from here.
+    if (_liveTurnRunning) return;
+    if (!phase.busy ||
+        phase == AssistantPhase.listening ||
+        phase == AssistantPhase.speaking) {
+      return;
+    }
     _stuckWatchdog = Timer(const Duration(seconds: 35), () {
-      if (phase.busy && phase != AssistantPhase.listening && !_ttsActive) {
-        _setLocalError("That took too long. Please try again.");
+      _stuckWatchdog = null;
+      if (phase.busy &&
+          phase != AssistantPhase.listening &&
+          phase != AssistantPhase.speaking) {
+        unawaited(_brainMade?.cancel());
+        _setLocalError('That took too long. Please try again.');
       }
     });
   }
@@ -840,98 +835,122 @@ class AssistantEngine extends ChangeNotifier {
 
   bool _started = false;
 
-  /// OFFLINE RETRIES BACK OFF — 4 s, 8 s, 16 s, 32 s, then once a minute —
-  /// so a phone without signal is not woken every 4 seconds for as long as
-  /// the app is open. A successful connect starts the count again.
-  int _connectFailures = 0;
-  Timer? _reconnect;
-
-  static Duration reconnectDelay(int failures) {
-    final s = 4 << (failures - 1).clamp(0, 4);
-    return Duration(seconds: s > 60 ? 60 : s);
-  }
-
-  /// Stops a pending reconnect (tests tear the engine down with this).
+  /// Stops the engine's standing timer (tests tear the engine down with
+  /// this).
   @visibleForTesting
   void cancelReconnect() {
-    _reconnect?.cancel();
-    _reconnect = null;
-    // The 5-minute location tick is the engine's other standing timer.
     _locationTicker?.cancel();
     _locationTicker = null;
   }
+
+  /// Skips [start]'s phone-wide side effects (tests).
+  @visibleForTesting
+  void debugMarkStarted() => _started = true;
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
     unawaited(loadCaptionPref());
-    // The saved server override must win the race against this first
-    // connect, or one launch in two would hit the wrong host.
+    unawaited(LiveVoicePrefs.load());
+    // The saved server override must win the race against the first turn.
     await ApiService.loadServerOverride();
     // INCOMING-CALL GUARD: the instant the phone rings or a call connects,
-    // Hari goes silent and releases the mic — never talk over a call. This
-    // was previously only wired in the (now-removed) controller, so the
-    // mute didn't actually work on the live path until now.
+    // the assistant goes silent and lets go of the microphone.
     PhoneStateGuard.instance.start(
       onCallActive: _onPhoneCallActive,
       onCallEnded: _onPhoneCallEnded,
     );
-    await _connect();
-    // Mirror the address book so "tell mom I'll be late" can be resolved by
-    // the server-side tool mid-turn. Not awaited: it must never delay the
-    // assistant coming up, and it silently does nothing without permission.
+    // Mirror the address book so "tell mom I'll be late" can be resolved
+    // by the server's tools. Never delays the assistant coming up.
     ContactsSyncService.instance.maybeSync();
     // Where the owner is, kept current while the app is on screen, and
     // calls missed while it was closed (the Home card; never a dialog).
     _startLocationTicker();
     unawaited(MissedCallsService.instance.check());
-    // Deliberately NO live mode and NO greeting here. Boot must be silent:
-    // the mic goes hot only when the user opens the conversation screen
-    // (beginConversation), never just because the app launched — a hot mic
-    // behind the dashboard read as "is it listening right now or not?".
+    // The brain's config (models, voice, routing words), ready before the
+    // first turn. Deliberately NO listening and NO greeting:
+    // the microphone opens only when the owner taps the orb.
+    unawaited(brain.prepare().catchError((_) {}));
   }
 
-  /// The user opened the conversation screen — THIS is the moment Hari may
-  /// speak and the mic may go hot. Greets first (the orb visibly speaks),
-  /// then opens the live speech-to-speech session; if live can't start,
-  /// the classic tap-to-talk loop is greeted and waiting.
+  /// The owner opened the conversation — THIS is the moment the assistant
+  /// may speak and the microphone may open.
   Future<void> beginConversation({String? name}) async {
     if (name != null && name.isNotEmpty) greetingName = name;
     _conversationOpen = true;
-    // Calls missed since the last look, read while the session connects
+    // Any way into the conversation warms the fast voice (the orb's tap
+    // already has: one connection either way).
+    if (_liveWanted) unawaited(_live.warm().catchError((Object _) => false));
+    // Calls missed since the last look, read while the conversation opens
     // so the greeting can mention them.
     final missedCheck = MissedCallsService.instance.check(force: true);
+    _missedCheck = missedCheck;
     await start();
-    // LIVE FIRST. The old order sat through the whole spoken greeting —
-    // settle delay, TTS synthesis, playback — and only then began the
-    // live connect, so the mic wasn't hot until many seconds after the
-    // screen opened. Now the session connects immediately and the live
-    // model speaks the greeting itself, so "ready to talk" arrives with
-    // the first spoken words instead of after them.
-    if (!liveActive) {
-      final ok = await _startLive();
-      if (ok) {
-        // Pending agent messages ride the live session's own prompt (the
-        // proxy loads unread rows at setup), delivered after the greeting.
-        _greetThroughLive();
-        unawaited(_mentionMissedCalls(missedCheck));
-        return;
-      }
-    }
-    // Classic fallback keeps its own TTS greeting — and must also deliver
-    // pending messages itself, since only the live path gets them in-prompt.
-    await _maybeGreetOnReady();
-    unawaited(announceIncomingMessages());
-    unawaited(_mentionMissedCalls(missedCheck));
+    if (!await _startVoice()) return;
+    // On the fast voice the greeting carries the calls (_greetOnLive).
+    if (!_openingDue) unawaited(_mentionMissedCalls(missedCheck));
   }
 
   /// Set when the orb tap left its hello to the missed-calls mention.
   bool _helloInMention = false;
 
+  /// The tap's greeting is still to be said by the fast voice, once its
+  /// session is up (_greetOnLive), or by the classic one if it is not.
+  bool _openingDue = false;
+  Future<void>? _missedCheck;
+
+  /// Connects the fast voice before the orb is tapped (the app coming to
+  /// the front), so the tap listens at once instead of ~4 s later
+  /// (measured on the owner's phone, 2026-09-30). A session nobody uses
+  /// closes itself ([AiLive.idleCloseSec]).
+  void prewarmVoice() {
+    if (_voiceOn || !_liveWanted) return;
+    unawaited(_live.warm().catchError((Object _) => false));
+  }
+
+  /// HER HELLO ON THE FAST VOICE: said by Live itself, in the voice she
+  /// answers in, the moment her session and the microphone are up — the
+  /// missed calls in it when there are any.
+  Future<void> _greetOnLive(int epoch) async {
+    try {
+      await (_missedCheck ?? Future<void>.value()).timeout(const Duration(seconds: 1));
+    } catch (_) {}
+    if (epoch != _voiceEpoch || !_foreground || PhoneStateGuard.instance.inCall) return;
+    final svc = MissedCallsService.instance;
+    final calls = svc.unmentioned;
+    final u = AuthService.instance.user;
+    final line = svc.takeMention(
+          honorific: honorific(gender: u?.gender),
+          hello: true,
+        ) ??
+        orbGreeting(name: greetingName ?? u?.name, gender: u?.gender);
+    final back = [
+      for (final g in CallHistory.group(calls).take(CallHistory.maxEntries))
+        if (g.latest.dialable.isNotEmpty) '${g.latest.label} (${g.latest.dialable})',
+    ];
+    final said = _live.greet('[SYSTEM] I just opened the conversation. Greet me '
+        'now with exactly this, nothing before or after it: "$line" Then stop '
+        'and wait for me.'
+        '${back.isEmpty ? '' : ' If I ask to call someone back, use '
+            'place_phone_call with the name or number: ${back.join('; ')}.'}');
+    if (!said) AppLog.add('voice', 'hello skipped: he was already talking');
+  }
+
+  /// The classic voice's greeting, when the fast voice could not start.
+  Future<void> _greetOnCascade() async {
+    if (MissedCallsService.instance.hasUnmentioned) {
+      _helloInMention = true;
+      await _mentionMissedCalls(_missedCheck ?? Future<void>.value());
+      return;
+    }
+    final u = AuthService.instance.user;
+    await _sayGreeting(orbGreeting(name: greetingName ?? u?.name, gender: u?.gender));
+  }
+
   /// THE GREETING MENTIONS MISSED CALLS, ONCE.
   ///
   /// Owner, 2026-09-24: "it should report when we have any missed calls".
-  /// Said by the session itself, so the calls are in the conversation —
+  /// Said by the assistant itself, so the calls are in the conversation —
   /// "call him back" then just works — and never repeated for calls
   /// already mentioned (MissedCallsService.takeMention).
   Future<void> _mentionMissedCalls(Future<void> check) async {
@@ -947,8 +966,8 @@ class AssistantEngine extends ChangeNotifier {
       honorific: honorific(gender: AuthService.instance.user?.gender),
       hello: hello,
     );
-    // Nothing new after all (called back meanwhile): the session simply
-    // opens listening, as it always does.
+    // Nothing new after all (called back meanwhile): the conversation
+    // simply opens listening, as it always does.
     if (line == null) return;
     AppLog.add('calls', 'greeting mentions ${calls.length} missed call(s)');
     final back = [
@@ -973,9 +992,6 @@ class AssistantEngine extends ChangeNotifier {
     await _dialAndReport(ContactMatch(id: '', name: c.label, phone: phone));
   }
 
-  /// Speaks the opening greeting through the live session's own voice.
-  /// Same epoch bookkeeping as the classic greeting, so a session greets
-  /// at most once and a real reconnect may greet again.
   /// When the greeting was last actually spoken. Opening the mic and
   /// SAYING HELLO are different things, and only one of them should happen
   /// every time the app comes forward.
@@ -985,724 +1001,1069 @@ class AssistantEngine extends ChangeNotifier {
   /// enough that coming back to the app later is still greeted.
   static const _greetCooldown = Duration(minutes: 15);
 
-  void _greetThroughLive() {
-    if (!greetingEnabled) return;
-    // FOUR GREETINGS IN SIX MINUTES, observed in a real transcript — every
-    // app switch produced another "Good morning, Dhanush!". Each one is a
-    // model turn generated and spoken from scratch for a fixed sentence,
-    // so it was wasteful as well as wearing. The session still opens and
-    // the microphone is still live; it simply does not announce itself
-    // again when it only just did.
-    if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) {
-      AppLog.add('greet', 'skipped — greeted recently');
+  /// A call started/rang — a real phone call always wins the audio: the
+  /// conversation ends, nothing speaks and nothing listens.
+  Future<void> _onPhoneCallActive() async {
+    if (_voiceOn || inlineVoice) {
+      await leaveConversation(chime: false);
       return;
     }
-    _lastGreetedAt = DateTime.now();
-    // EVERY TIME THE CONVERSATION OPENS, not once per session.
-    //
-    // The old guard was keyed to _sessionEpoch, which only advances when
-    // the SSE socket reconnects. Coming back to an app Android had kept in
-    // memory reuses the same epoch, so the orb would reopen and then say
-    // nothing — "everytime i open the app i need the greeting, even if i
-    // don't remove it from background".
-    //
-    // Nothing is lost by dropping it: this runs only from
-    // beginConversation, after a live session has actually started, and
-    // beginInlineConversation's _starting flag already refuses a second
-    // overlapping open. _greetedEpoch is still stamped so the classic
-    // fallback cannot add a second greeting later in the same session.
-    if (PhoneStateGuard.instance.inCall) return;
-    _greetedEpoch = _sessionEpoch;
-    final text = greetingFor(greetingName,
-        gender: AuthService.instance.user?.gender);
-    _liveSvc.sendText(
-        'Say this greeting to me now, in my language: "$text" — and if you '
-        'were given any messages from other people to deliver, deliver them '
-        'immediately after the greeting, naming each sender. If you were '
-        'given no messages, say ONLY the greeting — never mention messages, '
-        'their absence, or an empty inbox. BUT if I have already spoken or '
-        'asked for something, SKIP the greeting entirely — no hello, no '
-        '"how can I help" — and simply answer what I asked.');
-  }
-
-  /// A call started/rang — cut all audio and the mic immediately.
-  Future<void> _onPhoneCallActive() async {
-    if (liveActive) await stopLive(); // a real call always wins the audio
-    _bargedIn = false;
-    // A real phone call always wins: close the continuous loop so the mic
-    // can never reopen itself mid-call.
-    _conversationEnded = true;
-    if (_bargeMonitorOn) {
-      _bargeMonitorOn = false;
-      try {
-        await _voice.stopBargeInMonitor();
-      } catch (_) {}
-    }
-    _speakQueue.clear();
-    try {
-      await _voice.stopSpeaking();
-    } catch (_) {}
-    try {
-      await _voice.cancelCapture();
-    } catch (_) {}
-    _ttsActive = false;
+    _sayEpoch++;
+    await _brainMade?.cancel();
+    await _player.stop();
     if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
   }
 
   void _onPhoneCallEnded() {
-    // Nothing to resume — the live app waits for the user to tap the mic.
+    // Nothing to resume — the owner taps the orb when they want to talk.
     if (phase != AssistantPhase.idle && !phase.busy) {
       _setPhase(AssistantPhase.idle, silent: true);
     }
   }
 
-  Future<void> _connect() async {
-    try {
-      await _api.connect(
-        onEvent: _onEvent,
-        onDisconnect: () {
-          connected = false;
-          notifyListeners();
-        },
-        // Every successful (re)connect — a blip must not leave the header
-        // stuck on "Connecting" after the stream quietly came back.
-        onConnected: () {
-          connected = true;
-          errorMessage = null;
-          notifyListeners();
-        },
-      );
-      connected = true;
-      _connectFailures = 0;
-      errorMessage = null;
-      // THE REAL READY SIGNAL. The SSE session is open and the backend
-      // answered — this, and only this, is what unlocks the greeting.
-      // A new epoch means a genuinely new assistant session, so a
-      // reconnect after a real drop can greet again, while rebuilds,
-      // setState and navigation cannot (they never reach this line).
-      _sessionEpoch++;
-      // NOT WHILE A CONVERSATION IS OPENING. beginConversation sets
-      // _conversationOpen before awaiting start(), so on first launch this
-      // connect lands mid-setup: the classic TTS greeting would start,
-      // claim the epoch so _greetThroughLive skips, and then live would
-      // release the audio device out from under speech already playing —
-      // measured, one second apart. Whichever path beginConversation
-      // chooses will greet; its own classic fallback still calls this
-      // directly when live cannot start.
-      if (!_starting) _maybeGreetOnReady();
-    } catch (e) {
-      connected = false;
-      errorMessage = 'Could not reach the assistant service.';
-      AppLog.add('engine', 'connect failed: $e');
-      // Retry quietly — the screen shows the offline banner meanwhile.
-      _connectFailures++;
-      _reconnect?.cancel();
-      _reconnect = Timer(reconnectDelay(_connectFailures), () {
-        _reconnect = null;
-        if (_started && !connected) _connect();
-      });
-    }
-    notifyListeners();
-  }
-
   @override
   void dispose() {
     _stuckWatchdog?.cancel();
-    _api.close();
     super.dispose();
   }
 
-  // ---------------- user input ----------------
+  // ---------------- THE VOICE CONVERSATION ----------------
+  // listen (the phone's own recogniser, on-device first, in the owner's
+  // language) -> the brain's turn -> her reply, spoken sentence by
+  // sentence -> listen again, until the owner ends it (the orb, "bye",
+  // end_conversation) or a minute passes with nobody talking. Talking
+  // over her, or tapping, stops her at once (barge-in).
 
-  /// Mic button: record until silence, then hand the clip to the backend
-  /// (STT + the whole turn run server-side; results stream back).
-  ///
-  /// [auto] is true when the continuous-conversation loop re-opened the mic
-  /// by itself; a manual press always (re)starts a conversation.
-  Future<void> pressMic({bool auto = false}) async {
-    // THE ORB IS LIVE MODE. One tap opens a real speech-to-speech
-    // conversation; tapping again hangs up. The classic record→STT→TTS
-    // loop only runs as a SILENT fallback when live isn't available on
-    // this key/server — the user never sees an error for it.
-    if (liveActive) {
-      await stopLive();
+  bool _voiceOn = false;
+
+  /// The voice conversation is running — listening, thinking or speaking.
+  /// (It used to mean the live socket was open; every screen asks it.)
+  bool get liveActive => _voiceOn;
+
+  /// Marks a conversation as running without its loop (widget tests that
+  /// show the voice screen).
+  @visibleForTesting
+  set debugVoiceOn(bool on) {
+    _voiceOn = on;
+    if (on) {
+      _listening = true; // the microphone a running conversation has open
       return;
     }
-    if (!auto) {
-      // ALWAYS retry live on a deliberate tap. _liveUnavailable used to be
-      // sticky for the whole app run, so ONE transient failure (a quota
-      // blip, a slow avatar reservation) silently demoted the app to the
-      // classic loop until restart — "the agent is not visible".
-      final ok = await _startLive();
-      if (ok) return;
-      // Live couldn't start — fall through to the classic path, silently.
+    // Off: any listen still open is over, and its deadline with it.
+    _voiceEpoch++;
+    _listening = false;
+    _listenGuard?.cancel();
+    _listenGuard = null;
+  }
+
+  /// Bumped whenever the conversation stops, so a listen still finishing
+  /// from the one before knows it is stale.
+  int _voiceEpoch = 0;
+  bool _listening = false;
+
+  /// True while the microphone is actually open for the user's words —
+  /// not while the fast voice is still connecting (audit 2026-10-01: the
+  /// label said Listening through a 7 s connect with no microphone).
+  bool get micOpen =>
+      _listening &&
+      !_liveStarting &&
+      (!_liveMode || (_liveMade?.listening ?? false));
+  bool _turnRunning = false;
+  int _turnGen = 0;
+  int _hearFailures = 0;
+  int _turnFailures = 0;
+
+  /// "Bye" or end_conversation: the conversation closes once her last
+  /// words have played.
+  bool _endAfterTurn = false;
+
+  /// The last sign of life: the owner speaking, or her answering.
+  DateTime _lastLifeAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// A minute with nobody talking ends the conversation (owner,
+  /// 2026-09-24: "when user don't respond for 1 min (silence) auto close
+  /// it").
+  static const quietClose = Duration(seconds: 60);
+
+  /// Starts the conversation. False when it cannot (a phone call).
+  Future<bool> _startVoice() async {
+    if (_voiceOn) return true;
+    if (PhoneStateGuard.instance.inCall) return false;
+    AppLog.add('voice', 'conversation starts');
+    // The model connection gets ready while the owner is still talking.
+    unawaited(brain.warmUp());
+    _voiceOn = true;
+    _audioFocus(true);
+    final epoch = ++_voiceEpoch;
+    _hearFailures = 0;
+    _turnFailures = 0;
+    _endAfterTurn = false;
+    _lastLifeAt = DateTime.now();
+    _clearCaption();
+    _resetTurn();
+    // Where the owner is, for the turns to come (every turn carries it).
+    unawaited(_refreshLocation());
+    _setPhase(AssistantPhase.listening, silent: true);
+    notifyListeners();
+    final hello = _greeting;
+    if (hello != null) {
+      try {
+        await hello.timeout(const Duration(seconds: 4));
+      } catch (_) {}
     }
-    if (!auto) {
-      // An explicit tap means "I want to talk" — revive a conversation that
-      // had been closed by a goodbye or by silence.
-      _conversationEnded = false;
-      _silentTurns = 0;
-      _failedTurns = 0;
+    if (epoch != _voiceEpoch) return _voiceOn;
+    _chimeOnListen = true;
+    _maybeListen();
+    return true;
+  }
+
+  /// MUSIC PAUSES WHILE WE TALK, and plays again after (2026-09-30). The
+  /// microphone used to take the audio focus itself, and paused its capture
+  /// for good whenever it lost it (a WhatsApp ping): the client's S24 Ultra
+  /// sat on "Listening". The conversation holds it now, and a loss changes
+  /// nothing (MainActivity "audioFocus").
+  static const _device = MethodChannel('hari/device');
+  void _audioFocus(bool on) {
+    _device.invokeMethod<bool>('audioFocus', {'on': on}).catchError((Object _) => false);
+  }
+
+  /// Lets go of everything the conversation holds: the listener, the turn,
+  /// her voice, the barge-in microphone.
+  Future<void> _stopVoice() async {
+    final was = _voiceOn;
+    _voiceOn = false;
+    _voiceEpoch++;
+    _listening = false;
+    _sayEpoch++;
+    _notes.clear();
+    if (was) {
+      AppLog.add('voice', 'conversation ends');
+      _audioFocus(false);
     }
-    if (phase == AssistantPhase.listening) {
-      // Tap while listening = cancel this capture (both the recorder
-      // and the device-recognizer fallback honour this).
-      // An explicit cancel also closes the conversation loop, so the mic
-      // doesn't immediately reopen against the user's wishes.
-      _conversationEnded = true;
-      _voice.stopSpeaking();
-      _speakQueue.clear();
-      await _voice.cancelCapture();
+    try {
+      await _listenerMade?.cancel();
+    } catch (_) {}
+    try {
+      await _brainMade?.cancel();
+    } catch (_) {}
+    try {
+      await _speechMade?.cancel();
+    } catch (_) {}
+    try {
+      await _player.stop();
+    } catch (_) {}
+    try {
+      await _bargeMade?.stop();
+    } catch (_) {}
+    _liveMode = false;
+    // A Live turn cut short by the end of the conversation is over too.
+    if (_liveTurnRunning) _turnRunning = false;
+    _liveTurnRunning = false;
+    _liveGaveUp = false; // the next conversation tries the fast voice again
+    _openingDue = false;
+    _missedCheck = null;
+    _liveQuiet?.cancel();
+    _liveQuiet = null;
+    _listenGuard?.cancel();
+    _listenGuard = null;
+    _doneTimer?.cancel();
+    _doneTimer = null;
+    _liveUser = null;
+    _liveBubble = null;
+    try {
+      await _liveMade?.stop();
+    } catch (_) {}
+    micLevel = 0;
+    partial = '';
+  }
+
+  /// Listens for the owner's next words — when the conversation is on and
+  /// nothing else owns the microphone or the turn.
+  void _maybeListen() {
+    if (!_voiceOn || _listening || _turnRunning) return;
+    if (_typing || _deviceFlowActive || !_foreground) return;
+    if (PhoneStateGuard.instance.inCall) return;
+    // Never over her voice: _onPlayback comes back here when she is done.
+    if (_player.playing) return;
+    if (_notes.isNotEmpty) {
+      unawaited(_nextNote());
       return;
     }
-    if (phase.busy && phase != AssistantPhase.completed) return;
-    // Safety: never let a still-running barge monitor hold the mic while we
-    // try to record a fresh clip.
-    if (_bargeMonitorOn) {
-      _bargeMonitorOn = false;
-      _bargedIn = false;
-      await _voice.stopBargeInMonitor();
+    if (DateTime.now().difference(_lastLifeAt) >= quietClose && !_sessionWaiting) {
+      AppLog.add('voice', 'a minute of quiet — closing the conversation');
+      unawaited(_closeAfterQuiet());
+      return;
     }
-    await _voice.stopSpeaking();
+    if (_liveWanted) {
+      unawaited(_listenLive(_voiceEpoch));
+      return;
+    }
+    unawaited(_listenOnce(_voiceEpoch));
+  }
 
-    if (!await _voice.canRecord()) {
+  /// The first listen of a conversation chimes.
+  bool _chimeOnListen = false;
+
+  /// One listen of the phone's recogniser, at most (its own limit is 30 s).
+  static const listenDeadline = Duration(seconds: 40);
+  Timer? _listenGuard;
+
+  Future<void> _listenOnce(int epoch) async {
+    _listening = true;
+    partial = '';
+    // THE BARGE-IN MICROPHONE LETS GO FIRST (voice audit, 2026-09-30): the
+    // recogniser opening while it still held the microphone got nothing.
+    try {
+      await _bargeMade?.stop();
+    } catch (_) {}
+    if (epoch != _voiceEpoch || !_listening) return;
+    if (_chimeOnListen) {
+      _chimeOnListen = false;
+      // THE MOMENT IT IS LISTENING (after the hello has played): one chime
+      // is the whole signal to start talking (his ask, 2026-09-20) — and
+      // never off-screen.
+      if (_foreground) unawaited(ListeningChime.play());
+    }
+    if (phase != AssistantPhase.listening) {
+      _setPhase(AssistantPhase.listening, silent: true);
+    }
+    var heard = '';
+    HearError? failed;
+    // A recogniser that never reports back must not hold "Listening" for
+    // ever: past its own limit (30 s) it is let go, and listening starts
+    // again (2026-09-30).
+    var lastEvent = DateTime.now();
+    var extended = false;
+    void onDeadline() {
+      if (epoch != _voiceEpoch || !_listening) return;
+      // Still reporting (a long dictation, the cloud transcribing it): once
+      // more, never for ever.
+      if (!extended && DateTime.now().difference(lastEvent) < const Duration(seconds: 15)) {
+        extended = true;
+        _listenGuard = Timer(listenDeadline, onDeadline);
+        return;
+      }
+      AppLog.add('voice', 'the recogniser never finished: listening again');
+      unawaited(_listenerMade?.cancel());
+    }
+
+    _listenGuard?.cancel();
+    _listenGuard = Timer(listenDeadline, onDeadline);
+    try {
+      await for (final e in _listener.listen()) {
+        if (epoch != _voiceEpoch || !_listening) break;
+        lastEvent = DateTime.now();
+        switch (e) {
+          case HearPartial(:final text):
+            partial = text;
+            if (text.trim().isNotEmpty) {
+              _lastLifeAt = DateTime.now();
+              _captionLine('you', text);
+            }
+            notifyListeners();
+          case HearLevel(:final level):
+            micLevel = level;
+          case HearEndOfSpeech():
+            micLevel = 0;
+          case HearFinal(:final text):
+            heard = text.trim();
+          case final HearError err:
+            failed = err;
+        }
+      }
+    } catch (_) {
+      failed = const HearError('failed');
+    } finally {
+      _listenGuard?.cancel();
+      _listenGuard = null;
+    }
+    if (epoch != _voiceEpoch) return; // the conversation ended meanwhile
+    final wanted = _listening;
+    _listening = false;
+    micLevel = 0;
+    partial = '';
+    if (!wanted) return; // stopped on purpose: typing, a note, a camera
+    final error = failed;
+    if (error != null) return _hearFailed(error);
+    _hearFailures = 0;
+    if (heard.isEmpty) {
+      // Nothing was said: listen again (the quiet minute ends it). A beat
+      // first, so a recogniser that answers at once cannot spin.
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
+        if (epoch == _voiceEpoch) _maybeListen();
+      });
+      return;
+    }
+    _lastLifeAt = DateTime.now();
+    await _runTurn(heard, mode: BrainMode.voice);
+  }
+
+  /// Stops listening on purpose (what was heard so far is dropped).
+  Future<void> _stopListening() async {
+    if (!_listening) return;
+    _listening = false;
+    micLevel = 0;
+    partial = '';
+    if (_liveMode) {
+      // The fast voice lets go of the microphone; its session stays.
+      try {
+        await _liveMade?.pause();
+      } catch (_) {}
+      return;
+    }
+    try {
+      await _listenerMade?.cancel();
+    } catch (_) {}
+  }
+
+  void _hearFailed(HearError e) {
+    AppLog.add('voice', 'listening failed: ${e.code}');
+    final epoch = _voiceEpoch;
+    if (e.code == 'permission') {
+      unawaited(_stopVoice());
       _setLocalError('Microphone permission is needed. Enable it in Settings.');
       return;
     }
+    _hearFailures++;
+    if (e.permanent || _hearFailures >= 3) {
+      unawaited(_stopVoice());
+      _setLocalError(e.code == 'network'
+          ? "I couldn't reach the speech service. Check your connection."
+          : "I couldn't hear you just now. Please try again.");
+      return;
+    }
+    // A blip: try again in a moment.
+    Future<void>.delayed(const Duration(milliseconds: 600), () {
+      if (epoch == _voiceEpoch) _maybeListen();
+    });
+  }
 
-    _resetTurn();
-    _setPhase(AssistantPhase.listening);
-    HapticFeedback.mediumImpact();
+  /// BARGE-IN: the owner talked over her (the microphone heard it) or
+  /// tapped. She stops at once, the turn is dropped, and the conversation
+  /// listens — the way a person stops when interrupted.
+  Future<void> bargeIn() async {
+    if (!_voiceOn && !_turnRunning && !_player.playing) return;
+    AppLog.add('voice', 'barge-in');
+    _sayEpoch++;
+    _lastLifeAt = DateTime.now();
+    if (_liveMode) await _liveMade?.interrupt();
+    await _bargeMade?.stop();
+    await _brainMade?.cancel();
+    await _speechMade?.cancel();
+    await _player.stop();
+    replyComplete = true;
+    activityLabel.value = null;
+    if (_voiceOn) {
+      _setPhase(AssistantPhase.listening, silent: true);
+      // The dropped turn clears itself as its stream closes; that, or
+      // this, opens the microphone.
+      _maybeListen();
+    } else if (phase.busy) {
+      _setPhase(AssistantPhase.completed, silent: true);
+    }
+    notifyListeners();
+  }
 
-    // LATENCY TRACING: every stage of the turn is timed and written to the
-    // in-app log (Diagnostics screen), so a slow turn can be attributed to
-    // capture, upload or the server instead of guessed at.
-    _turnClock = Stopwatch()..start();
-    final path = await _voice.recordUntilSilence(
-      // The self-reopened mic (continuous loop) is strict: it only uploads
-      // sustained, latched speech and gives up on an idle room after 2.5s
-      // instead of 4 — so it never transcribes background noise ("00:00")
-      // and never apologizes into silence.
-      requireLatch: auto,
-      noSpeechTimeoutMs: auto ? 2500 : 4000,
-      onLevel: (l) => micLevel = l,
-    );
-    micLevel = 0;
-    AppLog.add('latency', 'capture ${_turnClock!.elapsedMilliseconds}ms');
+  void _onBargeIn() => unawaited(bargeIn());
 
-    if (path == null) {
-      if (_voice.lastRecordingCancelled) {
-        _setPhase(AssistantPhase.idle);
+  // ---------------- THE FAST VOICE'S TURNS ----------------
+
+  /// The quiet minute, for a Live conversation (its microphone never
+  /// stops, so the listening loop's own check never comes round).
+  Timer? _liveQuiet;
+
+  /// DONE is shown briefly, then LISTENING.
+  Timer? _doneTimer;
+  static const liveDoneHold = Duration(milliseconds: 450);
+
+  /// This Live turn's bubbles: the owner's words and her reply, replaced
+  /// as they grow.
+  TranscriptEntry? _liveUser;
+  TranscriptEntry? _liveBubble;
+
+  /// Listens on the fast voice: the session (warmed on the orb tap) and
+  /// its microphone. Anything short of ready within LiveTimeouts and the
+  /// cascade listens instead, for the rest of this conversation.
+  Future<void> _listenLive(int epoch) async {
+    _listening = true;
+    partial = '';
+    final chime = _chimeOnListen;
+    _chimeOnListen = false;
+    if (phase != AssistantPhase.listening) {
+      _setPhase(AssistantPhase.listening, silent: true);
+    }
+    var ok = false;
+    _liveStarting = true;
+    try {
+      ok = await _live.start();
+    } catch (e) {
+      AppLog.add('voice', 'fast voice failed to start: $e');
+    } finally {
+      _liveStarting = false;
+    }
+    if (epoch != _voiceEpoch) return; // the conversation ended meanwhile
+    if (!_listening) {
+      // Stopped on purpose meanwhile (typing, a note, the camera).
+      if (ok) unawaited(_liveMade?.pause());
+      return;
+    }
+    if (!ok) {
+      _listening = false;
+      _liveMode = false;
+      _liveGaveUp = true;
+      AppLog.add('voice', 'fast voice unavailable — the classic voice listens');
+      if (_openingDue) {
+        _openingDue = false;
+        await _greetOnCascade();
+        if (epoch != _voiceEpoch) return;
+      }
+      _chimeOnListen = chime;
+      _maybeListen();
+      return;
+    }
+    if (!_liveMode) AppLog.add('voice', 'fast voice listening');
+    _liveMode = true;
+    _armLiveQuiet();
+    if (_openingDue) {
+      // Her hello is the cue to talk: no chime (it would reach her
+      // microphone and could cut the hello short).
+      _openingDue = false;
+      unawaited(_greetOnLive(epoch));
+    } else if (chime && _foreground) {
+      unawaited(ListeningChime.play());
+    }
+    notifyListeners();
+  }
+
+  /// The fast voice's microphone is being opened ([_listenLive]).
+  bool _liveStarting = false;
+
+  void _armLiveQuiet() {
+    _liveQuiet?.cancel();
+    _liveQuiet = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!_liveMode || !_voiceOn) {
+        _liveQuiet?.cancel();
+        _liveQuiet = null;
         return;
       }
-      // The recorder captured nothing above the noise floor. The clip is
-      // now uploaded whenever ANY sound was present, so reaching here means
-      // the room really was silent — go straight back to idle instead of
-      // starting a second, invisible listening session (that fallback was
-      // what left the UI stuck on "Listening…" for seconds and then claimed
-      // nothing was heard).
-      if (!_voice.lastRecordingHadSound) {
-        // Nothing was said. In a continuous conversation this is normal
-        // (a pause after Hari's reply), so listen again — up to the
-        // two-strike limit enforced in _maybeContinueListening.
-        _silentTurns++;
-        _setPhase(AssistantPhase.idle);
-        _maybeContinueListening();
+      // LISTENING MEANS AN OPEN MICROPHONE (the client's S24 Ultra stuck on
+      // "Listening", 2026-09-30): the conversation believes the fast voice
+      // listens, but its microphone is closed and nothing is opening it.
+      if (_listening &&
+          _liveWanted &&
+          !_liveStarting &&
+          !(_liveMade?.listening ?? false) &&
+          !_turnRunning &&
+          !_player.playing &&
+          _foreground &&
+          !_typing &&
+          !_deviceFlowActive) {
+        AppLog.add('voice', 'listening with no microphone: opening it again');
+        _listening = false;
+        _maybeListen();
         return;
       }
-      // Recorded audio exists but couldn't be saved — try the on-device
-      // recognizer once, hard-bounded so the mic can never hang.
-      _setPhase(AssistantPhase.transcribing);
-      final heard = await _voice
-          .captureQuestion(
-            onPartial: (p) {
-              partial = p;
-              notifyListeners();
-            },
-            onLevel: (l) => micLevel = l,
-          )
-          .timeout(const Duration(seconds: 6), onTimeout: () => '');
-      micLevel = 0;
-      partial = '';
-      if (heard.trim().isEmpty) {
-        _setPhase(AssistantPhase.idle);
-        return;
+      if (_turnRunning || _player.playing || (_liveMade?.turnOpen ?? false)) return;
+      if (_sessionWaiting || _notes.isNotEmpty) return;
+      if (DateTime.now().difference(_lastLifeAt) >= quietClose) {
+        AppLog.add('voice', 'a minute of quiet — closing the conversation');
+        _liveQuiet?.cancel();
+        _liveQuiet = null;
+        unawaited(_closeAfterQuiet());
       }
-      // (No local transcript add — the server echoes user_transcript.)
-      _setPhase(AssistantPhase.thinking);
-      try {
-        await _api.sendText(heard.trim());
-      } catch (_) {
-        _setLocalError("I couldn't send that. Check your connection.");
+    });
+  }
+
+  /// A Live turn is running (from THINKING until DONE).
+  bool _liveTurnRunning = false;
+
+  /// A Live turn is under way from here (THINKING or later).
+  void _liveTurnBegins() {
+    if (_liveTurnRunning) return;
+    _liveTurnRunning = true;
+    _turnRunning = true;
+    replyComplete = false;
+    errorMessage = null;
+  }
+
+  /// The owner's words on the fast voice, as they are heard.
+  void _liveHeard(String text) {
+    _lastLifeAt = DateTime.now();
+    if (text.isEmpty) return;
+    partial = text;
+    if (_liveUser == null) {
+      // A NEW QUESTION RETIRES THE LAST ANSWER'S CARDS, as a cascade turn
+      // does.
+      _clearAnswerCards();
+      pendingConfirmation = null;
+      _maybeAskLocationFor(text);
+    }
+    final entry = TranscriptEntry(TranscriptRole.user, text);
+    final i = _liveUser == null ? -1 : transcript.lastIndexOf(_liveUser!);
+    if (i >= 0) {
+      transcript[i] = entry;
+    } else {
+      transcript.add(entry);
+    }
+    _liveUser = entry;
+    _captionLine('you', text);
+  }
+
+  /// Everything the fast voice reports.
+  void _onLive(LiveEvent e) {
+    if (!_voiceOn || !_liveMode) {
+      // A device action is always answered, or its tool waits 30 s.
+      if (e case LiveBrain(event: BrainDeviceAction(:final respond))) {
+        respond(const DeviceOutcome.failed('The conversation had ended.'));
       }
       return;
     }
-    _setPhase(AssistantPhase.transcribing);
-    _silentTurns = 0; // real speech captured — reset the walked-away counter
-    try {
-      final bytes = await File(path).readAsBytes();
-      // Keep the clip: if the server's speech service hits a transient blip
-      // (503 "high demand", timeout), we resend this exact audio once
-      // instead of making the user repeat themselves.
-      _lastAudioBytes = bytes;
-      _audioResent = false;
-      await _api.sendAudio(bytes, auto: auto);
-      AppLog.add(
-          'latency', 'uploaded ${_turnClock?.elapsedMilliseconds}ms '
-              '(${(bytes.length / 1024).round()}kB)');
-      // Backend takes over: transcribing → thinking → … via SSE.
-    } catch (_) {
-      _setLocalError("I couldn't upload your audio. Check your connection.");
+    switch (e) {
+      case LiveHeard(:final text):
+        _liveHeard(text);
+      case LiveThinking():
+        _liveTurnBegins();
+        _setPhase(AssistantPhase.thinking, silent: true);
+      case LiveBrain(:final event):
+        _liveTurnBegins();
+        switch (event) {
+          case BrainToolCall(:final name):
+            _toolStarted(name);
+            _setPhase(AssistantPhase.responding, silent: true);
+          case BrainDeviceAction(:final tool, :final action, :final respond):
+            unawaited(_performForBrain(tool, action, respond));
+          case BrainNeedsConfirmation(:final tool, :final summary):
+            pendingConfirmation = PendingConfirmation(
+              action: tool,
+              question: summary.trim().isEmpty ? null : summary.trim(),
+            );
+            HapticFeedback.mediumImpact();
+          default:
+            break;
+        }
+      case LiveSpeaking():
+        _liveTurnBegins();
+        _finishTools();
+      case LiveSaid(:final text):
+        _lastLifeAt = DateTime.now();
+        _liveTurnBegins();
+        _finishTools();
+        _captionLine('hari', text);
+        _liveBubble = _liveReply(_liveBubble, text);
+      case LiveInterrupted():
+        _lastLifeAt = DateTime.now();
+        replyComplete = true;
+        activityLabel.value = null;
+        _setPhase(AssistantPhase.listening, silent: true);
+      case LiveTurnDone(:final user, :final reply, :final interrupted, :final opening):
+        // Her hello goes straight to listening (no DONE flash).
+        _onLiveTurnDone(user, reply, interrupted || opening);
+      case LiveCorrected(:final text):
+        final b = _liveBubble;
+        final i = b == null ? -1 : transcript.lastIndexOf(b);
+        if (i >= 0) {
+          transcript[i] = TranscriptEntry(TranscriptRole.assistant, text);
+        } else if (transcript.isNotEmpty &&
+            transcript.last.role == TranscriptRole.assistant) {
+          transcript[transcript.length - 1] =
+              TranscriptEntry(TranscriptRole.assistant, text);
+        }
+        _captionLine('hari', text);
+      case LiveFallback():
+        _onLiveFallback(e);
     }
-  }
-
-  /// Times the current turn end-to-end (see the 'latency' entries in the
-  /// Diagnostics log): capture → upload → first sentence → first audio.
-  Stopwatch? _turnClock;
-
-  // ---------------- LIVE MODE (speech-to-speech) ----------------
-  // Real live conversation over the backend /live proxy: the mic streams
-  // continuously, Hari's VOICE streams back, Google detects end-of-speech
-  // and barge-in server-side. No STT step, no client VAD. The classic
-  // record→transcribe loop stays untouched as the fallback.
-
-  final _liveSvc = LiveService.instance;
-  bool get liveActive => _liveSvc.active;
-
-  /// FACE-TO-FACE mode. Off by default: voice-only live is faster and
-  /// burns no avatar minutes. The screen's toggle flips it; the avatar
-  /// room must exist BEFORE the live socket connects (audio routing is
-  /// fixed at session setup), so flipping mid-call is a clean restart.
-  bool faceMode = false;
-
-  Future<void> toggleFaceMode() async {
-    faceMode = !faceMode;
     notifyListeners();
-    if (liveActive) {
-      await stopLive();
-      await _startLive();
-    } else if (faceMode) {
-      await _startLive();
-    }
   }
 
-  // ---------------- AVATAR ----------------
-  // The photorealistic face is tied to the LIVE session, not to the screen:
-  // it starts with live mode and dies with it, so the per-minute meter only
-  // runs while a conversation is actually happening.
-  final _avatar = AvatarService.instance;
-
-  /// Guards against the mic gate sticking closed if the speaking-changed
-  /// event that normally reopens it never arrives.
-  Timer? _micGateWatchdog;
-
-  /// Debounces the end of her turn, so a pause between clauses is not
-  /// mistaken for her having finished.
-  Timer? _silenceSettle;
-
-  /// The avatar's video track while HeyGen is rendering, else null.
-  /// NOTE: nothing renders this today — the screen that painted it was
-  /// removed with the old conversation UI. The track is still produced, so
-  /// a future avatar surface can read it without re-plumbing the engine.
-  lk.VideoTrack? get avatarTrack => _avatar.videoTrack;
-
-  Completer<bool>? _liveStartResult;
-
-  Future<void> toggleLive() async {
-    if (liveActive) {
-      await stopLive();
-    } else {
-      await _startLive();
-    }
-  }
-
-  /// Starts a live session. Resolves TRUE once the session is ready, FALSE
-  /// if it failed (so the caller can fall back to the classic loop without
-  /// the user ever seeing an error).
-  Future<bool> _startLive() async {
-    AppLog.add('live', 'start: begin');
-    // The session URL carries the coordinates ONCE, at connect — so the
-    // fix must exist BEFORE the URL is built. On a cold start the
-    // background refresh raced this and lost, and the whole session ran
-    // location-blind ("best near me fails"). Bounded wait: a cached fix
-    // returns instantly, a real GPS fix gets ~1.2 s, and past that we
-    // connect anyway rather than add lag.
-    final fix = LocationService.instance.refresh();
-    try {
-      await fix.timeout(const Duration(milliseconds: 1200));
-    } catch (_) {
-      // Too slow for the URL: the session hears it the moment it lands.
-      unawaited(fix.then((_) => _pushLiveLocation()).catchError((_) {}));
-    }
-    // A previous session may still be tearing down (leaving the face
-    // screen fires leaveConversation without awaiting it). Starting the
-    // mic while LiveKit/audio release is mid-flight wedges the recorder —
-    // wait it out, plus a short settle for the native audio session.
-    final teardown = _liveTeardown;
-    if (teardown != null) {
-      try {
-        await teardown.timeout(const Duration(seconds: 6));
-      } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 350));
-    }
-    // Live owns all audio: silence the classic loop completely first.
-    _conversationEnded = true;
-    _clearCaption(); // a fresh session starts with a clean caption bar
-    _speakQueue.clear();
-    if (_bargeMonitorOn) {
-      _bargeMonitorOn = false;
-      await _voice.stopBargeInMonitor();
-    }
-    // Each of these touches a platform plugin, and a wedged recorder used
-    // to stall here with no trace. Bounded and logged.
-    try {
-      await _voice.stopSpeaking().timeout(const Duration(seconds: 3));
-    } catch (_) {
-      AppLog.add('live', 'start: stopSpeaking stalled — continuing');
-    }
-    try {
-      await _voice.cancelCapture().timeout(const Duration(seconds: 3));
-    } catch (_) {
-      AppLog.add('live', 'start: cancelCapture stalled — continuing');
-    }
-    _resetTurn();
-    AppLog.add('live', 'start: audio released');
-
-    // "Only my voice": score every utterance against the enrolled
-    // voiceprint before it reaches the model. No-op until the user has
-    // enrolled AND switched it on in settings.
-    final voiceId = VoiceIdService.instance;
-    await voiceId.load();
-    _liveSvc.speakerScorer = voiceId.scoreUtterance;
-    _liveSvc.speakerGateEnabled = voiceId.gateEnabled;
-
-    _liveSvc.onReady = () {
-      _liveStartResult?.complete(true);
-      _liveStartResult = null;
-      // THE MOMENT IT IS ACTUALLY LISTENING — not when the orb was
-      // tapped, which is seconds earlier. One chime here is the whole
-      // signal to start talking (his ask, 2026-09-20).
-      //
-      // Belt and braces with the revive guard: a chime is a message to
-      // someone looking at the screen, so it never sounds off-screen even
-      // if some future path opens a session there.
-      if (_foreground) unawaited(ListeningChime.play());
-      _setPhase(AssistantPhase.listening, silent: true);
-      notifyListeners();
-    };
-    _liveSvc.onMicLevel = (l) {
-      if (!_liveSvc.playing) micLevel = l;
-    };
-    _liveSvc.onQuietTimeout = _onQuietMinute;
-    _liveSvc.onSpeaking = (speaking) {
-      // A reply starting to play is a new reply: its words are still coming.
-      if (speaking) replyComplete = false;
-      _setPhase(
-        speaking ? AssistantPhase.speaking : AssistantPhase.listening,
-        silent: true,
-      );
-      if (!speaking) micLevel = 0;
-      notifyListeners();
-    };
-    // PURE VOICE: live mode shows NO text conversation. Transcripts are
-    // logged for diagnostics only — the screen stays clean.
-    _liveSvc.onUserText = (t) {
-      AppLog.add('live', 'you: $t');
-      replyComplete = false;
-      _captionFrom('you', t);
-      _maybeAskLocationFor(_capUser.isNotEmpty ? _capUser : t);
-      // Gemini streams the user's transcript WHILE they are still talking,
-      // so treating its arrival as "thinking" puts the orb in a busy state
-      // during the user's own sentence. In avatar mode the turn boundaries
-      // are known exactly — her transcript starts the reply, turn_complete
-      // ends it — so stay on "listening" here and let those drive it.
-      if (_avatar.isLive) {
-        if (phase != AssistantPhase.listening) {
-          _setPhase(AssistantPhase.listening, silent: true);
-          notifyListeners();
-        }
-        return;
+  /// A Live turn is over and its last sound heard: DONE, briefly, then
+  /// LISTENING (or the goodbye closes the conversation).
+  void _onLiveTurnDone(String user, String reply, bool interrupted) {
+    _lastLifeAt = DateTime.now();
+    // Only a Live turn's own flag: a cascade turn running meanwhile (typed,
+    // a note) keeps its own.
+    if (_liveTurnRunning) _turnRunning = false;
+    _liveTurnRunning = false;
+    _finishTools();
+    activityLabel.value = null;
+    replyComplete = true;
+    partial = '';
+    if (user.isNotEmpty) _liveHeard(user);
+    if (reply.isNotEmpty) {
+      connected = true;
+      _turnFailures = 0;
+      if (!interrupted) {
+        _liveBubble = _liveReply(_liveBubble, reply);
+        _captionLine('hari', reply);
       }
-      _setPhase(AssistantPhase.thinking, silent: true);
-      notifyListeners();
-    };
-    _liveSvc.onHariText = (t) {
-      AppLog.add('live', 'hari: $t');
-      _captionFrom('hari', t);
-      // With the avatar rendering, Hari's audio goes to the avatar service
-      // and never reaches this app — so onSpeaking (which is driven by local
-      // playback) can never fire, and the phase would stay stuck on the
-      // "thinking" set by onUserText for the rest of the conversation.
-      // Her transcript is the only speaking signal we still receive, so it
-      // drives the phase instead. Audio-only mode keeps using onSpeaking,
-      // which is tied to actual playback and therefore more precise.
-      // Early guard. The room's audio-level signal is authoritative but
-      // takes a few hundred ms to trip, and mic audio uploaded in that
-      // window is enough to make the model think it was interrupted. Her
-      // transcript arrives first, so close the gate on it.
-      if (_avatar.isLive) {
-        _liveSvc.remoteSpeaking = true;
-        // Safety net: if the speaking-changed event never arrives (it is
-        // what normally reopens the gate), the mic would stay muted and the
-        // conversation would be over. Force it open after a long turn.
-        _micGateWatchdog?.cancel();
-        _micGateWatchdog = Timer(const Duration(seconds: 20), () {
-          if (!_avatar.isSpeaking) {
-            AppLog.add('avatar', 'mic gate watchdog released');
-            _liveSvc.remoteSpeaking = false;
-            _setPhase(AssistantPhase.listening, silent: true);
-            notifyListeners();
-          }
-        });
-        if (phase != AssistantPhase.speaking) {
-          _setPhase(AssistantPhase.speaking, silent: true);
-          notifyListeners();
-        }
-      }
-    };
-    _liveSvc.onTurnComplete = () {
-      // A chip that outlives its turn reads as a hang — end it with the turn.
-      activityLabel.value = null;
-      replyComplete = true;
       _refreshBriefSoon();
-      // End of Hari's turn — back to listening. Same reasoning as above:
-      // without local audio there is no playback-finished event to wait on.
-      // NOT used to return to listening: turn_complete means Gemini stopped
-      // GENERATING, but the avatar is still playing out what it buffered.
-      // Trusting it here would unmute the mic while she talks — exactly the
-      // self-interruption this is meant to prevent. The speaking-changed
-      // signal ends the turn instead.
-      if (_avatar.isLive && !_avatar.isSpeaking) {
-        micLevel = 0;
-        _setPhase(AssistantPhase.listening, silent: true);
-        notifyListeners();
-      }
-      // The voice was changed during this turn — now that it has finished
-      // speaking, rebuild the session so the new voice is the one heard.
-      if (_pendingVoiceRestart) unawaited(_rebuildLiveForVoice());
-    };
-    _liveSvc.onInterrupted = () {
-      _setPhase(AssistantPhase.listening, silent: true);
-      notifyListeners();
-    };
-    _liveSvc.onError = (msg) {
-      // NO visible error. Log it, mark live unavailable for this run, and
-      // let the orb fall back to the classic loop from now on.
-      AppLog.add('live', 'unavailable: $msg');
-      _liveStartResult?.complete(false);
-      _liveStartResult = null;
-      _liveSvc.stop();
-      _setPhase(AssistantPhase.idle, silent: true);
-      notifyListeners();
-    };
-    _liveSvc.onClosed = () {
-      _liveStartResult?.complete(false);
-      _liveStartResult = null;
-      // A fresh session knows nothing of interpreter mode — never let the
-      // everyone-can-talk state leak past the session it was asked in.
-      translatorActive = false;
-      if (phase != AssistantPhase.idle) {
-        _setPhase(AssistantPhase.idle, silent: true);
-      }
-      notifyListeners();
-      // UNEXPECTED close only — deliberate stops clear _active before the
-      // socket closes, so they never reach this callback. Gemini live
-      // sessions have hard duration limits and mobile networks blip; both
-      // used to dump the user into the classic record→STT→TTS loop (heard
-      // as "the agent suddenly got slow and robotic"). Reconnect instead,
-      // so the conversation stays speech-to-speech.
-      _maybeReviveLive();
-    };
-
-    // Two overlapping starts used to clobber this completer — the loser
-    // timed out at 12 s and killed the WINNER's healthy session. Join the
-    // in-flight start instead.
-    if (_liveStartResult != null && !_liveStartResult!.isCompleted) {
-      final joined = _liveStartResult!;
-      final ok = await joined.future
-          .timeout(const Duration(seconds: 12), onTimeout: () => false);
-      // A join that timed out means that attempt is dead. Drop it so the
-      // user's next tap starts a fresh session instead of joining it again.
-      if (!ok && identical(_liveStartResult, joined)) _liveStartResult = null;
-      return ok;
     }
-    _setPhase(AssistantPhase.thinking, silent: true); // "connecting…"
-    notifyListeners();
-    _liveStartResult = Completer<bool>();
-
-    // Reserve the avatar BEFORE the socket: the backend needs the room at
-    // setup time to know where to send Hari's voice. Never fatal — a null
-    // room just means this conversation is audio-only with the portrait.
-    _avatar.onChanged = notifyListeners;
-    // Close the mic while she is audible, and drive the orb from the same
-    // signal. This is what stops her interrupting herself: without it the
-    // loudspeaker feeds her own voice back to the model as user speech.
-    // PRIMARY signal — from the server, which knows exactly how much audio
-    // it handed the avatar and how long that takes to play. LiveKit's own
-    // active-speaker events (wired below) turned out to fire only sometimes,
-    // which left the mic muted until the watchdog rescued it 20 s later.
-    // Device actions arriving over the live socket go through the same
-    // dispatcher as the classic path, so camera, contact lookup and document
-    // capture all behave identically in both modes.
-    _liveSvc.onDeviceAction = (action) {
-      AppLog.add('live', 'device action: ${action['type']}');
-      _onEvent(action);
-    };
-
-    _liveSvc.onAvatarSpeaking = (speaking) {
-      AppLog.add('avatar', speaking ? 'speaking' : 'silent');
-      _micGateWatchdog?.cancel();
-      _micGateWatchdog = null;
-      _silenceSettle?.cancel();
-      _silenceSettle = null;
-      _liveSvc.remoteSpeaking = speaking;
-      micLevel = 0;
-      _setPhase(
-        speaking ? AssistantPhase.speaking : AssistantPhase.listening,
-        silent: true,
-      );
-      notifyListeners();
-    };
-
-    _avatar.onSpeakingChanged = (speaking) {
-      // Secondary. It may close the gate early (useful), but it must never
-      // OPEN it — it has been seen to miss transitions entirely, and the
-      // server signal above is the one that knows when she is really done.
-      if (!speaking) return;
-      _micGateWatchdog?.cancel();
-      _micGateWatchdog = null;
-
-      if (speaking) {
-        _silenceSettle?.cancel();
-        _silenceSettle = null;
-        _liveSvc.remoteSpeaking = true;
-        micLevel = 0;
-        _setPhase(AssistantPhase.speaking, silent: true);
-        notifyListeners();
-        return;
-      }
-
-      // Do NOT reopen the mic on the first sign of silence. Natural pauses
-      // between clauses register as silence, and reopening inside one lets
-      // her own next words back into the model as if the user had spoken —
-      // the self-interruption returns as a stutter mid-reply. Wait for the
-      // silence to hold before deciding the turn is really over.
-      _silenceSettle?.cancel();
-      _silenceSettle = Timer(const Duration(milliseconds: 700), () {
-        if (_avatar.isSpeaking) return; // she resumed — the gap was a pause
-        _liveSvc.remoteSpeaking = false;
-        micLevel = 0;
+    if (user.isNotEmpty && isFarewell(user)) _endAfterTurn = true;
+    _liveUser = null;
+    _liveBubble = null;
+    if (_endAfterTurn) {
+      _endAfterTurn = false;
+      unawaited(_endWhenQuiet());
+      return;
+    }
+    _doneTimer?.cancel();
+    if (interrupted || (user.isEmpty && reply.isEmpty)) {
+      if (phase != AssistantPhase.listening) {
         _setPhase(AssistantPhase.listening, silent: true);
-        notifyListeners();
+      }
+    } else {
+      _setPhase(AssistantPhase.completed, silent: true);
+      _doneTimer = Timer(liveDoneHold, () {
+        _doneTimer = null;
+        if (_voiceOn && phase == AssistantPhase.completed) {
+          _setPhase(AssistantPhase.listening, silent: true);
+        }
       });
-    };
-    String? avatarRoom;
-    try {
-      if (faceMode && await AvatarService.isAvailable()) {
-        avatarRoom = await _avatar.start();
-      }
-    } catch (_) {
-      avatarRoom = null;
     }
-    if (faceMode && avatarRoom == null) {
-      // The avatar service refused (out of credits, quota, outage). Say so
-      // and drop the toggle — a lit camera icon over a face that will
-      // never arrive reads as "the app is broken".
-      faceMode = false;
-      _setLocalError(
-          'Face mode isn\'t available right now — continuing voice-only.');
-    }
+    // Notes that waited for this turn (a camera's reading, a message).
+    unawaited(_nextNote());
+    _maybeListen();
+  }
 
-    AppLog.add('live', 'start: opening socket');
+  /// Live could not answer: the cascade does — the owner is never left
+  /// without an answer, and nothing a tool did is done twice.
+  void _onLiveFallback(LiveFallback f) {
+    AppLog.add('voice',
+        'fast voice: ${f.reason}${f.keepLive ? '' : ' — the classic voice from here'}');
+    final liveTurn = _liveTurnRunning;
+    _liveTurnRunning = false;
+    if (liveTurn) {
+      _turnRunning = false;
+      _finishTools();
+      activityLabel.value = null;
+    }
+    partial = '';
+    final shown = _liveUser;
+    _liveUser = null;
+    _liveBubble = null;
+    Future<void> micFree = Future.value();
+    if (!f.keepLive) {
+      _liveMode = false;
+      _liveGaveUp = true;
+      _listening = false;
+      _liveQuiet?.cancel();
+      _liveQuiet = null;
+      // Its microphone lets go before the phone's recogniser opens: one
+      // capture at a time, or the recogniser hears silence (2026-09-30).
+      // WAITED FOR below (2026-10-01): the stop can take up to 3 s, and
+      // a recogniser opened meanwhile heard nothing.
+      micFree = (_liveMade?.stop() ?? Future<void>.value())
+          .timeout(const Duration(seconds: 4))
+          .catchError((Object _) {});
+    }
+    final words = f.words;
+    final line = f.line;
+    if (words != null && words.isNotEmpty) {
+      // Its bubble is the cascade turn's own now.
+      if (shown != null) transcript.remove(shown);
+      unawaited(_runTurn(words, mode: BrainMode.voice));
+      return;
+    }
+    if (line != null && line.isNotEmpty) {
+      transcript.add(TranscriptEntry(TranscriptRole.assistant, line));
+      _captionLine('hari', line);
+      replyComplete = true;
+      unawaited(_speakDirect(line));
+      return;
+    }
+    // A cascade turn still running (typed, a note) listens when it ends.
+    if (_turnRunning) return;
+    replyComplete = true;
+    if (_endAfterTurn) {
+      // end_conversation, or a goodbye, on a turn that ended this way.
+      _endAfterTurn = false;
+      unawaited(_endWhenQuiet());
+      return;
+    }
+    if (_voiceOn && phase != AssistantPhase.listening) {
+      _setPhase(AssistantPhase.listening, silent: true);
+    }
+    final epoch = _voiceEpoch;
+    unawaited(micFree.whenComplete(() {
+      if (epoch == _voiceEpoch) _maybeListen();
+    }));
+  }
+
+  // ---------------- ONE TURN ----------------
+
+  /// ONE BRAIN TURN, end to end, for every way in: the owner's words
+  /// (spoken or typed), a panel's button, the app's own [SYSTEM] note, a
+  /// photo. [speak] says the reply aloud (default: in voice mode).
+  /// [fromOwner] false: the words are not shown as the owner's.
+  Future<void> _runTurn(
+    String text, {
+    BrainMode mode = BrainMode.voice,
+    bool? speak,
+    AiAttachment? image,
+    bool untrusted = false,
+    bool shared = false,
+    bool fromOwner = true,
+  }) async {
+    final words = text.trim();
+    if (words.isEmpty && image == null) return;
+    // Something typed while she answers on the fast voice: she stops.
+    if (_liveMode && fromOwner) await _liveMade?.interrupt();
+    if (_listening) await _stopListening();
+    _sayEpoch++;
+    final gen = ++_turnGen;
+    _turnRunning = true;
+    _lastLifeAt = DateTime.now();
+    errorMessage = null;
+    replyComplete = false;
+    if (fromOwner) {
+      // A NEW QUESTION RETIRES THE LAST ANSWER'S CARDS (and answers, or
+      // moves on from, a question still on screen). The news and schedule
+      // panels stay: the owner dismisses those.
+      _clearAnswerCards();
+      pendingConfirmation = null;
+      transcript.add(TranscriptEntry(TranscriptRole.user, words));
+      _captionLine('you', words);
+      _maybeAskLocationFor(words);
+      // A goodbye closes the conversation: she still answers this turn (so
+      // she can say goodbye back), but the microphone does not reopen.
+      if (isFarewell(words)) _endAfterTurn = true;
+    }
+    _setPhase(AssistantPhase.thinking, silent: true);
+    // THE BARGE-IN MICROPHONE OPENS NOW, NOT WHEN SHE STARTS (voice audit,
+    // 2026-09-30): while she is silent it learns the room's noise floor,
+    // which it never did when it only ran while she spoke.
+    if ((speak ?? mode == BrainMode.voice) &&
+        _voiceOn &&
+        _bargeWatchOn &&
+        !speakerMuted &&
+        _foreground &&
+        !_liveMode) {
+      unawaited(_barge.start(_onBargeIn));
+    }
+    TranscriptEntry? live;
     try {
-      await _liveSvc.start(avatarRoom: avatarRoom).timeout(
-        const Duration(seconds: 12),
+      final events = brain.turn(
+        text: words,
+        mode: mode,
+        image: image,
+        untrusted: untrusted,
+        shared: shared,
+        speak: speak ?? mode == BrainMode.voice,
       );
+      await for (final e in events) {
+        if (gen != _turnGen) break;
+        switch (e) {
+          case BrainRouteChosen(:final route, :final reason):
+            AppLog.add('brain', '${route.name} ($reason)');
+          case BrainPartialText(:final text):
+            _finishTools();
+            if (phase == AssistantPhase.responding) {
+              _setPhase(AssistantPhase.thinking, silent: true);
+            }
+            _captionLine('hari', text);
+            live = _liveReply(live, text);
+          case BrainToolCall(:final name):
+            _toolStarted(name);
+            if (phase != AssistantPhase.speaking) {
+              _setPhase(AssistantPhase.responding, silent: true);
+            }
+          case BrainDeviceAction(:final tool, :final action, :final respond):
+            unawaited(_performForBrain(tool, action, respond));
+          case BrainNeedsConfirmation(:final tool, :final summary):
+            // The reply asks "…?"; the owner's yes — spoken, typed or this
+            // card's button — carries the approval on the next turn.
+            pendingConfirmation = PendingConfirmation(
+              action: tool,
+              question: summary.trim().isEmpty ? null : summary.trim(),
+            );
+            HapticFeedback.mediumImpact();
+          case final BrainFinalText fin:
+            _finishTools();
+            live = _onFinal(fin, words, live);
+          case BrainSpokenAudio():
+            // Already queued on the player; the orb follows the player.
+            break;
+          case BrainError(:final code, :final message, :final fatal):
+            _onBrainError(code, message, fatal);
+        }
+        _armWatchdog();
+        notifyListeners();
+      }
     } catch (e) {
-      AppLog.add('live', 'start: socket did not open ($e)');
+      AppLog.add('brain', 'turn failed: $e');
+    } finally {
+      if (gen == _turnGen) {
+        _turnRunning = false;
+        _finishTools();
+        activityLabel.value = null;
+        replyComplete = true;
+        _afterTurn();
+      }
     }
-    if (!_liveSvc.active) {
-      AppLog.add('live', 'start: socket inactive — giving up');
-      _liveStartResult?.complete(false);
-      _liveStartResult = null;
-      await _avatar.stop(); // socket never came up — don't leave a paid room
-      _setPhase(AssistantPhase.idle, silent: true);
-      return false;
-    }
-    // Ready must arrive within 6s or we treat live as unavailable.
-    final ok = await (_liveStartResult?.future ??
-            Future<bool>.value(_liveSvc.active))
-        .timeout(const Duration(seconds: 12), onTimeout: () {
-      _liveSvc.stop();
-      _avatar.stop();
-      _setPhase(AssistantPhase.idle, silent: true);
-      return false;
-    });
-    AppLog.add('live', 'start: ready=$ok');
-    // The user may have left the screen while we were connecting; a live
-    // session with no screen is a hot mic talking behind the dashboard.
-    if (ok && !_conversationOpen) {
-      await stopLive();
-      return false;
-    }
-    return ok;
   }
 
-  /// One automatic reconnect after an UNEXPECTED live-session close, so a
-  /// session-duration limit or a network blip doesn't silently demote the
-  /// conversation to the classic text pipeline. Throttled hard: if live is
-  /// genuinely down (quota, outage), one failed revive per window is all we
-  /// spend on it and the classic fallback still works on the next tap.
-  DateTime _lastLiveRevive = DateTime.fromMillisecondsSinceEpoch(0);
-  void _maybeReviveLive() {
-    if (!_conversationOpen) return;
-    // NOT WHILE THEY ARE SOMEWHERE ELSE. _conversationOpen stays true
-    // across a trip to another app — that is what lets a caller come back
-    // to the conversation still running — so it is NOT evidence that
-    // anyone is looking. Reconnecting here reopened the microphone and
-    // chimed over WhatsApp. onAppResumed rebuilds the session properly
-    // when they actually return.
-    if (!_foreground) return;
-    if (PhoneStateGuard.instance.inCall) return;
-    final now = DateTime.now();
-    if (now.difference(_lastLiveRevive) < const Duration(seconds: 20)) return;
-    _lastLiveRevive = now;
-    Future.delayed(const Duration(seconds: 1), () async {
-      if (liveActive || _liveStartResult != null) return;
-      if (PhoneStateGuard.instance.inCall) return;
-      AppLog.add('live', 'session dropped — reconnecting');
-      await _startLive();
-    });
+  /// The assistant's bubble being written, replaced as the reply grows.
+  TranscriptEntry _liveReply(TranscriptEntry? live, String text) {
+    final entry = TranscriptEntry(TranscriptRole.assistant, text);
+    final i = live == null ? -1 : transcript.lastIndexOf(live);
+    if (i >= 0) {
+      transcript[i] = entry;
+    } else {
+      transcript.add(entry);
+    }
+    return entry;
   }
 
-  /// The user LEFT the conversation screen — back on Home, among the
-  /// calendar and cards, nothing may keep listening or talking. Kills the
-  /// live session, any in-flight TTS, any open capture, and closes the
-  /// continuous loop so the mic cannot quietly reopen itself behind the
-  /// dashboard. Reopening the screen starts everything fresh.
-  /// The account the current SSE session belongs to. HomeShell calls
+  TranscriptEntry? _onFinal(BrainFinalText e, String asked, TranscriptEntry? live) {
+    connected = true;
+    _turnFailures = 0;
+    final text = e.text.trim();
+    if (text.isEmpty) {
+      // The model chose to stay silent (the words were not for it):
+      // nothing shown, nothing said.
+      if (live != null) transcript.remove(live);
+      if (caption.value?.speaker == 'hari') caption.value = null;
+      return null;
+    }
+    _captionLine('hari', text);
+    // A Google-Search-grounded answer shows the pages it used and Google's
+    // search suggestions beside it (the grounding terms require both).
+    if (e.sources.isNotEmpty || (e.searchSuggestionsHtml ?? '').isNotEmpty) {
+      searchQuery = asked;
+      searchResults = [
+        for (final s in e.sources.take(5))
+          SearchResult(
+            title: (s.title ?? '').trim().isEmpty ? _host(s.uri) : s.title!.trim(),
+            url: s.uri,
+            snippet: '',
+            source: (s.title ?? '').trim().isEmpty ? '' : s.title!.trim(),
+          ),
+      ];
+      searchSuggestions = parseSearchSuggestions(e.searchSuggestionsHtml);
+    }
+    _refreshBriefSoon();
+    return _liveReply(live, text);
+  }
+
+  static String _host(String url) {
+    try {
+      final h = Uri.parse(url).host;
+      return h.startsWith('www.') ? h.substring(4) : h;
+    } catch (_) {
+      return url;
+    }
+  }
+
+  void _onBrainError(String code, String message, bool fatal) {
+    AppLog.add('brain', 'error $code${fatal ? '' : ' (the reply stands)'}');
+    if (code == 'offline') connected = false;
+    if (!fatal) {
+      if (code == 'tts' && !speakerMuted) AppFeedback.toast(message);
+      return;
+    }
+    // The turn ended with no reply. In a conversation it is said on screen
+    // and the conversation listens on — twice in a row, or a fault no
+    // retry can fix (the app not allowed, the service off), and it stops.
+    _turnFailures++;
+    const permanent = {'not_enabled', 'denied', 'location'};
+    if (_voiceOn && !permanent.contains(code) && _turnFailures < 2) {
+      transcript.add(TranscriptEntry(TranscriptRole.assistant, message));
+      _captionLine('hari', message);
+      return;
+    }
+    if (_voiceOn) unawaited(_stopVoice());
+    _setLocalError(message);
+  }
+
+  /// The tool the model is using, as a chip ("Checking the weather…").
+  void _toolStarted(String tool) {
+    _finishTools();
+    if (LocationService.locationTools.contains(tool)) {
+      unawaited(_maybeAskLocation());
+    }
+    final label = _labelForTool(tool);
+    activities.add(ToolActivity(tool: tool, label: label));
+    activityLabel.value = label;
+  }
+
+  /// The tools before this point have reported back (the brain runs them
+  /// one at a time): what they changed on this phone is brought up to date.
+  void _finishTools() {
+    for (final a in activities) {
+      if (a.completed) continue;
+      a.completed = true;
+      // ARM THE ALARM NOW, NOT WHEN THE BRIEF NEXT REFRESHES: a reminder
+      // set for a few seconds from now has to be armed in those seconds.
+      if (_remindersTouchedBy(a.tool)) {
+        unawaited(ReminderNotifications.instance.sync());
+      }
+    }
+    if (activityLabel.value != null) activityLabel.value = null;
+  }
+
+  void _afterTurn() {
+    _lastLifeAt = DateTime.now();
+    if (_endAfterTurn) {
+      _endAfterTurn = false;
+      unawaited(_endWhenQuiet());
+      return;
+    }
+    if (phase == AssistantPhase.thinking ||
+        phase == AssistantPhase.responding ||
+        (phase == AssistantPhase.speaking && !_player.playing)) {
+      _setPhase(_voiceOn ? AssistantPhase.listening : AssistantPhase.completed,
+          silent: true);
+    }
+    if (_voiceOn) {
+      _maybeListen();
+    } else {
+      unawaited(_nextNote());
+    }
+  }
+
+  /// "Bye": her farewell plays out, then the whole conversation closes —
+  /// orb, overlay, microphone.
+  Future<void> _endWhenQuiet() async {
+    await _stopListening();
+    try {
+      await _player.drained().timeout(const Duration(seconds: 12));
+    } catch (_) {}
+    if (inlineVoice || _voiceOn || _conversationOpen) {
+      await endInlineConversation();
+    }
+  }
+
+  // ---------------- THE APP'S OWN NOTES ----------------
+
+  /// [SYSTEM] notes waiting for a turn of their own.
+  final _notes = <({String line, bool untrusted})>[];
+  bool _notesRunning = false;
+
+  /// [_tellModel] for feature modules (the photo-card actions).
+  Future<void> tellModel(String line) => _tellModel(line);
+
+  /// [_tellModel] with [untrusted] (tests).
+  @visibleForTesting
+  Future<void> debugNote(String line, {bool untrusted = false}) =>
+      _tellModel(line, untrusted: untrusted);
+
+  /// A [SYSTEM] note about something the phone did.
+  ///
+  /// Said while a device action of a turn runs, it IS that action's outcome
+  /// — the model hears it as the function's result, in the same turn.
+  /// Outside a turn (a greeting, missed calls, a camera's reading, a call
+  /// that ended, someone's message), it starts a turn of its own once the
+  /// current one is over; [untrusted] marks someone else's words.
+  Future<void> _tellModel(String line, {bool untrusted = false}) async {
+    final reply = Zone.current[_deviceReplyKey];
+    if (reply is _DeviceReply && !reply.answered) {
+      reply.answer(DeviceOutcome(ok: !line.contains('ERROR'), detail: line));
+      return;
+    }
+    _notes.add((line: line, untrusted: untrusted));
+    await _nextNote();
+  }
+
+  Future<void> _nextNote() async {
+    if (_notesRunning || _turnRunning || _notes.isEmpty) return;
+    // A real phone call always wins: nothing is said over it.
+    if (PhoneStateGuard.instance.inCall) {
+      _notes.clear();
+      return;
+    }
+    if (_listening) {
+      // The owner is mid-sentence: their turn first.
+      if (partial.trim().isNotEmpty) return;
+      await _stopListening();
+    }
+    _notesRunning = true;
+    try {
+      while (_notes.isNotEmpty && !_turnRunning) {
+        final n = _notes.removeAt(0);
+        await _runTurn(n.line,
+            mode: BrainMode.voice, untrusted: n.untrusted, fromOwner: false);
+        // One after another, never over each other.
+        try {
+          await _player.drained().timeout(const Duration(seconds: 30));
+        } catch (_) {}
+      }
+    } finally {
+      _notesRunning = false;
+    }
+    _maybeListen();
+  }
+
+  // ---------------- DEVICE ACTIONS ----------------
+
+  static const _deviceReplyKey = #assistantDeviceReply;
+
+  /// Flows that need the owner (the camera, a picker, a signature, a share
+  /// sheet): the model is answered at once and the result follows as a
+  /// turn of its own.
+  static const _ownerFlows = {
+    'analyze_camera',
+    'capture_document',
+    'open_camera',
+    'ask_about_image',
+    'scan_business_card',
+    'poster_pick_photo',
+    'poster_show',
+    'poster_share',
+    'poster_sign',
+    'shortcut_run',
+  };
+
+  /// The most a device action may keep the model waiting (the brain gives
+  /// up at 30 s); a longer one is answered "started" and reports later.
+  static const _deviceAnswerWithin = Duration(seconds: 20);
+
+  /// Performs a device action the brain handed over, through the same
+  /// switch that always performed them, and ALWAYS answers — unanswered,
+  /// the model waits 30 s. A [SYSTEM] note said while it runs is its
+  /// outcome; a reported failure makes it a failure; otherwise it is done.
+  Future<void> _performForBrain(
+    String tool,
+    Map<String, dynamic> action,
+    void Function(DeviceOutcome outcome) respond,
+  ) async {
+    final reply = _DeviceReply(respond);
+    final type = '${action['type'] ?? ''}';
+    AppLog.add('brain', 'device action $type ($tool)');
+    await runZoned(() async {
+      try {
+        final work = _onEvent(action);
+        if (_ownerFlows.contains(type)) {
+          reply.answer(const DeviceOutcome.ok('It is open on the phone and the '
+              'owner is doing it now; its result comes as the next message. Do '
+              'not say it is finished.'));
+        }
+        await work.timeout(_deviceAnswerWithin);
+      } on TimeoutException {
+        reply.answer(const DeviceOutcome.ok(
+            'Started on the phone; its result comes as the next message.'));
+      } catch (e) {
+        reply.answer(DeviceOutcome.failed('The phone could not do it: $e'));
+      }
+      reply.answer(const DeviceOutcome.ok());
+    }, zoneValues: {_deviceReplyKey: reply});
+  }
+
+  /// The account the current conversation belongs to. HomeShell calls
   /// [ensureFreshSession] on every appearance: after a sign-out and
-  /// sign-in as someone else, the singleton engine used to keep posting
-  /// turns into the PREVIOUS user's session forever, and the greeting
-  /// never fired again.
+  /// sign-in as someone else, the brain must not carry the previous
+  /// account's conversation.
   String? _sessionUid;
 
-  /// Set when sign-out closed the session: the next sign-in — even as the
-  /// same person — must open a new one, since nothing else would.
-  bool _reconnectOnSignIn = false;
-
-  /// Nobody is signed in any more: stop listening and drop the session, so
-  /// the previous account's stream does not keep running behind the login
-  /// screen.
+  /// Nobody is signed in any more: stop listening and forget the
+  /// conversation, so nothing of the previous account runs behind the
+  /// login screen.
   Future<void> _onSignedOut() async {
     try {
       await leaveConversation(chime: false);
     } catch (_) {}
-    _api.close();
+    _brainMade?.reset();
     resetGreeting();
     _sessionUid = null;
-    _reconnectOnSignIn = true;
   }
 
   Future<void> ensureFreshSession() async {
@@ -1710,155 +2071,77 @@ class AssistantEngine extends ChangeNotifier {
     if (uid == null) return;
     if (_sessionUid == null || _sessionUid == uid) {
       _sessionUid = uid;
-      if (_reconnectOnSignIn) {
-        _reconnectOnSignIn = false;
-        unawaited(_connect());
-      }
       return;
     }
-    AppLog.add('engine', 'account changed — rebuilding assistant session');
+    AppLog.add('engine', 'account changed — a new conversation');
     _sessionUid = uid;
     await leaveConversation();
-    _api.close();
+    _brainMade?.reset();
     resetGreeting();
-    unawaited(_connect()); // fresh session under the new account
   }
 
+  /// The owner LEFT the conversation — back on Home, among the calendar and
+  /// cards, nothing may keep listening or talking. Reopening starts
+  /// everything fresh.
   Future<void> leaveConversation({bool chime = true}) async {
-    // THE CLOSING HALF OF THE PAIR. Only when something was actually
-    // listening — closing a screen that was already silent should be
-    // silent — and never off-screen, for the same reason the opening
-    // chime is not: a sound the user cannot connect to anything they did
-    // is exactly the WhatsApp complaint.
-    final wasListening = liveActive || inlineVoice;
+    // THE CLOSING HALF OF THE PAIR: only when something was listening, and
+    // never off-screen.
+    final wasListening = _voiceOn || inlineVoice;
     if (chime && wasListening && _foreground) unawaited(ListeningChime.playStop());
     _idleStop?.cancel();
     _idleStop = null;
     _conversationOpen = false;
     inlineVoice = false;
-    _conversationEnded = true; // the loop must not resume on its own
-    // MUTE BELONGS TO THE CONVERSATION THAT SET IT. Nothing cleared it,
-    // and the only unmute control lives in the inline overlay — so a
-    // session muted to read captions left every later Home-panel reply
-    // (news, schedule, today, finance, a shared document) silently
-    // dropped at _drainSpeech, with no control anywhere on screen to
-    // undo it, until the app was killed.
+    _endAfterTurn = false;
+    // MUTE BELONGS TO THE CONVERSATION THAT SET IT: the only unmute control
+    // lives in the voice overlay.
     if (speakerMuted) setSpeakerMuted(false);
-    // Typing pauses the mic; the pause never outlives the conversation (a
-    // field left focused kept the NEXT session silently deaf).
-    _liveSvc.typingMute = false;
-    // Web results belong to the conversation they answered — with no ✕
-    // they used to sit over every tab until the next question.
+    // Typing pauses the mic; the pause never outlives the conversation.
+    _typing = false;
+    // Web results belong to the conversation they answered.
     searchQuery = null;
     searchResults = const [];
-    translatorActive = false; // interpreter never outlives the screen
+    searchSuggestions = const [];
+    translatorActive = false; // the interpreter never outlives the screen
     _clearCaption();
     activityLabel.value = null;
-    _announceEpoch++; // any in-flight message readout stops at its next line
-    _micGateWatchdog?.cancel();
-    _micGateWatchdog = null;
-    _silenceSettle?.cancel();
-    _silenceSettle = null;
-    _speakQueue.clear();
-    if (_bargeMonitorOn) {
-      _bargeMonitorOn = false;
-      try {
-        await _voice.stopBargeInMonitor();
-      } catch (_) {}
-    }
-    try {
-      await _voice.stopSpeaking();
-    } catch (_) {}
-    try {
-      await _voice.cancelCapture();
-    } catch (_) {}
-    if (liveActive) await stopLive();
-    _ttsActive = false;
+    _announceEpoch++; // any message readout in flight stops at its next line
+    // THE SCREEN GOES FIRST (client, 2026-10-01: "Listening" stayed on
+    // after the tap). The phase used to turn idle only after the voice had
+    // stopped, and that stop waits on the microphone and the session — on
+    // a bad link, for many seconds — while the overlay still said
+    // Listening and a second tap read as "stop" again.
+    micLevel = 0;
+    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    notifyListeners();
+    await _stopVoice();
     micLevel = 0;
     if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
   }
 
-  /// The in-flight live/audio teardown, if any. A new session start MUST
-  /// wait for it: LiveKit room exit and the native audio session release
-  /// take real time, and starting the mic mid-teardown is the "stuck mic"
-  /// error seen when tapping the orb right after leaving the face screen.
-  Future<void>? _liveTeardown;
-
-  Future<void> stopLive() {
-    final f = _stopLiveInner();
-    _liveTeardown = f;
-    f.whenComplete(() {
-      if (identical(_liveTeardown, f)) _liveTeardown = null;
-    });
-    return f;
-  }
-
-  Future<void> _stopLiveInner() async {
-    // Any deliberate live stop ends the inline (Home-orb) conversation —
-    // a phone call, a hold-for-face handover, a tap-to-stop. The flag must
-    // never outlive the audio, or the orb's next tap toggles the wrong way.
-    inlineVoice = false;
-    // SETTLE A START THAT IS IN FLIGHT. A connect interrupted by a stop
-    // (tap-to-stop, a resume rebuild) used to leave this completer pending
-    // forever; every later tap then JOINED that dead future, waited out
-    // its timeout and gave up — the orb sat white and deaf no matter how
-    // many times it was pressed.
-    if (_liveStartResult != null && !_liveStartResult!.isCompleted) {
-      _liveStartResult!.complete(false);
-    }
-    _liveStartResult = null;
-    _micGateWatchdog?.cancel();
-    _micGateWatchdog = null;
-    _silenceSettle?.cancel();
-    _silenceSettle = null;
-    await _liveSvc.stop();
-    // Ends the avatar session — this is what stops the per-minute
-    // billing, so it runs on every exit from live mode.
-    await _avatar.stop();
-    micLevel = 0;
-    _setPhase(AssistantPhase.idle, silent: true);
-    notifyListeners();
-  }
-
   // ---------------- OPENING GREETING ----------------
-  // Spoken once when the assistant session becomes ready. It runs through
-  // the SAME voice pipeline as every other reply (_speakQueue -> VoiceService
-  // -> barge-in watcher), so it is interruptible and creates no second
-  // session (§7, §8, §14).
 
-  /// Increments each time a live session genuinely becomes ready. The
-  /// greeting is keyed to this rather than a global boolean, so it can
-  /// never fire twice for one session and is never permanently blocked
-  /// after a real reconnect (§16).
-  int _sessionEpoch = 0;
-  int _greetedEpoch = -1;
-
-  /// True once the user has opened the conversation view this app run.
-  /// The greeting is gated on it so a reconnect while the user is on the
-  /// dashboard can never make the phone start talking out of nowhere.
+  /// True once the owner has opened the conversation this app run. The
+  /// greeting is gated on it, so nothing can make the phone start talking
+  /// out of nowhere while they are on the dashboard.
   bool _conversationOpen = false;
 
   /// The user's display name, supplied by the screen once it is known.
   String? greetingName;
 
-  /// Suppresses every automatic greeting — the instant on-device one at
-  /// orb-tap, the live session's own, and the classic fallback.
+  /// Suppresses the automatic spoken greeting when a conversation opens.
   ///
-  /// OFF since 2026-09-20 at the owner's request. It was on because he
-  /// had previously asked for the opposite ("everytime i open the app i
-  /// need the greeting"), so this stays a switch rather than deleted
-  /// code: flipping it back is one word, and the three greeting paths it
-  /// guards are still correct.
+  /// OFF since 2026-09-20 at the owner's request (the orb tap's cached
+  /// hello stays). It stays a switch rather than deleted code: flipping it
+  /// back is one word.
   bool greetingEnabled = false;
-
-  bool get hasGreeted => _greetedEpoch == _sessionEpoch;
 
   /// How the owner is addressed (owner, 2026-09-23: "should say hello
   /// Sir, and give more respect"; 2026-09-24: "don't call them ji, call
   /// them Sir"). Ma'am when the profile says female, Sir otherwise — never
-  /// "<name> ji". The server tells the model the same thing
-  /// (agents/owner.js), so the voice and this greeting never disagree.
+  /// "<name> ji". The server tells the model the same thing, so the voice
+  /// and this greeting never disagree.
   static String honorific({String? name, String? gender}) {
     return (gender ?? '').trim().toLowerCase() == 'female' ? "Ma'am" : 'Sir';
   }
@@ -1884,85 +2167,29 @@ class AssistantEngine extends ChangeNotifier {
     return '$part, $who! How can I help you today?';
   }
 
-  /// Speaks the opening greeting — ONLY when the live session is really
-  /// ready. Called from the connect path, never from a widget lifecycle.
-  ///
-  /// Refuses to speak when: not connected, already greeted this session,
-  /// a turn is in flight, live mode owns the audio, or a phone call is
-  /// active. If the session drops before the audio starts, the greeting is
-  /// abandoned rather than spoken into a dead session (§4).
-  Future<void> _maybeGreetOnReady() async {
-    if (!greetingEnabled) return;
-    if (!_conversationOpen) return;         // silent until the orb opens
-    if (!connected) return;                 // never greet while offline
-    // The instant on-device greeting claims the epoch at orb-tap; the
-    // classic path must honour that claim or slow-network sessions are
-    // greeted twice — once instantly, once when the session settles.
-    if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) return;
-    final epoch = _sessionEpoch;
-    if (_greetedEpoch == epoch) return;     // once per real session
-    if (phase.busy || liveActive || _liveStartResult != null) return;
-    if (PhoneStateGuard.instance.inCall) return;
-    _greetedEpoch = epoch;                  // claim before awaiting
-
-    // Small settle so a reconnect storm cannot start speech mid-flap.
-    await Future.delayed(const Duration(milliseconds: 600));
-    // Re-verify: the session may have dropped during the settle.
-    if (!connected || _sessionEpoch != epoch || phase.busy || liveActive) {
-      if (_sessionEpoch == epoch) _greetedEpoch = -1; // allow a later retry
-      return;
-    }
-
-    _lastGreetedAt = DateTime.now(); // one clock for every greeting path
-    final text = greetingFor(greetingName,
-        gender: AuthService.instance.user?.gender);
-    transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
-    _captionFrom('hari', text);
-    _setPhase(AssistantPhase.speaking, silent: true);
-    notifyListeners();
-
-    // Same speak queue + barge-in watcher as any other reply, so "Call
-    // Mom" over the greeting cuts it off and is processed normally.
-    _speakQueue.add(text);
-    await _drainSpeech();
-  }
-
-  /// Kept for the screen to nudge a greeting once the user's name is
-  /// known, if the session was already ready before that happened.
+  /// The spoken greeting, when it is switched on: a FIXED line, so it goes
+  /// straight through the speech engine — no model is asked to say it.
+  /// Refuses while offline to the conversation, mid-turn, in a phone call,
+  /// or when it was said recently.
   Future<void> greetOnce({String? name}) async {
     if (name != null && name.isNotEmpty) greetingName = name;
-    await _maybeGreetOnReady();
+    if (!greetingEnabled || !_conversationOpen) return;
+    if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) return;
+    if (_turnRunning || PhoneStateGuard.instance.inCall) return;
+    _lastGreetedAt = DateTime.now();
+    final text = greetingFor(greetingName, gender: AuthService.instance.user?.gender);
+    transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
+    replyComplete = true;
+    _captionLine('hari', text);
+    notifyListeners();
+    await _speakDirect(text);
   }
 
-  /// Resets the greeting guard — used when a DIFFERENT user signs in, so
+  /// Resets the greeting clock — used when a DIFFERENT user signs in, so
   /// the next person is greeted properly.
-  void resetGreeting() => _greetedEpoch = -1;
+  void resetGreeting() => _lastGreetedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // ---------------- CONTINUOUS CONVERSATION ----------------
-  // Hari keeps the conversation going: after she finishes speaking she
-  // listens again automatically, so it feels like a phone call instead of
-  // a walkie-talkie. The loop ends when the user says goodbye, taps to
-  // cancel, or twice says nothing at all.
-
-  /// Set false to go back to tap-to-talk for every turn.
-  bool continuousConversation = true;
-
-  bool _conversationEnded = false;
-  int _silentTurns = 0;
-
-  /// Consecutive turns that produced no transcript. Guards against the loop
-  /// re-listening forever into a broken speech service.
-  int _failedTurns = 0;
-
-  /// The last uploaded mic clip, kept so a transient server-side STT
-  /// failure can be retried with the SAME audio — the user shouldn't have
-  /// to repeat themselves because Google's endpoint had a load spike.
-  List<int>? _lastAudioBytes;
-  bool _audioResent = false;
-
-  /// True while Hari will re-open the mic on her own after replying.
-  bool get conversationActive =>
-      continuousConversation && !_conversationEnded;
+  // ---------------- GOODBYE ----------------
 
   /// Phrases that close the conversation. Deliberately conservative: the
   /// phrase must END the utterance (allowing trailing filler like "then",
@@ -1979,7 +2206,7 @@ class AssistantEngine extends ChangeNotifier {
     caseSensitive: false,
   );
 
-  /// Farewells in the other languages Hari speaks.
+  /// Farewells in the other languages the assistant speaks.
   static final RegExp _farewellNativeRx = RegExp(
     r"अलविदा|फिर मिलेंगे|बाय|बस इतना|ಬೈ|ಸಾಕು|ಹೋಗ್ತೀನಿ|ಮುಗಿಯಿತು|"
     r"போதும்|பிறகு பார்க்கலாம்|సరిపోతుంది|వెళ్తాను",
@@ -1995,59 +2222,19 @@ class AssistantEngine extends ChangeNotifier {
     return _farewellRx.hasMatch(t) || _farewellNativeRx.hasMatch(t);
   }
 
-  /// Called when a reply has finished being spoken. Re-opens the mic unless
-  /// something else legitimately owns the turn.
-  void _maybeContinueListening() {
-    if (!conversationActive) return;
-    // A barge-in already schedules its own capture — don't double-start.
-    if (_bargedIn || _bargeMonitorOn) return;
-    if (PhoneStateGuard.instance.inCall) return;
-    // The camera/gallery owns the screen — reopening the mic underneath it
-    // only records noise. The flow re-enters here when it finishes.
-    if (_deviceFlowActive) return;
-    // These are waiting on the USER to tap something; don't talk over them.
-    if (pendingConfirmation != null ||
-        ambiguousContacts.isNotEmpty ||
-        phase == AssistantPhase.error ||
-        phase == AssistantPhase.listening ||
-        phase == AssistantPhase.inCall) {
-      return;
-    }
-    // Two silent turns in a row: they've walked away. Stop the mic rather
-    // than listening to an empty room forever.
-    if (_silentTurns >= 2) {
-      _conversationEnded = true;
-      notifyListeners();
-      return;
-    }
-    // A brief settle lets the audio device release the speaker before the
-    // mic reopens (prevents the tail of Hari's own voice being captured).
-    Future.delayed(const Duration(milliseconds: 350), () {
-      if (!conversationActive) return;
-      if (phase == AssistantPhase.listening || phase.busy) return;
-      if (pendingConfirmation != null || ambiguousContacts.isNotEmpty) return;
-      pressMic(auto: true);
-    });
-  }
+  // ---------------- ASKED FROM A SCREEN ----------------
 
-  /// Ask the assistant something on the user's behalf (dashboard quick
-  /// actions). Routed into whichever conversation currently owns the audio:
-  /// the LIVE session when one is up (she answers by voice, tools and all),
-  /// otherwise the classic SSE session — so a button tap and a spoken
-  /// request are the same thing to the rest of the system.
-  /// The same canned request sent twice, a second apart, most recently
-  /// from a double-tapped "Brief me": the user heard their whole agenda
-  /// read out, then heard it read out again. Every entry point to a turn
-  /// goes through here, so the guard belongs here rather than on the one
-  /// button that exposed it.
-  ///
-  /// Keyed on the TEXT, not a plain in-flight flag: asking two different
-  /// things in quick succession is legitimate, and dropping the second
-  /// would be its own bug.
+  /// The same canned request sent twice, a second apart (a double-tapped
+  /// "Brief me") read the whole agenda out twice. Keyed on the TEXT:
+  /// asking two different things in quick succession is legitimate.
   String? _lastAsk;
   DateTime _lastAskAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _askDedupeWindow = Duration(seconds: 4);
 
+  /// Ask the assistant something on the owner's behalf (a panel's button:
+  /// "Brief me", "Listen", "Tell me about Ravi"): one turn, answered out
+  /// loud — a button tap and a spoken request are the same thing to the
+  /// rest of the system.
   Future<void> askAssistant(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
@@ -2058,21 +2245,18 @@ class AssistantEngine extends ChangeNotifier {
     }
     _lastAsk = t;
     _lastAskAt = now;
-    if (liveActive) {
-      _liveSvc.sendText(t);
-      return;
-    }
-    await sendText(t);
+    await _runTurn(t, mode: BrainMode.voice);
   }
 
   /// AGENT-TO-AGENT DELIVERY, spoken half. Fetches this user's unread
-  /// agent messages and has Hari SPEAK them ("Dhanush says: …"). Called by
-  /// the push listeners (foreground arrival, notification tap, cold start
-  /// from a notification). Messages are marked read immediately so a live
-  /// session that starts later doesn't announce them a second time.
+  /// agent messages and has the assistant SAY them ("Dhanush said: …").
+  /// Called by the push listeners (foreground arrival, notification tap,
+  /// cold start from a notification). Marked read immediately, so a
+  /// conversation that starts later does not announce them a second time.
   bool _announcing = false;
-  /// Bumped by leaveConversation — the readout loop checks it between
-  /// messages so unread items 2 and 3 don't keep speaking over Home.
+
+  /// Bumped by leaveConversation — the readout checks it between messages
+  /// so unread items 2 and 3 don't keep speaking over Home.
   int _announceEpoch = 0;
 
   Future<void> announceIncomingMessages() async {
@@ -2100,58 +2284,39 @@ class AssistantEngine extends ChangeNotifier {
           body: {'ids': [for (final m in list) m['id']]});
 
       // A personal relay, not a readout: "Hey Allen, Dhanush said: …".
-      // The recipient hears their own name first — that instant of "this
-      // is for me" is what makes a spoken message land as a message.
-      final meFull = (greetingName ?? AuthService.instance.user?.name ?? '')
-          .trim();
+      final meFull = (greetingName ?? AuthService.instance.user?.name ?? '').trim();
       final me = meFull.isEmpty ? '' : meFull.split(RegExp(r'\s+')).first;
       final hey = me.isEmpty ? 'Hey,' : 'Hey $me,';
       final lines = [
         for (final m in list)
           '$hey ${(m['from'] as String? ?? 'Someone').split(RegExp(r'\s+')).first}'
-              // auto = composed by the other person's assistant (interim
-              // scheduling acknowledgement) — never put words in the
-              // person's own mouth.
+              // auto = composed by the other person's assistant — never put
+              // words in the person's own mouth.
               '${m['auto'] == true ? "'s assistant" : ''} '
               'said: ${m['message'] ?? ''}'
       ];
-      if (liveActive) {
-        // The live model owns the audio — hand it the news to deliver.
-        _liveSvc.sendText(
+      if (_voiceOn || _turnRunning) {
+        // A conversation is running: the assistant delivers them in it —
+        // someone else's words, so the turn is marked untrusted (nothing is
+        // saved, sent or paid because a message asks).
+        await _tellModel(
             '[SYSTEM] New message${lines.length > 1 ? 's' : ''} just arrived. '
-            'Read to me now, naming each sender: ${lines.join(' | ')}');
+            'Read to me now, naming each sender: ${lines.join(' | ')}',
+            untrusted: true);
         return;
       }
+      // No conversation: read out as they are, in her voice, no model.
       for (final line in lines) {
         if (epoch != _announceEpoch) return; // user left — stop talking
         transcript.add(TranscriptEntry(TranscriptRole.assistant, line));
         notifyListeners();
-        await _speakReply(line);
+        await _speakDirect(line);
       }
     } catch (_) {
       // A failed announce keeps the message unread-safe: worst case the
-      // brief still shows it and the next session speaks it.
+      // brief still shows it and the next conversation says it.
     } finally {
       _announcing = false;
-    }
-  }
-
-  /// Text fallback from the bottom input bar.
-  Future<void> sendText(String text) async {
-    final t = text.trim();
-    if (t.isEmpty) return;
-    await _voice.stopSpeaking();
-    // Typing is an explicit "I'm here" — revive the loop, but respect a
-    // typed goodbye the same way a spoken one is respected.
-    _conversationEnded = isFarewell(t);
-    _maybeAskLocationFor(t);
-    _silentTurns = 0;
-    _resetTurn();
-    _setPhase(AssistantPhase.thinking);
-    try {
-      await _api.sendText(t);
-    } catch (_) {
-      _setLocalError("I couldn't send that. Check your connection.");
     }
   }
 
@@ -2162,71 +2327,52 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
     HapticFeedback.selectionClick();
 
-    // On-device flow (live mode): no server round-trip — the SSE session
-    // knows nothing about this call. Dial (or drop) locally and let the
-    // live model know what happened so the conversation stays coherent.
+    // An on-device call flow: dial (or drop) here, and say what happened.
     if (_localCallFlow) {
       _localCallFlow = false;
       final who = pending?.contact?.name ?? 'them';
       if (approved && (pending?.contact?.phone.isNotEmpty ?? false)) {
         await _dialAndReport(pending!.contact!);
-      } else if (liveActive) {
-        _liveSvc.sendText('[SYSTEM] I declined the call to $who. Acknowledge briefly.');
+      } else {
+        await _tellModel('[SYSTEM] I declined the call to $who. Acknowledge briefly.');
       }
       return;
     }
-
-    try {
-      await _api.confirm(approved);
-    } catch (_) {
-      _setLocalError('That action could not be sent.');
-      return;
-    }
-    // The phone permissions live HERE — the backend only narrates status,
-    // this device actually dials.
-    if (approved &&
-        pending?.action == 'call' &&
-        (pending?.contact?.phone.isNotEmpty ?? false)) {
-      await _dialAndReport(pending!.contact!);
-    }
+    // The server is waiting for the owner's yes: the card's button IS that
+    // answer, and the approval rides on this turn only when it says yes.
+    await _runTurn(approved ? 'Yes' : 'No',
+        mode: _voiceOn ? BrainMode.voice : BrainMode.chat, speak: true);
   }
 
   /// Ambiguous-contact card selection.
   Future<void> chooseContact(ContactMatch m) async {
     ambiguousContacts = const [];
-    // On-device flow: the user's tap on the pick IS the choice — act on it
-    // (relay or direct dial); the server was never part of this call.
+    notifyListeners();
+    // The owner's tap on the pick IS the choice — act on it (relay or
+    // direct dial).
     if (_localCallFlow) {
       _localCallFlow = false;
-      notifyListeners();
       await _actOnResolvedCall(m);
       return;
     }
-    notifyListeners();
-    try {
-      await _api.chooseContact(m.id);
-    } catch (_) {
-      _setLocalError('That choice could not be sent.');
-    }
+    // No call is waiting on it here: the name goes to the assistant as the
+    // owner's answer.
+    await _runTurn(m.name, mode: _voiceOn ? BrainMode.voice : BrainMode.chat, speak: true);
   }
 
-  /// Cancel whatever is in flight.
+  /// Cancel whatever is in flight: the turn, her voice, a card waiting on
+  /// a tap. A conversation that is running listens again.
   Future<void> cancelAction() async {
-    _bargedIn = false; // an explicit cancel is not a barge-in
-    _conversationEnded = true; // and it closes the continuous loop
     _localCallFlow = false;
-    if (_bargeMonitorOn) {
-      _bargeMonitorOn = false;
-      await _voice.stopBargeInMonitor();
-    }
-    _speakQueue.clear();
-    _voice.stopSpeaking();
-    try {
-      await _api.cancel();
-    } catch (_) {}
     pendingConfirmation = null;
     ambiguousContacts = const [];
-    _setPhase(AssistantPhase.idle);
+    _sayEpoch++;
+    await _brainMade?.cancel();
+    await _speechMade?.cancel();
+    await _player.stop();
+    activityLabel.value = null;
+    _setPhase(_voiceOn ? AssistantPhase.listening : AssistantPhase.idle);
+    _maybeListen();
   }
 
   void dismissError() {
@@ -2235,115 +2381,17 @@ class AssistantEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ---------------- backend events ----------------
+  // ---------------- DEVICE ACTIONS: WHAT THE PHONE DOES ----------------
 
-  /// Hands an event to the engine as if the server had sent it (tests).
+  /// Hands an action to the engine as if the brain had (tests).
   @visibleForTesting
-  void debugHandleEvent(Map<String, dynamic> e) => _onEvent(e);
+  void debugHandleEvent(Map<String, dynamic> e) => unawaited(_onEvent(e));
 
-  void _onEvent(Map<String, dynamic> e) {
+  /// Performs one device action — every shape the server's tools send.
+  /// Completes when the action is done, so the brain can tell the model
+  /// how it went ([_performForBrain]).
+  Future<void> _onEvent(Map<String, dynamic> e) async {
     switch (e['type']) {
-      case 'assistant_state':
-        final p = AssistantPhase.fromWire(e['state'] as String? ?? '');
-        // Never let a server 'idle' stomp on local listening/recording.
-        if (p == AssistantPhase.idle && phase == AssistantPhase.listening) break;
-        // The server fires speaking→completed the instant it SENDS the
-        // reply, but the audio plays HERE afterwards — while our TTS is
-        // talking, those two states are ours to manage, or the mouth
-        // would freeze mid-sentence.
-        if (_ttsActive &&
-            (p == AssistantPhase.speaking || p == AssistantPhase.completed)) {
-          break;
-        }
-        _setPhase(p, silent: true);
-        if (p == AssistantPhase.error) {
-          errorMessage = e['message'] as String? ?? 'Something went wrong.';
-        }
-        _haptic(p);
-        break;
-
-      case 'user_transcript':
-        partial = '';
-        _failedTurns = 0; // a real transcript — the service is healthy
-        // A NEW QUESTION RETIRES THE LAST ANSWER'S CARDS.
-        //
-        // _resetTurn does this, but it only runs on the classic path — a
-        // live session never called it between turns, so citation and
-        // document cards from turn one were still on screen at turn five.
-        // Reported from the device: saying "hello" showed CPR steps and two
-        // evidence-law sections left over from a much earlier question.
-        // The news and schedule panels are deliberately NOT cleared here —
-        // they are dismissed by the user, and a follow-up question about a
-        // story must not close the story.
-        _clearAnswerCards();
-        final said = e['text'] as String? ?? '';
-        transcript.add(TranscriptEntry(TranscriptRole.user, said));
-        _captionFrom('you', said);
-        _maybeAskLocationFor(said);
-        // A goodbye closes the continuous loop: Hari still answers this
-        // turn (so she can say goodbye back), but won't reopen the mic.
-        if (isFarewell(said)) _conversationEnded = true;
-        break;
-
-      case 'assistant_sentence':
-        _enqueueSentence(e['text'] as String? ?? '');
-        break;
-
-      case 'assistant_message':
-        final text = e['text'] as String? ?? '';
-        if (e['streamed'] == true) {
-          // Sentences were already displayed + spoken as they arrived —
-          // just settle the live bubble on the exact final text.
-          if (_liveEntry != null) {
-            transcript[transcript.length - 1] =
-                TranscriptEntry(TranscriptRole.assistant, text);
-            _liveEntry = null;
-          } else {
-            transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
-          }
-        } else {
-          transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
-          _speakReply(text); // non-streamed (booking/search) — speak whole
-        }
-        break;
-
-      case 'tool_started':
-        final startedTool = e['tool'] as String? ?? '';
-        if (LocationService.locationTools.contains(startedTool)) {
-          unawaited(_maybeAskLocation());
-        }
-        activities.add(ToolActivity(
-          tool: startedTool,
-          label: e['label'] as String? ?? 'Working…',
-        ));
-        activityLabel.value = _labelForTool(startedTool);
-        break;
-
-      case 'tool_completed':
-        for (final a in activities) {
-          if (a.tool == e['tool'] && !a.completed) a.completed = true;
-        }
-        // ARM THE ALARM NOW, NOT WHEN THE BRIEF NEXT REFRESHES.
-        //
-        // Local alarms were only re-armed inside BriefService.refresh,
-        // which is throttled — 5 s in the engine, and 2 minutes in the
-        // service itself. Three reminders set in under a minute meant the
-        // last one's refresh was throttled away and its alarm was never
-        // scheduled: "remind me at 12:40", set at 12:39:52, never rang.
-        // A reminder set for a few seconds from now has to be armed in
-        // those few seconds.
-        if (_remindersTouchedBy(e['tool'] as String?)) {
-          unawaited(ReminderNotifications.instance.sync());
-        }
-        // A promise kept by voice can make today count (Momentum).
-        if (e['tool'] == 'complete_commitment') {
-          unawaited(MomentumService.instance.refresh(force: true));
-        }
-        if (!activities.any((a) => !a.completed)) {
-          activityLabel.value = null;
-        }
-        break;
-
       case 'search_results':
         searchQuery = e['query'] as String?;
         searchResults = ((e['results'] as List?) ?? const [])
@@ -2368,7 +2416,7 @@ class AssistantEngine extends ChangeNotifier {
         // nothing handled it, so Hari said "Calling…" and the phone never
         // dialled. The whole flow is on-device anyway (contacts + dialler
         // live here), so resolve, confirm and dial locally.
-        _handleResolveAndCall(
+        await _handleResolveAndCall(
           e['name'] as String? ?? '',
           e['message'] as String?,
           agentAvailable: e['agent_available'] == true,
@@ -2380,82 +2428,16 @@ class AssistantEngine extends ChangeNotifier {
         );
         break;
 
-      case 'contact_lookup':
-        _pendingLookupName = e['name'] as String? ?? '';
-        _localCallVia = (e['via'] ?? 'phone').toString();
-        // Contacts live on THIS device — resolve the name here and post
-        // the matches back so the backend can continue the flow.
-        _resolveContacts(e['name'] as String? ?? '');
-        break;
-
-      case 'contact_found':
-        foundContact =
-            ContactMatch.fromJson((e['contact'] as Map).cast<String, dynamic>());
-        ambiguousContacts = const [];
-        break;
-
-      case 'contacts_ambiguous':
-        ambiguousContacts = ((e['matches'] as List?) ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .map(ContactMatch.fromJson)
-            .toList();
-        // Several people share the name — ask with a TAP, not a spoken
-        // round-trip. The sheet pops over whatever screen is on top and
-        // one tap places the call.
-        _offerContactPicker();
-        break;
-
-      case 'contact_not_found':
-        foundContact = null;
-        ambiguousContacts = const [];
-        break;
-
-      case 'confirmation_request':
-        pendingConfirmation = PendingConfirmation(
-          action: e['action'] as String? ?? 'generic',
-          question: e['question'] as String?,
-          contact: e['contact'] is Map
-              ? ContactMatch.fromJson((e['contact'] as Map).cast<String, dynamic>())
-              : null,
-          message: e['message'] as String?,
-          spokenPreview: e['spoken_preview'] as String?,
-        );
-        HapticFeedback.mediumImpact();
-        break;
-
-      case 'call_status':
-        callStatus = CallStatusInfo(
-          status: e['status'] as String? ?? '',
-          contactName: e['contact_name'] as String? ?? '',
-        );
-        final oid = (e['outcome_id'] as num?)?.toInt();
-        if (oid != null) _pendingCallOutcomeId = oid;
-        break;
-
-      case 'place_call':
-        // The user picked a contact from the duplicate-name sheet, so the
-        // choice IS the confirmation — dial straight away, no second tap.
-        {
-          final c = e['contact'];
-          if (c is Map) {
-            _pendingCallOutcomeId =
-                (e['outcome_id'] as num?)?.toInt() ?? _pendingCallOutcomeId;
-            _dialAndReport(
-                ContactMatch.fromJson(c.cast<String, dynamic>()));
-          }
-        }
-        break;
-
       case 'analyze_camera':
         // Voice-driven vision analysis ("what tablet is this")
-        _analyzeCamera(e['question'] as String? ?? 'What is in this image?');
+        await _analyzeCamera(e['question'] as String? ?? 'What is in this image?');
         break;
 
       case 'capture_document':
       case 'open_camera':
         // Voice-driven capture: the backend recognised "save/scan/remember
         // this" and asks the device to open the camera/gallery and file the shot.
-        _captureDocument(
+        await _captureDocument(
           e['note'] as String? ?? '',
           clientId: (e['client_id'] as num?)?.toInt(),
           person: e['person'] as String?,
@@ -2467,7 +2449,7 @@ class AssistantEngine extends ChangeNotifier {
         // look_at_screenshot: they pick a picture they already have and we
         // answer about it. The server's screenshot mode existed for months
         // with nothing on this side to reach it.
-        _askAboutImage(
+        await _askAboutImage(
           question: e['question'] as String? ?? '',
           source: e['source'] as String? ?? 'gallery',
         );
@@ -2480,14 +2462,21 @@ class AssistantEngine extends ChangeNotifier {
         // PHOTO CARDS (client, 2026-09-26: "make a birthday card for my
         // daughter… with my signature"). The server's card tools only send
         // these from build 119; the card is drawn here, never by a model.
-        unawaited(PosterDeviceActions(EnginePosterHost(this)).handle(e));
+        await PosterDeviceActions(EnginePosterHost(this)).handle(e);
+        break;
+
+      case 'open_poster_studio':
+        // POSTER STUDIO (2026-09-30, build 135+): create_event_poster's
+        // design and background open in the studio; the phone sets the
+        // words, the AI only painted the picture.
+        await PosterStudioActions().handle(e);
         break;
 
       case 'phone_control':
         // Flashlight / volume / media / battery / settings — executed on
         // the device with the REAL result reported back; a control that
         // failed is said to have failed, never assumed.
-        _handlePhoneControl(e);
+        await _handlePhoneControl(e);
         break;
 
       case 'send_sms':
@@ -2500,33 +2489,23 @@ class AssistantEngine extends ChangeNotifier {
           final to = (e['to'] ?? '').toString();
           final who = (e['name'] ?? 'them').toString();
           final msg = (e['message'] ?? '').toString();
-          SmsService.instance.send(to, msg).then((err) async {
-            final ok = err == null;
-            AppFeedback.toast(
-                ok ? 'Text sent to $who.' : "Couldn't text $who — $err.");
-            try {
-              await ApiService.sendJson('/outcomes', method: 'POST', body: {
-                'kind': 'message',
-                'target': who,
-                'status': ok ? 'completed' : 'failed',
-                if (!ok) 'reason': err,
-                'detail': 'SMS',
-              });
-            } catch (_) {}
-            if (!ok) {
-              final line =
-                  '[SYSTEM] ERROR: the SMS to $who FAILED — $err. It was NOT '
-                  'sent; tell me plainly and suggest fixing the permission '
-                  'or trying again.';
-              if (liveActive) {
-                _liveSvc.sendText(line);
-              } else {
-                try {
-                  await _api.sendText(line);
-                } catch (_) {}
-              }
-            }
-          });
+          final err = await SmsService.instance.send(to, msg);
+          final ok = err == null;
+          AppFeedback.toast(ok ? 'Text sent to $who.' : "Couldn't text $who — $err.");
+          try {
+            await ApiService.sendJson('/outcomes', method: 'POST', body: {
+              'kind': 'message',
+              'target': who,
+              'status': ok ? 'completed' : 'failed',
+              if (!ok) 'reason': err,
+              'detail': 'SMS',
+            });
+          } catch (_) {}
+          if (!ok) {
+            await _tellModel('[SYSTEM] ERROR: the SMS to $who FAILED — $err. It was NOT '
+                'sent; tell me plainly and suggest fixing the permission '
+                'or trying again.');
+          }
         }
         break;
 
@@ -2541,7 +2520,7 @@ class AssistantEngine extends ChangeNotifier {
             final d = UserDocument.fromJson(doc.cast<String, dynamic>());
             documentCards = [d];
             notifyListeners();
-            shareDocumentFile(d).catchError((_) {
+            await shareDocumentFile(d).catchError((_) {
               AppFeedback.toast("Couldn't prepare that file to share.");
             });
           }
@@ -2584,24 +2563,16 @@ class AssistantEngine extends ChangeNotifier {
                 target: mode, reason: 'not a theme this app has');
           }
         }
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'scan_business_card':
-        unawaited(_scanBusinessCard());
+        await _scanBusinessCard();
         break;
 
       case 'call_log':
         // "Any missed calls?", "did Ravi call?" — read on this phone and
         // answered with ONE [SYSTEM] line (phone_calls tool, build 106).
-        unawaited(_answerCallLog(e));
-        break;
-
-      case 'automate':
-        // "Do it for me" inside another app — the phone's hands, one
-        // checked step at a time (AutomationRunner). Stops at payment.
-        unawaited(_runAutomation(e));
-        _setPhase(AssistantPhase.completed);
+        await _answerCallLog(e);
         break;
 
       case 'shortcut_run':
@@ -2611,7 +2582,6 @@ class AssistantEngine extends ChangeNotifier {
         // when (in-app at once, the chat message, the app that stays open,
         // a phone task last) and keeps the rest for the owner's return.
         unawaited(ShortcutRunner.instance.run(ShortcutRunDirective.fromJson(e), shortcutPorts));
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'open_app_screen':
@@ -2628,12 +2598,15 @@ class AssistantEngine extends ChangeNotifier {
             if (nav == null || builder == null) {
               _reportDeviceFailure('open_app_screen',
                   target: screen, reason: 'that screen is not available');
+            } else if (screen == 'shopping_list' && ShoppingListScreen.showing > 0) {
+              // Already open: it redraws with what the assistant just did
+              // rather than stacking a second list.
+              unawaited(ShoppingService.instance.refresh());
             } else {
               nav.push(MaterialPageRoute(builder: builder));
             }
           }
         }
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'start_focus':
@@ -2650,13 +2623,25 @@ class AssistantEngine extends ChangeNotifier {
                 builder: (_) => FocusScreen(minutes: minutes, label: label, autoStart: true)));
           }
         }
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'momentum_updated':
-        // A voice write to Today's 3 or a habit: Home redraws now, not at
-        // the next refresh. Asks nothing of the phone beyond that.
-        unawaited(MomentumService.instance.refresh(force: true));
+        // Momentum is gone from the app (2026-09-29): nothing to redraw.
+        break;
+
+      case 'shopping_list_updated':
+        // The assistant added, ticked, removed or cleared something on the
+        // shopping list (build 124): an open list and Hub's count redraw
+        // now. A notice — asks nothing else of the phone.
+        unawaited(ShoppingService.instance.refresh());
+        break;
+
+      case 'shop_handoff':
+        // "Order these" (shop_from_list, build 124, asked first): each
+        // thing opens in the app that sells it — the first now, the rest
+        // from the "Shopping · 1 of 7 · Next" notification. Nothing is
+        // ordered or paid here; the owner chooses and pays in the app.
+        await _shopFromList(e);
         break;
 
       case 'open_usage_access':
@@ -2669,13 +2654,12 @@ class AssistantEngine extends ChangeNotifier {
         // then apologised three times running for something that had
         // worked. Only a real failure is reported, matching every other
         // device action.
-        UsageService.instance.openSettings().then((opened) {
+        await UsageService.instance.openSettings().then((opened) {
           if (!opened) {
             _reportDeviceFailure('enable_usage_tracking',
                 reason: 'this phone has no Usage access settings screen');
           }
         });
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'clock_intent':
@@ -2687,7 +2671,7 @@ class AssistantEngine extends ChangeNotifier {
           final action = e['action'] as String? ?? '';
           final extras = (e['extras'] as Map?)?.cast<String, dynamic>() ?? {};
           if (action.isNotEmpty) {
-            const MethodChannel('hari/intent')
+            await const MethodChannel('hari/intent')
                 .invokeMethod<Map<Object?, Object?>>(
                     'clockIntent', {'action': action, 'extras': extras})
                 .then((res) {
@@ -2727,7 +2711,6 @@ class AssistantEngine extends ChangeNotifier {
               AppLog.add('clock', '$action -> channel error: $err');
             });
           }
-          _setPhase(AssistantPhase.completed);
         }
         break;
 
@@ -2739,27 +2722,18 @@ class AssistantEngine extends ChangeNotifier {
           // the return trip rebuilds the voice session instead of
           // resuming a socket Android has already torn down.
           _leftForExternalApp = true;
-          _openExternalUrl(url);
-          _setPhase(AssistantPhase.completed);
+          await _openExternalUrl(url);
         }
         break;
 
       case 'end_conversation':
-        // The user said goodbye. Stop listening NOW (no more frames go
-        // up), give the two-word farewell just enough air to finish, and
-        // take the whole session down — orb, overlay, mic, socket.
-        {
-          AppLog.add('live', 'user ended the conversation by voice');
-          // remoteSpeaking hard-gates the mic uplink — no more frames go
-          // to the model while the farewell plays out.
-          _liveSvc.remoteSpeaking = true;
-          _setPhase(AssistantPhase.completed, silent: true);
-          Timer(const Duration(milliseconds: 1400), () {
-            if (inlineVoice || liveActive || _conversationOpen) {
-              endInlineConversation();
-            }
-          });
-        }
+        // The owner said goodbye: no more listening, her farewell (this
+        // turn's reply) plays out, then the whole conversation closes —
+        // orb, overlay, microphone.
+        AppLog.add('voice', 'the owner ended the conversation by voice');
+        _endAfterTurn = true;
+        if (_listening) unawaited(_stopListening());
+        if (!_turnRunning) unawaited(_endWhenQuiet());
         break;
 
       case 'open_any_app':
@@ -2778,9 +2752,9 @@ class AssistantEngine extends ChangeNotifier {
           // question is asked.
           final mayInstall = e['install'] == true;
           _leftForExternalApp = true;
-          const MethodChannel('hari/intent')
+          await const MethodChannel('hari/intent')
               .invokeMethod<String>('launchApp', {'name': want, 'pkg': pkg})
-              .then((opened) {
+              .then((opened) async {
             if (opened == null || opened.isEmpty) {
               _leftForExternalApp = false;
               // NOT INSTALLED MEANS THE STORE. Owner, 2026-09-23: "open
@@ -2789,7 +2763,7 @@ class AssistantEngine extends ChangeNotifier {
               // package is known), and the phone opens the app once it is
               // installed (InstallWatch).
               if (e['store_if_missing'] == true) {
-                const MethodChannel('hari/intent')
+                await const MethodChannel('hari/intent')
                     .invokeMethod<bool>('openStore', {'query': want, 'pkg': pkg})
                     .then((ok) async {
                   if (ok == true) {
@@ -2807,31 +2781,8 @@ class AssistantEngine extends ChangeNotifier {
                           'name the store.');
                       return;
                     }
-                    // "DO IT FOR ME" ON: press Install for them, then open
-                    // the app when it lands (HariAccessibilityService).
-                    // Free apps only; a price stops it. The service is
-                    // waited for first, as a task does: just after the app
-                    // started, Android binds it within seconds, and not
-                    // waiting sent the owner to tap Install himself.
-                    var st = await AutomationRunner.instance.device.status();
-                    for (var i = 0; i < 12 && !st.connected && st.enabled; i++) {
-                      await Future<void>.delayed(const Duration(milliseconds: 500));
-                      st = await AutomationRunner.instance.device.status();
-                    }
-                    final auto = await const MethodChannel('hari/automation')
-                        .invokeMethod<bool>('autoInstall', {'pkg': pkg, 'name': want})
-                        .catchError((_) => false);
-                    if (auto == true) {
-                      AppFeedback.toast('Installing $want…',
-                          tone: FeedbackTone.progress, spoken: true);
-                      _tellModel(
-                          '[SYSTEM] "$want" is not installed. Its page in the app '
-                          'store is open and you are pressing Install for them now; '
-                          'it opens by itself as soon as it is installed. Say that '
-                          'in ONE short sentence, without naming the store, and '
-                          'never claim it is already installed.');
-                      return;
-                    }
+                    // Asked to install: the store page is open, they tap
+                    // Install, and InstallWatch opens the app when it lands.
                     AppFeedback.toast("$want isn't installed — tap Install",
                         spoken: true);
                     _tellModel(
@@ -2867,7 +2818,6 @@ class AssistantEngine extends ChangeNotifier {
                 target: want, reason: 'the phone could not launch it');
           });
         }
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'uninstall_app':
@@ -2878,7 +2828,7 @@ class AssistantEngine extends ChangeNotifier {
         {
           final want = (e['name'] as String? ?? '').trim();
           final pkg = (e['pkg'] as String? ?? '').trim();
-          const MethodChannel('hari/intent')
+          await const MethodChannel('hari/intent')
               .invokeMethod<Object?>('uninstallApp', {'name': want, 'pkg': pkg})
               .then((r) {
             final m = r is Map ? r : const {};
@@ -2939,20 +2889,14 @@ class AssistantEngine extends ChangeNotifier {
                 'so NOTHING was removed. Say that plainly in one sentence.');
           });
         }
-        _setPhase(AssistantPhase.completed);
         break;
 
       case 'live_voice_changed':
-        // Gemini Live fixes the voice in the setup message, so the running
-        // session keeps the old one however many times the profile
-        // changes. The session has to be rebuilt — but NOT now: the
-        // confirmation ("give me a second to switch over") is still being
-        // spoken, and tearing the socket down here cuts off the sentence
-        // announcing the change. The flag is consumed at turn end.
-        if (liveActive) {
-          _pendingVoiceRestart = true;
-          AppLog.add('live', 'voice changed — session rebuild queued');
-        }
+        // The voice is /ai/config's (Gemini TTS): fetched again, the next
+        // sentence is said in the new one. The cached greeting was made in
+        // the old voice.
+        unawaited(AiConfigStore.instance.refresh());
+        unawaited(GreetingVoice.instance.clear());
         break;
 
       case 'assistant_renamed':
@@ -2992,14 +2936,13 @@ class AssistantEngine extends ChangeNotifier {
             // only honest move left is to correct it out loud.
             AppLog.add('update', 'no context to show the update sheet');
             AppFeedback.toast('Open the app first, then ask me to update.',
-                spoken: liveActive);
-            if (liveActive) {
-              _liveSvc.sendText(
-                  '[SYSTEM] ERROR: the update screen could NOT be opened on '
-                  'this phone, so nothing is installing. Tell me that '
-                  'plainly and say to open the app and ask again — do not '
-                  'claim the update started.');
-            }
+                spoken: true);
+            _reportDeviceFailure('check_for_update', reason: 'no screen to show it on');
+            await _tellModel(
+                '[SYSTEM] ERROR: the update screen could NOT be opened on '
+                'this phone, so nothing is installing. Tell me that '
+                'plainly and say to open the app and ask again — do not '
+                'claim the update started.');
           }
         }
         break;
@@ -3040,6 +2983,20 @@ class AssistantEngine extends ChangeNotifier {
         }
         break;
 
+      // 2026-09-30 HOOK (features/briefing): play_daily_brief and
+      // prepare_meeting. Returns at once; the brief plays on its own.
+      case 'play_brief':
+      case 'open_meeting_prep':
+        await BriefingDirectives.handle(e);
+        break;
+
+      // 2026-09-30 HOOK (features/people): remember_address / show_address
+      // — the owner asks for someone's address and "it should show us".
+      // The sheet pops over the screen; the voice turn does not wait.
+      case 'show_address':
+        unawaited(AddressSheet.fromDirective(e));
+        break;
+
       case 'show_image':
       case 'show_video':
         // generate_image / generate_video: the result is already saved as
@@ -3071,456 +3028,305 @@ class AssistantEngine extends ChangeNotifier {
         break;
 
       case 'translator':
-        // Live interpreter: while on, the speaker gate opens to everyone
-        // in the room and the live model translates each utterance
+        // Interpreter: while on, the model translates each utterance
         // between the two languages instead of assisting.
-        final on = e['on'] == true;
-        translatorActive = on;
-        _liveSvc.translatorBypass = on;
-        if (liveActive) {
-          if (on) {
-            final a = (e['from'] as String?)?.trim() ?? '';
-            final b = (e['to'] as String?)?.trim() ?? '';
-            _liveSvc.sendText(
-                '[SYSTEM] INTERPRETER MODE ON between $a and $b. From now '
-                'until told otherwise, several different people will speak. '
-                'For each utterance you hear: if it is in $a, say it in $b; '
-                'if it is in $b, say it in $a. Speak ONLY the translation — '
-                'no commentary, no answering questions yourself, no '
-                'greetings. Keep names and numbers exact. If an utterance '
-                'is in neither language, translate it into $a.');
-          } else {
-            _liveSvc.sendText(
-                '[SYSTEM] INTERPRETER MODE OFF. Stop translating; go back '
-                'to being my assistant and respond only to me as usual.');
-          }
+        {
+          final on = e['on'] == true;
+          translatorActive = on;
+          final a = (e['from'] as String?)?.trim() ?? '';
+          final b = (e['to'] as String?)?.trim() ?? '';
+          await _tellModel(on
+              ? '[SYSTEM] INTERPRETER MODE ON between $a and $b. From now '
+                  'until told otherwise, several different people will speak. '
+                  'For each utterance you hear: if it is in $a, say it in $b; '
+                  'if it is in $b, say it in $a. Speak ONLY the translation — '
+                  'no commentary, no answering questions yourself, no '
+                  'greetings. Keep names and numbers exact. If an utterance '
+                  'is in neither language, translate it into $a.'
+              : '[SYSTEM] INTERPRETER MODE OFF. Stop translating; go back '
+                  'to being my assistant and respond only to me as usual.');
+          AppFeedback.toast(on
+              ? 'Translator on — everyone near the phone is heard.'
+              : 'Translator off.');
         }
-        AppFeedback.toast(on
-            ? 'Translator on — everyone near the phone is heard.'
-            : 'Translator off.');
-        notifyListeners();
         break;
 
       case 'open_video':
-        // Voice-driven video mode. This used to END the conversation and
-        // call a hook NO screen ever registered — the assistant went
-        // silent and nothing opened. Face mode is an engine toggle (the
-        // same one the on-screen camera button flips), so just flip it.
-        if (!faceMode) toggleFaceMode();
-        break;
-
-      case 'transcript_failed':
-        // The turn produced no transcript. Two different situations:
-        //  • stt_error  — the speech service hiccuped (503 congestion,
-        //    timeout, retired model). The server already retried; here we
-        //    resend the SAME recorded clip exactly once after a short
-        //    pause — congestion blips usually clear in a second, and the
-        //    user shouldn't have to repeat themselves for Google's load
-        //    spikes. If the resend also fails, stop the loop and say the
-        //    service is down rather than blaming their microphone.
-        //  • no_speech  — genuinely quiet; allow one retry, then stop.
-        _failedTurns++;
-        if (e['reason'] == 'stt_error') {
-          AppLog.add('stt', 'stt_error: ${e['detail'] ?? ''}');
-          final clip = _lastAudioBytes;
-          if (!_audioResent && clip != null) {
-            _audioResent = true;
-            _setPhase(AssistantPhase.transcribing, silent: true);
-            Future.delayed(const Duration(milliseconds: 1500), () async {
-              try {
-                await _api.sendAudio(clip);
-              } catch (_) {
-                _setLocalError(
-                    'Speech service unavailable — please try again shortly.');
-              }
-            });
-          } else {
-            _conversationEnded = true;
-            errorMessage =
-                'Speech service unavailable — check the server logs.';
-          }
-        } else if (_failedTurns >= 2) {
-          _conversationEnded = true;
-        }
-        break;
-
-      case 'audio_ready':
-        readyAudioUrl = e['url'] as String?;
-        usedClonedVoice = e['cloned_voice'] == true;
-        break;
-
-      case 'error':
-        errorMessage = e['message'] as String? ?? 'Something went wrong.';
+        // Face-to-face video rode the live socket, which is gone: said
+        // plainly rather than opening an empty room.
+        _reportDeviceFailure('open_video', reason: 'face-to-face video is not in this version');
+        await _tellModel('[SYSTEM] ERROR: face-to-face video is not available in '
+            'this version of the app, so nothing opened. Say that plainly in '
+            'one sentence.');
         break;
     }
     notifyListeners();
   }
 
-  /// Voice-driven vision analysis: opens the camera, sends the photo directly
-  /// to the backend /vision endpoint with the user's question, and speaks the answer.
-  /// Opens the camera, sends the frame to /vision, and reports what it says.
-  ///
-  /// The mic is held shut for the whole capture: the shutter and whatever the
-  /// user mutters while framing the shot would otherwise stream into the live
-  /// model and be taken as a new question. The gate is released in a finally
-  /// because there are five ways out of the inner method — cancelled capture,
-  /// camera failure, upload failure, thrown error, success — and missing any
-  /// one of them would leave the microphone dead for the rest of the session.
-  Future<void> _analyzeCamera(String question) async {
-    final gated = liveActive;
-    if (gated) _liveSvc.remoteSpeaking = true;
-    _deviceFlowActive = true; // no auto-listen under the camera
-    try {
-      await _analyzeCameraInner(question);
-    } finally {
-      _deviceFlowActive = false;
-      if (gated) _liveSvc.remoteSpeaking = false;
-    }
-  }
+  // ---------------- THE CAMERA AND PICTURES ----------------
 
-  /// Say something that came out of the camera flow.
-  ///
-  /// In live mode the assistant's voice IS the avatar's, so speaking locally
-  /// would be a second, unsynced voice — and in practice the user heard
-  /// nothing and the assistant simply appeared to give up after the shutter.
-  /// Routing through the live session makes her say it, and keeps the model
-  /// aware of what happened.
-  Future<void> _sayFromCamera(String text) async {
-    if (liveActive) {
-      _liveSvc.sendText('Say this to me now, in my language: "$text"');
-      _setPhase(AssistantPhase.listening, silent: true);
-      notifyListeners();
-      return;
-    }
-    await _speakReply(text);
-    _setPhase(AssistantPhase.completed);
-  }
-
-  Future<void> _analyzeCameraInner(String question) async {
-    await _voice.stopSpeaking();
-    XFile? shot;
-    try {
-      shot = await ImagePicker().pickImage(
-        source: ImageSource.camera,
+  /// A photo from the camera or the gallery; null when the owner closed it.
+  /// Throws when it would not open.
+  static Future<XFile?> _pick(ImageSource source, {int quality = 82}) =>
+      ImagePicker().pickImage(
+        source: source,
         maxWidth: 1920,
         maxHeight: 1920,
-        imageQuality: 82,
+        imageQuality: quality,
       );
-    } catch (_) {
-      await _sayFromCamera("I couldn't open the camera.");
+
+  /// "WHAT IS THIS?" — the camera, then ONE brain turn with the photo and
+  /// the owner's question, answered by the cloud model. The turn that asked for the camera
+  /// has already answered; this is the next one. The microphone is held
+  /// shut for the whole capture — the shutter, and whatever the owner
+  /// mutters while framing the shot, are not a question.
+  Future<void> _analyzeCamera(String question) async {
+    XFile? shot;
+    try {
+      shot = await holdMicDuring(() => _pick(ImageSource.camera));
+    } catch (e) {
+      AppLog.add('vision', 'camera failed: $e');
+      _reportDeviceFailure('analyze_camera', reason: 'the camera would not open');
+      await _tellModel('[SYSTEM] ERROR: the camera could not be opened, so no '
+          'photo was taken. Say so plainly in one sentence.');
       return;
     }
     if (shot == null) {
-      await _sayFromCamera("Okay, cancelled.");
+      await _tellModel('[SYSTEM] The owner closed the camera without taking a '
+          'photo; nothing was looked at. Acknowledge in a few words.');
       return;
     }
-
-    _setPhase(AssistantPhase.thinking, silent: true);
-    notifyListeners();
-    try {
-      final bytes = await shot.readAsBytes();
-      
-      var request = http.MultipartRequest('POST', Uri.parse('${ApiService.baseUrl}/vision'));
-      if (ApiService.sessionToken != null) {
-        request.headers['Authorization'] = 'Bearer ${ApiService.sessionToken}';
-      }
-      request.fields['mode'] = 'ask';
-      request.fields['question'] = question;
-      // contentType is REQUIRED, not optional. Without it the part goes up
-      // as application/octet-stream and /vision — which accepts only
-      // image/jpeg|png|webp — rejects every photo with 415. A filename
-      // ending in .jpg does NOT set the MIME type.
-      request.files.add(http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: 'scan.jpg',
-        contentType: MediaType('image', 'jpeg'),
-      ));
-      
-      final response = await request.send();
-      final body = await response.stream.bytesToString();
-      
-      if (response.statusCode != 200) {
-        // Log the body: a silent "couldn't analyse it" hid a 415 for the
-        // whole of this feature's life.
-        AppLog.add('vision',
-            'HTTP ${response.statusCode}: ${body.substring(0, body.length < 160 ? body.length : 160)}');
-        await _sayFromCamera("I couldn't read that image, sorry. Try again?");
-        return;
-      }
-      
-      final data = jsonDecode(body);
-      final answer = data['answer'] as String? ?? "I couldn't see anything clearly.";
-
-      transcript.add(TranscriptEntry(TranscriptRole.assistant, answer));
-
-      if (liveActive) {
-        // In live mode the assistant's voice belongs to the avatar. Speaking
-        // this locally would talk over her with a second, unsynced voice and
-        // leave the model unaware of what was on the sign. Hand the reading
-        // back to the live session instead: she says it herself, in the
-        // user's language, and can be asked follow-up questions about it.
-        _liveSvc.sendText(
-          'I pointed the camera and the image shows: "$answer". '
-          'Tell me this now, naturally, in the language I am speaking.',
-        );
-        _setPhase(AssistantPhase.listening, silent: true);
-        notifyListeners();
-      } else {
-        await _speakReply(answer);
-        // Let the backend know we answered it so context is maintained
-        _api.sendText("I looked at it and saw: $answer");
-      }
-      
-    } catch (e) {
-      await _sayFromCamera("There was a problem scanning the image.");
-    }
+    await _askWithPicture(shot, question);
   }
 
   /// Dashboard "Scan" button — same flow as the voice command, but entered
   /// deterministically: the camera opens immediately, no voice turn needed.
   Future<void> startScan() => _captureDocument('');
 
-  /// LOOK AT A PICTURE THEY ALREADY HAVE and answer about it.
-  ///
-  /// Mirrors _captureDocument's device-flow discipline — the picker owns
-  /// the screen, so the continuous mic loop is held shut for the whole
-  /// thing; without that the next turn is shutter noise and the assistant
-  /// says it could not hear.
-  ///
-  /// The answer comes back as a [SYSTEM] line rather than being spoken
-  /// here, so it goes through the same turn the model is already in and
-  /// the reply is subject to every gate: it is the model's sentence, from
-  /// a real result, not text this file invented.
+  /// LOOK AT A PICTURE THEY ALREADY HAVE (look_at_screenshot) and answer
+  /// about it, as a turn with the picture. When it shows an upcoming event
+  /// (an invite, a ticket, a booking), the model may put it on screen as
+  /// one tap — a reminder or the phone's calendar — through an app-local
+  /// tool offered only for this picture's turn.
   Future<void> _askAboutImage({
     required String question,
     String source = 'gallery',
   }) async {
-    _deviceFlowActive = true;
-    final liveGated = liveActive;
-    if (liveGated) _liveSvc.remoteSpeaking = true;
+    XFile? shot;
     try {
-      await _voice.stopSpeaking();
-      XFile? shot;
-      try {
-        shot = await ImagePicker().pickImage(
-          source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
-          maxWidth: 1920,
-          maxHeight: 1920,
-          imageQuality: 85,
-        );
-      } catch (e) {
-        AppLog.add('vision', 'picker failed: $e');
-        _reportDeviceFailure('look_at_screenshot', reason: 'the picker would not open');
-        await _tellModel(
-            '[SYSTEM] ERROR: the gallery would not open, so NO image was '
-            'read. Say so plainly.');
-        _setPhase(AssistantPhase.completed);
-        return;
-      }
-      if (shot == null) {
-        await _tellModel(
-            '[SYSTEM] The user closed the picker without choosing an image. '
-            'Nothing was read. Acknowledge briefly and move on.');
-        _setPhase(AssistantPhase.completed);
-        return;
-      }
+      shot = await holdMicDuring(() => _pick(
+            source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+            quality: 85,
+          ));
+    } catch (e) {
+      AppLog.add('vision', 'picker failed: $e');
+      _reportDeviceFailure('look_at_screenshot', reason: 'the picker would not open');
+      await _tellModel('[SYSTEM] ERROR: the gallery would not open, so NO image was '
+          'read. Say so plainly.');
+      return;
+    }
+    if (shot == null) {
+      await _tellModel('[SYSTEM] The user closed the picker without choosing an image. '
+          'Nothing was read. Acknowledge briefly and move on.');
+      return;
+    }
+    await _askWithPicture(shot, question, offerEventCard: true);
+  }
 
-      _setPhase(AssistantPhase.thinking, silent: true);
-      notifyListeners();
-      try {
-        final bytes = await shot.readAsBytes();
-        final res = await ApiService.visionAsk(
-          bytes: bytes,
-          filename: 'screenshot.jpg',
-          mimeType: 'image/jpeg',
-          mode: 'screenshot',
-          question: question,
-        );
-        final answer = res.answer.trim();
-        if (answer.isEmpty) {
-          _reportDeviceFailure('look_at_screenshot',
-              reason: 'nothing could be read from the image');
-          await _tellModel(
-              '[SYSTEM] ERROR: nothing could be read from that image. Say so '
-              'and offer to try another one.');
-        } else {
-          // AN EVENT IN THE PICTURE (an invite, a ticket, a booking): the
-          // server resolved its date; the answer alone lost it. It goes on
-          // screen as one tap, and to the model exactly, so "when is it?"
-          // and "remind me" work from the real date.
-          final seen = res.action;
-          final event = seen != null && seen.isUpcoming() ? seen : null;
-          if (event != null) {
-            seenEvent = event;
-            notifyListeners();
-          }
-          final where = (event?.location ?? '').trim();
-          await _tellModel(
-              '[SYSTEM] The image the user picked says this — answer them '
-              'from IT and nothing else:\n$answer'
-              '${event == null ? '' : '\nIt shows an event: "${event.title}" '
-                  'on ${event.whenLabel(withYear: true)}'
-                  '${where.isEmpty ? '' : ' at $where'}. A card on their '
-                  'screen sets a reminder or adds it to their calendar in '
-                  'one tap — mention it in a few words.'}');
-        }
-      } catch (e) {
-        AppLog.add('vision', 'screenshot ask failed: $e');
-        _reportDeviceFailure('look_at_screenshot', reason: '$e');
-        await _tellModel(
-            '[SYSTEM] ERROR: the image could not be read ($e). NOTHING was '
-            'understood; do not guess what it showed.');
-      }
+  /// THE "+" IN THE TYPE BAR (owner, 2026-09-30: "need one + icon there
+  /// itself to upload or click images to ask my assistant"): a photo from
+  /// the camera or the gallery, with whatever was typed as the question —
+  /// one turn, answered out loud while the conversation is on. The
+  /// microphone is held shut while the picker is up. False when the
+  /// picker or the photo failed (the bar says so); true otherwise, closed
+  /// without choosing included.
+  Future<bool> askWithPhoto(ImageSource source, {String question = ''}) async {
+    XFile? shot;
+    try {
+      shot = await holdMicDuring(() => _pick(source));
+    } catch (e) {
+      AppLog.add('vision', 'picker failed: $e');
+      return false;
+    }
+    if (shot == null) return true;
+    Uint8List bytes;
+    try {
+      bytes = await shot.readAsBytes();
+    } catch (e) {
+      AppLog.add('vision', 'photo unreadable: $e');
+      return false;
+    }
+    final mime = shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    final image = AiAttachment(kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
+    final ask = question.trim().isEmpty ? 'What is in this picture?' : question.trim();
+    await _runTurn(ask,
+        mode: BrainMode.chat, speak: _voiceOn || inlineVoice, image: image);
+    return true;
+  }
+
+  /// The picture and the question as a turn of their own, once the turn
+  /// that asked for it is over.
+  Future<void> _askWithPicture(XFile shot, String question, {bool offerEventCard = false}) async {
+    Uint8List bytes;
+    try {
+      bytes = await shot.readAsBytes();
+    } catch (e) {
+      AppLog.add('vision', 'photo unreadable: $e');
+      await _tellModel('[SYSTEM] ERROR: the photo could not be read on the phone, so '
+          'nothing was looked at. Say so and offer to try again.');
+      return;
+    }
+    final mime = shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    final image = AiAttachment(kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
+    final ask = question.trim().isEmpty ? 'What is in this picture?' : question.trim();
+    // After the turn that opened the camera, never instead of it.
+    while (_turnRunning) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    final remove = offerEventCard ? brain.localTools.register(_eventCardTool) : null;
+    try {
+      await _runTurn(ask, mode: BrainMode.voice, image: image, fromOwner: false);
     } finally {
-      _deviceFlowActive = false;
-      if (liveGated) _liveSvc.remoteSpeaking = false;
+      remove?.call();
     }
   }
 
-  /// [_tellModel] for feature modules (the photo-card actions).
-  Future<void> tellModel(String line) => _tellModel(line);
+  /// THE EVENT IN THE PICTURE, as one tap (build 2026-09-27's card, now
+  /// filled by the model that saw the picture): offered to the cloud model
+  /// only during a picked picture's turn.
+  late final LocalTool _eventCardTool = LocalTool(
+    spec: const AiToolSpec(
+      name: 'offer_event_card',
+      description: 'Call this when the picture shows an upcoming event (an '
+          'invitation, a ticket, a booking, an appointment). It puts a card on '
+          "the owner's screen that sets a reminder or adds the event to their "
+          'phone calendar in one tap. Work out the date from today\'s date. '
+          'Mention the card in a few words.',
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'title': {'type': 'string', 'description': 'What the event is.'},
+          'startIso': {
+            'type': 'string',
+            'description': 'When it starts: ISO 8601 with the time zone offset.',
+          },
+          'endIso': {
+            'type': 'string',
+            'description': 'When it ends, if the picture says (ISO 8601).',
+          },
+          'location': {'type': 'string', 'description': 'Where, if the picture says.'},
+        },
+        'required': ['title', 'startIso'],
+      },
+    ),
+    handler: (call) async {
+      final event = VisionAction.fromJson({...call.args, 'type': 'calendar'});
+      if (event == null || !event.isUpcoming()) {
+        return const LocalToolResult.failed('That is not an upcoming event with a date.');
+      }
+      seenEvent = event;
+      notifyListeners();
+      return LocalToolResult(result: {
+        'shown': true,
+        'when': event.whenLabel(withYear: true),
+      });
+    },
+  );
 
   /// Holds the microphone shut while [body] owns the screen — a picker, a
-  /// signature pad — exactly as the photo flows above do: the continuous
-  /// loop stays closed and live mode stops sending mic audio, so the next
-  /// turn is not shutter noise or a pen on glass.
+  /// signature pad — so the next turn is not shutter noise or a pen on
+  /// glass. The conversation listens again when it is over.
   Future<T> holdMicDuring<T>(Future<T> Function() body) async {
     final wasHeld = _deviceFlowActive;
     _deviceFlowActive = true;
-    final liveGated = liveActive && !wasHeld;
-    if (liveGated) _liveSvc.remoteSpeaking = true;
+    if (!wasHeld) await _stopListening();
     try {
-      if (!wasHeld) await _voice.stopSpeaking();
       return await body();
     } finally {
-      if (!wasHeld) _deviceFlowActive = false;
-      if (liveGated) _liveSvc.remoteSpeaking = false;
+      if (!wasHeld) {
+        _deviceFlowActive = false;
+        _maybeListen();
+      }
     }
   }
 
-  /// Hand a [SYSTEM] line to whichever surface is live, so a device result
-  /// re-enters the same conversation instead of becoming a dead end.
-  Future<void> _tellModel(String line) async {
-    if (liveActive) {
-      _liveSvc.sendText(line);
+  /// Voice-driven document capture: open the camera or gallery, then file
+  /// the shot into document memory with the owner's own words as the note
+  /// (so "the receipt I saved after the doctor" is findable later).
+  ///
+  /// [person] is who the document BELONGS to ("save this scan for
+  /// Prasant") — it lands in that person's records.
+  Future<void> _captureDocument(String note,
+      {int? clientId, String? person, String source = 'camera'}) async {
+    XFile? shot;
+    try {
+      shot = await holdMicDuring(() => _pick(
+            source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
+          ));
+    } catch (_) {
+      await _tellModel('Say this to me now, in my language: "I couldn\'t open the camera."');
+      return;
+    }
+    if (shot == null) {
+      await _tellModel('Say this to me now, in my language: "Okay, nothing saved."');
       return;
     }
     try {
-      await _api.sendText(line);
-    } catch (_) {}
-  }
-
-  /// Voice-driven document capture: open the camera or gallery, then file the shot
-  /// into document memory with the user's own words as the note (so "the
-  /// receipt I saved after the doctor" is findable later). No manual entry.
-  ///
-  /// [person] is who the document BELONGS to ("save this scan for Prasant") —
-  /// passed through to the upload so the file lands in that person's records
-  /// and "show me Prasant's records" finds it later.
-  Future<void> _captureDocument(String note,
-      {int? clientId, String? person, String source = 'camera'}) async {
-    // Hold the continuous loop shut for the whole flow — the camera owns
-    // the screen and the mic would only record shutter noise (the source of
-    // the "I couldn't hear that clearly" error after every scan).
-    _deviceFlowActive = true;
-    final liveGated = liveActive;
-    if (liveGated) _liveSvc.remoteSpeaking = true;
-    try {
-      await _voice.stopSpeaking();
-      XFile? shot;
-      try {
-        shot = await ImagePicker().pickImage(
-          source: source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
-          maxWidth: 1920,
-          maxHeight: 1920,
-          imageQuality: 82,
-        );
-      } catch (_) {
-        await _sayFromCamera("I couldn't open the camera.");
-        _setPhase(AssistantPhase.completed);
-        return;
-      }
-      if (shot == null) {
-        await _sayFromCamera("Okay, nothing saved.");
-        _setPhase(AssistantPhase.completed);
-        return;
-      }
-
-      _setPhase(AssistantPhase.thinking, silent: true);
+      final bytes = await shot.readAsBytes();
+      final result = await ApiService.uploadDocumentDetailed(
+        bytes: bytes,
+        filename: 'Capture.jpg',
+        mimeType: 'image/jpeg',
+        note: note,
+        clientId: clientId,
+        person: person,
+      );
+      documentCards = [result.document];
       notifyListeners();
-      try {
-        final bytes = await shot.readAsBytes();
-        final result = await ApiService.uploadDocumentDetailed(
-          bytes: bytes,
-          filename: 'Capture.jpg',
-          mimeType: 'image/jpeg',
-          note: note,
-          clientId: clientId,
-          person: person,
-        );
-        documentCards = [result.document];
-        notifyListeners();
 
-        // Report WHERE the server actually filed it — never where we hoped.
-        // A named patient who isn't in the user's clients means the shot is
-        // in My documents, and the user must hear that, not "saved to X".
-        final String toast;
-        final String spoken;
-        if (result.filedUnderClient) {
-          toast = "Saved to ${result.clientName}'s file.";
-          spoken = "Saved to ${result.clientName}'s file.";
-        } else if (result.clientCandidates.length > 1) {
-          final names = result.clientCandidates.join(' and ');
-          toast = 'Saved to your documents — "$person" matched $names.';
-          spoken = 'Saved to your documents for now — $names both match '
-              '"$person". Tell me which one and I\'ll file it.';
-        } else if (person != null && person.trim().isNotEmpty) {
-          toast = 'Saved to your documents — no client named "$person".';
-          spoken = "I saved it to your documents, but I couldn't find a "
-              "client or patient named $person. Add them from the Clients "
-              "screen and I'll file it there.";
-        } else {
-          toast = 'Saved to your documents.';
-          spoken = 'Saved to your documents. Ask me about it anytime.';
-        }
-        // Visible proof on WHATEVER screen the user is on — the scan from
-        // the Home tab used to end with a voice line and nothing else,
-        // which read as "nothing was saved".
-        AppFeedback.toast(toast,
-            tone: FeedbackTone.success, spoken: liveActive);
-        if (liveActive) {
-          // Prime the live model: it confirms the save itself AND knows to
-          // use get_last_document for follow-ups ("what does it say?").
-          _liveSvc.sendText(
-              '[SYSTEM] I just scanned a document. Server result: "$spoken" '
-              'It is being analyzed right now. If I ask to save/put/file '
-              '"this" under a client or patient, call file_document_under_client '
-              '(do not open the camera). When I ask about "the image/photo/'
-              'document I just scanned" or what it says, call get_last_document '
-              'and answer from its text. Now tell me the server result above '
-              'in one short sentence, in my language.');
-          _setPhase(AssistantPhase.listening, silent: true);
-          notifyListeners();
-        } else {
-          await _sayFromCamera(spoken);
-        }
-      } on DocumentUploadException catch (e) {
-        final why = e.message.isNotEmpty
-            ? e.message
-            : 'the server refused the upload (${e.statusCode})';
-        AppFeedback.toast("Couldn't save the scan — $why.", spoken: true);
-        await _sayFromCamera("I couldn't save that — $why. Nothing was saved.");
-      } catch (_) {
-        AppFeedback.toast("Couldn't save the scan — check your connection.",
-            spoken: true);
-        await _sayFromCamera(
-            "I couldn't save that — please check your connection and try again. Nothing was saved.");
+      // Report WHERE the server actually filed it — never where we hoped.
+      final String toast;
+      final String spoken;
+      if (result.filedUnderClient) {
+        toast = "Saved to ${result.clientName}'s file.";
+        spoken = "Saved to ${result.clientName}'s file.";
+      } else if (result.clientCandidates.length > 1) {
+        final names = result.clientCandidates.join(' and ');
+        toast = 'Saved to your documents — "$person" matched $names.';
+        spoken = 'Saved to your documents for now — $names both match '
+            '"$person". Tell me which one and I\'ll file it.';
+      } else if (person != null && person.trim().isNotEmpty) {
+        toast = 'Saved to your documents — no client named "$person".';
+        spoken = "I saved it to your documents, but I couldn't find a "
+            "client or patient named $person. Add them from the Clients "
+            "screen and I'll file it there.";
+      } else {
+        toast = 'Saved to your documents.';
+        spoken = 'Saved to your documents. Ask me about it anytime.';
       }
-      _setPhase(AssistantPhase.completed);
-    } finally {
-      _deviceFlowActive = false;
-      if (liveGated) _liveSvc.remoteSpeaking = false;
+      // Visible proof on WHATEVER screen the owner is on.
+      AppFeedback.toast(toast, tone: FeedbackTone.success, spoken: true);
+      // The assistant confirms the save itself AND knows to use
+      // get_last_document for follow-ups ("what does it say?").
+      await _tellModel(
+          '[SYSTEM] I just scanned a document. Server result: "$spoken" '
+          'It is being analyzed right now. If I ask to save/put/file '
+          '"this" under a client or patient, call file_document_under_client '
+          '(do not open the camera). When I ask about "the image/photo/'
+          'document I just scanned" or what it says, call get_last_document '
+          'and answer from its text. Now tell me the server result above '
+          'in one short sentence, in my language.');
+    } on DocumentUploadException catch (e) {
+      final why = e.message.isNotEmpty
+          ? e.message
+          : 'the server refused the upload (${e.statusCode})';
+      AppFeedback.toast("Couldn't save the scan — $why.", spoken: true);
+      await _tellModel('[SYSTEM] ERROR: the scan was NOT saved — $why. Say that '
+          'plainly in one sentence; nothing was saved.');
+    } catch (_) {
+      AppFeedback.toast("Couldn't save the scan — check your connection.", spoken: true);
+      await _tellModel('[SYSTEM] ERROR: the scan could not be uploaded (no '
+          'connection), so NOTHING was saved. Say so and suggest trying again.');
     }
   }
 
@@ -3600,19 +3406,13 @@ class AssistantEngine extends ChangeNotifier {
           'Enable Contacts in Settings.',
           tone: FeedbackTone.error,
           spoken: true);
-      if (liveActive) {
-        _liveSvc.sendText(
-            '[SYSTEM] ERROR: Contacts permission is turned off on this '
-            'phone, so "$name" could not be looked up and NO call was '
-            'placed. Tell me plainly that the call failed because contacts '
-            'access is off, and that I should enable the Contacts '
-            'permission in the phone settings. Do NOT say the call was '
-            'made.');
-      } else {
-        await _speakReply(
-            "I couldn't place that call — contacts permission is turned "
-            'off. Enable it in Settings and ask me again.');
-      }
+      await _tellModel(
+          '[SYSTEM] ERROR: Contacts permission is turned off on this '
+          'phone, so "$name" could not be looked up and NO call was '
+          'placed. Tell me plainly that the call failed because contacts '
+          'access is off, and that I should enable the Contacts '
+          'permission in the phone settings. Do NOT say the call was '
+          'made.');
       return;
     }
 
@@ -3667,15 +3467,10 @@ class AssistantEngine extends ChangeNotifier {
       // of the user waiting on a call that can never come.
       AppFeedback.toast('No contact named "$name" found — no call placed.',
           spoken: true);
-      if (liveActive) {
-        _liveSvc.sendText(
-            '[SYSTEM] ERROR: No contact named "$name" was found on the '
-            'phone, so NO call was placed. Tell me that plainly — do NOT '
-            'say the call was made.');
-      } else {
-        await _speakReply("I couldn't find $name in your contacts, so no "
-            'call was placed.');
-      }
+      await _tellModel(
+          '[SYSTEM] ERROR: No contact named "$name" was found on the '
+          'phone, so NO call was placed. Tell me that plainly — do NOT '
+          'say the call was made.');
       return;
     }
 
@@ -3709,17 +3504,12 @@ class AssistantEngine extends ChangeNotifier {
     _offerContactPicker();
 
     final names = ambiguousContacts.map((c) => c.name).join(', ');
-    if (liveActive) {
-      _liveSvc.sendText(
-          '[SYSTEM] "$name" matches ${ambiguousContacts.length} saved '
-          'contacts: $names. NO call was placed. Ask the user which one '
-          'you should call, in ONE short question that says the names as '
-          'they are saved. When they answer, call place_phone_call again '
-          'with that exact saved name.');
-    } else {
-      await _speakReply('You have ${ambiguousContacts.length} contacts for '
-          'that — $names. Which one should I call?');
-    }
+    await _tellModel(
+        '[SYSTEM] "$name" matches ${ambiguousContacts.length} saved '
+        'contacts: $names. NO call was placed. Ask the user which one '
+        'you should call, in ONE short question that says the names as '
+        'they are saved. When they answer, call place_phone_call again '
+        'with that exact saved name.');
   }
 
   /// Acts on a resolved contact: agent relay (Hari speaks the message on
@@ -3751,7 +3541,12 @@ class AssistantEngine extends ChangeNotifier {
         id = null; // unavailable / quota / network — fall through
       }
       if (id != null) {
-        await _followAgentCall(id, contact.name);
+        // The call is the assistant's now: followed to its real end, and
+        // its outcome said then, as a turn of its own.
+        unawaited(_followAgentCall(id, contact.name));
+        await _tellModel('[SYSTEM] The assistant is now calling '
+            '${contact.name} to deliver the message; the result comes when '
+            'the call ends. Say that in one short sentence.');
         return;
       }
       // A MESSAGE CALL IS THE ASSISTANT'S CALL, NEVER THE PHONE'S
@@ -3762,17 +3557,11 @@ class AssistantEngine extends ChangeNotifier {
       // call then met a busy line. "Use agent call … when such request is
       // made." So nothing is dialled here: the user hears that the call
       // could not be placed and decides.
-      if (liveActive) {
-        _liveSvc.sendText(
-            '[SYSTEM] I could not place the call to ${contact.name} with the '
-            'message just now, and NOTHING was dialled. Tell me that in one '
-            'short sentence and ask whether you should try again. Do NOT '
-            'dial them from my phone unless I ask for that myself.');
-      } else {
-        await _speakReply(
-            "I couldn't place that call just now, so nothing was dialled. "
-            'Shall I try again?');
-      }
+      await _tellModel(
+          '[SYSTEM] ERROR: I could not place the call to ${contact.name} with '
+          'the message just now, and NOTHING was dialled. Tell me that in one '
+          'short sentence and ask whether you should try again. Do NOT '
+          'dial them from my phone unless I ask for that myself.');
       return;
     }
 
@@ -3859,15 +3648,7 @@ class AssistantEngine extends ChangeNotifier {
       _reportDeviceFailure('phone_control', target: action,
           reason: 'the phone refused or could not do it');
     }
-    if (report != null) {
-      if (liveActive) {
-        _liveSvc.sendText(report);
-      } else {
-        try {
-          await _api.sendText(report);
-        } catch (_) {}
-      }
-    }
+    if (report != null) await _tellModel(report);
   }
 
   /// Do Not Disturb access is asked for once per app run, IN the app first:
@@ -3899,68 +3680,41 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   /// True while the user is deliberately in ANOTHER app because we sent
-  /// them there (Instagram, a map, a web page). Their voice session is
-  /// expected to be interrupted, so coming back must rebuild it rather
-  /// than limp along on a half-dead socket.
+  /// them there (Instagram, a map, a web page).
   bool _leftForExternalApp = false;
   DateTime? _backgroundedAt;
 
-  /// The app went to the background. Android suspends the microphone and
-  /// will quietly drop the live socket, so remember when it happened.
   /// Is the app actually on the user's screen right now?
   ///
   /// NOTHING THAT MAKES A SOUND OR OPENS A MICROPHONE MAY RUN WHEN THIS
   /// IS FALSE. He heard the listening chime twice while using WhatsApp,
-  /// having never opened the assistant (2026-09-20) — the live session is
-  /// deliberately kept alive across a short trip away, so when it dropped
-  /// in the background the automatic revive reconnected and announced
-  /// itself over whatever he was doing.
+  /// having never opened the assistant (2026-09-20).
   bool _foreground = true;
 
+  /// The app went to the background: GO QUIET THE INSTANT IT LEAVES THE
+  /// SCREEN — her voice stops mid-word and nothing listens (a phone in a
+  /// pocket must not be listening to a conversation). A turn still being
+  /// answered finishes silently; the conversation itself is left alone,
+  /// so a caller back in two seconds finds it still there.
   void onAppPaused() {
     _foreground = false;
     _backgroundedAt = DateTime.now();
     // Location is only kept current while the app is on screen.
     _locationTicker?.cancel();
     _locationTicker = null;
-    // GO QUIET THE INSTANT THE APP LEAVES THE SCREEN.
-    //
-    // This only recorded the time, so she kept talking into a phone call,
-    // over another app, or into a pocket after the user swiped away — the
-    // single rudest thing an assistant can do, and reported as exactly
-    // that (2026-09-20). Audio stops here; the SESSION is left alone,
-    // because onAppResumed already rebuilds it, and a caller returning in
-    // two seconds should find the conversation still there.
-    //
-    // Deliberately not awaited: pause handlers must not block, and every
-    // one of these is safe to fire and forget.
-    unawaited(_voice.stopSpeaking().catchError((_) {}));
-    if (liveActive) {
-      // Remember that WE broke it. silence() tears the microphone down,
-      // so the session that comes back is not the one that left, however
-      // brief the trip — the resume path must rebuild it rather than
-      // trust the "was it long enough" heuristic below.
-      _silencedForBackground = true;
-      unawaited(_liveSvc.silence().catchError((_) {}));
-    }
+    _sayEpoch++;
+    _player.muted = true;
+    unawaited(_player.stop().catchError((_) {}));
+    unawaited(_bargeMade?.stop());
+    if (_listening) unawaited(_stopListening());
   }
 
-  /// True while a backgrounded session is waiting to be rebuilt: the mic
-  /// was stopped on the way out and nothing else will restart it.
-  bool _silencedForBackground = false;
-
   /// The app came back to the foreground.
-  ///
-  /// Returning from Instagram (or any app we opened) used to leave the
-  /// orb spinning on a session whose audio was gone: it looked connected,
-  /// the mic was shut, and nothing spoke. Any voice session that was
-  /// interrupted for more than a moment is now rebuilt from scratch —
-  /// two seconds of reconnect beats a conversation that cannot talk.
   Future<void> onAppResumed() async {
-    // FIRST LINE, BEFORE ANY EARLY RETURN. The method gives up below when
-    // no conversation is open, and leaving the flag false there would
-    // silence a legitimate chime for the rest of the app's life.
+    // FIRST LINE, BEFORE ANY EARLY RETURN: a false left here would silence
+    // every later chime for the rest of the app's life.
     _foreground = true;
+    _player.muted = speakerMuted;
     // Back from the chat the shortcut opened: carry on with its next step.
     unawaited(ShortcutRunner.instance.resumePending(shortcutPorts));
     // Back on screen: where the owner is now (and every 5 minutes from
@@ -3969,81 +3723,27 @@ class AssistantEngine extends ChangeNotifier {
     unawaited(_refreshLocation());
     unawaited(MissedCallsService.instance.check());
     final pausedAt = _backgroundedAt;
-    final away = pausedAt == null
-        ? Duration.zero
-        : DateTime.now().difference(pausedAt);
+    final away = pausedAt == null ? Duration.zero : DateTime.now().difference(pausedAt);
     _backgroundedAt = null;
     final wasExternal = _leftForExternalApp;
     _leftForExternalApp = false;
     if (!_conversationOpen && !inlineVoice) return;
     // A resume with no matching pause is a UI flicker (a dialog, a
-    // permission sheet), not a trip to another app. Rebuilding there
-    // killed healthy sessions mid-sentence.
+    // permission sheet), not a trip to another app.
     if (pausedAt == null) return;
-
-    // Clear the flags that gate the microphone. A pause mid-reply leaves
-    // remoteSpeaking set, which mutes the user permanently.
-    _liveSvc.remoteSpeaking = false;
-    _deviceFlowActive = false;
-    _micGateWatchdog?.cancel();
-    _micGateWatchdog = null;
-    _silenceSettle?.cancel();
-    _silenceSettle = null;
-
-    // A session we silenced ALWAYS needs rebuilding — its microphone is
-    // gone. Without this the orb came back showing "listening" over a
-    // dead mic and stayed that way until the app was killed (reported
-    // 2026-09-20, after returning from an image search).
-    final silenced = _silencedForBackground;
-    _silencedForBackground = false;
-    final interrupted = silenced ||
-        (wasExternal && away.inMilliseconds >= 800) ||
-        away.inSeconds >= 2;
-    if (!interrupted) return;
-
-    // WE SENT THEM SOMEWHERE ELSE, SO THE CONVERSATION IS OVER.
-    //
-    // His report, 2026-09-21: asked to download Swiggy, sent to a page,
-    // came back — "the mic orb should be visible… but it's showing that
-    // it's speaking something". It was: the resume path below rebuilds
-    // the session and comes back LISTENING, so the orb showed an active
-    // conversation over a screen the user had just returned to with
-    // nothing to say.
-    //
-    // Leaving the tab already ends the conversation (build 88). Leaving
-    // for another app is the same act — they went to do something else —
-    // so it ends the same way, and the orb is a mic again. No chime:
-    // returning to the app is not a gesture, and a sound they cannot
-    // connect to anything they did is the WhatsApp complaint again.
+    // WE SENT THEM SOMEWHERE ELSE, SO THE CONVERSATION IS OVER (his
+    // report, 2026-09-21: back from the page he was sent to, the orb
+    // should be a mic again, not a conversation). No chime: returning to
+    // the app is not a gesture.
     if (wasExternal && away.inMilliseconds >= 800) {
-      AppLog.add('live', 'returned from another app — conversation ended');
+      AppLog.add('voice', 'returned from another app — conversation ended');
       await leaveConversation(chime: false);
       notifyListeners();
       return;
     }
-
-    AppLog.add('live', 'resumed after ${away.inSeconds}s — rebuilding session');
-    // The last thing said belongs to the session that just died. Leaving
-    // it on screen is what made a stuck orb look like it was still
-    // working on "Opening image search for golden duck".
-    _clearCaption();
-    if (liveActive) await stopLive();
-    micLevel = 0;
-    _setPhase(AssistantPhase.idle, silent: true);
-    notifyListeners();
-    final ok = await _startLive();
-    if (ok) {
-      // SILENTLY. The rebuilt session comes back listening, but must not
-      // greet again — the assistant never speaks unprompted on returning
-      // to the app; it talks only when the user does.
-      return;
-    }
-    // Live could not come back (network still settling). Leave the orb
-    // resting rather than pretending: the next tap starts a fresh
-    // session, which is the behaviour the user expects anyway.
-    inlineVoice = false;
-    _setPhase(AssistantPhase.idle, silent: true);
-    notifyListeners();
+    // Otherwise the conversation simply listens again (there is no socket
+    // to rebuild) — silently: it talks only when the owner does.
+    _maybeListen();
   }
 
   /// Places the call and reports what ACTUALLY happened.
@@ -4068,22 +3768,16 @@ class AssistantEngine extends ChangeNotifier {
         AppFeedback.toast('WhatsApp ${video ? 'video ' : ''}call to $who…',
             tone: FeedbackTone.progress);
         await _reportCallResult(who, 'connected');
-        if (liveActive) {
-          _liveSvc.sendText('[SYSTEM] WhatsApp is placing the '
-              '${video ? 'video ' : ''}call to $who now.');
-        }
+        await _tellModel('[SYSTEM] WhatsApp is placing the '
+            '${video ? 'video ' : ''}call to $who now.');
         return;
       }
       final why = CallService.whatsappFailure(fail, who);
       AppFeedback.toast(why, tone: FeedbackTone.error, spoken: true);
       await _reportCallResult(who, 'failed', reason: fail);
-      if (liveActive) {
-        _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
-            'whether I want a normal phone call instead — do NOT place one '
-            'on your own.');
-      } else {
-        await _speakReply('$why Should I call them normally instead?');
-      }
+      await _tellModel('[SYSTEM] ERROR: $why Tell me that plainly and ask '
+          'whether I want a normal phone call instead — do NOT place one '
+          'on your own.');
       return;
     }
 
@@ -4104,23 +3798,17 @@ class AssistantEngine extends ChangeNotifier {
         AppFeedback.toast('$shown ${video ? 'video ' : ''}call to $who…',
             tone: FeedbackTone.progress);
         await _reportCallResult(who, 'connected');
-        if (liveActive) {
-          _liveSvc.sendText('[SYSTEM] $shown is placing the '
-              '${video ? 'video ' : ''}call to $who now.');
-        }
+        await _tellModel('[SYSTEM] $shown is placing the '
+            '${video ? 'video ' : ''}call to $who now.');
         return;
       }
       final why = CallService.appCallFailure(res.reason!, who, app,
           available: res.available);
       AppFeedback.toast(why, tone: FeedbackTone.error, spoken: true);
       await _reportCallResult(who, 'failed', reason: res.reason ?? 'failed');
-      if (liveActive) {
-        _liveSvc.sendText('[SYSTEM] ERROR: $why Tell me that plainly and ask '
-            'whether I want a normal phone call instead — do NOT place one '
-            'on your own.');
-      } else {
-        await _speakReply('$why Should I call them normally instead?');
-      }
+      await _tellModel('[SYSTEM] ERROR: $why Tell me that plainly and ask '
+          'whether I want a normal phone call instead — do NOT place one '
+          'on your own.');
       return;
     }
 
@@ -4132,14 +3820,12 @@ class AssistantEngine extends ChangeNotifier {
     }
     if (!ok) {
       AppFeedback.toast('The phone could not start the call to $who.',
-          tone: FeedbackTone.error, spoken: liveActive);
+          tone: FeedbackTone.error, spoken: true);
       await _reportCallResult(who, 'failed',
           reason: 'the phone could not start the call');
-      if (liveActive) {
-        _liveSvc.sendText(
-            '[SYSTEM] ERROR: The phone could NOT start the call to $who — '
-            'no call is happening. Tell me plainly.');
-      }
+      await _tellModel(
+          '[SYSTEM] ERROR: The phone could NOT start the call to $who — '
+          'no call is happening. Tell me plainly.');
       return;
     }
 
@@ -4155,30 +3841,16 @@ class AssistantEngine extends ChangeNotifier {
     }
     await _reportCallResult(who, connected ? 'connected' : 'unconfirmed',
         reason: connected ? '' : 'the phone never reported a call starting');
-    if (liveActive) {
-      _liveSvc.sendText(connected
-          ? '[SYSTEM] The call to $who started on the phone.'
-          : '[SYSTEM] The dialer opened for $who but the phone never '
-              'confirmed a call started — do NOT claim the call happened.');
-    }
+    await _tellModel(connected
+        ? '[SYSTEM] The call to $who started on the phone.'
+        : '[SYSTEM] The dialer opened for $who but the phone never '
+            'confirmed a call started — do NOT claim the call happened.');
   }
 
   /// Records the true result of a call attempt on the account, so "did my
   /// call to Allen go through?" and the admin panel both see the same fact.
   Future<void> _reportCallResult(String who, String status,
       {String reason = ''}) async {
-    final id = _pendingCallOutcomeId;
-    _pendingCallOutcomeId = null;
-    if (id != null) {
-      try {
-        await _api.callResult(
-            outcomeId: id, status: status, reason: reason, contactName: who);
-        return;
-      } catch (_) {
-        // Session gone (live mode, expired sid) — fall through to the
-        // account-level endpoint so the outcome is never lost.
-      }
-    }
     try {
       await ApiService.sendJson('/outcomes', method: 'POST', body: {
         'kind': 'call',
@@ -4241,47 +3913,9 @@ class AssistantEngine extends ChangeNotifier {
             : state == 'no_answer'
                 ? '$who did not pick up, so the message was not delivered.'
                 : 'The call to $who did not go through.');
-    if (liveActive) {
-      _liveSvc.sendText(
-          '[SYSTEM] The call to $who has ended. Result: $said Tell me this '
-          'now in one short sentence, exactly as it happened.');
-    } else {
-      await _speakReply(said);
-    }
-  }
-
-  Future<void> _resolveContacts(String name) async {
-    // EMERGENCY services aren't contacts — answer the lookup with the
-    // short code so the classic flow confirms and dials it directly.
-    final sos = CallService.emergencyNumber(name);
-    if (sos != null) {
-      await _api.sendContactMatches([
-        {'id': '', 'name': '${name.trim()} ($sos)', 'phone': sos}
-      ]);
-      return;
-    }
-    if (!await CallService.instance.ensurePermission()) {
-      // The server will report "not found" — make sure the user learns the
-      // REAL reason on screen instead of blaming their address book.
-      AppFeedback.toast(
-          'Contacts permission is off — "$name" can\'t be looked up. '
-          'Enable Contacts in Settings.');
-      await _api.sendContactMatches(const []);
-      return;
-    }
-    try {
-      final found = await CallService.instance.findContacts(name);
-      final matches = <Map<String, dynamic>>[];
-      for (final c in found) {
-        if (c.phones.isEmpty) continue;
-        final phone = CallService.instance.bestNumber(c);
-        if (phone.isEmpty) continue;
-        matches.add({'id': c.id, 'name': c.displayName, 'phone': phone});
-      }
-      await _api.sendContactMatches(matches);
-    } catch (_) {
-      await _api.sendContactMatches(const []);
-    }
+    await _tellModel(
+        '[SYSTEM] The call to $who has ended. Result: $said Tell me this '
+        'now in one short sentence, exactly as it happened.');
   }
 
   // ---------------- helpers ----------------
@@ -4445,7 +4079,9 @@ class AssistantEngine extends ChangeNotifier {
         'diagnostics' => (_) => const DiagnosticsScreen(),
         'mcp' => (_) => const McpServersScreen(),
         'news' => (_) => const NewsScreen(),
-        'momentum' => (_) => const MomentumScreen(),
+        // "Open my calendar": this app's own calendar, never Google's
+        // (owner, 2026-09-30: it said Google Calendar was not connected).
+        'calendar' => (_) => const CalendarScreen(),
         'focus' => (_) => const FocusScreen(),
         // "Send a video note to …" with no video recorded yet: the server
         // opens the place to record it (send_video_note, 2026-09-26).
@@ -4456,210 +4092,76 @@ class AssistantEngine extends ChangeNotifier {
         'shortcuts' => (_) => const ShortcutsScreen(),
         // "What's my bills email" (bills_email tool, build 120).
         'bills_email' => (_) => const BillsEmailScreen(),
+        // "Show my shopping list" (shopping_list_show, build 124), or one
+        // kind of it ("my grocery list").
+        'shopping_list' => (_) => ShoppingListScreen(
+              category: (e['category'] as String?)?.trim().isEmpty ?? true
+                  ? null
+                  : (e['category'] as String).trim(),
+            ),
         _ => null,
       };
 
+  /// shop_handoff: the first thing opens (in its app when it is installed,
+  /// else the browser) and the notification offers the rest. The answer
+  /// is what really happened — where it opened, or that nothing did.
+  Future<void> _shopFromList(Map<String, dynamic> e) async {
+    final h = ShopHandoff.fromJson(e);
+    if (h == null) {
+      _reportDeviceFailure('shop_from_list', reason: 'there was nothing to open');
+      await _tellModel('[SYSTEM] ERROR: nothing from the shopping list could be opened on the '
+          'phone, so NOTHING was opened, ordered or paid. Say so plainly in one sentence.');
+      return;
+    }
+    // We are sending them to the shopping app on purpose (see open_url).
+    _leftForExternalApp = true;
+    final r = await ShopHandoffRunner.instance.start(h);
+    final s = r.step;
+    if (!r.opened || s == null) {
+      _leftForExternalApp = false;
+      _reportDeviceFailure('shop_from_list',
+          reason: s == null ? 'no safe link to open' : 'nothing could open ${s.item.name}');
+      await _tellModel('[SYSTEM] ERROR: the phone could not open '
+          '${s == null ? 'any of those links safely' : s.item.name}, so NOTHING was opened, '
+          'ordered or paid. Say so plainly in one sentence.');
+      return;
+    }
+    // Inside the action it is its answer; outside one it needs no turn.
+    if (Zone.current[_deviceReplyKey] is! _DeviceReply) return;
+    final where = r.inApp ? s.label : 'the browser';
+    final more = r.total > 1
+        ? ' The notification on the phone offers the next of the ${r.total} things.'
+        : '';
+    await _tellModel('[SYSTEM] Opened ${s.item.name} in $where.$more Nothing is ordered or '
+        'paid: they choose and pay in the app themselves.');
+  }
+
+  /// SOMETHING SHARED IN FROM ANOTHER APP, with the owner's choice of what
+  /// to do with it ("Add to shopping list", build 124): one turn, answered
+  /// out loud like a panel's button. What was shared is outside content,
+  /// so the turn is untrusted — nothing is sent, paid or changed because
+  /// the shared words ask.
+  Future<void> askAboutShared(String text, {AiAttachment? image}) async {
+    final t = text.trim();
+    if (t.isEmpty && image == null) return;
+    // After a turn already under way, never instead of it.
+    for (var i = 0; i < 100 && _turnRunning; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    await _runTurn(t,
+        mode: BrainMode.voice, image: image, untrusted: true, shared: true, fromOwner: false);
+  }
+
   /// Performs one device action as if the server had just sent it — the
   /// shortcut runner's hands. Every action keeps its own honest reporting.
-  void performDeviceAction(Map<String, dynamic> action) => _onEvent(action);
+  Future<void> performDeviceAction(Map<String, dynamic> action) => _onEvent(action);
 
   /// The shortcut runner's view of this app.
   late final ShortcutPorts shortcutPorts = _EngineShortcutPorts(this);
 
-  /// The last phone task that finished (done, or handed over at payment):
-  /// what "Save as shortcut" on the Shortcuts screen saves.
-  final ValueNotifier<({int runId, String goal})?> lastSavableTask = ValueNotifier(null);
-
   /// Whether a voice command can open [screen] (open_app_screen).
   @visibleForTesting
   bool canOpenAppScreen(String screen) => _appScreenBuilder(screen) != null;
-
-  /// "Scan this visiting card" — the camera, the server's reading, and the
-  /// result sheet (add to contacts / say hello / call). The voice loop is
-  /// held shut meanwhile, as for any camera flow.
-  // ---------------- DO IT FOR ME (automation) ----------------
-
-  /// A task inside another app. Without the one-time permission the setup
-  /// screen opens and the task carries on by itself once it is switched
-  /// on — the owner never has to ask twice.
-  Future<void> _runAutomation(Map<String, dynamic> e) async {
-    final d = AutomationDirective.fromEvent(e);
-    if (d == null) return;
-    var st = await AutomationRunner.instance.device.status();
-    // Switched on but not bound yet (the app was just restarted or
-    // updated): Android reconnects it within seconds — wait, don't nag.
-    for (var i = 0; i < 12 && !st.connected && st.enabled; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      st = await AutomationRunner.instance.device.status();
-    }
-    if (!st.connected) {
-      _openAutomationSetup(d);
-      return;
-    }
-    await _runAutomationNow(d);
-  }
-
-  void _openAutomationSetup(AutomationDirective d) {
-    final nav = AvatarMessageService.navigatorKey.currentState;
-    if (nav == null) {
-      _reportDeviceFailure('do_task_in_app',
-          target: d.goal, reason: 'the one-time permission is not on');
-      return;
-    }
-    _tellModel('[SYSTEM] Before doing this the user must allow "use other '
-        'apps" once — the setup screen is now open. Say in ONE short '
-        'sentence that it continues by itself as soon as they switch it on.');
-    nav.push(MaterialPageRoute(
-        builder: (_) => AutomationSetupScreen(
-              pendingGoal: d.goal,
-              onEnabled: () => unawaited(_runAutomationNow(d)),
-            )));
-  }
-
-  Future<void> _runAutomationNow(AutomationDirective d) async {
-    // IS THE APP HERE? Checked before anything closes. Build 115 asked
-    // whether to install a missing app and ended the task; the owner,
-    // 2026-09-26, asking to order from Amazon with no Amazon on the phone:
-    // "it should click on the install and it should install the app… my
-    // assistant should be that much smart". So it says so in one line, in
-    // her own voice, installs the app and carries on with the task. An app
-    // he never named is not installed when one of the same kind is here
-    // (the task starts again in that one), and a money app never is.
-    final plan = await AutomationRunner.instance.appPlan(d);
-    final missing = plan.kind == 'install';
-    // "On it, doing this in Swiggy…" is still being spoken, and leaving
-    // the screen silences the assistant (onAppPaused). Let it finish.
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    final until = DateTime.now().add(const Duration(seconds: 4));
-    while (DateTime.now().isBefore(until) &&
-        (_ttsActive || _speakQueue.isNotEmpty || phase == AssistantPhase.speaking)) {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
-    if (plan.kind == 'other' || plan.kind == 'money') {
-      AppLog.add('auto', 'run ${d.runId}: ${d.app} not installed -> ${plan.kind} ${plan.alt}');
-      // The conversation stays open: the task starts again in the app
-      // that is here, or she says the one line.
-      await _tellModel(plan.kind == 'other' ? useInsteadNote(d, plan.alt) : moneyAppNote(d));
-      return;
-    }
-    if (missing) {
-      AppLog.add('auto', 'run ${d.runId}: ${d.app} not installed — installing it first');
-      await _tellModel(installingNote(d));
-      await _letHerSay();
-    }
-    // A TASK IS ITS OWN FLOW: "On it" → the bar → the report. The voice
-    // session closes here so nothing else is heard or said meanwhile —
-    // left open, it answered room noise while the task ran (2026-09-24).
-    if (inlineVoice || liveActive) {
-      // Closed for the task, not by the owner: "On it…" is no answer, and
-      // must not linger as a card over Home (the owner, 2026-09-26: the
-      // same words came back "as a toast — that is not necessary").
-      _quietEndAt = DateTime.now();
-      await endInlineConversation();
-    }
-    _leftForExternalApp = true;
-    if (missing) {
-      final failed = await AutomationRunner.instance.installFor(d);
-      if (failed != null) {
-        AppLog.add('auto', 'run ${d.runId} -> ${failed.status} (install)');
-        await _onAutomationOutcome(d, failed);
-        return;
-      }
-    }
-    final out = await AutomationRunner.instance.run(d);
-    AppLog.add('auto', 'run ${d.runId} -> ${out.status}');
-    await _onAutomationOutcome(d, out);
-  }
-
-  /// Waits for the line the model was just asked to say: until she starts
-  /// (at most [start]) and then until she has finished (at most [cap] in
-  /// all) — so the conversation does not close over her words.
-  Future<void> _letHerSay({
-    Duration start = const Duration(seconds: 4),
-    Duration cap = const Duration(seconds: 10),
-  }) async {
-    final t0 = DateTime.now();
-    bool over(Duration d) => DateTime.now().difference(t0) >= d;
-    while (!over(start) && phase != AssistantPhase.speaking && !_ttsActive) {
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-    }
-    while (!over(cap) &&
-        (phase == AssistantPhase.speaking || _ttsActive || _speakQueue.isNotEmpty)) {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
-  }
-
-  Future<void> _onAutomationOutcome(
-      AutomationDirective d, AutomationOutcome o) async {
-    switch (o.status) {
-      case 'no_permission':
-        _openAutomationSetup(d);
-        return;
-      case 'busy':
-        _tellModel('[SYSTEM] Another task is still running on the phone. Say '
-            'you will do this one as soon as that finishes.');
-        return;
-      case 'waiting':
-        // Only the owner can answer: come back to them, then ask.
-        await AutomationRunner.instance.device.bringBack();
-        for (var i = 0; i < 25 && !_foreground; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 200));
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 1200));
-        _tellModel('[SYSTEM] The task "${d.goal}" (run_id ${d.runId}) needs '
-            'one answer from the user: "${o.question}". Ask exactly that, '
-            'briefly. When they answer, call do_task_in_app with run_id '
-            '${d.runId} and their answer.');
-        return;
-    }
-    // A task that got there can become a shortcut (build 120).
-    if ((o.status == 'done' || o.status == 'handoff') && d.runId > 0) {
-      lastSavableTask.value = (runId: d.runId, goal: d.goal);
-    }
-    // Done, handed over, stopped or failed: the report goes where the
-    // owner is. Out in the other app that is a notification and the bar —
-    // never a voice over someone else's screen.
-    final report = o.report.isNotEmpty ? o.report : 'I stopped there.';
-    transcript.add(TranscriptEntry(TranscriptRole.assistant, report));
-    notifyListeners();
-    if (_foreground) {
-      unawaited(_speakReply(report));
-    } else {
-      unawaited(ReminderNotifications.instance
-          .showNow(automationTitles[o.status] ?? 'Task update', report));
-    }
-  }
-
-  /// What the conversation is told when the task's app is not on the
-  /// phone: it is being installed and the task carries on — one line to
-  /// say, no question, no tool.
-  /// The server's usual pick is missing but an app of the same kind is
-  /// here: the same task, started again in that app — no question.
-  static String useInsteadNote(AutomationDirective d, String alt) {
-    final app = d.app.isEmpty ? 'That app' : d.app;
-    return '[SYSTEM] $app is not installed on this phone, but $alt (the same '
-        'kind of app) is, and the user did not name $app. Call do_task_in_app '
-        'again now with app "$alt", the same goal and the same query. Do not '
-        'ask anything first.';
-  }
-
-  /// A money app the task needs is missing: installing it is the owner's.
-  static String moneyAppNote(AutomationDirective d) {
-    final app = d.app.isEmpty ? 'That app' : d.app;
-    return '[SYSTEM] $app is not installed on this phone, and it is a money '
-        'app, which the user installs themselves. Say exactly this and '
-        "nothing else: \"$app isn't on your phone — money apps are yours to "
-        "install, so once it's in, ask me again.\" Do not call any tool.";
-  }
-
-  static String installingNote(AutomationDirective d) {
-    final app = d.app.isEmpty ? 'The app' : d.app;
-    return '[SYSTEM] $app is not installed on this phone. It is being '
-        'installed from the app store right now, and the task carries on by '
-        'itself as soon as it is installed. Say exactly this and nothing '
-        "else: \"$app isn't on your phone, so I'm installing it now — then "
-        "I'll carry on.\" Do not ask anything and do not call any tool.";
-  }
 
   /// When the conversation was last closed for a task rather than by the
   /// owner: its last line ("On it…") is not an answer to keep on screen.
@@ -4677,28 +4179,16 @@ class AssistantEngine extends ChangeNotifier {
     return at != null && DateTime.now().difference(at) < const Duration(seconds: 5);
   }
 
-  /// The notification title for how a task ended, when the owner is out
-  /// in another app.
-  static const automationTitles = {
-    'done': 'Done',
-    'handoff': 'Your turn',
-    'stopped': 'Stopped',
-    'failed': "Couldn't finish",
-    // The app itself keeps assistants out (a secure screen, no access).
-    'blocked': "Can't do this one here",
-    // Said done, but nothing on the screen showed it.
-    'unconfirmed': 'Please check',
-  };
-
+  /// "Scan this visiting card" — the camera, the server's reading, and the
+  /// result sheet (add to contacts / say hello / call). The microphone is
+  /// held shut meanwhile, as for any camera flow.
   Future<void> _scanBusinessCard() async {
-    _deviceFlowActive = true;
-    final liveGated = liveActive;
-    if (liveGated) _liveSvc.remoteSpeaking = true;
-    try {
-      await _voice.stopSpeaking();
+    await holdMicDuring(() async {
       final ctx = AvatarMessageService.navigatorKey.currentContext;
       if (ctx == null || !ctx.mounted) {
         _reportDeviceFailure('scan_business_card', reason: 'no screen to show the camera on');
+        await _tellModel('[SYSTEM] ERROR: the card scanner could not open on '
+            'this screen, so nothing was saved. Say so in ONE short sentence.');
         return;
       }
       final person = await BusinessCardFlow.scan(ctx);
@@ -4713,21 +4203,19 @@ class AssistantEngine extends ChangeNotifier {
             'Buttons to add them to phone contacts and say hello on WhatsApp '
             'are on screen. Confirm in ONE short sentence.');
       }
-    } finally {
-      _deviceFlowActive = false;
-      if (liveGated) _liveSvc.remoteSpeaking = false;
-      _setPhase(AssistantPhase.completed);
-    }
+    });
   }
 
-  /// Tell the server a device action failed. Fire and forget: a failed
-  /// report must never turn into a second visible failure.
+  /// A device action failed. Inside a turn, the action it belongs to is
+  /// answered as a failure (the model says so; the server's record of the
+  /// turn carries the outcome); outside one, it is logged.
   void _reportDeviceFailure(String tool, {String target = '', String reason = ''}) {
-    try {
-      _api
-          .deviceResult(tool: tool, ok: false, target: target, reason: reason)
-          .catchError((_) {});
-    } catch (_) {}
+    AppLog.add('device',
+        '$tool failed${target.isEmpty ? '' : ' ($target)'}${reason.isEmpty ? '' : ': $reason'}');
+    final reply = Zone.current[_deviceReplyKey];
+    if (reply is _DeviceReply) {
+      reply.failed ??= 'the phone could not do it${reason.isEmpty ? '' : ': $reason'}';
+    }
   }
 
   void dismissGeneratedImage() {
@@ -4738,9 +4226,10 @@ class AssistantEngine extends ChangeNotifier {
 
   /// User closed the web results.
   void dismissSearchResults() {
-    if (searchResults.isEmpty && searchQuery == null) return;
+    if (searchResults.isEmpty && searchQuery == null && searchSuggestions.isEmpty) return;
     searchQuery = null;
     searchResults = const [];
+    searchSuggestions = const [];
     notifyListeners();
   }
 
@@ -4800,6 +4289,7 @@ class AssistantEngine extends ChangeNotifier {
   /// that a live session manages itself.
   void _clearAnswerCards() {
     if (searchResults.isEmpty &&
+        searchSuggestions.isEmpty &&
         documentCards.isEmpty &&
         presentedText == null &&
         generatedImage == null) {
@@ -4807,6 +4297,7 @@ class AssistantEngine extends ChangeNotifier {
     }
     searchQuery = null;
     searchResults = const [];
+    searchSuggestions = const [];
     documentCards = const [];
     presentedTitle = null;
     presentedText = null;
@@ -4816,11 +4307,10 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   void _resetTurn() {
-    _speakQueue.clear();
-    _liveEntry = null;
     errorMessage = null;
     searchQuery = null;
     searchResults = const [];
+    searchSuggestions = const [];
     documentCards = const [];
     generatedImage = null;
     generatedImagePrompt = '';
@@ -4831,7 +4321,6 @@ class AssistantEngine extends ChangeNotifier {
     pendingConfirmation = null;
     seenEvent = null;
     callStatus = null;
-    readyAudioUrl = null;
     activities.clear();
     activityLabel.value = null;
     notifyListeners();
@@ -4845,16 +4334,11 @@ class AssistantEngine extends ChangeNotifier {
     if (!silent) _haptic(p);
   }
 
-  /// A SESSION THAT NOBODY IS TALKING TO ENDS ITSELF. The mic used to
-  /// stay hot indefinitely after the last reply — the user walks away,
-  /// the room keeps making noise, and eventually the detector opens a
-  /// turn on a TV voice and the assistant "randomly speaks". Thirty
-  /// silent seconds after a turn completes, the inline session closes on
-  /// its own; any real activity re-arms the clock.
+  /// A SESSION THAT NOBODY IS TALKING TO ENDS ITSELF: a minute after the
+  /// last turn completed with the conversation resting (not listening),
+  /// the inline session closes on its own; any real activity re-arms the
+  /// clock. The listening loop has its own quiet minute ([quietClose]).
   Timer? _idleStop;
-  // A MINUTE, like the quiet clock in LiveService (owner, 2026-09-24:
-  // "when user don't respond for 1 min (silence) auto close it") — at 30
-  // seconds this one closed sessions sooner than he asked for.
   static const _idleStopAfter = Duration(seconds: 60);
 
   void _armIdleStop(AssistantPhase p) {
@@ -4862,41 +4346,31 @@ class AssistantEngine extends ChangeNotifier {
     _idleStop = null;
     if (!inlineVoice || !liveActive) return;
     if (p != AssistantPhase.idle && p != AssistantPhase.completed) return;
+    // Someone with the keyboard open is not "nobody" (tester run,
+    // 2026-10-01: the session closed under a typist as "a minute of quiet").
+    if (_typing) return;
     _idleStop = Timer(_idleStopAfter, () {
-      if (!inlineVoice || !liveActive) return;
+      if (!inlineVoice || !liveActive || _typing) return;
       if (phase != AssistantPhase.idle && phase != AssistantPhase.completed) {
         return;
       }
-      AppLog.add('live', 'idle ${_idleStopAfter.inSeconds}s — ending session');
+      if (_sessionWaiting) return;
+      AppLog.add('voice', 'idle ${_idleStopAfter.inSeconds}s — ending session');
       unawaited(_closeAfterQuiet());
     });
   }
 
   /// Something outside the conversation is still going: a card waiting on
   /// the owner's TAP (a confirmation, a contact pick, the camera), a phone
-  /// call, or a call the assistant placed to a business or a meeting
-  /// contact. That last one can run for minutes without a word on the
-  /// socket, and its outcome comes back through THIS session — closed, the
-  /// owner would never hear what they said.
+  /// call, or a call the assistant placed to a business or a contact. That
+  /// last one can run for minutes, and its outcome comes back to this
+  /// conversation — closed, the owner would never hear what they said.
   bool get _sessionWaiting =>
       pendingConfirmation != null ||
       ambiguousContacts.isNotEmpty ||
       _deviceFlowActive ||
       PhoneStateGuard.instance.inCall ||
       callStillRunning(_callStatus, _callStatusAt, DateTime.now());
-
-  /// LiveService heard a minute with nobody talking and nothing from the
-  /// assistant. A session that is waiting on something ([_sessionWaiting])
-  /// is not quiet — the minute starts over instead.
-  void _onQuietMinute() {
-    if (!liveActive) return;
-    if (_sessionWaiting) {
-      _liveSvc.noteActivity();
-      return;
-    }
-    AppLog.add('live', 'a minute of quiet — closing the session');
-    unawaited(_closeAfterQuiet());
-  }
 
   /// Closes cleanly with a short caption and no spoken goodbye.
   Future<void> _closeAfterQuiet() async {
@@ -4910,7 +4384,8 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Every 5 minutes while the app is on screen (owner, 2026-09-24: "my
   /// assistant should be aware of user location when he makes any
-  /// requests").
+  /// requests"). Every turn carries the latest fix (the brain's
+  /// deviceContext).
   void _startLocationTicker() {
     _locationTicker?.cancel();
     _locationTicker = Timer.periodic(
@@ -4921,17 +4396,6 @@ class AssistantEngine extends ChangeNotifier {
     try {
       await LocationService.instance.refresh();
     } catch (_) {}
-    _pushLiveLocation();
-  }
-
-  /// The live session hears a move of more than 300 m (or the 5-minute
-  /// repeat) — LiveService decides which.
-  void _pushLiveLocation() {
-    if (!liveActive) return;
-    final lat = ApiService.geoLat;
-    final lng = ApiService.geoLng;
-    if (lat == null || lng == null) return;
-    _liveSvc.maybeSendLocation(lat, lng, LocationService.instance.accuracy);
   }
 
   /// A request that needs the owner's position, with location unknown.
@@ -4945,7 +4409,8 @@ class AssistantEngine extends ChangeNotifier {
 
   /// ASKED ONCE, EVER: a one-line explainer and Android's dialog, the
   /// first time a request needs the owner's location and cannot have it.
-  /// LocationService remembers that it asked.
+  /// LocationService remembers that it asked. The next turn carries the
+  /// new permission and the fix, so the tools that need them are offered.
   Future<void> _maybeAskLocation() async {
     if (_askingLocation || ApiService.geoLat != null) return;
     _askingLocation = true;
@@ -4955,77 +4420,12 @@ class AssistantEngine extends ChangeNotifier {
       final ok = await LocationService.instance
           .askOnce(explain: (line) => AppFeedback.toast(line));
       if (!ok) return;
-      _pushLiveLocation();
-      // THE SERVER STILL THINKS LOCATION IS OFF. It chose this session's
-      // tools and wrote "location permission is NOT granted" into its
-      // prompt from what the phone reported when the session opened, so
-      // "ask me again" would have met the same refusal. The chat session
-      // is simply told again (it rebuilds its tools every turn); a live
-      // session fixes both at setup, so it is rebuilt.
-      final told = DeviceCapabilities.report(_api.reportCapabilities);
-      if (liveActive) {
-        unawaited(told);
-        await _rebuildLiveForLocation();
-      } else {
-        await told;
-        AppFeedback.toast('Location is on — ask me again.');
-      }
+      await _refreshLocation();
+      AppFeedback.toast('Location is on — ask me again.');
     } catch (_) {
     } finally {
       _askingLocation = false;
     }
-  }
-
-  /// Location was allowed in the middle of a live session: start it again
-  /// so the new one is set up with location on — the tools that need it
-  /// offered, the prompt no longer saying it is off. Only once her answer
-  /// has finished, the owner is not mid-sentence and nothing is waiting on
-  /// him; "ask me again" is promised only when the new session is up.
-  Future<void> _rebuildLiveForLocation() async {
-    final era = _liveSvc.era;
-    bool busy() =>
-        _liveSvc.modelTurn || _liveSvc.ownerTalking || _sessionWaiting;
-    final deadline = DateTime.now().add(const Duration(seconds: 30));
-    while (liveActive &&
-        _liveSvc.era == era &&
-        busy() &&
-        DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
-    if (!liveActive) {
-      // Closed meanwhile: the next session opens with location on.
-      AppFeedback.toast('Location is on.');
-      return;
-    }
-    if (_liveSvc.era != era) {
-      // Closed and opened again meanwhile: that session was set up after
-      // the grant, so it already has location — never restart it.
-      AppFeedback.toast('Location is on — ask me again.');
-      return;
-    }
-    if (busy()) {
-      // Never cut a task in half for this.
-      AppFeedback.toast('Location is on — it applies from the next '
-          'conversation.');
-      return;
-    }
-    AppLog.add('live', 'rebuilding session — location is on now');
-    try {
-      // The same conversation carrying on: no goodbye chime, no second
-      // hello (the cooldown counts from now).
-      _lastGreetedAt = DateTime.now();
-      await leaveConversation(chime: false);
-      // leaveConversation clears inlineVoice; the owner has not asked to
-      // stop talking, so put it back before starting again.
-      inlineVoice = true;
-      await beginInlineConversation();
-    } catch (e) {
-      AppLog.add('live', 'location rebuild failed: $e');
-      inlineVoice = false;
-      notifyListeners();
-    }
-    // A failed start already said so ("tap again"); one toast at a time.
-    if (liveActive) AppFeedback.toast('Location is on — ask me again.');
   }
 
   // ---------------- CALL HISTORY ----------------
@@ -5111,6 +4511,8 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   void _setLocalError(String message) {
+    _stuckWatchdog?.cancel();
+    _stuckWatchdog = null;
     errorMessage = message;
     phase = AssistantPhase.error;
     notifyListeners();
@@ -5147,13 +4549,13 @@ class _EngineShortcutPorts implements ShortcutPorts {
   final AssistantEngine engine;
 
   @override
-  Future<void> perform(Map<String, dynamic> action) async => engine.performDeviceAction(action);
+  Future<void> perform(Map<String, dynamic> action) async =>
+      unawaited(engine.performDeviceAction(action));
 
   @override
-  Future<bool> canLaunchFromBackground() async {
-    final st = await AutomationRunner.instance.device.status();
-    return st.connected && st.enabled;
-  }
+  // Android only lets an app open another app while it is in front; the
+  // runner keeps the rest for the owner's return.
+  Future<bool> canLaunchFromBackground() async => false;
 
   @override
   Future<void> notifyContinue(ShortcutRunDirective d, ShortcutEnvelope next) =>
@@ -5165,4 +4567,21 @@ class _EngineShortcutPorts implements ShortcutPorts {
 
   @override
   Future<void> wait(Duration d) => Future<void>.delayed(d);
+}
+
+/// The answer owed to the brain for one device action: given once. A
+/// failure reported while it runs turns a plain "done" into that failure.
+class _DeviceReply {
+  _DeviceReply(this._respond);
+
+  final void Function(DeviceOutcome outcome) _respond;
+  bool answered = false;
+  String? failed;
+
+  void answer(DeviceOutcome outcome) {
+    if (answered) return;
+    answered = true;
+    final why = failed;
+    _respond(outcome.ok && why != null ? DeviceOutcome.failed(why) : outcome);
+  }
 }

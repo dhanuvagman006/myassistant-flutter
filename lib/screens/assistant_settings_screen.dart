@@ -1,23 +1,20 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../design/accent_controller.dart';
+import '../features/home/home_memory.dart';
 import '../design/apple_kit.dart';
 import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../design/theme_controller.dart';
-import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
-import '../services/voice_id_service.dart';
 import 'account_section.dart';
 import 'app_lock_section.dart';
-import 'automation_setup_screen.dart';
 import 'theme_colour_screen.dart';
 import 'voice_picker_screen.dart';
 import 'avatar_identity_screen.dart';
@@ -51,15 +48,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   final _newRule = TextEditingController();
   bool _loading = true;
 
-  // Voice ID ("only my voice") state — mirrors VoiceIdService.
-  bool _voiceEnrolled = false;
-  bool _voiceGateOn = false;
-  bool _enrolling = false;
-
-  /// Voices the TTS + live stack actually supports, with what they sound
+  /// Voices the speech model supports, with what they sound
   /// like — a picker the user can read, not a bare dropdown.
   static const _voices = [
-    ('', 'Default', "The assistant's own voice"),
+    ('', 'Fola', 'Expressive · Female · the default'),
     ('Kore', 'Kore', 'Warm · Female'),
     ('Aoede', 'Aoede', 'Bright · Female'),
     ('Puck', 'Puck', 'Upbeat · Male'),
@@ -82,19 +74,15 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   }
 
   Future<void> _load() async {
-    final vid = VoiceIdService.instance;
-    // Side by side, not one after another: the tab opened on three
-    // sequential round-trips.
+    // Side by side, not one after another: the tab opened on sequential
+    // round-trips.
     final results = await Future.wait([
-      vid.load().then((_) => null),
       ApiService.getJson('/profile/full'),
       ApiService.getJson('/profile/instructions'),
     ]);
-    final p = results[1];
-    final r = results[2];
+    final p = results[0];
+    final r = results[1];
     if (!mounted) return;
-    _voiceEnrolled = vid.enrolled;
-    _voiceGateOn = vid.gateEnabled;
     setState(() {
       _loading = false;
       final a = (p?['assistant'] as Map?) ?? {};
@@ -144,112 +132,6 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     await _load();
   }
 
-  /// Records ~9 s of the user reading a sentence and turns it into the
-  /// voiceprint. The audio is processed on the phone and thrown away —
-  /// only the numeric print is kept.
-  Future<void> _enrollVoice() async {
-    if (_enrolling) return;
-    if (AssistantEngine.instance.liveActive) {
-      _snack('Close the conversation first, then enroll.');
-      return;
-    }
-    final rec = AudioRecorder();
-    if (!await rec.hasPermission()) {
-      _snack('Microphone permission is needed to enroll.');
-      return;
-    }
-    setState(() => _enrolling = true);
-    const seconds = 9;
-    final buf = BytesBuilder(copy: true);
-    StreamSubscription<List<int>>? sub;
-    var cancelled = false;
-    try {
-      final stream = await rec.startStream(const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: 16000,
-        numChannels: 1,
-      ));
-      sub = stream.listen((c) => buf.add(c));
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dctx) {
-          Timer.periodic(const Duration(seconds: seconds), (t) {
-            t.cancel();
-            if (dctx.mounted) Navigator.of(dctx).pop();
-          });
-          return AlertDialog(
-            backgroundColor: Neon.surface,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14)),
-            title: Text('Read this aloud',
-                style: TextStyle(color: Neon.textHi, fontSize: 17)),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '"Hey ${AssistantIdentity.name}, this is my voice. From '
-                  'now on, listen only to me. One, two, three, four, five — '
-                  'today is a really good day."',
-                  style: TextStyle(
-                      color: Neon.textHi, fontSize: 16, height: 1.5),
-                ),
-                const SizedBox(height: 16),
-                LinearProgressIndicator(
-                    color: Neon.violet, backgroundColor: Neon.bg),
-                const SizedBox(height: 10),
-                Text('Recording ${seconds}s — speak naturally.',
-                    style: TextStyle(color: Neon.textDim, fontSize: 13)),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  cancelled = true;
-                  Navigator.of(dctx).pop();
-                },
-                child: const Text('Cancel'),
-              ),
-            ],
-          );
-        },
-      );
-    } catch (_) {
-      _snack("Couldn't open the microphone.");
-      cancelled = true;
-    } finally {
-      try {
-        await sub?.cancel();
-        if (await rec.isRecording()) await rec.stop();
-      } catch (_) {}
-      rec.dispose();
-    }
-    if (cancelled) {
-      if (mounted) setState(() => _enrolling = false);
-      return;
-    }
-    final err = await VoiceIdService.instance.enroll(buf.toBytes());
-    if (!mounted) return;
-    if (err == null) {
-      await VoiceIdService.instance.setEnabled(true);
-      setState(() {
-        _enrolling = false;
-        _voiceEnrolled = true;
-        _voiceGateOn = true;
-      });
-      _snack('Voice saved — the assistant now responds only to you.');
-    } else {
-      setState(() => _enrolling = false);
-      _snack(err);
-    }
-  }
-
-  void _snack(String msg) {
-    if (!mounted) return;
-    AppFeedback.show(msg, context: context);
-  }
-
   /// Opens the tester feedback form (TesterFeedback). When it opened,
   /// the form speaks for itself; when it could not, one toast says so.
   ///
@@ -279,16 +161,14 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     // different screen from the one tapped. Pushed on its own (from
     // Diagnostics) it keeps a normal app bar with a back arrow.
     final pushed = ModalRoute.of(context)?.canPop ?? false;
-    return Scaffold(
-      backgroundColor: Neon.bg,
-      appBar: pushed ? appleAppBar(context, 'Settings') : null,
-      body: SafeArea(
-        top: !pushed,
-        bottom: false,
-        child: _loading
-          ? Center(
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Neon.textLo))
+    // UNDER THE SAME SKY (2026-09-30): as the You tab it is clear, so the
+    // shell's sky shows through as it does on Hub (a flat Neon.bg hid it
+    // on this one tab); pushed, it brings its own (NeonScaffold).
+    final body = SafeArea(
+      top: !pushed,
+      bottom: false,
+      child: _loading
+          ? const NeonLoader.page(semanticLabel: 'Loading your settings')
           : ListView(
               // Clears the dock and the mic on every phone.
               padding: EdgeInsets.fromLTRB(
@@ -297,19 +177,20 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 if (!pushed) const LargeTitle('You'),
                 // Identity lives in the conversation, and the page says so.
                 // Live: renaming by voice updates this card too.
+                // The one lit card on the page (2026-09-30): who the
+                // assistant is, in the brand's own light; every group
+                // below is a calm rim.
                 ValueListenableBuilder<String>(
                   valueListenable: AssistantIdentity.notifier,
-                  builder: (_, n, __) => GroupedCard(
-                    dividerInset: 60,
-                    children: [
-                      AppleRow(
-                        leading: IconTile(
-                            Icons.auto_awesome_rounded, AppleColors.purple),
-                        title: n,
-                        subtitle: 'To rename, just say it — "your name is '
-                            'Maya from now on".',
-                      ),
-                    ],
+                  builder: (_, n, __) => GlowCard(
+                    halo: 0.5,
+                    child: AppleRow(
+                      leading: IconTile(
+                          Icons.auto_awesome_rounded, AppleColors.purple),
+                      title: n,
+                      subtitle: 'To rename, just say it — "your name is '
+                          'Maya from now on".',
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -320,34 +201,14 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   builder: (_, mode, __) => GroupedCard(
                     dividerInset: 60,
                     children: [
-                      AppleRow(
-                        leading: IconTile(Icons.brightness_auto_rounded,
-                            AppleColors.indigo),
-                        title: 'Adaptive',
-                        subtitle:
-                            'Light through the day, dark after 7 pm — automatically.',
-                        trailing: _themeTick(mode == ThemeMode3.adaptive),
-                        onTap: () => ThemeController.setMode(ThemeMode3.adaptive),
-                      ),
-                      AppleRow(
-                        leading: IconTile(
-                            Icons.wb_sunny_rounded, AppleColors.orange),
-                        title: 'Light',
-                        trailing: _themeTick(mode == ThemeMode3.light),
-                        onTap: () => ThemeController.setMode(ThemeMode3.light),
-                      ),
-                      AppleRow(
-                        leading: IconTile(
-                            Icons.nightlight_round, AppleColors.gray),
-                        title: 'Dark',
-                        trailing: _themeTick(mode == ThemeMode3.dark),
-                        onTap: () => ThemeController.setMode(ThemeMode3.dark),
-                      ),
+                      // Adaptive, Light and Dark came out (2026-09-30): the
+                      // app has one design, the night-sky neon, in every
+                      // theme (owner's word).
                       // In the Appearance card (2026-09-24): it floated
                       // 10 dp under it as a card with no label of its own.
                       AppleRow(
-                        leading: IconTile(
-                            Icons.palette_rounded, AppleColors.purple),
+                        leading:
+                            IconTile(Icons.palette_rounded, AppleColors.purple),
                         title: 'Theme colour',
                         subtitle: 'Paints the orb, the mic and every highlight',
                         trailing: Row(
@@ -380,6 +241,33 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
                 const SizedBox(height: 24),
 
+                // Home's headlines (2026-09-30): a card of two when there is
+                // room under what is personal; the card's ✕ turns it off.
+                const GroupLabel('Home'),
+                ValueListenableBuilder<bool>(
+                  valueListenable: HomeMemory.instance.newsOn,
+                  builder: (_, on, __) => GroupedCard(
+                    dividerInset: 60,
+                    children: [
+                      AppleRow(
+                        leading:
+                            IconTile(Icons.newspaper_rounded, AppleColors.blue),
+                        title: 'News on Home',
+                        subtitle:
+                            'Two headlines from the topic you read, when there is room',
+                        trailing: Switch(
+                          value: on,
+                          onChanged: (v) {
+                            HapticFeedback.selectionClick();
+                            HomeMemory.instance.setNewsOn(v);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
                 // ONE VOICE CARD (2026-09-24). "ASSISTANT VOICE" sat over a
                 // row called "Assistant voice", and "RECOGNISE MY VOICE"
                 // over "Voice ID": a label per row, each repeating it.
@@ -388,10 +276,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   dividerInset: 60,
                   children: [
                     AppleRow(
-                      leading: IconTile(
-                          Icons.graphic_eq_rounded, AppleColors.teal),
+                      leading:
+                          IconTile(Icons.graphic_eq_rounded, AppleColors.teal),
                       title: 'Assistant voice',
-                      subtitle: 'Applies to your next conversation',
+                      subtitle: 'Fast live voice, or the classic voice',
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -408,8 +296,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         ],
                       ),
                       onTap: () async {
-                        final picked =
-                            await Navigator.of(context).push<String>(
+                        final picked = await Navigator.of(context).push<String>(
                           MaterialPageRoute(
                             builder: (_) => VoicePickerScreen(
                               voices: _voices,
@@ -424,46 +311,12 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     // (captions always show in the voice overlay),
                     // describing a conversation screen that no longer
                     // exists.
-                    AppleRow(
-                      leading: IconTile(
-                          Icons.record_voice_over_rounded, AppleColors.teal),
-                      title: 'Voice ID',
-                      subtitle: _voiceEnrolled
-                          ? 'Enrolled. Stays on this phone — nothing '
-                              'is uploaded.'
-                          : 'Record once so the assistant answers '
-                              'only you.',
-                      trailing: OutlinedButton(
-                        onPressed: _enrolling ? null : _enrollVoice,
-                        // The app's own accent: this was the one #3B5BDB
-                        // highlight on a page where every other is violet.
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Neon.violet,
-                          side: BorderSide(color: Neon.line),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: Text(_enrolling
-                            ? 'Listening…'
-                            : (_voiceEnrolled ? 'Re-record' : 'Enroll')),
-                      ),
-                    ),
-                    if (_voiceEnrolled)
-                      AppleRow(
-                        title: 'Respond only to my voice',
-                        subtitle: 'Live translation still hears everyone '
-                            'until you stop it.',
-                        trailing: Switch(
-                          value: _voiceGateOn,
-                          activeThumbColor: Colors.white,
-                          activeTrackColor: AppleColors.green,
-                          onChanged: (v) async {
-                            HapticFeedback.selectionClick();
-                            setState(() => _voiceGateOn = v);
-                            await VoiceIdService.instance.setEnabled(v);
-                          },
-                        ),
-                      ),
+                    // "Voice ID" and "Respond only to my voice" were here
+                    // (2026-09-29). Since the phone's own speech recogniser
+                    // hears the owner, no audio reaches a voiceprint check,
+                    // so the promise "answers only you" was no longer true.
+                    // VoiceIdService is kept for a mode that streams its own
+                    // microphone (hands-free cooking).
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -504,14 +357,17 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                               dividerInset: 60,
                               children: [
                                 AppleRow(
-                                  leading: IconTile(Icons.forward_to_inbox_rounded,
+                                  leading: IconTile(
+                                      Icons.forward_to_inbox_rounded,
                                       AppleColors.blue),
                                   title: 'Bills by email',
-                                  subtitle: "Forward bills and tickets — I'll file "
+                                  subtitle:
+                                      "Forward bills and tickets — I'll file "
                                       'them and remind you',
                                   onTap: () => Navigator.of(context).push(
                                     MaterialPageRoute(
-                                        builder: (_) => const BillsEmailScreen()),
+                                        builder: (_) =>
+                                            const BillsEmailScreen()),
                                   ),
                                 ),
                               ],
@@ -543,9 +399,9 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                           child: Row(children: [
                             Expanded(
                                 child: Text(r['instruction'] ?? '',
-                                    style:
-                                        TextStyle(color: Neon.textLo))),
+                                    style: TextStyle(color: Neon.textLo))),
                             IconButton(
+                              tooltip: 'Remove rule',
                               icon: Icon(Icons.close_rounded,
                                   size: 18, color: Neon.textDim),
                               onPressed: () => _removeRule(r['id'] as int),
@@ -567,13 +423,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   ),
                   const SizedBox(width: 8),
                   IconButton(
+                      tooltip: 'Add rule',
                       onPressed: _addRule,
-                      icon: Icon(Icons.add_circle_rounded,
-                          color: Neon.violet)),
+                      icon: Icon(Icons.add_circle_rounded, color: Neon.violet)),
                 ]),
-                const SizedBox(height: 24),
-
-                const AutomationSection(),
                 const SizedBox(height: 24),
 
                 const AppLockSection(),
@@ -611,14 +464,17 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                 ),
               ],
             ),
-      ),
     );
+    if (pushed) {
+      return NeonScaffold(appBar: appleAppBar(context, 'Settings'), body: body);
+    }
+    return Scaffold(backgroundColor: Colors.transparent, body: body);
   }
 
   Widget _legalRow(String label, String path) => AppleRow(
         title: label,
-        trailing: Icon(Icons.open_in_new_rounded,
-            size: 16, color: Neon.textDim),
+        trailing:
+            Icon(Icons.open_in_new_rounded, size: 16, color: Neon.textDim),
         onTap: () => launchUrl(Uri.parse('${ApiService.baseUrl}$path'),
             mode: LaunchMode.externalApplication),
       );
@@ -635,9 +491,3 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
             borderSide: BorderSide.none),
       );
 }
-
-/// Check mark on the selected appearance row.
-Widget _themeTick(bool on) => on
-    ? Icon(Icons.check_rounded, color: Neon.violet, size: 20)
-    : const SizedBox(width: 20);
-

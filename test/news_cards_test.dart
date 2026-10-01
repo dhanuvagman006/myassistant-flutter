@@ -529,6 +529,9 @@ void main() {
       expect(find.text('1 of 3'), findsOneWidget);
       await tester.tap(find.byTooltip('Close'));
       await tester.pump();
+      // It fades and sinks away in 120 ms (ExitPresence).
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pump(const Duration(milliseconds: 200));
       expect(AssistantEngine.instance.newsItems, isEmpty);
       expect(find.byType(NewsDeck), findsNothing);
     });
@@ -701,7 +704,7 @@ void main() {
         calls++;
         return calls == 1 ? null : [story(1)];
       });
-      expect(find.text("Couldn't load the news."), findsOneWidget);
+      expect(find.text("Couldn't load the news"), findsOneWidget);
       await tester.tap(find.text('Try again'));
       await settle(tester);
       expect(front('Story number 1 about the day'), findsOneWidget);

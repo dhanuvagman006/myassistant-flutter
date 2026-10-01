@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../design/motion.dart';
+import '../design/neon_tokens.dart';
 
 /// THE WHOLE REPLY, STILL STREAMING (2026-09-26).
 ///
@@ -196,9 +197,16 @@ class _LatestPill extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Jump to the latest words',
+      // A lit pill (2026-09-30): the night's raised surface with the
+      // assistant's cyan rim and a soft glow, so it reads as a control over
+      // the words, not another line of them.
       child: Material(
-        color: Colors.white.withValues(alpha: 0.16),
-        shape: const StadiumBorder(),
+        color: Neon.surfaceHigh,
+        shadowColor: NeonTone.tip.rim.first.withValues(alpha: 0.5),
+        elevation: 4,
+        shape: StadiumBorder(
+            side: BorderSide(
+                color: NeonTone.tip.rim.first.withValues(alpha: 0.7))),
         child: InkWell(
           key: const ValueKey('caption-latest'),
           customBorder: const StadiumBorder(),
@@ -210,12 +218,12 @@ class _LatestPill extends StatelessWidget {
               children: [
                 Text('Latest',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.92),
+                        color: Neon.textHi,
                         fontSize: 13,
                         fontWeight: FontWeight.w600)),
                 const SizedBox(width: 4),
                 Icon(Icons.arrow_downward_rounded,
-                    size: 16, color: Colors.white.withValues(alpha: 0.92)),
+                    size: 16, color: NeonTone.tip.ink),
               ],
             ),
           ),
@@ -306,14 +314,17 @@ class _RenderEdgeFade extends RenderProxyBox {
     if (_shader == null || _shaderSize != size) {
       _shaderSize = size;
       final f = (_height / size.height).clamp(0.0, 0.45);
+      // A mask (dstIn): only the colours' alpha counts — opaque keeps the
+      // words, clear fades them (2026-09-30: tokens, not raw black).
+      final keep = Neon.bg, fade = Neon.bg.withValues(alpha: 0);
       _shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          _top ? Colors.transparent : Colors.black,
-          Colors.black,
-          Colors.black,
-          _bottom ? Colors.transparent : Colors.black,
+          _top ? fade : keep,
+          keep,
+          keep,
+          _bottom ? fade : keep,
         ],
         stops: [0.0, f, 1.0 - f, 1.0],
       ).createShader(Offset.zero & size);

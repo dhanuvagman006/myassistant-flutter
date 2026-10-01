@@ -5,7 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart'
-    show NeonEmptyState, NeonErrorState, NeonLoader;
+    show NeonEmptyState, NeonErrorState, NeonLoader, NeonPill, NeonScaffold;
 import '../features/assistant/widgets/action_cards.dart'
     show shareDocumentFile;
 import '../models/client.dart';
@@ -15,6 +15,8 @@ import 'business_card_flow.dart';
 import '../services/document_events.dart';
 import '../widgets/document_tile.dart';
 import '../services/app_feedback.dart';
+import '../design/motion.dart';
+import '../widgets/neon_cards.dart';
 
 /// PROFESSIONAL MODE — the case-file workspace.
 ///
@@ -46,7 +48,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
       if (mounted) setState(() => _clients = rows);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = "Couldn't load your clients. Pull to retry.");
+        setState(() => _error = "Couldn't load your clients");
       }
     }
   }
@@ -64,12 +66,10 @@ class _ClientsScreenState extends State<ClientsScreen> {
   }
 
   Future<void> _addClient() async {
-    final created = await showModalBottomSheet<Client>(
+    // The theme's sheet (2026-09-30): lit rim, night scrim, handle.
+    final created = await showAppSheet<Client>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => const _EditClientSheet(),
     );
     if (created != null && mounted) {
@@ -79,8 +79,8 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under the night sky, with the theme's lit FAB (2026-09-30).
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Clients & patients', actions: [
         IconButton(
           tooltip: 'Scan a business card',
@@ -90,13 +90,14 @@ class _ClientsScreenState extends State<ClientsScreen> {
           },
         ),
       ]),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Neon.violet,
-        foregroundColor: Neon.onAccent,
-        onPressed: _addClient,
-        icon: const Icon(Icons.person_add_alt_1_rounded),
-        label: const Text('Add'),
-      ),
+      // One "Add" on an empty screen: the empty state's (2026-09-30).
+      floatingActionButton: (_clients?.isEmpty ?? true)
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _addClient,
+              icon: const Icon(Icons.person_add_alt_1_rounded),
+              label: const Text('Add'),
+            ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,7 +109,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),
-            Expanded(child: _body()),
+            Expanded(child: StateSwitch.of(_body())),
           ],
         ),
       ),
@@ -127,7 +128,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
             _load();
           });
     }
-    if (_clients == null) return const Center(child: NeonLoader());
+    if (_clients == null) return const NeonLoader.page();
     final rows = _filtered;
     if (rows.isEmpty) {
       return NeonEmptyState(
@@ -137,6 +138,9 @@ class _ClientsScreenState extends State<ClientsScreen> {
             ? 'Add a patient or client to keep their documents and notes '
                 'in one place, separate from your own documents.'
             : 'Nobody matches "$_query".',
+        actionLabel: _query.isEmpty ? 'New case file' : null,
+        actionIcon: Icons.person_add_alt_1_rounded,
+        onAction: _query.isEmpty ? _addClient : null,
       );
     }
     return RefreshIndicator(
@@ -157,13 +161,20 @@ class _ClientsScreenState extends State<ClientsScreen> {
 
   Widget _clientRow(Client c) {
     return AppleRow(
-      leading: CircleAvatar(
-        radius: 15,
-        backgroundColor: Neon.violet.withValues(alpha: 0.15),
+      // A lit initial (2026-09-30): the brand's glass and rim.
+      leading: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: NeonTone.brand.fill,
+          border: Border.all(color: Neon.violet.withValues(alpha: 0.6)),
+        ),
         child: Text(
           c.name.isNotEmpty ? c.name[0].toUpperCase() : '?',
-          style: TextStyle(
-              color: Neon.violet, fontSize: 14, fontWeight: FontWeight.w700),
+          style: NeonType.manrope(NeonType.body, FontWeight.w700)
+              .copyWith(color: NeonTone.brand.ink),
         ),
       ),
       title: c.name,
@@ -251,7 +262,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         _error = null;
       });
     } catch (_) {
-      if (mounted) setState(() => _error = "Couldn't load this case file.");
+      if (mounted) setState(() => _error = "Couldn't load this case file");
     }
   }
 
@@ -272,36 +283,34 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   }
 
   Future<void> _attachDocument() async {
-    final source = await showModalBottomSheet<String>(
+    // The theme's sheet, and the app's grouped rows in it (2026-09-30).
+    final source = await showAppSheet<String>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.photo_camera_rounded, color: AppleColors.blue),
-              title: Text('Take a photo',
-                  style: TextStyle(color: Neon.textHi)),
-              onTap: () => Navigator.pop(context, 'camera'),
-            ),
-            ListTile(
-              leading:
-                  Icon(Icons.photo_library_rounded, color: AppleColors.blue),
-              title: Text('Pick from gallery',
-                  style: TextStyle(color: Neon.textHi)),
-              onTap: () => Navigator.pop(context, 'gallery'),
-            ),
-            ListTile(
-              leading:
-                  Icon(Icons.picture_as_pdf_rounded, color: AppleColors.red),
-              title:
-                  Text('Pick a PDF', style: TextStyle(color: Neon.textHi)),
-              onTap: () => Navigator.pop(context, 'pdf'),
-            ),
-          ],
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: GroupedCard(
+            dividerInset: 60,
+            children: [
+              AppleRow(
+                leading: IconTile(Icons.photo_camera_rounded, AppleColors.blue),
+                title: 'Take a photo',
+                onTap: () => Navigator.pop(ctx, 'camera'),
+              ),
+              AppleRow(
+                leading:
+                    IconTile(Icons.photo_library_rounded, AppleColors.blue),
+                title: 'Pick from gallery',
+                onTap: () => Navigator.pop(ctx, 'gallery'),
+              ),
+              AppleRow(
+                leading:
+                    IconTile(Icons.picture_as_pdf_rounded, AppleColors.red),
+                title: 'Pick a PDF',
+                onTap: () => Navigator.pop(ctx, 'pdf'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -412,12 +421,9 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
 
   Future<void> _edit() async {
     if (_client == null) return;
-    final updated = await showModalBottomSheet<Client>(
+    final updated = await showAppSheet<Client>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => _EditClientSheet(existing: _client),
     );
     if (updated != null && mounted) setState(() => _client = updated);
@@ -430,11 +436,9 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         : n == 1
             ? ' and the 1 document filed in it'
             : ' and the $n documents filed in it';
-    final ok = await showDialog<bool>(
+    final ok = await showAppDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: Neon.surface,
-        surfaceTintColor: Colors.transparent,
         title: Text('Delete ${_client?.name ?? 'this case file'}?',
             style: TextStyle(color: Neon.textHi)),
         content: Text(
@@ -475,16 +479,18 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = _client;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under the night sky (2026-09-30); the bar's buttons are named.
+    return NeonScaffold(
       appBar: appleAppBar(
         context,
         c?.name ?? 'Case file',
         actions: [
           IconButton(
+              tooltip: 'Edit',
               icon: Icon(Icons.edit_rounded, color: Neon.textLo, size: 20),
               onPressed: c == null ? null : _edit),
           IconButton(
+              tooltip: 'Delete',
               icon: Icon(Icons.delete_outline_rounded,
                   color: Neon.textLo, size: 20),
               onPressed: c == null ? null : _delete),
@@ -493,8 +499,13 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
       body: SafeArea(
         child: c == null
             ? (_error != null
-                ? NeonErrorState(message: _error!, onRetry: _load)
-                : const Center(child: NeonLoader()))
+                ? NeonErrorState(
+                    message: _error!,
+                    onRetry: () {
+                      setState(() => _error = null);
+                      _load();
+                    })
+                : const NeonLoader.page())
             : RefreshIndicator(
                 color: Neon.violet,
                 onRefresh: _load,
@@ -529,15 +540,13 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Row(
                           children: [
-                            SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Neon.violet)),
+                            const NeonLoader.inline(
+                                size: 14, semanticLabel: 'Uploading'),
                             const SizedBox(width: 10),
                             Text('Uploading…',
                                 style: TextStyle(
-                                    color: Neon.textLo, fontSize: 13)),
+                                    color: Neon.textLo,
+                                    fontSize: NeonType.footnote)),
                           ],
                         ),
                       ),
@@ -547,6 +556,9 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                         'No documents yet',
                         'Attach reports, prescriptions or scans. '
                             'They stay in ${c.name}\'s file only.',
+                        tone: NeonTone.info,
+                        actionLabel: 'Attach',
+                        onAction: _busy ? null : _attachDocument,
                       )
                     else
                       for (final d in _documents)
@@ -566,6 +578,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                       _emptyRow(
                         Icons.sticky_note_2_outlined,
                         'No notes yet',
+                        tone: NeonTone.tip,
                         'Dated notes you add here are read back '
                             'when you ask about ${c.name}.',
                       )
@@ -580,32 +593,42 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
     );
   }
 
-  Widget _emptyRow(IconData icon, String title, String body) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Neon.line),
-      ),
+  /// A SECTION'S EMPTY STATE, COMPACT (2026-09-30): the page-level
+  /// NeonEmptyState's lit tile and words on the raised card, sized for a
+  /// section of a page rather than the whole of it — with the section's
+  /// next step as a lit pill where there is one.
+  Widget _emptyRow(IconData icon, String title, String body,
+      {NeonTone tone = NeonTone.brand,
+      String? actionLabel,
+      VoidCallback? onAction}) {
+    return RimCard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: Neon.textDim),
+          ToneTile(icon, tone, size: 34),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600)),
+                    style: NeonType.manrope(NeonType.body, FontWeight.w600)
+                        .copyWith(color: Neon.textHi)),
                 const SizedBox(height: 2),
                 Text(body,
                     style: TextStyle(
-                        color: Neon.textLo, fontSize: 13, height: 1.35)),
+                        color: Neon.textLo,
+                        fontSize: NeonType.footnote,
+                        height: 1.35)),
+                if (actionLabel != null) ...[
+                  const SizedBox(height: 6),
+                  NeonPill(
+                    label: actionLabel,
+                    icon: Icons.add_rounded,
+                    tone: tone,
+                    onPressed: onAction,
+                  ),
+                ],
               ],
             ),
           ),
@@ -718,6 +741,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           ),
           const SizedBox(width: 8),
           IconButton(
+            tooltip: 'Add note',
             onPressed: _busy ? null : _addNote,
             icon: Icon(Icons.send_rounded, color: Neon.violet),
           ),
@@ -728,17 +752,22 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
 
   Widget _noteRow(ClientNote n) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(16, 2, 4, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Text(_day(n.createdAt),
-                  style: TextStyle(color: Neon.textDim, fontSize: 12)),
+                  style: TextStyle(
+                      color: Neon.textDim, fontSize: NeonType.caption)),
               const Spacer(),
-              GestureDetector(
-                onTap: () async {
+              // 48 dp to the finger and named (2026-09-30): it was a bare
+              // 15 dp cross.
+              IconButton(
+                tooltip: 'Delete note',
+                visualDensity: VisualDensity.compact,
+                onPressed: () async {
                   try {
                     await ApiService.deleteClientNote(widget.clientId, n.id);
                     if (!mounted) return;
@@ -748,8 +777,8 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                     _toast("Couldn't delete the note.");
                   }
                 },
-                child:
-                    Icon(Icons.close_rounded, size: 15, color: Neon.textDim),
+                icon:
+                    Icon(Icons.close_rounded, size: 16, color: Neon.textDim),
               ),
             ],
           ),
@@ -860,8 +889,7 @@ class _EditClientSheetState extends State<_EditClientSheet> {
         children: [
           Text(
             widget.existing == null ? 'New case file' : 'Edit case file',
-            style: TextStyle(
-                color: Neon.textHi, fontSize: 18, fontWeight: FontWeight.w700),
+            style: NeonType.cardTitle.copyWith(color: Neon.textHi),
           ),
           const SizedBox(height: 14),
           TextField(
@@ -878,10 +906,10 @@ class _EditClientSheetState extends State<_EditClientSheet> {
                 'student',
                 'customer',
               ])
+                // The theme's chip (2026-09-30).
                 ChoiceChip(
                   label: Text(_kindLabel(k)),
                   selected: _kind == k,
-                  selectedColor: Neon.violet.withValues(alpha: 0.35),
                   onSelected: (_) => setState(() => _kind = k),
                 ),
             ],
@@ -907,7 +935,8 @@ class _EditClientSheetState extends State<_EditClientSheet> {
           if (_error != null) ...[
             const SizedBox(height: 10),
             Text(_error!,
-                style: TextStyle(color: Neon.errorInk, fontSize: 13)),
+                style: TextStyle(
+                    color: Neon.errorInk, fontSize: NeonType.footnote)),
           ],
           const SizedBox(height: 16),
           ApplePrimaryButton(

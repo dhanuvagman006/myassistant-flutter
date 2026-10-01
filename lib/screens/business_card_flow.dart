@@ -8,9 +8,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
 import '../services/auth_service.dart';
+import '../design/motion.dart';
 
 /// BUSINESS CARD SCANNER. Owner's pick, 2026-09-23.
 ///
@@ -45,7 +47,7 @@ class BusinessCardFlow {
     // later can never pop some OTHER route (the screen underneath, or
     // Home itself) if it is already gone.
     var reading = true;
-    showDialog<void>(
+    showAppDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => const _ReadingDialog(),
@@ -79,17 +81,14 @@ class BusinessCardFlow {
     if (person == null) {
       // The screen that asked may be gone by now: the app-wide messenger.
       AppFeedback.show(error!,
-          context: context.mounted ? context : null,
-          tone: FeedbackTone.error);
+          context: context.mounted ? context : null, tone: FeedbackTone.error);
       return null;
     }
     if (context.mounted) {
-      await showModalBottomSheet<void>(
+      await showAppSheet<void>(
         context: context,
+        // The theme's sheet (2026-09-30): its lit top edge and radius.
         isScrollControlled: true,
-        backgroundColor: Neon.surface,
-        shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
         builder: (_) => CardResultSheet(person: person!),
       );
     }
@@ -105,13 +104,10 @@ class _ReadingDialog extends StatelessWidget {
     // Back still closes it, as it always has (the upload can take up to a
     // minute on a weak signal). The flow tracks whether it is still open,
     // so it never pops some other screen when the answer comes in.
+    // The theme's dialog and the app's loader (2026-09-30).
     return AlertDialog(
-      backgroundColor: Neon.surface,
       content: Row(children: [
-        SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.4, color: Neon.violet)),
+        const NeonLoader.inline(size: 22, semanticLabel: 'Reading the card'),
         const SizedBox(width: 16),
         Expanded(
           child: Text('Reading the card…',
@@ -217,7 +213,8 @@ class _CardResultSheetState extends State<CardResultSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              Icon(Icons.check_circle_rounded, color: Neon.success, size: 20),
+              // Done, drawn as done: the app's tick (NeonSuccess).
+              const NeonSuccess(size: 22),
               const SizedBox(width: 8),
               Flexible(
                 child: Text('Saved to your people',

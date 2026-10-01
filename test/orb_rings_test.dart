@@ -306,7 +306,9 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('thinking: a slow, small breath', (tester) async {
+    // 2026-09-30, the six states: the thinking breath is 4.5% now — at
+    // 1.8% nobody saw it — and violet, so it never reads as his voice.
+    testWidgets('thinking: a slow breath you can see', (tester) async {
       await tester.pumpWidget(_rings(OrbMood.thinking));
       var most = 0.0, least = 1.0;
       for (var i = 0; i < 300; i++) {
@@ -317,14 +319,29 @@ void main() {
           least = x < least ? x : least;
         }
       }
-      expect(most, greaterThan(0.008), reason: 'it breathes');
-      expect(most, lessThan(0.022), reason: 'gently');
-      expect(least, greaterThan(-0.004));
+      expect(most, greaterThan(0.04), reason: 'it breathes, visibly');
+      expect(most, lessThan(0.07), reason: 'a breath, not a voice at full');
+      expect(least, greaterThan(-0.01));
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('at rest: exactly the picture, and no ticker', (tester) async {
+    // 2026-09-30: idle breathes slowly now (the six states); the mic
+    // paused for typing is the one that rests, and ticks not at all.
+    testWidgets('idle: a calm, small breath', (tester) async {
       await tester.pumpWidget(_rings(OrbMood.idle, level: ValueNotifier(0.9)));
+      var most = 0.0;
+      for (var i = 0; i < 400; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        final x = VoiceOrbBackdrop.debugPush;
+        most = x > most ? x : most;
+      }
+      expect(most, greaterThan(0.005), reason: 'it breathes');
+      expect(most, lessThan(0.02), reason: 'calmly — the mic level is ignored');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('paused: exactly the picture, and no ticker', (tester) async {
+      await tester.pumpWidget(_rings(OrbMood.paused, level: ValueNotifier(0.9)));
       await _run(tester, 60);
       expect(VoiceOrbBackdrop.debugPush, 0);
       expect(SchedulerBinding.instance.transientCallbackCount, 0,

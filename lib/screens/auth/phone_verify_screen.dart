@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/glow_cta.dart';
 import '../../services/auth_service.dart';
 import '../../services/phone_verify_service.dart';
 
@@ -14,41 +14,56 @@ import '../../services/phone_verify_service.dart';
 /// unreachable, so letting it through would create users who silently never
 /// receive anything.
 ///
+/// No SMS code (owner, 2026-09-29): Google confirms the number of the SIM
+/// in this phone with its carrier (PhoneVerifyService). Where the carrier
+/// does not take part, the server's testing switch (a typed number) is the
+/// only other way, shown only while the server offers it.
+///
 /// Styled as part of ONE onboarding flow with the auth and naming screens:
 /// plain ground, left-aligned headline, theme fields, ink primary button.
 class PhoneVerifyScreen extends StatefulWidget {
-  const PhoneVerifyScreen({super.key});
+  const PhoneVerifyScreen({super.key, this.service});
+
+  /// Tests pass their own; the app uses [PhoneVerifyService.instance].
+  final PhoneVerifyService? service;
 
   @override
   State<PhoneVerifyScreen> createState() => _PhoneVerifyScreenState();
 }
 
 class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
-  final _svc = PhoneVerifyService.instance;
+  late final PhoneVerifyService _svc =
+      widget.service ?? PhoneVerifyService.instance;
   final _phone = TextEditingController();
-  final _code = TextEditingController();
 
   /// Default matches the backend's DEFAULT_PHONE_REGION.
   final _dial = TextEditingController(text: '+91');
-  bool _codeSent = false;
+
+  /// Null while the phone and the server are asked what they allow.
+  PhoneVerifyMethods? _methods;
   bool _busy = false;
   String? _error;
-
-  /// Only true while the backend is running with ALLOW_DEV_PHONE_VERIFY.
-  bool _devAvailable = false;
 
   @override
   void initState() {
     super.initState();
-    _svc.devVerifyAvailable().then((v) {
-      if (mounted) setState(() => _devAvailable = v);
-    });
+    _check();
+  }
+
+  Future<void> _check() async {
+    if (_methods != null || _error != null) {
+      setState(() {
+        _methods = null;
+        _error = null;
+      });
+    }
+    final m = await _svc.methods();
+    if (mounted) setState(() => _methods = m);
   }
 
   @override
   void dispose() {
     _phone.dispose();
-    _code.dispose();
     _dial.dispose();
     super.dispose();
   }
@@ -60,52 +75,60 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
 
   String get _e164 => '$_dialCode${_phone.text.replaceAll(RegExp(r'\D'), '')}';
 
-  Future<void> _send() async {
-    final digits = _phone.text.replaceAll(RegExp(r'\D'), '');
-    if (digits.length < 6) {
-      setState(() => _error = 'Enter your phone number.');
-      return;
+  Future<void> _viaSim() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final err = await _svc.verifyWithSim();
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = err;
+      });
     }
-    setState(() { _busy = true; _error = null; });
-    await _svc.sendCode(
-      _e164,
-      onError: (m) { if (mounted) setState(() { _busy = false; _error = m; }); },
-      onCodeSent: () { if (mounted) setState(() { _busy = false; _codeSent = true; }); },
-      // Android often reads the SMS itself on the receiving handset, so the
-      // user may never see a code. Finish for them rather than showing an
-      // entry box that will never be used.
-      onAutoVerified: (cred) async {
-        final err = await _svc.submit(cred);
-        if (mounted) setState(() { _busy = false; _error = err; });
-      },
-    );
   }
 
-  Future<void> _devSkip() async {
+  Future<void> _typed() async {
     final digits = _phone.text.replaceAll(RegExp(r'\D'), '');
     if (digits.length < 6) {
       setState(() => _error = 'Enter your phone number first.');
       return;
     }
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     final err = await _svc.devVerify(_e164);
-    if (mounted) setState(() { _busy = false; _error = err; });
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = err;
+      });
+    }
   }
 
-  Future<void> _confirm() async {
-    if (_code.text.trim().length < 4) {
-      setState(() => _error = 'Enter the code we sent you.');
-      return;
+  String get _lead {
+    final m = _methods;
+    if (m == null) return 'Checking your SIM…';
+    if (m.sim) {
+      return 'This is how friends and family reach you through their '
+          'assistant. Google confirms the number of the SIM in this phone '
+          'with your network — there is no code to type.';
     }
-    setState(() { _busy = true; _error = null; });
-    final err = await _svc.confirmCode(_code.text);
-    if (mounted) setState(() { _busy = false; _error = err; });
+    if (!m.reached) return 'Could not reach the server. Check your connection.';
+    if (m.typed) {
+      return "Your network can't confirm numbers automatically yet. For "
+          'testing, enter your number instead.';
+    }
+    return "Your network can't confirm numbers automatically yet, so this "
+        'step is not available on this phone for now.';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky, the lit mark and one lit action (2026-09-30).
+    return NeonScaffold(
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -116,18 +139,9 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Align(
+                  const Align(
                     alignment: Alignment.centerLeft,
-                    child: Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        color: Neon.textHi,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(Icons.verified_user_rounded,
-                          color: Neon.onInk, size: 26),
-                    ),
+                    child: BrandMark(icon: Icons.verified_user_rounded),
                   ),
                   const SizedBox(height: 22),
                   Text(
@@ -141,16 +155,12 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    _codeSent
-                        ? 'Enter the code we sent to ${_svc.pendingNumber ?? _e164}.'
-                        : 'This is how friends and family reach you through '
-                            'their assistant. One number, one account.',
+                    _lead,
                     style: TextStyle(
                         color: Neon.textLo, fontSize: 15, height: 1.45),
                   ),
                   const SizedBox(height: 26),
-
-                  if (!_codeSent)
+                  if (_methods?.typed == true && _methods?.sim == false)
                     Row(
                       children: [
                         SizedBox(
@@ -175,23 +185,7 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                           ),
                         ),
                       ],
-                    )
-                  else
-                    TextField(
-                      controller: _code,
-                      keyboardType: TextInputType.number,
-                      autofocus: true,
-                      maxLength: 6,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly
-                      ],
-                      decoration: const InputDecoration(
-                        labelText: '6-digit code',
-                        counterText: '',
-                        prefixIcon: Icon(Icons.pin_outlined),
-                      ),
                     ),
-
                   if (_error != null) ...[
                     const SizedBox(height: 14),
                     Container(
@@ -216,65 +210,40 @@ class _PhoneVerifyScreenState extends State<PhoneVerifyScreen> {
                       ),
                     ),
                   ],
-
                   const SizedBox(height: 20),
-                  _busy
-                      ? FilledButton(
-                          onPressed: null,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Neon.violet,
-                            foregroundColor: Neon.onAccent,
-                            minimumSize: const Size.fromHeight(50),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2.2, color: Colors.white),
-                          ),
-                        )
-                      : ApplePrimaryButton(
-                          label: _codeSent ? 'Confirm' : 'Send code',
-                          onPressed: _codeSent ? _confirm : _send,
-                        ),
-
-                  if (_codeSent) ...[
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _busy
-                          ? null
-                          : () => setState(() {
-                                _codeSent = false;
-                                _error = null;
-                              }),
-                      child: Text('Change number',
-                          style: TextStyle(color: Neon.textLo)),
+                  if (_busy || _methods == null)
+                    const GlowCta(
+                      label: '',
+                      busy: true,
+                      busyLabel: 'Checking your number',
+                      onPressed: null,
+                    )
+                  else if (_methods!.sim)
+                    GlowCta(
+                      label: 'Confirm with my SIM',
+                      onPressed: _viaSim,
+                    )
+                  else if (_methods!.typed)
+                    GlowCta(
+                      label: 'Use this number (testing)',
+                      onPressed: _typed,
+                    )
+                  else
+                    // The only way forward from here, so it is the primary
+                    // button, not a link: offline it retries the server;
+                    // on a network that cannot confirm it checks again (a
+                    // new SIM, or the testing switch turned on).
+                    GlowCta(
+                      label: _methods!.reached ? 'Check again' : 'Try again',
+                      onPressed: _check,
                     ),
-                  ],
-
-                  // Dev escape hatch. Shown only when the SERVER says it
-                  // will accept it, so it cannot linger in a build pointed
-                  // at a production backend.
-                  if (_devAvailable && !_codeSent) ...[
-                    const SizedBox(height: 4),
-                    TextButton(
-                      onPressed: _busy ? null : _devSkip,
-                      child: Text(
-                        'Skip OTP (dev only)',
-                        style: TextStyle(color: Neon.warningInk, fontSize: 13),
-                      ),
-                    ),
-                  ],
-
                   const SizedBox(height: 6),
                   TextButton(
                     onPressed:
                         _busy ? null : () => AuthService.instance.signOut(),
                     child: Text('Sign out',
-                        style:
-                            TextStyle(color: Neon.textDim, fontSize: 13)),
+                        style: TextStyle(
+                            color: Neon.textLo, fontSize: NeonType.footnote)),
                   ),
                 ],
               ),

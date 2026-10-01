@@ -685,6 +685,14 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                         result.success(true)
                     }
+                    // A CONVERSATION HOLDS THE AUDIO FOCUS (2026-09-30): music or a
+                    // video pauses while she listens and talks, and resumes after.
+                    // The microphone no longer asks for it itself: the recorder's
+                    // own request PAUSED THE CAPTURE for good on any loss (a
+                    // WhatsApp ping), which left the client's S24 Ultra stuck on
+                    // "Listening". A loss here changes nothing.
+                    "audioFocus" -> result.success(
+                        conversationFocus(ctx, call.argument<Boolean>("on") == true))
                     "torch" -> result.success(
                         DeviceControl.torch(ctx, call.argument<Boolean>("on") == true))
                     "volume" -> result.success(
@@ -782,18 +790,13 @@ class MainActivity : FlutterFragmentActivity() {
         // calls card), read here and summarised in Dart (CallLogBridge).
         CallLogBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
 
-        // "Do it for me" inside other apps: the task loop's line to the
-        // accessibility service (AutomationBridge, HariAccessibilityService).
-        AutomationBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
-
         // "Send feedback" on the You tab: opens App Distribution's own
         // feedback form (TesterFeedbackBridge).
         TesterFeedbackBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
 
-        // "Talk while it works" (owner, 2026-09-25: "start talk while it
-        // works"): the microphone foreground service. In this build only the
-        // mic test on the Diagnostics screen uses it (TaskVoiceBridge).
-        TaskVoiceBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
+        // The sign-up's phone step: Google confirms the SIM's number with
+        // its carrier, no SMS code (PhoneNumberVerificationBridge).
+        PhoneNumberVerificationBridge.register(flutterEngine.dartExecutor.binaryMessenger, this)
     }
 
     /** True automatic SMS — SmsManager sends without opening any app.
@@ -1006,4 +1009,35 @@ class MainActivity : FlutterFragmentActivity() {
         pkg.substringAfterLast('.').replaceFirstChar { it.uppercase() }
     }
 
+
+    private var focusRequest: android.media.AudioFocusRequest? = null
+
+    /** Takes (on) or gives back the audio focus for a conversation. */
+    private fun conversationFocus(ctx: Context, on: Boolean): Boolean {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        if (android.os.Build.VERSION.SDK_INT < 26) return false
+        return try {
+            if (on) {
+                if (focusRequest != null) return true
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val req = android.media.AudioFocusRequest.Builder(
+                    android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attrs)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                focusRequest = req
+                am.requestAudioFocus(req) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                focusRequest?.let { am.abandonAudioFocusRequest(it) }
+                focusRequest = null
+                true
+            }
+        } catch (e: Exception) {
+            Log.w("hari", "audio focus: ${e.message}")
+            false
+        }
+    }
 }

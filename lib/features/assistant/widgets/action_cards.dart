@@ -7,7 +7,9 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../design/gyro_tilt.dart';
+import '../../../design/motion.dart';
 import '../../../design/neon_tokens.dart';
+import '../../../design/neon_widgets.dart';
 import '../../../models/user_document.dart';
 import '../../../models/vision_result.dart';
 // openDocument/documentGlyph live with the document tiles. The import
@@ -18,16 +20,32 @@ import '../../../models/vision_result.dart';
 import '../../../widgets/document_tile.dart'
     show openDocument, openDocumentFile, documentGlyph, documentTypeLabel;
 import '../../../services/api_service.dart';
-import '../../../theme/app_theme.dart';
+import '../../../ai/search_suggestions.dart';
 import '../state/assistant_state.dart';
 import 'package:video_player/video_player.dart';
 import '../../../services/app_feedback.dart';
 
-/// Shared glass card chrome for the dark assistant screen.
-class _Glass extends StatelessWidget {
+/// THE ASSISTANT'S CARDS ARE LIT (2026-09-30, the client's neon
+/// reference). Each is a [GlowCard] whose rim says what it is — green done,
+/// blue information, amber a decision waiting for you, magenta-to-orange
+/// something to act on, purple something made for you, cyan the assistant
+/// suggesting — the same meaning as everywhere else in the app. The old
+/// glass card's edge (#141627 at 18%) was invisible on the navy.
+class _LitCard extends StatelessWidget {
   final Widget child;
-  final Color? borderTint;
-  const _Glass({required this.child, this.borderTint});
+  final NeonTone tone;
+
+  /// 0.35: the soft light every lit card has; 0.8: one that wants you.
+  final double halo;
+  final VoidCallback? onTap;
+  final String? semanticLabel;
+  const _LitCard({
+    required this.child,
+    this.tone = NeonTone.info,
+    this.halo = 0.35,
+    this.onTap,
+    this.semanticLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -36,19 +54,131 @@ class _Glass extends StatelessWidget {
       // only the painted card floats with the device.
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: GyroTilt(
-        radius: 18,
-        shadowColor: borderTint ?? Neon.violet,
-        child: Container(
+        radius: Neon.rLg,
+        // The card's own halo is its light; a second, moving one doubled it.
+        shadow: false,
+        child: GlowCard(
+          tone: tone,
+          halo: halo,
+          rimWidth: 1.6,
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: (borderTint ?? const Color(0xFF141627)).withValues(alpha: 0.18),
-            ),
-          ),
+          onTap: onTap,
+          semanticLabel: semanticLabel,
           child: child,
         ),
+      ),
+    );
+  }
+}
+
+/// A card's button (2026-09-30, hierarchy by light): the way forward
+/// ([primary]) is filled with its tone's gradient and glows; the other is
+/// a rim and nothing more. 48 dp tall; it dips and ticks under the finger.
+class _CardButton extends StatelessWidget {
+  const _CardButton({
+    required this.label,
+    this.icon,
+    this.onTap,
+    this.primary = false,
+    this.tone = NeonTone.action,
+    this.busy = false,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+  final bool primary;
+  final NeonTone tone;
+
+  /// Working: a small loader in place of the icon, and no taps.
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final tap = onTap;
+    final enabled = tap != null && !busy;
+    final rim = tone.rim;
+    // Words on the gradient: whichever of white and ink reads there.
+    final ink =
+        primary ? Neon.textOn(Color.lerp(rim[0], rim[1], 0.5)!) : Neon.textLo;
+    Widget body = Container(
+      constraints: const BoxConstraints(minHeight: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: primary ? LinearGradient(colors: rim) : null,
+        color: primary ? null : Neon.textHi.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(Neon.rPill),
+        border: primary ? null : Border.all(color: Neon.lineBright, width: 1.2),
+        boxShadow: primary && enabled ? Neon.halo(rim.first, strength: 1.2) : null,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (busy)
+            const NeonLoader.inline(size: 16, semanticLabel: 'Working')
+          else if (icon != null)
+            Icon(icon, size: 18, color: ink),
+          if (busy || icon != null) const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: NeonType.manrope(NeonType.callout, FontWeight.w700)
+                  .copyWith(color: ink),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!enabled && !busy) body = Opacity(opacity: 0.5, child: body);
+    if (enabled) {
+      body = PressScale(
+        scale: 0.96,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            tap();
+          },
+          child: body,
+        ),
+      );
+    }
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: label,
+      onTap: enabled ? tap : null,
+      excludeSemantics: true,
+      child: body,
+    );
+  }
+}
+
+/// THE MOMENT IT WORKED (2026-09-30): the lit tick and a word, in a row
+/// on the card that did it.
+class _DoneLine extends StatelessWidget {
+  const _DoneLine(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          const NeonSuccess(size: 26),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: NeonType.manrope(NeonType.callout, FontWeight.w700)
+                  .copyWith(color: NeonTone.success.ink),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -61,18 +191,14 @@ class ToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _Glass(
+    return _LitCard(
+      // Running: information; done: green, with the lit tick.
+      tone: activity.completed ? NeonTone.success : NeonTone.info,
       child: Row(
         children: [
           activity.completed
-              ? const Icon(Icons.check_circle_rounded,
-                  size: 18, color: Color(0xFF35C48D))
-              : SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: AppColors.peacockLight),
-                ),
+              ? const NeonSuccess(size: 20)
+              : const NeonLoader.inline(size: 16, semanticLabel: 'Working'),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -90,26 +216,77 @@ class ToolCard extends StatelessWidget {
 }
 
 /// One web search hit — tappable to open the source.
+/// GOOGLE'S SEARCH SUGGESTIONS for a Google-Search-grounded answer — the
+/// Gemini API's grounding terms require them beside the answer. Each chip
+/// opens that Google search.
+class SearchSuggestionChips extends StatelessWidget {
+  final List<SearchSuggestion> suggestions;
+  const SearchSuggestionChips({super.key, required this.suggestions});
+
+  @override
+  Widget build(BuildContext context) {
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_rounded, size: 15, color: Neon.textLo),
+            const SizedBox(width: 4),
+            Text('Google',
+                style: TextStyle(color: Neon.textLo, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+        ),
+        for (final s in suggestions)
+          Semantics(
+            button: true,
+            label: 'Search Google for ${s.label}',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () {
+                final u = Uri.tryParse(s.url);
+                if (u != null) launchUrl(u, mode: LaunchMode.externalApplication);
+              },
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 36),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Neon.surfaceHigh,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Text(s.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Neon.textHi, fontSize: 13)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class SearchResultCard extends StatelessWidget {
   final SearchResult result;
   const SearchResultCard({super.key, required this.result});
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: () {
-        final u = Uri.tryParse(result.url);
-        if (u != null) launchUrl(u, mode: LaunchMode.externalApplication);
-      },
-      child: _Glass(
+    return _LitCard(
+        onTap: () {
+          final u = Uri.tryParse(result.url);
+          if (u != null) launchUrl(u, mode: LaunchMode.externalApplication);
+        },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Icon(Icons.public_rounded,
-                    size: 14, color: AppColors.peacockLight),
+                    size: 14, color: NeonTone.tip.ink),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -151,7 +328,6 @@ class SearchResultCard extends StatelessWidget {
             ],
           ],
         ),
-      ),
     );
   }
 }
@@ -172,19 +348,25 @@ class ContactCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final initial =
         contact.name.isNotEmpty ? contact.name[0].toUpperCase() : '?';
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: _Glass(
-        borderTint: selected ? AppColors.peacockLight : null,
+    final cyan = NeonTone.tip.rim.first;
+    return _LitCard(
+        // The chosen one glows; the others are information.
+        tone: selected ? NeonTone.tip : NeonTone.info,
+        halo: selected ? 0.8 : 0.35,
+        onTap: onTap,
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: AppColors.peacock.withValues(alpha: 0.6),
+            Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: Neon.tile(cyan),
+              ),
               child: Text(initial,
                   style: TextStyle(
-                      color: Neon.textHi, fontWeight: FontWeight.w700)),
+                      color: Neon.onTile(cyan), fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -208,7 +390,6 @@ class ContactCard extends StatelessWidget {
                   color: Neon.textDim),
           ],
         ),
-      ),
     );
   }
 }
@@ -227,9 +408,15 @@ class CallStatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final failed = status.status == 'failed' || status.status == 'no_answer';
     final idx = _steps.indexOf(status.status);
-    return _Glass(
-      borderTint: failed ? AppColors.danger : const Color(0xFF35C48D),
+    // Green while it goes well, the danger tone when it did not
+    // (2026-09-30: an off-palette green #35C48D before).
+    final ok = NeonTone.success.ink, bad = NeonTone.danger.ink;
+    return _LitCard(
+      tone: failed ? NeonTone.danger : NeonTone.success,
       child: Column(
+        // 2026-09-30 visual QA: shrink-wrap — in the voice screen the card was
+        // given all the room above the text box and stretched into an empty panel.
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -237,7 +424,7 @@ class CallStatusCard extends StatelessWidget {
               Icon(
                 failed ? Icons.phone_missed_rounded : Icons.phone_in_talk_rounded,
                 size: 18,
-                color: failed ? AppColors.danger : const Color(0xFF35C48D),
+                color: failed ? bad : ok,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -260,9 +447,7 @@ class CallStatusCard extends StatelessWidget {
                   return Expanded(
                     child: Container(
                       height: 2,
-                      color: done
-                          ? const Color(0xFF35C48D)
-                          : Neon.line,
+                      color: done ? ok : Neon.line,
                     ),
                   );
                 }
@@ -274,17 +459,8 @@ class CallStatusCard extends StatelessWidget {
                   height: 12,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: done
-                        ? const Color(0xFF35C48D)
-                        : Neon.lineBright,
-                    boxShadow: current
-                        ? [
-                            BoxShadow(
-                                color: const Color(0xFF35C48D)
-                                    .withValues(alpha: 0.6),
-                                blurRadius: 8)
-                          ]
-                        : null,
+                    color: done ? ok : Neon.lineBright,
+                    boxShadow: current ? Neon.halo(ok, strength: 1.2) : null,
                   ),
                 );
               }),
@@ -318,7 +494,11 @@ class _StepLabel extends StatelessWidget {
 }
 
 /// "Should I place this call?" — always shown before dialing.
-class ConfirmationCard extends StatelessWidget {
+///
+/// A DECISION WAITING FOR YOU (2026-09-30): an amber rim with its glow;
+/// the way forward filled and glowing, Cancel a rim only; and a yes lands
+/// with the lit tick while the card goes.
+class ConfirmationCard extends StatefulWidget {
   final PendingConfirmation pending;
   final void Function(bool approved) onDecision;
   const ConfirmationCard({
@@ -328,17 +508,35 @@ class ConfirmationCard extends StatelessWidget {
   });
 
   @override
+  State<ConfirmationCard> createState() => _ConfirmationCardState();
+}
+
+class _ConfirmationCardState extends State<ConfirmationCard> {
+  bool _approved = false;
+
+  void _decide(bool approved) {
+    if (_approved) return;
+    if (approved) setState(() => _approved = true);
+    widget.onDecision(approved);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final pending = widget.pending;
     final isCall = pending.action == 'place_call';
-    return _Glass(
-      borderTint: AppColors.marigold,
+    return _LitCard(
+      tone: NeonTone.warning,
+      halo: 0.8,
       child: Column(
+        // 2026-09-30 visual QA: shrink-wrap — in the voice screen the card was
+        // given all the room above the text box and stretched into an empty panel.
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Icon(Icons.verified_user_outlined,
-                  size: 18, color: AppColors.marigold),
+                  size: 18, color: NeonTone.warning.ink),
               const SizedBox(width: 8),
               Text(
                 isCall ? 'Confirm this call' : 'Confirm',
@@ -378,33 +576,31 @@ class ConfirmationCard extends StatelessWidget {
               pending.question ?? 'Shall I go ahead?',
               style: TextStyle(color: Neon.textHi, fontSize: 15),
             ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Neon.textLo,
-                    side: BorderSide(
-                        color: Neon.lineBright),
+          if (_approved)
+            _DoneLine(isCall ? 'Placing the call' : 'Confirmed')
+          else ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _CardButton(
+                    label: 'Cancel',
+                    onTap: () => _decide(false),
                   ),
-                  onPressed: () => onDecision(false),
-                  child: const Text('Cancel'),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.peacock),
-                  onPressed: () => onDecision(true),
-                  icon: Icon(isCall ? Icons.call_rounded : Icons.check_rounded,
-                      size: 18),
-                  label: Text(isCall ? 'Place call' : 'Confirm'),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _CardButton(
+                    label: isCall ? 'Place call' : 'Confirm',
+                    icon: isCall ? Icons.call_rounded : Icons.check_rounded,
+                    primary: true,
+                    tone: isCall ? NeonTone.success : NeonTone.action,
+                    onTap: () => _decide(true),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -434,11 +630,15 @@ class EventOfferCard extends StatefulWidget {
 class _EventOfferCardState extends State<EventOfferCard> {
   bool _busy = false;
 
-  Future<void> _run(Future<bool> Function() action) async {
+  /// What worked, for the lit tick (2026-09-30); null until something did.
+  String? _done;
+
+  Future<void> _run(Future<bool> Function() action, String done) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await action();
+      final ok = await action();
+      if (ok && mounted) setState(() => _done = done);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -448,15 +648,17 @@ class _EventOfferCardState extends State<EventOfferCard> {
   Widget build(BuildContext context) {
     final e = widget.event;
     final where = (e.location ?? '').trim();
-    return _Glass(
-      borderTint: Neon.cyan,
+    return _LitCard(
+      // The assistant suggesting: cyan.
+      tone: NeonTone.tip,
+      halo: 0.6,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              Icon(Icons.event_rounded, size: 18, color: Neon.cyan),
+              Icon(Icons.event_rounded, size: 18, color: NeonTone.tip.ink),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -486,30 +688,27 @@ class _EventOfferCardState extends State<EventOfferCard> {
           Row(
             children: [
               Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.peacock,
-                      minimumSize: const Size(0, 48)),
-                  onPressed: _busy ? null : () => _run(widget.onRemind),
-                  icon: const Icon(Icons.alarm_add_rounded, size: 18),
-                  label: const Text('Remind me'),
+                child: _CardButton(
+                  label: 'Remind me',
+                  icon: Icons.alarm_add_rounded,
+                  primary: true,
+                  busy: _busy,
+                  onTap: () => _run(widget.onRemind, 'Reminder set'),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Neon.cyanInk,
-                    minimumSize: const Size(0, 48),
-                    side: BorderSide(color: Neon.cyan.withValues(alpha: 0.5)),
-                  ),
-                  onPressed: _busy ? null : () => _run(widget.onCalendar),
-                  icon: const Icon(Icons.calendar_month_rounded, size: 18),
-                  label: const Text('Add to calendar'),
+                child: _CardButton(
+                  label: 'Add to calendar',
+                  icon: Icons.calendar_month_rounded,
+                  onTap: _busy
+                      ? null
+                      : () => _run(widget.onCalendar, 'Added to your calendar'),
                 ),
               ),
             ],
           ),
+          if (_done != null) _DoneLine(_done!),
         ],
       ),
     );
@@ -558,9 +757,11 @@ class _DocumentCardState extends State<DocumentCard> {
 
   @override
   Widget build(BuildContext context) {
-    return _Glass(
-      borderTint: Neon.cyan,
+    return _LitCard(
       child: Column(
+        // 2026-09-30 visual QA: shrink-wrap — in the voice screen the card was
+        // given all the room above the text box and stretched into an empty panel.
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
@@ -644,22 +845,13 @@ class _DocumentCardState extends State<DocumentCard> {
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _sending ? null : _send,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Neon.cyanInk,
-                    side: BorderSide(color: Neon.cyan.withValues(alpha: 0.5)),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                  ),
-                  icon: _sending
-                      ? SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Neon.cyan),
-                        )
-                      : const Icon(Icons.send_rounded, size: 16),
-                  label: Text(_sending ? 'Preparing…' : 'Send'),
+                child: _CardButton(
+                  label: _sending ? 'Preparing…' : 'Send',
+                  icon: Icons.send_rounded,
+                  primary: true,
+                  tone: NeonTone.info,
+                  busy: _sending,
+                  onTap: _send,
                 ),
               ),
             ],
@@ -722,11 +914,11 @@ class ScriptCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _Glass(
-      borderTint: Neon.cyan,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+    // Something made for you: purple.
+    return _LitCard(
+        tone: NeonTone.discovery,
         onTap: () => _openReader(context),
+        semanticLabel: 'Open $title full screen',
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -734,7 +926,7 @@ class ScriptCard extends StatelessWidget {
             Row(
               children: [
                 Icon(Icons.description_rounded,
-                    color: Neon.cyan, size: 18),
+                    color: NeonTone.discovery.ink, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -755,7 +947,8 @@ class ScriptCard extends StatelessWidget {
                       const BoxConstraints(minWidth: 44, minHeight: 44),
                   padding: EdgeInsets.zero,
                   onPressed: () => Share.share(content, subject: title),
-                  icon: Icon(Icons.share_rounded, color: Neon.cyan, size: 19),
+                  icon: Icon(Icons.share_rounded,
+                      color: NeonTone.tip.ink, size: 19),
                 ),
                 if (onClose != null)
                   IconButton(
@@ -786,7 +979,7 @@ class ScriptCard extends StatelessWidget {
             Text(
               'Tap to open full screen',
               style: TextStyle(
-                color: Neon.cyanInk,
+                color: NeonTone.discovery.ink,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.3,
@@ -794,7 +987,6 @@ class ScriptCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -922,8 +1114,11 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
 
   @override
   Widget build(BuildContext context) {
-    return _Glass(
-      borderTint: Neon.violet,
+    // Something made for you: purple, and lit a little more — it is the
+    // showpiece.
+    return _LitCard(
+      tone: NeonTone.discovery,
+      halo: 0.6,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -948,9 +1143,10 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                                 if (!_video!.value.isPlaying)
                                   Container(
                                     alignment: Alignment.center,
-                                    color: Colors.black26,
-                                    child: const Icon(Icons.play_arrow_rounded,
-                                        color: Colors.white, size: 54),
+                                    color: Neon.scrim,
+                                    child: Icon(Icons.play_arrow_rounded,
+                                        color: Neon.textHi, size: 54,
+                                        semanticLabel: 'Play'),
                                   ),
                               ],
                             ),
@@ -963,8 +1159,8 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                           child: _videoFailed
                               ? Icon(Icons.movie_rounded,
                                   color: Neon.cyan, size: 42)
-                              : CircularProgressIndicator(
-                                  strokeWidth: 2.4, color: Neon.violet),
+                              : const NeonLoader(
+                                  size: 36, semanticLabel: 'Loading the video'),
                         ))
                   : GestureDetector(
                       onTap: () => Navigator.of(context).push(
@@ -990,8 +1186,9 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                                 height: 200,
                                 alignment: Alignment.center,
                                 color: Neon.surfaceHigh,
-                                child: CircularProgressIndicator(
-                                    color: Neon.violet, strokeWidth: 2.5),
+                                child: const NeonLoader(
+                                    size: 36,
+                                    semanticLabel: 'Loading the image'),
                               ),
                         errorBuilder: (_, __, ___) => Container(
                           height: 120,
@@ -1008,7 +1205,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
           Row(
             children: [
               Icon(Icons.auto_awesome_rounded,
-                  color: Neon.violet, size: 16),
+                  color: NeonTone.discovery.ink, size: 16),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -1026,11 +1223,12 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
               ),
               const SizedBox(width: 8),
               _sending
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          color: Neon.cyan, strokeWidth: 2),
+                  ? const SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Center(
+                          child: NeonLoader.inline(
+                              size: 20, semanticLabel: 'Preparing to share')),
                     )
                   : IconButton(
                       tooltip: 'Share',
@@ -1039,7 +1237,7 @@ class _GeneratedImageCardState extends State<GeneratedImageCard> {
                       padding: EdgeInsets.zero,
                       onPressed: _share,
                       icon: Icon(Icons.share_rounded,
-                          color: Neon.cyan, size: 20),
+                          color: NeonTone.tip.ink, size: 20),
                     ),
               if (widget.onClose != null)
                 IconButton(
@@ -1133,11 +1331,13 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
   @override
   Widget build(BuildContext context) {
     final docs = _docs;
+    // THE NAVY NIGHT, NOT BLACK (2026-09-30): the app's own ground under
+    // the pictures, so the gallery belongs to the app.
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Neon.bg,
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
+        backgroundColor: Neon.bg,
+        foregroundColor: Neon.textHi,
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
           tooltip: 'Close',
@@ -1153,21 +1353,14 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                 overflow: TextOverflow.ellipsis),
             if (docs.length > 1)
               Text('${_index + 1} of ${docs.length}',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withValues(alpha: 0.6))),
+                  style: TextStyle(fontSize: 12, color: Neon.textLo)),
           ],
         ),
         actions: [
           IconButton(
             tooltip: 'Share',
             icon: _sharing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  )
+                ? const NeonLoader.inline(semanticLabel: 'Preparing to share')
                 : const Icon(Icons.share_rounded),
             onPressed: _sharing ? null : _share,
           ),
@@ -1175,12 +1368,7 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
             IconButton(
               tooltip: 'Delete',
               icon: _deleting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
+                  ? const NeonLoader.inline(semanticLabel: 'Deleting')
                   : const Icon(Icons.delete_outline_rounded),
               onPressed: _deleting ? null : _delete,
             ),
@@ -1223,21 +1411,18 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                           textAlign: TextAlign.center,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white)),
+                          style: TextStyle(color: Neon.textHi)),
                     ),
                     if (type.isNotEmpty && !d.isPdf) ...[
                       const SizedBox(height: 4),
-                      Text(type,
-                          style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.6))),
+                      Text(type, style: TextStyle(color: Neon.textLo)),
                     ],
                     const SizedBox(height: 14),
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
+                        foregroundColor: Neon.textHi,
                         minimumSize: const Size(120, 48),
-                        side: BorderSide(
-                            color: Colors.white.withValues(alpha: 0.5)),
+                        side: BorderSide(color: Neon.lineBright),
                       ),
                       onPressed: () => openDocumentFile(d),
                       icon: const Icon(Icons.open_in_new_rounded, size: 16),
@@ -1256,9 +1441,7 @@ class _DocumentGalleryScreenState extends State<DocumentGalleryScreen> {
                   fit: BoxFit.contain,
                   loadingBuilder: (context, child, p) => p == null
                       ? child
-                      : const Center(
-                          child: CircularProgressIndicator(
-                              color: Colors.white70)),
+                      : const NeonLoader.page(),
                   errorBuilder: (_, __, ___) => Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text("Couldn't load this document.",
@@ -1320,14 +1503,14 @@ class _GalleryVideoState extends State<_GalleryVideo> {
   @override
   Widget build(BuildContext context) {
     if (_failed) {
-      return const Center(
-        child: Icon(Icons.movie_rounded, color: Colors.white54, size: 64),
+      return Center(
+        child: Icon(Icons.movie_rounded, color: Neon.textDim, size: 64,
+            semanticLabel: "Couldn't play this video"),
       );
     }
     final c = _c;
     if (c == null || !c.value.isInitialized) {
-      return const Center(
-          child: CircularProgressIndicator(color: Colors.white70));
+      return const NeonLoader.page(semanticLabel: 'Loading the video');
     }
     return Center(
       child: GestureDetector(
@@ -1342,9 +1525,9 @@ class _GalleryVideoState extends State<_GalleryVideo> {
               if (!c.value.isPlaying)
                 Container(
                   alignment: Alignment.center,
-                  color: Colors.black26,
-                  child: const Icon(Icons.play_arrow_rounded,
-                      color: Colors.white, size: 64),
+                  color: Neon.scrim,
+                  child: Icon(Icons.play_arrow_rounded,
+                      color: Neon.textHi, size: 64, semanticLabel: 'Play'),
                 ),
             ],
           ),

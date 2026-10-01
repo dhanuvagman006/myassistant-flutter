@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
+import '../design/motion.dart' show StateSwitch, Tappable;
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../models/user_document.dart';
@@ -55,7 +56,13 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = "Couldn't load your documents.");
+      // Already loaded: keep the list and say the refresh missed.
+      if (_docs != null) {
+        AppFeedback.show("Couldn't refresh.",
+            context: context, tone: FeedbackTone.error);
+        return;
+      }
+      setState(() => _error = "Couldn't load your documents");
     }
   }
 
@@ -84,10 +91,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   @override
   Widget build(BuildContext context) {
     final docs = _docs;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // 2026-09-30: under the app's sky; loading, empty and the grid
+    // replace one another softly.
+    return NeonScaffold(
       appBar: appleAppBar(context, 'My documents'),
-      body: _body(docs),
+      body: StateSwitch.of(_body(docs)),
     );
   }
 
@@ -101,15 +109,16 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     return due;
   }
 
+  /// What is running out: the screen's one lit card, in the warning tone
+  /// (2026-09-30). Each line opens its document.
   Widget _renewalsCard(List<UserDocument> docs) {
     final due = _renewals(docs);
-    return Container(
+    return GlowCard(
+      tone: NeonTone.warning,
+      radius: Neon.rMd,
+      rimWidth: 1.6,
+      halo: 0.5,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
-      decoration: BoxDecoration(
-        color: Neon.warning.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Neon.warning.withValues(alpha: 0.35)),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -124,22 +133,29 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           ]),
           const SizedBox(height: 2),
           Text("You'll get reminders 30 days and 7 days before, and on the day.",
-              style: TextStyle(color: Neon.textDim, fontSize: 12)),
+              style: TextStyle(color: Neon.textLo, fontSize: 12)),
           const SizedBox(height: 6),
           for (final d in due.take(4))
-            InkWell(
+            Tappable(
               onTap: () => _open(d),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
+              scale: 0.985,
+              // 48 dp to the finger: a 13 sp line was a 30 dp target.
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
                 child: Row(children: [
                   Expanded(
                     child: Text(d.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: Neon.textLo, fontSize: 13)),
+                        style: TextStyle(color: Neon.textHi, fontSize: 13)),
                   ),
                   const SizedBox(width: 8),
-                  ExpiryBadge(document: d),
+                  // Bounded (2026-09-30): the badge's own Row flexes its
+                  // words, which an unbounded slot here cannot allow.
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 170),
+                    child: IntrinsicWidth(child: ExpiryBadge(document: d)),
+                  ),
                 ]),
               ),
             ),
@@ -161,7 +177,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         },
       );
     }
-    if (docs == null) return const Center(child: NeonLoader());
+    if (docs == null) return const NeonLoader.page();
     if (docs.isEmpty) {
       return RefreshIndicator(
         color: Neon.violet,
@@ -185,7 +201,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       );
     }
     final width = MediaQuery.of(context).size.width;
-    final columns = width >= 900 ? 5 : width >= 600 ? 4 : 3;
+    // 2026-09-30 visual QA: two across on a phone. At three (≈114 dp a
+    // tile) the neon type cut every date and expiry to "12 Sep 20…" and
+    // "Expires in 3…", and a two-line title shrank its thumbnail out of
+    // line with its neighbours.
+    final columns = width >= 900 ? 5 : width >= 600 ? 4 : width >= 440 ? 3 : 2;
     return RefreshIndicator(
       color: Neon.violet,
       onRefresh: _load,
@@ -213,7 +233,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 crossAxisCount: columns,
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
-                childAspectRatio: 0.72,
+                childAspectRatio: columns == 2 ? 0.95 : 0.72,
               ),
               delegate: SliverChildBuilderDelegate(
                 (_, i) {

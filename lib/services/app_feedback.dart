@@ -14,6 +14,10 @@ enum FeedbackTone {
   success,
   error,
 
+  /// Done, but with something to know ("Saved — no signal, will sync").
+  /// Amber-lit; lives as long as an error.
+  warning,
+
   /// "Opening…", "Calling Ravi…" — true only at the moment it is said.
   /// Never replayed when the app comes back to the foreground.
   progress,
@@ -152,6 +156,36 @@ class AppFeedback {
         fromScreen: true, onUndo: onUndo);
     return _present(msg, force: true) ??
         Future.value(SnackBarClosedReason.remove);
+  }
+
+  /// A failure the user can simply try again: an error toast with a "Try
+  /// again" button (the shopping list, 2026-09-29). It closes on its own
+  /// like every toast; the same failure after a retry is shown again.
+  static void showRetry(
+    String message, {
+    BuildContext? context,
+    required VoidCallback onRetry,
+  }) {
+    final text = message.trim();
+    if (text.isEmpty) return;
+    final messenger = _messengerFor(context);
+    if (messenger == null) return;
+    final msg = _Message(
+      text,
+      FeedbackTone.error,
+      messenger,
+      fromScreen: context != null,
+      coveredByPopup: context != null &&
+          context.mounted &&
+          _coveredByPopup(context, messenger),
+      onAction: onRetry,
+      actionLabel: 'Try again',
+    );
+    if (_mustWait(msg)) {
+      _park(msg);
+      return;
+    }
+    _present(msg, force: true);
   }
 
   /// "Copied". Android 13+ already confirms every copy itself, so a toast
@@ -379,7 +413,11 @@ class AppFeedback {
 
   static Duration _durationFor(_Message msg) {
     if (msg.onUndo != null) return const Duration(seconds: 4);
-    if (msg.tone == FeedbackTone.error) return const Duration(seconds: 5);
+    // Long enough to read the failure and reach its button.
+    if (msg.onAction != null) return const Duration(seconds: 6);
+    if (msg.tone == FeedbackTone.error || msg.tone == FeedbackTone.warning) {
+      return const Duration(seconds: 5);
+    }
     if (msg.tone == FeedbackTone.progress) return const Duration(seconds: 3);
     final ms = 2500 + 40 * msg.text.length;
     return Duration(milliseconds: ms.clamp(3000, 6000));
@@ -398,20 +436,38 @@ class AppFeedback {
 
   static SnackBar _bar(_Message msg) {
     final bottom = _sessionOnScreen ? (sessionMargin ?? 10 + sessionLift) : 10.0;
-    final (IconData icon, Color tint) = switch (msg.tone) {
-      FeedbackTone.success => (Icons.check_circle_rounded, Neon.success),
-      FeedbackTone.error => (Icons.error_outline_rounded, Neon.error),
-      FeedbackTone.progress => (Icons.hourglass_top_rounded, Neon.violet),
-      FeedbackTone.info => (Icons.info_outline_rounded, Neon.violet),
+    // LIT IN ITS TONE (2026-09-30, the client's neon reference): the toast
+    // says what kind of news it is by its rim as well as its icon — green
+    // done, amber careful, red failed, blue for information — on a
+    // surface tinted by the same light.
+    final (IconData icon, NeonTone lit) = switch (msg.tone) {
+      FeedbackTone.success => (Icons.check_circle_rounded, NeonTone.success),
+      FeedbackTone.error => (Icons.error_outline_rounded, NeonTone.danger),
+      FeedbackTone.warning => (Icons.warning_amber_rounded, NeonTone.warning),
+      FeedbackTone.progress => (Icons.hourglass_top_rounded, NeonTone.brand),
+      FeedbackTone.info => (Icons.info_outline_rounded, NeonTone.info),
     };
+    final tint = lit.ink;
+    final edge = lit.rim.first;
     return SnackBar(
       behavior: SnackBarBehavior.floating,
       // A SnackBar with an action defaults to persist: true — it would
       // never close on its own. Every toast here closes.
       persist: false,
       showCloseIcon: true,
+      // 2026-09-30 visual QA: "Try again" and the ✕ passed the default 25%
+      // and dropped to a second line, leaving a tall, half-empty toast.
+      // They stay beside the words unless they would take half the width.
+      actionOverflowThreshold: 0.5,
       closeIconColor: Neon.textLo,
-      backgroundColor: Neon.surfaceHigh,
+      backgroundColor: Color.alphaBlend(
+          edge.withValues(alpha: Neon.isDark ? 0.10 : 0.04), Neon.surfaceHigh),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Neon.rMd),
+        side: BorderSide(
+            color: edge.withValues(alpha: Neon.isDark ? 0.70 : 0.40),
+            width: 1.2),
+      ),
       dismissDirection: DismissDirection.horizontal,
       margin: EdgeInsets.fromLTRB(16, 5, 16, bottom),
       duration: _durationFor(msg),
@@ -431,13 +487,19 @@ class AppFeedback {
           ),
         ],
       )),
-      action: msg.onUndo == null
-          ? null
-          : SnackBarAction(
+      action: msg.onUndo != null
+          ? SnackBarAction(
               label: 'Undo',
-              textColor: Neon.violet,
+              textColor: Neon.cyanInk,
               onPressed: msg.onUndo!,
-            ),
+            )
+          : msg.onAction != null
+              ? SnackBarAction(
+                  label: msg.actionLabel ?? 'Try again',
+                  textColor: Neon.cyanInk,
+                  onPressed: msg.onAction!,
+                )
+              : null,
     );
   }
 
@@ -505,7 +567,11 @@ class _MeasureToastState extends State<_MeasureToast> {
 
 class _Message {
   _Message(this.text, this.tone, this.messenger,
-      {this.fromScreen = false, this.coveredByPopup = false, this.onUndo})
+      {this.fromScreen = false,
+      this.coveredByPopup = false,
+      this.onUndo,
+      this.onAction,
+      this.actionLabel})
       : at = DateTime.now();
   final String text;
   final FeedbackTone tone;
@@ -513,6 +579,10 @@ class _Message {
   final bool fromScreen;
   final bool coveredByPopup;
   final VoidCallback? onUndo;
+
+  /// Any other one-tap way forward ("Try again").
+  final VoidCallback? onAction;
+  final String? actionLabel;
   final DateTime at;
   bool parkedInBackground = false;
 }

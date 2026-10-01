@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart' show NeonScaffold, NeonSuccess;
 import '../services/focus_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
@@ -60,7 +62,9 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
   Future<void> _open() async {
     await _svc.restore();
     if (widget.autoStart && !_svc.active) {
-      await _svc.start(widget.minutes ?? 25, label: widget.label);
+      // The ring as soon as the session exists on the phone; the
+      // notification and the server log finish behind it.
+      await _svc.start(widget.minutes ?? 25, label: widget.label, waitForServer: false);
     }
     if (!mounted) return;
     setState(() => _ready = true);
@@ -123,7 +127,6 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
     final ok = await showAppDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Neon.surface,
         title: Text('End this focus?', style: NeonType.cardTitle.copyWith(color: Neon.textHi)),
         content: Text(
             s.kind == FocusKind.rest
@@ -149,8 +152,8 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final s = _svc.session;
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under the night sky (2026-09-30): the ring is the page's light.
+    return NeonScaffold(
       appBar: appleAppBar(context, s?.kind == FocusKind.rest ? 'Break' : 'Focus'),
       body: SafeArea(
         top: false,
@@ -178,15 +181,14 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
           runSpacing: 8,
           children: [
             for (final m in const [15, 25, 45, 60])
+              // The theme's chip (2026-09-30): the picked one lit in the
+              // accent's rim and glass, the rest dark.
               ChoiceChip(
                 label: Text('$m min'),
                 selected: _pick == m,
                 onSelected: (_) => setState(() => _pick = m),
                 labelStyle: NeonType.manrope(NeonType.body, FontWeight.w700)
-                    .copyWith(color: _pick == m ? Neon.onAccent : Neon.textHi),
-                selectedColor: Neon.violet,
-                backgroundColor: Neon.surface,
-                side: BorderSide(color: _pick == m ? Neon.violet : Neon.line),
+                    .copyWith(color: Neon.textHi),
                 showCheckmark: false,
                 materialTapTargetSize: MaterialTapTargetSize.padded,
               ),
@@ -247,14 +249,27 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              SizedBox(
+              // THE RING IS LIT (2026-09-30): the brand gradient (the cyan
+              // of the assistant on a break) with its halo behind — dimmed
+              // while paused. The halo is drawn once; only the ring
+              // repaints, once a second, on its own layer.
+              AnimatedContainer(
+                duration: Motion.reduced(context) ? Duration.zero : Motion.short,
+                curve: Motion.easeMove,
                 width: ring,
                 height: ring,
-                child: CustomPaint(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: Neon.halo(rest ? Neon.cyan : Neon.violet,
+                      strength: paused ? 0.3 : 0.9),
+                ),
+                child: RepaintBoundary(
+                  child: CustomPaint(
                   painter: FocusRingPainter(
                     remaining: 1 - s.clock.progress(now),
                     color: rest ? Neon.cyan : Neon.violet,
                     track: Neon.line,
+                    gradient: rest ? [Neon.cyan, Neon.violet] : Neon.rim,
                   ),
                   child: Center(
                     child: Padding(
@@ -273,12 +288,13 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
                                 )),
                             Text(paused ? 'Paused' : rest ? 'Break' : 'left',
                                 style: NeonType.manrope(NeonType.body, FontWeight.w600)
-                                    .copyWith(color: Neon.textLo)),
+                                    .copyWith(color: paused ? Neon.warningInk : Neon.textLo)),
                           ],
                         ),
                       ),
                     ),
                   ),
+                ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -313,23 +329,33 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// HIERARCHY BY LIGHT (2026-09-30): Pause/Resume is the theme's lit
+  /// filled button; +5 min and End are the secondary one — a rim, no fill,
+  /// no glow.
   Widget _control(IconData icon, String label, VoidCallback onTap, {bool primary = false}) {
-    final style = primary
-        ? FilledButton.styleFrom(
-            backgroundColor: Neon.violet,
-            foregroundColor: Neon.onAccent,
-            minimumSize: const Size(120, 52),
-            textStyle: NeonType.manrope(NeonType.rowTitle, FontWeight.w700),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Neon.rPill)),
-          )
-        : FilledButton.styleFrom(
-            backgroundColor: Neon.surfaceHigh,
-            foregroundColor: Neon.textHi,
-            minimumSize: const Size(96, 52),
-            textStyle: NeonType.manrope(NeonType.rowTitle, FontWeight.w600),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Neon.rPill)),
-          );
-    return FilledButton.icon(onPressed: onTap, style: style, icon: Icon(icon, size: 20), label: Text(label));
+    const pill = RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(Neon.rPill)));
+    if (primary) {
+      return FilledButton.icon(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(120, 52),
+          textStyle: NeonType.manrope(NeonType.rowTitle, FontWeight.w700),
+          shape: pill,
+        ),
+        icon: Icon(icon, size: 20),
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(96, 52),
+        textStyle: NeonType.manrope(NeonType.rowTitle, FontWeight.w600),
+        shape: pill,
+      ),
+      icon: Icon(icon, size: 20),
+      label: Text(label),
+    );
   }
 
   // ── After: logged, and a break offered ────────────────────────────────
@@ -351,10 +377,15 @@ class _FocusScreenState extends State<FocusScreen> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 48, 20, 32),
       children: [
-        EnterOnce(
-          scaleFrom: 0.9,
-          child: Icon(rest ? Icons.spa_rounded : Icons.check_circle_rounded, size: 72, color: Neon.violet),
-        ),
+        // A focus logged gets the app's success moment (2026-09-30): the
+        // lit disc and its tick drawing in. A break over keeps its leaf.
+        if (rest)
+          EnterOnce(
+            scaleFrom: 0.9,
+            child: Icon(Icons.spa_rounded, size: 72, color: Neon.cyan),
+          )
+        else
+          const Center(child: NeonSuccess()),
         const SizedBox(height: 16),
         Text(title,
             textAlign: TextAlign.center,
@@ -405,12 +436,17 @@ String focusTimeText(Duration d) {
 /// The countdown ring: a full circle of the theme colour that empties
 /// clockwise from the top.
 class FocusRingPainter extends CustomPainter {
-  FocusRingPainter({required this.remaining, required this.color, required this.track});
+  FocusRingPainter(
+      {required this.remaining, required this.color, required this.track, this.gradient});
 
   /// 1 → 0 as the session runs.
   final double remaining;
   final Color color;
   final Color track;
+
+  /// The arc's light from its start to its head (2026-09-30); [color]
+  /// alone without it.
+  final List<Color>? gradient;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -423,20 +459,30 @@ class FocusRingPainter extends CustomPainter {
       ..color = track);
     final v = remaining.clamp(0.0, 1.0);
     if (v <= 0) return;
-    canvas.drawArc(
-      Rect.fromCircle(center: c, radius: r),
-      -math.pi / 2,
-      2 * math.pi * v,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round
-        ..color = color,
-    );
+    final rect = Rect.fromCircle(center: c, radius: r);
+    final g = gradient;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..color = color;
+    if (g != null && g.length > 1) {
+      // Started half a cap early, so the round tail is the first colour,
+      // not the last one wrapped round.
+      final cap = stroke / 2 / r;
+      paint.shader = SweepGradient(
+        endAngle: 2 * math.pi * v + 2 * cap,
+        colors: g,
+        transform: GradientRotation(-math.pi / 2 - cap),
+      ).createShader(rect);
+    }
+    canvas.drawArc(rect, -math.pi / 2, 2 * math.pi * v, false, paint);
   }
 
   @override
   bool shouldRepaint(FocusRingPainter old) =>
-      old.remaining != remaining || old.color != color || old.track != track;
+      old.remaining != remaining ||
+      old.color != color ||
+      old.track != track ||
+      !listEquals(old.gradient, gradient);
 }

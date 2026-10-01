@@ -61,6 +61,16 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
     super.dispose();
   }
 
+  /// "Remove animations": the pill's spinner holds still.
+  bool _still = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = Motion.reduced(context);
+    if (_still) _spin.stop();
+  }
+
   void _onLabel() {
     if (!mounted) return;
     setState(() => _adopt(engine.activityLabel.value));
@@ -91,7 +101,7 @@ class _AssistantActivityPillState extends State<AssistantActivityPill>
       _spin.stop();
       return;
     }
-    if (!_spin.isAnimating) _spin.repeat();
+    if (!_spin.isAnimating && !_still) _spin.repeat();
     // A LONG LOOKUP HAS TO KEEP SAYING SOMETHING. A label frozen at
     // "Searching…" for eight seconds reads as a hang just like no label
     // at all, so the wording changes as the seconds pass.

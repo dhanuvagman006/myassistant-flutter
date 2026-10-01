@@ -45,7 +45,6 @@ class Shortcut {
     this.otherNames = const [],
     this.version = 1,
     this.steps = const [],
-    this.learned = false,
     this.runCount = 0,
     this.lastRunAt = 0,
   });
@@ -55,7 +54,6 @@ class Shortcut {
   final List<String> otherNames;
   final int version;
   final List<ShortcutStep> steps;
-  final bool learned;
   final int runCount;
   final int lastRunAt;
 
@@ -71,7 +69,6 @@ class Shortcut {
             .whereType<Map>()
             .map((m) => ShortcutStep.fromJson(m.cast<String, dynamic>()))
             .toList(),
-        learned: j['learned'] == true,
         runCount: _int(j['run_count']),
         lastRunAt: _int(j['last_run_at']),
       );
@@ -82,7 +79,6 @@ class Shortcut {
         'other_names': otherNames,
         'version': version,
         'steps': steps.map((s) => s.toJson()).toList(),
-        'learned': learned,
         'run_count': runCount,
         'last_run_at': lastRunAt,
       };
@@ -101,7 +97,7 @@ class ShortcutEnvelope {
 
   final int i;
 
-  /// in_app | hand_back | stays | app_task
+  /// in_app | hand_back | stays
   final String cls;
   final String label;
   final bool waitReturn;

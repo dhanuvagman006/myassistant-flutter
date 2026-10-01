@@ -9,9 +9,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 
 import '../core/log.dart';
-import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
+import '../widgets/glow_cta.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/app_feedback.dart';
 import '../services/avatar_message_service.dart';
@@ -740,6 +741,12 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
   /// Dark behind the words and behind the controls, fading to clear over
   /// the face: the words stay legible over a bright window as well as a
   /// dim room, and the user sees their own face to frame it.
+  // The words' and controls' ink over the picture (2026-09-30): the
+  // night theme's white, from the tokens. The picture itself, and the
+  // shade that keeps words legible over it, stay true black: this is the
+  // camera, like the phone's own.
+  static Color get _ink => Neon.textHi;
+
   static BoxDecoration _shade({required bool fromTop}) => BoxDecoration(
         gradient: LinearGradient(
           begin: fromTop ? Alignment.topCenter : Alignment.bottomCenter,
@@ -777,7 +784,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
             child: switch (_stage) {
               RecordStage.countdown => _countdownNumber(),
               RecordStage.preparing =>
-                const CircularProgressIndicator(color: Colors.white),
+                const NeonLoader(semanticLabel: 'Starting the camera'),
               _ => const SizedBox.shrink(),
             },
           ),
@@ -791,7 +798,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                 title: 'Your video',
                 trailing: live ? _recPill() : null,
               ),
-              AnimatedOpacity(
+              AnimatedOpacity(curve: Motion.easeMove, 
                 opacity: live ? 1 : 0,
                 duration: quick,
                 child: Padding(
@@ -803,8 +810,8 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                       child: LinearProgressIndicator(
                         value: _timeline.progress(t),
                         minHeight: 3,
-                        color: Colors.white,
-                        backgroundColor: Colors.white.withValues(alpha: 0.22),
+                        color: Neon.cyan,
+                        backgroundColor: _ink.withValues(alpha: 0.22),
                       ),
                     ),
                   ),
@@ -858,7 +865,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
           IconButton(
             tooltip: 'Close',
             icon: const Icon(Icons.close_rounded),
-            color: Colors.white,
+            color: _ink,
             onPressed: () => Navigator.maybePop(context),
           ),
           Expanded(
@@ -870,11 +877,11 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                       Text(title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: NeonType.row.copyWith(color: Colors.white)),
+                          style: NeonType.row.copyWith(color: _ink)),
                       if (subtitle != null)
                         Text(subtitle,
                             style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.75),
+                                color: _ink.withValues(alpha: 0.75),
                                 fontSize: NeonType.footnote,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures()
@@ -893,15 +900,17 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
   Widget _recPill() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
+          color: Neon.scrim,
           borderRadius: BorderRadius.circular(Neon.rPill),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Container(
             width: 8,
             height: 8,
-            decoration:
-                BoxDecoration(color: Neon.error, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+                color: Neon.error,
+                shape: BoxShape.circle,
+                boxShadow: Neon.halo(Neon.error, strength: 0.6)),
           ),
           const SizedBox(width: 8),
           ValueListenableBuilder<int>(
@@ -909,7 +918,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
             builder: (_, s, __) => Text(
               _clockOf(Duration(seconds: s)),
               style: NeonType.manrope(NeonType.body, FontWeight.w600).copyWith(
-                  color: Colors.white,
+                  color: _ink,
                   fontFeatures: const [FontFeature.tabularFigures()]),
             ),
           ),
@@ -924,9 +933,11 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
         // A 96 px digit is large enough at any text size.
         textScaler: TextScaler.noScaling,
         style: NeonType.manrope(96, FontWeight.w800).copyWith(
-          color: Colors.white,
+          color: _ink,
+          // Its own light as well as the dark under it: the count glows.
           shadows: [
-            Shadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 24),
+            Shadow(color: Neon.scrim, blurRadius: 24),
+            Shadow(color: Neon.violet.withValues(alpha: 0.7), blurRadius: 30),
           ],
         ),
       ),
@@ -987,7 +998,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
         text,
         textAlign: TextAlign.center,
         style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.88),
+            color: _ink.withValues(alpha: 0.88),
             fontSize: NeonType.footnote,
             height: 1.35),
       );
@@ -1020,26 +1031,36 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
       selected: on,
       label: '${p.label} pace',
       excludeSemantics: true,
-      child: GestureDetector(
+      // The chosen pace lit in the brand's gradient and glow; the
+      // others clear glass (2026-09-30). It dips under the finger.
+      child: PressScale(
+        scale: 0.95,
+        child: GestureDetector(
         key: ValueKey('pace-${p.name}'),
-        onTap: () => _setPace(p),
-        child: AnimatedContainer(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          _setPace(p);
+        },
+        child: AnimatedContainer(curve: Motion.easeMove,
           duration: Motion.reduced(context) ? Duration.zero : Motion.micro,
           height: 34,
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: on ? Colors.white : Colors.white.withValues(alpha: 0.16),
+            color: on ? null : _ink.withValues(alpha: 0.16),
+            gradient: on ? Neon.gBrand : null,
             borderRadius: BorderRadius.circular(Neon.rPill),
+            boxShadow: on ? Neon.halo(Neon.violet, strength: 0.7) : null,
           ),
           child: FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
               p.label,
               style: NeonType.manrope(NeonType.footnote, FontWeight.w600)
-                  .copyWith(color: on ? Colors.black : Colors.white),
+                  .copyWith(color: on ? Neon.onBrand : _ink),
             ),
           ),
+        ),
         ),
       ),
     );
@@ -1064,9 +1085,17 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
           : counting
               ? 'Cancel'
               : 'Start recording',
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedOpacity(
+      // It dips under the finger, and the red core glows (2026-09-30).
+      child: PressScale(
+        scale: 0.94,
+        child: GestureDetector(
+        onTap: onTap == null
+            ? null
+            : () {
+                HapticFeedback.mediumImpact();
+                onTap();
+              },
+        child: AnimatedOpacity(curve: Motion.easeMove,
           opacity: onTap == null ? 0.45 : 1,
           duration: quick,
           child: Container(
@@ -1075,7 +1104,7 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 4),
+              border: Border.all(color: _ink, width: 4),
             ),
             child: AnimatedContainer(
               duration: quick,
@@ -1085,9 +1114,13 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
               decoration: BoxDecoration(
                 color: Neon.error,
                 borderRadius: BorderRadius.circular(recording ? 8 : 30),
+                boxShadow: onTap == null
+                    ? null
+                    : Neon.halo(Neon.error, strength: 0.8),
               ),
             ),
           ),
+        ),
         ),
       ),
     );
@@ -1132,10 +1165,10 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                         child: OutlinedButton(
                           onPressed: uploading ? null : _retake,
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
+                            foregroundColor: _ink,
                             minimumSize: const Size.fromHeight(50),
                             side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.7)),
+                                color: _ink.withValues(alpha: 0.7)),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12)),
                             textStyle: NeonType.manrope(
@@ -1146,7 +1179,8 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: ApplePrimaryButton(
+                        // The one lit action: keep this take.
+                        child: GlowCta(
                           label: _uploadError != null ? 'Try again' : 'Save',
                           onPressed: uploading ? null : _save,
                         ),
@@ -1175,18 +1209,17 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
           button: true,
           label: playing ? 'Pause the video' : 'Play the video',
           onTap: _toggleReview,
-          child: AnimatedOpacity(
+          child: AnimatedOpacity(curve: Motion.easeMove, 
             opacity: v.isInitialized && !playing ? 1 : 0,
             duration: Motion.reduced(context) ? Duration.zero : Motion.micro,
             child: Container(
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.45),
+                color: Neon.scrim,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.play_arrow_rounded,
-                  color: Colors.white, size: 44),
+              child: Icon(Icons.play_arrow_rounded, color: _ink, size: 44),
             ),
           ),
         );
@@ -1194,26 +1227,27 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
     );
   }
 
-  Widget _errorBanner(String text) => Container(
-        margin: const EdgeInsets.only(bottom: 2),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.cloud_off_rounded, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(text,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: NeonType.body,
-                      height: 1.4)),
-            ),
-          ],
+  // Could-not, in the danger tone's rim (2026-09-30).
+  Widget _errorBanner(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: GlowCard(
+          tone: NeonTone.danger,
+          halo: 0.5,
+          rimWidth: 1.4,
+          radius: Neon.rSm,
+          padding: const EdgeInsets.all(10.6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.cloud_off_rounded, color: Neon.errorInk, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(text,
+                    style: TextStyle(
+                        color: _ink, fontSize: NeonType.body, height: 1.4)),
+              ),
+            ],
+          ),
         ),
       );
 
@@ -1230,8 +1264,8 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                   // Every byte handed over; the server still has to take it.
                   value: v >= 1 ? null : v,
                   minHeight: 5,
-                  color: Colors.white,
-                  backgroundColor: Colors.white.withValues(alpha: 0.22),
+                  color: Neon.cyan,
+                  backgroundColor: _ink.withValues(alpha: 0.22),
                 ),
               ),
               const SizedBox(height: 8),
@@ -1239,10 +1273,10 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                 v >= 1
                     ? 'Almost there…'
                     : 'Saving your video… ${(v * 100).round()}%',
-                style: const TextStyle(
-                    color: Colors.white,
+                style: TextStyle(
+                    color: _ink,
                     fontSize: NeonType.footnote,
-                    fontFeatures: [FontFeature.tabularFigures()]),
+                    fontFeatures: const [FontFeature.tabularFigures()]),
               ),
             ],
           ),
@@ -1297,23 +1331,20 @@ class _IdentityRecordScreenState extends State<IdentityRecordScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(icon,
-                          size: 44,
-                          color: Colors.white.withValues(alpha: 0.8)),
+                      Icon(icon, size: 44, color: _ink.withValues(alpha: 0.8)),
                       const SizedBox(height: 16),
                       Text(title,
                           textAlign: TextAlign.center,
-                          style:
-                              NeonType.cardTitle.copyWith(color: Colors.white)),
+                          style: NeonType.cardTitle.copyWith(color: _ink)),
                       const SizedBox(height: 8),
                       Text(body,
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.78),
+                              color: _ink.withValues(alpha: 0.78),
                               fontSize: NeonType.body,
                               height: 1.45)),
                       const SizedBox(height: 22),
-                      ApplePrimaryButton(label: action, onPressed: onAction),
+                      GlowCta(label: action, onPressed: onAction),
                     ],
                   ),
                 ),

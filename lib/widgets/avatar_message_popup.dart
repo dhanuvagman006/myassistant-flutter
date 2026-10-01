@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../design/neon_tokens.dart';
+import '../design/motion.dart';
 
 /// The recipient-side popup: the sender's AI avatar delivers their
 /// message. Kind:
@@ -40,7 +41,7 @@ Future<bool?> showAvatarMessagePopup(
   int index = 1,
   int total = 1,
 }) {
-  return showDialog<bool>(
+  return showAppDialog<bool>(
     context: context,
     barrierDismissible: true,
     barrierColor: Colors.black.withValues(alpha: 0.55),

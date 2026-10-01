@@ -4,8 +4,11 @@ import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../features/assistant/state/assistant_engine.dart';
+import '../core/log.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
 import '../services/assistant_identity.dart';
+import '../design/motion.dart';
 
 /// FINANCE SECTION — the user's money map: expected incomes, EMIs (with
 /// interest and outstanding principal) and recurring expenses. Everything
@@ -34,12 +37,21 @@ class _FinanceScreenState extends State<FinanceScreen> {
       final res = await ApiService.fetchFinance();
       if (mounted) setState(() => _data = res);
     } catch (_) {
-      if (mounted) setState(() => _error = "Couldn't load your finances.");
+      if (mounted) setState(() => _error = "Couldn't load your finances");
     }
   }
 
   Future<void> _delete(int id) async {
-    await ApiService.deleteFinanceItem(id);
+    var ok = false;
+    try {
+      ok = await ApiService.deleteFinanceItem(id);
+    } catch (e) {
+      AppLog.add('finance', 'delete $id -> $e');
+    }
+    if (!ok && mounted) {
+      AppFeedback.show("Couldn't delete that.",
+          context: context, tone: FeedbackTone.error);
+    }
     _load();
   }
 
@@ -50,10 +62,17 @@ class _FinanceScreenState extends State<FinanceScreen> {
         'first and how to use my surplus this month.');
   }
 
+  Future<void> _addItem() async {
+    final added = await showAppDialog<bool>(
+      context: context,
+      builder: (_) => const _AddItemDialog(),
+    );
+    if (added == true) _load();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Finance', actions: [
         // Large text or a long assistant name used to push this past the
         // app bar's edge: capped in width, the label shortens instead, and
@@ -83,19 +102,18 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ),
           ),
       ]),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Neon.textHi,
-        foregroundColor: Neon.onInk,
-        onPressed: () async {
-          final added = await showDialog<bool>(
-            context: context,
-            builder: (_) => const _AddItemDialog(),
-          );
-          if (added == true) _load();
-        },
-        child: const Icon(Icons.add_rounded),
-      ),
-      body: SafeArea(child: _body()),
+      // The theme's lit FAB (2026-09-30): the page's primary action glows;
+      // it was a flat white disc.
+      // One "Add" on an empty screen: the empty state's (2026-09-30).
+      floatingActionButton:
+          ((_data?['items'] as List?)?.isEmpty ?? true)
+              ? null
+              : FloatingActionButton(
+                  tooltip: 'Add finance item',
+                  onPressed: _addItem,
+                  child: const Icon(Icons.add_rounded),
+                ),
+      body: SafeArea(child: StateSwitch.of(_body())),
     );
   }
 
@@ -112,7 +130,9 @@ class _FinanceScreenState extends State<FinanceScreen> {
         },
       );
     }
-    if (_data == null) return const Center(child: NeonLoader());
+    if (_data == null) {
+      return const NeonLoader.page(semanticLabel: 'Loading your finances');
+    }
 
     final items = (_data!['items'] as List? ?? const []).cast<Map>();
     final s = (_data!['summary'] as Map?) ?? const {};
@@ -121,17 +141,15 @@ class _FinanceScreenState extends State<FinanceScreen> {
     final expenses = items.where((i) => i['kind'] == 'expense').toList();
 
     if (items.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            'Nothing here yet.\n\nAdd your EMIs, incomes and expenses with '
-            'the + button — or just tell ${AssistantIdentity.name}:\n"I have '
-            'a bike EMI of ₹3,500 at 11 percent".',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5),
-          ),
-        ),
+      return NeonEmptyState(
+        icon: Icons.account_balance_wallet_rounded,
+        title: 'Nothing here yet',
+        body: 'Add your EMIs, incomes and expenses with the + button — or '
+            'just tell ${AssistantIdentity.name}: "I have a bike EMI of '
+            '₹3,500 at 11 percent".',
+        actionLabel: 'Add an item',
+        actionIcon: Icons.add_rounded,
+        onAction: _addItem,
       );
     }
 
@@ -166,8 +184,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(label,
-                  style:
-                      TextStyle(color: Neon.textDim, fontSize: 12)),
+                  style: TextStyle(
+                      color: Neon.textLo, fontSize: NeonType.caption)),
               const SizedBox(height: 3),
               Text(value,
                   maxLines: 1,
@@ -179,13 +197,12 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ],
           ),
         );
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Neon.line),
-      ),
+    // The page's one lit card (2026-09-30): the month's totals, in the
+    // blue of information.
+    return GlowCard(
+      tone: NeonTone.info,
+      halo: 0.6,
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -195,13 +212,14 @@ class _FinanceScreenState extends State<FinanceScreen> {
               cell('Out / month',
                   '₹${_fmt((s['monthly_emi'] as num? ?? 0) + (s['monthly_expense'] as num? ?? 0))}'),
               cell('Surplus', '₹${_fmt(surplus)}',
-                  color: good ? AppleColors.green : AppleColors.red),
+                  color: good ? Neon.successInk : Neon.errorInk),
             ],
           ),
           if ((s['total_debt'] as num? ?? 0) > 0) ...[
             const SizedBox(height: 8),
             Text('Total debt outstanding: ₹${_fmt(s['total_debt'])}',
-                style: TextStyle(color: Neon.textLo, fontSize: 12)),
+                style:
+                    TextStyle(color: Neon.textLo, fontSize: NeonType.caption)),
           ],
         ],
       ),
@@ -213,9 +231,9 @@ class _FinanceScreenState extends State<FinanceScreen> {
     final isEmi = kind == 'emi';
     final isIncome = kind == 'income';
     final color = isIncome
-        ? AppleColors.green
+        ? Neon.successInk
         : isEmi
-            ? AppleColors.red
+            ? Neon.errorInk
             : Neon.textLo;
     final chips = <String>[
       if (isEmi && (e['interest_rate'] as num? ?? 0) > 0)
@@ -233,9 +251,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
         trailing: Text(
           '${isIncome ? '+' : '−'}₹${_fmt(e['amount'])}/mo',
           style: TextStyle(
-              color: color,
-              fontSize: 15,
-              fontWeight: FontWeight.w700),
+              color: color, fontSize: 15, fontWeight: FontWeight.w700),
         ),
       ),
     );
@@ -285,17 +301,22 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       _saving = true;
       _problem = null;
     });
-    final ok = await ApiService.addFinanceItem({
-      'kind': _kind,
-      'name': _name.text.trim(),
-      'amount': amount,
-      if (_rate.text.trim().isNotEmpty)
-        'interest_rate': double.tryParse(_rate.text.trim()),
-      if (_day.text.trim().isNotEmpty)
-        'due_day': int.tryParse(_day.text.trim()),
-      if (_outstanding.text.trim().isNotEmpty)
-        'outstanding': double.tryParse(_outstanding.text.trim()),
-    });
+    var ok = false;
+    try {
+      ok = await ApiService.addFinanceItem({
+        'kind': _kind,
+        'name': _name.text.trim(),
+        'amount': amount,
+        if (_rate.text.trim().isNotEmpty)
+          'interest_rate': double.tryParse(_rate.text.trim()),
+        if (_day.text.trim().isNotEmpty)
+          'due_day': int.tryParse(_day.text.trim()),
+        if (_outstanding.text.trim().isNotEmpty)
+          'outstanding': double.tryParse(_outstanding.text.trim()),
+      });
+    } catch (e) {
+      AppLog.add('finance', 'add -> $e');
+    }
     if (!mounted) return;
     if (ok) {
       Navigator.of(context).pop(true);
@@ -317,12 +338,12 @@ class _AddItemDialogState extends State<_AddItemDialog> {
         style: TextStyle(color: Neon.textHi, fontSize: 14),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: Neon.textDim, fontSize: 13),
+          labelStyle:
+              TextStyle(color: Neon.textLo, fontSize: NeonType.footnote),
           isDense: true,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide:
-                BorderSide(color: Neon.lineBright),
+            borderSide: BorderSide(color: Neon.lineBright),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -336,12 +357,10 @@ class _AddItemDialogState extends State<_AddItemDialog> {
   @override
   Widget build(BuildContext context) {
     final isEmi = _kind == 'emi';
+    // The theme's dialog, chips and buttons (2026-09-30): the local
+    // colours matched them and kept the lit rim and Save's glow off.
     return AlertDialog(
-      backgroundColor: Neon.surface,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      title: Text('Add finance item',
-          style: TextStyle(color: Neon.textHi, fontSize: 17)),
+      title: const Text('Add finance item'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -358,20 +377,16 @@ class _AddItemDialogState extends State<_AddItemDialog> {
                   ChoiceChip(
                     label: Text(k[1]),
                     selected: _kind == k[0],
-                    selectedColor: Neon.textHi.withValues(alpha: 0.10),
                     labelStyle: TextStyle(
                         color: _kind == k[0] ? Neon.textHi : Neon.textLo,
-                        fontSize: 13,
-                        fontWeight: _kind == k[0]
-                            ? FontWeight.w700
-                            : FontWeight.w500),
+                        fontWeight:
+                            _kind == k[0] ? FontWeight.w700 : FontWeight.w500),
                     onSelected: (_) => setState(() => _kind = k[0]),
                   ),
               ],
             ),
             const SizedBox(height: 14),
-            _field(_name, 'Name (Bike EMI, Salary…)',
-                type: TextInputType.text),
+            _field(_name, 'Name (Bike EMI, Salary…)', type: TextInputType.text),
             _field(_amount, 'Monthly amount (₹)'),
             if (isEmi) _field(_rate, 'Interest rate (% per year)'),
             _field(_day, 'Day of month it hits (1-31)'),
@@ -388,12 +403,9 @@ class _AddItemDialogState extends State<_AddItemDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: Text('Cancel',
-              style: TextStyle(color: Neon.textDim)),
+          child: const Text('Cancel'),
         ),
         FilledButton(
-          style: FilledButton.styleFrom(
-              backgroundColor: Neon.violet, foregroundColor: Neon.onAccent),
           onPressed: _saving ? null : _save,
           child: Text(_saving ? 'Saving…' : 'Save'),
         ),

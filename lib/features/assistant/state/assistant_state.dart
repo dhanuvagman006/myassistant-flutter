@@ -4,11 +4,20 @@
 /// the UI can render EXACTLY what the assistant is doing at every moment.
 library;
 
+/// THE VOICE'S STATES (2026-09-30, the fast Live voice): IDLE -> LISTENING
+/// -> THINKING (the owner stopped; until her first sound or a tool) ->
+/// RESPONDING (a tool is running; [AssistantEngine.phaseLabel] carries its
+/// human label, "Checking your calendar…") -> SPEAKING -> DONE ([completed]:
+/// the turn is over and its last sound heard, briefly) -> LISTENING. The
+/// older, finer phases stay for the screens that still name them.
 enum AssistantPhase {
   idle,
   listening,
   transcribing,
   thinking,
+
+  /// A tool is running for the answer (RESPONDING).
+  responding,
   searching,
   findingContact,
   preparingMessage,
@@ -25,6 +34,7 @@ enum AssistantPhase {
         'listening' => AssistantPhase.listening,
         'transcribing' => AssistantPhase.transcribing,
         'thinking' => AssistantPhase.thinking,
+        'responding' => AssistantPhase.responding,
         'searching' => AssistantPhase.searching,
         // The backend enters this while a tool runs (ordering, booking,
         // looking a place up). Unmapped it fell through to idle, so the
@@ -56,6 +66,7 @@ enum AssistantPhase {
         AssistantPhase.listening => 'Listening…',
         AssistantPhase.transcribing => 'Thinking…',
         AssistantPhase.thinking => 'Thinking…',
+        AssistantPhase.responding => 'Working on it…',
         AssistantPhase.searching => 'Searching…',
         AssistantPhase.findingContact => 'Finding contact…',
         AssistantPhase.preparingMessage => 'Thinking…',
@@ -72,6 +83,7 @@ enum AssistantPhase {
   /// Whether a running action can be cancelled from the UI.
   bool get cancellable => switch (this) {
         AssistantPhase.thinking ||
+        AssistantPhase.responding ||
         AssistantPhase.searching ||
         AssistantPhase.findingContact ||
         AssistantPhase.preparingMessage ||

@@ -12,6 +12,8 @@ analyzer:
     - build/**
     - android/**
     - ios/**
+    # Upstream code, kept as published (third_party/README.md).
+    - third_party/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

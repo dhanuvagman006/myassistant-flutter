@@ -1,6 +1,7 @@
 // FOCUS (2026-09-25, Momentum) — the countdown's arithmetic, the session
 // that survives the app being killed, and the page that redraws once a
 // second only while it is on screen and running.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -271,6 +272,19 @@ void main() {
       expect(t.getCenter(ring).dx, closeTo(mid, 1));
       expect(t.getCenter(find.text('Pause')).dx, greaterThan(mid - 1),
           reason: 'Pause sits right of +5 min, both centred as a pair');
+      await close(t);
+    });
+
+    testWidgets('started offline, the ring shows at once', (t) async {
+      // A server that never answers, as on a phone with no signal: a focus
+      // started by the assistant used to open on a blank page until it did.
+      MomentumService.transport = (m, p, {body}) => Completer<MomentumReply>().future;
+      await open(t, const FocusScreen(minutes: 25, autoStart: true));
+      expect(
+          find.byWidgetPredicate((w) => w is CustomPaint && w.painter is FocusRingPainter),
+          findsOneWidget);
+      expect(find.text('25:00'), findsOneWidget);
+      expect(alerts.log, ['show'], reason: 'the notification is armed all the same');
       await close(t);
     });
 

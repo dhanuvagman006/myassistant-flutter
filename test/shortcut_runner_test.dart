@@ -1,6 +1,6 @@
 // The shortcut runner (build 120): the order the server fixed, the tail
 // kept for the owner's return, the 1.5 s gap only when "use other apps" is
-// on, a phone task last, expiry, and a resent directive ignored.
+// on, expiry, and a resent directive ignored.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/models/shortcut.dart';
 import 'package:myassistant/services/shortcut_runner.dart';
@@ -43,7 +43,6 @@ final torch = {'type': 'phone_control', 'action': 'flashlight_on'};
 final chat = {'type': 'open_url', 'url': 'whatsapp://send?phone=1&text=hi'};
 final maps = {'type': 'open_url', 'url': 'google.navigation:q=MG%20Road'};
 final music = {'type': 'open_url', 'url': 'music://x'};
-final task = {'type': 'automate', 'goal': 'add milk'};
 
 void main() {
   setUp(() async {
@@ -94,12 +93,6 @@ void main() {
     expect(off.continues, ['step 1']);
     await ShortcutRunner.instance.resumePending(off); // the tap
     expect(off.performed.last, 'open_url:music://x');
-  });
-
-  test('a phone task goes last, after the in-app steps', () async {
-    final p = FakePorts();
-    await ShortcutRunner.instance.run(directive(6, [env(0, 'in_app', torch), env(1, 'app_task', task)]), p);
-    expect(p.performed, ['phone_control:flashlight_on', 'automate:add milk']);
   });
 
   test('a tail kept over 10 minutes is not run; the owner is told what never happened', () async {

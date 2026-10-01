@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../design/neon_tokens.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../screens/calls_screen.dart';
+import '../design/motion.dart';
 
 /// A SMALL GREEN LIGHT WHILE THE ASSISTANT IS ON A CALL.
 ///
@@ -39,11 +40,20 @@ class _CallLedState extends State<CallLed> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _engine.addListener(_onChange);
+  }
+
+  /// "Remove animations": the light stays lit instead of pulsing.
+  bool _still = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = Motion.reduced(context);
     _syncPulse();
   }
 
   void _syncPulse() {
-    final on = _engine.callStatus != null;
+    final on = _engine.callStatus != null && !_still;
     if (on && !_pulse.isAnimating) {
       _pulse.repeat(reverse: true);
     } else if (!on && _pulse.isAnimating) {

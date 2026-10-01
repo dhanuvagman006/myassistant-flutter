@@ -1,15 +1,16 @@
+import 'package:flutter/foundation.dart' show ValueNotifier, visibleForTesting;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../features/shopping/shop_handoff.dart';
 import '../models/momentum.dart';
 import '../models/reminder.dart';
 import '../core/log.dart';
 import 'api_service.dart';
 import 'focus_service.dart';
 import 'habit_alarms.dart';
-import 'momentum_service.dart';
 
 /// Turns backend reminders into LOCAL notifications, so "remind me to
 /// call amma at 5" actually rings the phone at 5 — even if the app is
@@ -80,6 +81,18 @@ class ReminderNotifications {
   static const int focusCountdownId = 0x3F0F0C01;
   static const int focusDoneId = 0x3F0F0C02;
 
+  /// The shopping trip's "Shopping · 1 of 7 · Next: curd" (build 124).
+  static const int shoppingId = 0x3F0F0C03;
+  static const String shoppingPayload = 'shopping';
+
+  /// A reminder's own payload, "reminder:<id>" (2026-09-30): its tap opens
+  /// the reminder pop-up.
+  static const String reminderPayload = 'reminder:';
+
+  /// The reminders as last fetched: the pop-up watches for the next one
+  /// due while the app is open.
+  final ValueNotifier<List<Reminder>> synced = ValueNotifier(const []);
+
   /// Where a tapped notification goes ('momentum', 'focus'). The shell sets
   /// it once it can navigate; a tap that launched the app waits for it.
   static void Function(String payload)? _onOpen;
@@ -93,9 +106,19 @@ class ReminderNotifications {
     }
   }
 
-  static void _tapped(NotificationResponse r) {
+  /// A tap's destination: the notification's payload, and for a tap on one
+  /// of its buttons, "payload:button" ('shopping:next').
+  @visibleForTesting
+  static String? destinationOf(NotificationResponse r) {
     final p = r.payload;
-    if (p == null || p.isEmpty) return;
+    if (p == null || p.isEmpty) return null;
+    final action = r.actionId;
+    return action == null || action.isEmpty ? p : '$p:$action';
+  }
+
+  static void _tapped(NotificationResponse r) {
+    final p = destinationOf(r);
+    if (p == null) return;
     final f = _onOpen;
     if (f != null) {
       f(p);
@@ -201,10 +224,15 @@ class ReminderNotifications {
     } catch (_) {
       return reminders;
     }
+    synced.value = reminders;
     if (!_ready) await init();
     if (!_ready) return reminders;
 
     try {
+      // A shopping trip's notification is not a reminder: it goes with the
+      // rest below and is put back — unless the owner swiped it away.
+      final shopTrip = await ShopHandoffRunner.instance.hasTrip();
+      final shopShown = shopTrip && await shoppingShown();
       await _plugin.cancelAll();
       // Android 14+ never auto-grants exact alarms; scheduling in exact
       // mode without the grant THROWS. Detect once and fall back to
@@ -236,6 +264,8 @@ class ReminderNotifications {
               iOS: const DarwinNotificationDetails(),
             ),
             androidScheduleMode: mode,
+            // A tap opens the reminder's pop-up (reminder_popup.dart).
+            payload: '$reminderPayload${r.id}',
           );
           scheduled++;
         } catch (e) {
@@ -245,10 +275,9 @@ class ReminderNotifications {
       }
       AppLog.add('remind',
           'scheduled $scheduled reminder alarm(s)${failedCount > 0 ? ", $failedCount failed" : ""} (${mode == AndroidScheduleMode.exactAllowWhileIdle ? "exact" : "inexact"})');
-      // cancelAll() above also took the habit reminders and a running
-      // focus countdown: put them back (Momentum, 2026-09-25).
-      await _armHabits(MomentumService.instance.summary?.habits ?? const [], mode);
+      // cancelAll() above also took a running focus countdown: put it back.
       await FocusService.instance.rearm();
+      if (shopTrip) await ShopHandoffRunner.instance.rearm(stillShown: shopShown);
     } catch (e) {
       AppLog.add('remind', 'sync failed: $e');
     }
@@ -375,5 +404,66 @@ class ReminderNotifications {
       await _plugin.cancel(focusCountdownId);
       if (!keepAlert) await _plugin.cancel(focusDoneId);
     } catch (_) {}
+  }
+
+  /// THE SHOPPING TRIP (build 124): "Shopping · 1 of 7", "Next: curd", with
+  /// Next and Done. Quiet (it sits in the shade while they shop, like the
+  /// focus countdown). Both buttons bring the app to the front first:
+  /// Android lets an app open another only while it is on screen, so Next
+  /// opens the following thing from there.
+  Future<void> showShopping(String title, String body, {required bool hasNext}) async {
+    if (!_ready) await init();
+    if (!_ready) return;
+    try {
+      await _plugin.show(
+        shoppingId,
+        title,
+        body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hari_shopping',
+            'Shopping',
+            channelDescription: 'The next thing on your list while you shop',
+            importance: Importance.low,
+            priority: Priority.low,
+            ongoing: true,
+            autoCancel: false,
+            onlyAlertOnce: true,
+            silent: true,
+            showWhen: false,
+            category: AndroidNotificationCategory.status,
+            styleInformation: BigTextStyleInformation(body),
+            actions: [
+              if (hasNext)
+                const AndroidNotificationAction('next', 'Next',
+                    showsUserInterface: true, cancelNotification: false),
+              const AndroidNotificationAction('done', 'Done', showsUserInterface: true),
+            ],
+          ),
+        ),
+        payload: shoppingPayload,
+      );
+    } catch (e) {
+      AppLog.add('shop', 'notification failed: $e');
+    }
+  }
+
+  Future<void> cancelShopping() async {
+    try {
+      await _plugin.cancel(shoppingId);
+    } catch (e) {
+      AppLog.add('shop', 'could not take the notification away: $e');
+    }
+  }
+
+  /// Is the trip's notification still in the shade? When the phone cannot
+  /// say, it is assumed to be (a trip is never ended on a guess).
+  Future<bool> shoppingShown() async {
+    try {
+      final active = await _plugin.getActiveNotifications();
+      return active.any((n) => n.id == shoppingId);
+    } catch (_) {
+      return true;
+    }
   }
 }

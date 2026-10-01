@@ -1,0 +1,114 @@
+// Copyright 2024 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+export 'src/api.dart'
+    show
+        BlockReason,
+        Candidate,
+        CitationMetadata,
+        Citation,
+        CountTokensResponse,
+        FinishReason,
+        GenerateContentResponse,
+        GenerationConfig,
+        GoogleMapsGroundingChunk,
+        GroundingChunk,
+        ThinkingConfig,
+        ThinkingLevel,
+        MediaResolution,
+        HarmBlockThreshold,
+        HarmCategory,
+        HarmProbability,
+        HarmBlockMethod,
+        PromptFeedback,
+        ResponseModalities,
+        SafetyRating,
+        SafetySetting,
+        UsageMetadata,
+        WebGroundingChunk;
+export 'src/base_model.dart'
+    show GenerativeModel, LiveGenerativeModel, TemplateGenerativeModel;
+export 'src/chat.dart' show ChatSession, StartChatExtension;
+export 'src/content.dart'
+    show
+        Content,
+        InlineDataPart,
+        FileData,
+        FunctionCall,
+        FunctionResponse,
+        Part,
+        TextPart,
+        ExecutableCodePart,
+        CodeExecutionResultPart,
+        UnknownPart;
+export 'src/error.dart'
+    show
+        FirebaseAIException,
+        FirebaseAISdkException,
+        // PATCHED (MYASSISTANT): the app tells a closed socket from a bad message.
+        LiveWebSocketClosedException,
+        InvalidApiKey,
+        ServerException,
+        ServiceApiNotEnabled,
+        QuotaExceeded,
+        UnsupportedUserLocation;
+export 'src/firebase_ai.dart' show FirebaseAI;
+export 'src/image_config.dart' show ImageConfig, ImageAspectRatio, ImageSize;
+export 'src/live_api.dart'
+    show
+        ActivityDetectionConfig,
+        ActivityHandling,
+        AudioTranscriptionConfig,
+        ContextWindowCompressionConfig,
+        GoingAwayNotice,
+        LiveGenerationConfig,
+        LiveServerMessage,
+        LiveServerContent,
+        LiveServerToolCall,
+        LiveServerToolCallCancellation,
+        LiveServerResponse,
+        RealtimeInputConfig,
+        Sensitivity,
+        SessionResumptionConfig,
+        SessionResumptionUpdate,
+        SlidingWindow,
+        Transcription,
+        TurnCoverage;
+export 'src/live_session.dart' show LiveSession;
+export 'src/mime_types.dart' show FirebaseAIMimeTypes;
+export 'src/schema.dart' show JSONSchema, Schema, SchemaType;
+export 'src/server_template/template_chat.dart'
+    show TemplateChatSession, StartTemplateChatExtension;
+export 'src/server_template/template_tool.dart'
+    show
+        TemplateAutoFunctionDeclaration,
+        TemplateFunctionDeclaration,
+        TemplateTool,
+        TemplateToolConfig;
+export 'src/speech_config.dart'
+    show SpeechConfig, MultiSpeakerVoiceConfig, SpeakerVoiceConfig;
+export 'src/tool.dart'
+    show
+        AutoFunctionDeclaration,
+        FunctionCallingConfig,
+        FunctionCallingMode,
+        FunctionDeclaration,
+        Tool,
+        ToolConfig,
+        GoogleSearch,
+        GoogleMaps,
+        CodeExecution,
+        UrlContext,
+        LatLng,
+        RetrievalConfig;

@@ -5,9 +5,8 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../core/log.dart';
 import 'call_history.dart';
-import 'live_mic_stats.dart';
+import 'audio/mic_stats.dart';
 
 /// WHAT THIS PHONE CAN ACTUALLY DO.
 ///
@@ -17,7 +16,7 @@ import 'live_mic_stats.dart';
 /// permission denial surfaced afterwards as a failure the user had
 /// already been promised wouldn't happen.
 ///
-/// This is reported once per assistant session. The server filters the
+/// Every turn carries it (the brain's /ai/context). The server filters the
 /// tools it offers the model against it, and when something is genuinely
 /// blocked the assistant can say which permission is missing and offer to
 /// open the settings page — instead of trying and failing.
@@ -71,7 +70,7 @@ class DeviceCapabilities {
     // WHAT THE MICROPHONE ACTUALLY DELIVERED last session. The S24
     // Ultra bug was invisible from here precisely because these numbers
     // never left the handset.
-    final mic = LiveMicStats.snapshot();
+    final mic = MicStats.snapshot();
     // Audio hardware, battery policy, memory, ABIs — collected natively
     // because none of it is reachable from Dart.
     Map<String, dynamic> diag = {};
@@ -107,19 +106,5 @@ class DeviceCapabilities {
         'tzOffsetMin': DateTime.now().timeZoneOffset.inMinutes,
       },
     };
-  }
-
-  /// Report to the server, never throwing: a session must open whether or
-  /// not this lands.
-  static Future<void> report(
-      Future<void> Function(Map<String, dynamic>) send) async {
-    try {
-      final caps = await collect();
-      await send(caps);
-      AppLog.add('caps',
-          'reported build ${caps['build']}, granted ${(caps['granted'] as List).join(",")}');
-    } catch (e) {
-      AppLog.add('caps', 'report failed: $e');
-    }
   }
 }

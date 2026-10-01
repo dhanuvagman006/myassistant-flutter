@@ -1,7 +1,7 @@
 name: myassistant
 description: MYASSISTANT — AI personal assistant for Android and iOS.
 publish_to: 'none'
-version: 0.2.99+122
+version: 0.2.100+141
 
 environment:
   # Color.withValues() (used throughout lib/design) requires Dart 3.6 / Flutter 3.27+
@@ -92,7 +92,6 @@ dependencies:
   camera: ^0.12.1
   livekit_client: ^2.4.9           # avatar video: subscribes to the BEY track
   firebase_core: ^4.14.0
-  firebase_auth: ^6.6.1             # phone OTP: proves the number is theirs
   firebase_messaging: ^16.6.0
   firebase_app_installations: ^0.4.3
   flutter_sound: ^9.28.0
@@ -104,6 +103,18 @@ dependencies:
   convert: ^3.1.2
   device_info_plus: ^12.4.0
   workmanager: ^0.10.10
+  # THE ASSISTANT'S BRAIN (owner, 2026-09-29): Firebase AI Logic. The
+  # conversation, speech out and cloud answers run in the app (lib/ai/)
+  # through firebase_ai; Gemini Nano on the phone goes through NanoBridge.kt.
+  firebase_ai: ^4.0.0
+  # Required by AI Logic from 2026-11-02: every request carries an App
+  # Check token (debug provider on App Distribution builds, Play Integrity
+  # otherwise — lib/ai/identity.dart).
+  firebase_app_check: ^0.4.8
+  # ONLY for the AI Logic identity: a custom token minted by our backend
+  # (POST /ai/firebase-token), so per-user rate limits apply. Phone/SMS
+  # sign-in stays removed (test/phone_verify_test.dart guards it).
+  firebase_auth: ^6.7.0
 
 dev_dependencies:
   flutter_test:
@@ -119,6 +130,14 @@ dev_dependencies:
   # ...and a fake player its review, and the saved video's preview.
   video_player_platform_interface: ^6.9.0
   flutter_launcher_icons: ^0.14.1
+
+# firebase_ai 4.0.0 with ONE fix (third_party/README.md): a Live message
+# the SDK does not know ended its receive() stream, and whatever the server
+# sent right behind it (a tool call, turn complete, her audio) was lost —
+# the conversation then sat on "Listening" (client's S24 Ultra, 2026-09-30).
+dependency_overrides:
+  firebase_ai:
+    path: third_party/firebase_ai
 
 flutter_launcher_icons:
   android: true

@@ -5,8 +5,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../core/log.dart';
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
@@ -33,6 +35,7 @@ bool voiceSessionOnScreen(AssistantEngine e) =>
 bool _waitingForVoice(AssistantPhase p) => switch (p) {
       AssistantPhase.transcribing ||
       AssistantPhase.thinking ||
+      AssistantPhase.responding ||
       AssistantPhase.searching ||
       AssistantPhase.findingContact ||
       AssistantPhase.preparingMessage ||
@@ -40,6 +43,30 @@ bool _waitingForVoice(AssistantPhase p) => switch (p) {
         true,
       _ => false,
     };
+
+/// The orb's state for what the engine is doing (2026-09-30, the six
+/// states). A tool at work is RESPONDING, working the answer out is
+/// THINKING, a turn that landed on the fast voice is DONE for its 450 ms,
+/// and the mic paused for typing holds still.
+OrbMood orbMoodFor(AssistantEngine e, {bool micPaused = false}) {
+  final p = e.phase;
+  if (p == AssistantPhase.speaking) return OrbMood.speaking;
+  if (p == AssistantPhase.responding ||
+      p == AssistantPhase.searching ||
+      p == AssistantPhase.findingContact) {
+    return OrbMood.responding;
+  }
+  if (_waitingForVoice(p) ||
+      p == AssistantPhase.dialing ||
+      p == AssistantPhase.ringing) {
+    return OrbMood.thinking;
+  }
+  if (p == AssistantPhase.completed && e.liveActive) return OrbMood.done;
+  // Paused for typing: the orb rests instead of pulsing with room noise.
+  if (micPaused) return OrbMood.paused;
+  if (p == AssistantPhase.listening) return OrbMood.listening;
+  return e.liveActive ? OrbMood.listening : OrbMood.idle;
+}
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  INLINE VOICE — talk to the assistant from Home, no second screen.
@@ -75,7 +102,11 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   // moves when something happens: the halo while a session runs, and a
   // dip under the finger.
 
+  // Matches the shell's tap rule: whenever a tap would STOP, the orb looks
+  // live — never a resting mic that secretly ends a session.
   bool get _active =>
+      engine.starting ||
+      engine.inlineVoice ||
       engine.liveActive ||
       (engine.phase != AssistantPhase.idle &&
           engine.phase != AssistantPhase.completed);
@@ -117,6 +148,10 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
   @override
   Widget build(BuildContext context) {
     final active = _active;
+    // The halo wears the state's colour (2026-09-30): cyan listening,
+    // violet thinking, magenta working, pink speaking, green done.
+    final tone = orbMoodColor(orbMoodFor(engine,
+        micPaused: engine.micPausedForTyping));
     // The app's main control had no label for screen readers.
     return Semantics(
       button: true,
@@ -153,6 +188,7 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                 builder: (_, __) => CustomPaint(
                     size: const Size(76, 76),
                     painter: _HaloPainter(
+                      tone,
                       _still ? 0.25 : _halo.value,
                       _still
                           ? 1.0
@@ -180,20 +216,27 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                   // The big centre orb carries the session now; a second
                   // waveform down here was redundant noise. During a
                   // session this button has ONE job and now looks like
-                  // it: stop.
+                  // it: stop. A lit rim in the state's colour, the stop
+                  // glyph on the night inside it (2026-09-30).
                   ? Container(
                       key: const ValueKey('live'),
                       width: 64,
                       height: 64,
+                      padding: const EdgeInsets.all(2.2),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Neon.surfaceHigh,
-                        border: Border.all(
-                            color: Neon.violet.withValues(alpha: 0.7),
-                            width: 2),
+                        gradient: SweepGradient(
+                            colors: [tone, Neon.violet, Neon.pink, tone]),
+                        boxShadow: Neon.halo(tone, strength: 0.9),
                       ),
-                      child: Icon(Icons.stop_rounded,
-                          color: Neon.textHi, size: 30),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Neon.surfaceHigh,
+                        ),
+                        child: Icon(Icons.stop_rounded,
+                            color: Neon.textHi, size: 30),
+                      ),
                     )
                   : Container(
                       key: const ValueKey('idle'),
@@ -203,16 +246,19 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                       // single biggest piece of "this looks unfinished"
                       // on every screen — it now wears the brand
                       // gradient and throws its own light.
+                      // A RING OF LIGHT (2026-09-30, the client's
+                      // reference): cyan through the accent into magenta
+                      // round a deep-navy centre, glowing.
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: Neon.gBrand,
+                        gradient: SweepGradient(colors: [
+                          Neon.cyan,
+                          Neon.violet,
+                          Neon.pink,
+                          Neon.cyan,
+                        ]),
                         boxShadow: [
-                          BoxShadow(
-                            color: Neon.violet.withValues(alpha: 0.55),
-                            blurRadius: 26,
-                            spreadRadius: 1,
-                            offset: const Offset(0, 8),
-                          ),
+                          ...Neon.halo(Neon.violet, strength: 1.2),
                           BoxShadow(
                             color: Neon.pink.withValues(alpha: 0.30),
                             blurRadius: 18,
@@ -220,10 +266,26 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
                           ),
                         ],
                       ),
-                      // Dark ink on the evening theme's pastel accent,
-                      // where white measured 2.4:1 (Neon.onBrand).
-                      child: Icon(Icons.mic_rounded,
-                          color: Neon.onBrand, size: 30),
+                      padding: const EdgeInsets.all(3.5),
+                      // The deep-navy centre from the tokens (2026-09-30:
+                      // it was two hard-coded navies), lit a touch by the
+                      // accent where the light falls.
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            center: const Alignment(-0.3, -0.4),
+                            colors: [
+                              Color.alphaBlend(
+                                  Neon.violet.withValues(alpha: 0.16),
+                                  Neon.surfaceHigh),
+                              Neon.surface,
+                            ],
+                          ),
+                        ),
+                        child: Icon(Icons.mic_rounded,
+                            color: Neon.textHi, size: 30),
+                      ),
                     ),
             ),
           ],
@@ -241,11 +303,13 @@ class _AssistantOrbButtonState extends State<AssistantOrbButton>
 /// the painted size, so the same painter serves the 76 px dock orb and
 /// the large centre-screen orb.
 class _HaloPainter extends CustomPainter {
+  /// The state's colour (see [orbMoodColor]).
+  final Color color;
   final double t;
 
   /// 0..1: how far the rings have faded in.
   final double strength;
-  _HaloPainter(this.t, [this.strength = 1.0]);
+  _HaloPainter(this.color, this.t, [this.strength = 1.0]);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -261,14 +325,14 @@ class _HaloPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.2 - p * 1.4
-          ..color = Neon.violet.withValues(alpha: alpha),
+          ..color = color.withValues(alpha: alpha),
       );
     }
   }
 
   @override
   bool shouldRepaint(_HaloPainter old) =>
-      old.t != t || old.strength != strength;
+      old.t != t || old.strength != strength || old.color != color;
 }
 
 /// Center-screen live captions, lyrics-style: while the inline
@@ -391,6 +455,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     super.initState();
     engine.caption.addListener(_onCaption);
     engine.addListener(_onEngine);
+    // The tool's own words while one runs ("Checking your calendar…")
+    // can change without the phase changing.
+    engine.activityLabel.addListener(_onEngine);
     // Built mid-session (a theme flip rebuilds the whole app): it starts
     // fully in, with no fade to end, so it says so itself.
     if (_active) {
@@ -404,6 +471,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   void dispose() {
     engine.caption.removeListener(_onCaption);
     engine.removeListener(_onEngine);
+    engine.activityLabel.removeListener(_onEngine);
     _pacer?.cancel();
     // Never leave the page behind it unpainted.
     InlineCaptionOverlay.covering.value = false;
@@ -454,6 +522,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   }
 
   /// What the session is doing, in words — every phase, not just four.
+  /// While a tool runs, the tool's own words (engine.phaseLabel:
+  /// "Checking your calendar…"); a landed turn on the fast voice is "Done"
+  /// for its moment (2026-09-30).
   String _status(bool micPaused) {
     final p = engine.phase;
     if (micPaused && !_waitingForVoice(p) && p != AssistantPhase.speaking) {
@@ -461,26 +532,20 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     }
     return switch (p) {
       AssistantPhase.speaking => '',
-      AssistantPhase.listening => 'Listening…',
-      AssistantPhase.idle || AssistantPhase.completed =>
-        engine.liveActive ? 'Listening…' : 'Connecting…',
-      _ => p.label,
+      // The fast voice still connecting is not listening yet.
+      AssistantPhase.listening =>
+        engine.liveActive && !engine.micOpen ? 'Connecting…' : 'Listening…',
+      AssistantPhase.completed => engine.liveActive ? 'Done' : 'Connecting…',
+      // "Listening…" only while the microphone is actually open (client,
+      // 1 Oct: it said Listening when it was not).
+      AssistantPhase.idle => engine.liveActive
+          ? (engine.micOpen ? 'Listening…' : 'One moment…')
+          : 'Connecting…',
+      _ => engine.phaseLabel,
     };
   }
 
-  OrbMood _mood(bool micPaused) {
-    final p = engine.phase;
-    if (p == AssistantPhase.speaking) return OrbMood.speaking;
-    if (_waitingForVoice(p) ||
-        p == AssistantPhase.dialing ||
-        p == AssistantPhase.ringing) {
-      return OrbMood.thinking;
-    }
-    // Paused for typing: the orb rests instead of pulsing with room noise.
-    if (micPaused) return OrbMood.idle;
-    if (p == AssistantPhase.listening) return OrbMood.listening;
-    return engine.liveActive ? OrbMood.listening : OrbMood.idle;
-  }
+  OrbMood _mood(bool micPaused) => orbMoodFor(engine, micPaused: micPaused);
 
   /// The turn whose words outgrew their space: for the rest of that turn
   /// the orb steps back and the words get the room (2026-09-26, the owner:
@@ -501,8 +566,12 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     final size = typing
         ? 17.0
         : (_fromUser ? 19.0 : (_roomy ? 19.0 : 22.0));
+    // HERS BRIGHT AND LIT, HIS SOFTER (2026-09-30): her words in the
+    // brightest ink beside a soft lit edge in the state's colour; his own
+    // (shown as he speaks, interim words included) a step dimmer, beside a
+    // plain one.
     final style = _VoiceType.spoken(size).copyWith(
-      color: _fromUser ? Colors.white.withValues(alpha: 0.62) : Colors.white,
+      color: _fromUser ? Neon.textHi.withValues(alpha: 0.62) : Neon.textHi,
     );
     final turn = _turn;
     return CaptionScroll(
@@ -511,8 +580,12 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
           setState(() => _roomyTurn = turn);
         }
       },
-      child: Padding(
-        padding: const EdgeInsets.only(top: 14, bottom: 8),
+      child: CustomPaint(
+        painter: _SpeakerEdge(
+          _fromUser ? null : orbMoodColor(_mood(engine.micPausedForTyping)),
+        ),
+        child: Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 8, left: 14),
         // The keyboard coming up eases the size down as a picture, on the
         // orb's 220 ms: laid out once at the new size, never again on the
         // keyboard's frames (2026-09-24, review).
@@ -529,6 +602,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
             earlierOpacity: _fromUser ? 0.8 : 0.6,
           ),
         ),
+      ),
       ),
     );
   }
@@ -684,8 +758,17 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                   child: Builder(
                   builder: (_) {
                     final mood = _mood(micPaused);
-                    // The level still arrives while paused (it is measured
-                    // before the mute) — the orb must not react to it.
+                    // A tap only does something while she speaks or works
+                    // on the answer; the rest of the time the orb is not
+                    // a button, so a screen reader does not offer one.
+                    // ONE TAP ON THE ORB ENDS IT (client, 1 Oct: "I have to
+                    // tap twice, it looks stuck"). It used to interrupt
+                    // while she spoke and do NOTHING while listening — so
+                    // a tap on the big orb left "Listening…" on screen and
+                    // only the dock mic got them out. Now any tap on it
+                    // stops the conversation and hands Home back; to
+                    // interrupt her, they simply start speaking.
+                    const canStop = true;
                     final level = micPaused ? null : engine.micLevelListenable;
                     return Stack(
                       alignment: Alignment.center,
@@ -720,11 +803,26 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             // The assistant's own name under the mic
                             // ("My Assistant" until it has one); a rename
                             // rebuilds only this.
-                            child: ValueListenableBuilder<String>(
-                              valueListenable: AssistantIdentity.notifier,
-                              builder: (_, name, __) => VoiceOrb(
-                                size: _orbSize,
-                                label: orbLabelFor(name),
+                            // TAP TO INTERRUPT: while she speaks (or is
+                            // still working on the answer) a tap stops her
+                            // and the conversation listens (barge-in).
+                            child: Semantics(
+                              button: canStop,
+                              label: 'Stop and go back',
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () {
+                                  HapticFeedback.mediumImpact();
+                                  AppLog.add('orb', 'big orb tap → stop');
+                                  unawaited(engine.endInlineConversation());
+                                },
+                                child: ValueListenableBuilder<String>(
+                                  valueListenable: AssistantIdentity.notifier,
+                                  builder: (_, name, __) => VoiceOrb(
+                                    size: _orbSize,
+                                    label: orbLabelFor(name),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -781,8 +879,9 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             child: Text(
                               _status(micPaused),
                               textAlign: TextAlign.center,
-                              // Readable on the night ground (was 0.45).
-                              style: _VoiceType.status,
+                              // In the state's colour (2026-09-30), lifted
+                              // toward white so it reads at AA on the night.
+                              style: _VoiceType.statusFor(_mood(micPaused)),
                             ),
                           )
                         : KeyedSubtree(
@@ -816,25 +915,80 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
 /// read worse than Manrope, and look like another app beside Home and
 /// Hub. Built once: the pacer rebuilds this screen five times a second,
 /// and every GoogleFonts call made a new style and a font-load future.
+/// THE TEXT BOX ON A NIGHT SCREEN — the voice screen's "Type a message…"
+/// and Quick task's (2026-09-29: Quick task drew a light box with a faint
+/// hint on its black screen). One pill, and a field with no fill or
+/// outline of its own: the app theme gives every TextField a fill (light
+/// by day) and an outline, and `border: none` alone does not switch off
+/// the enabled/focused ones.
+abstract final class NightField {
+  static BoxDecoration pill({required bool focused}) => BoxDecoration(
+        color: Neon.textHi.withValues(alpha: focused ? 0.10 : 0.07),
+        borderRadius: BorderRadius.circular(28),
+        // The resting outline at 22% white: at 10% it was 1.26:1 and the
+        // box all but vanished when not focused. Focused, a lit cyan rim
+        // (2026-09-30: the assistant's own colour, where you talk to it).
+        border: Border.all(
+          color: focused
+              ? NeonTone.tip.rim.first.withValues(alpha: 0.75)
+              : Neon.textHi.withValues(alpha: 0.22),
+        ),
+        boxShadow: focused
+            ? Neon.halo(NeonTone.tip.rim.first, strength: 0.45)
+            : null,
+      );
+
+  static InputDecoration decoration(String hint) => InputDecoration(
+        isDense: true,
+        filled: false,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        disabledBorder: InputBorder.none,
+        hintText: hint,
+        hintStyle: _VoiceType.hint,
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+      );
+
+  static TextStyle get input => _VoiceType.input;
+}
+
 abstract final class _VoiceType {
   static final TextStyle status =
-      NeonType.manrope(NeonType.callout, FontWeight.w600).copyWith(
-          color: Colors.white.withValues(alpha: 0.66), letterSpacing: 0.3);
+      NeonType.manrope(NeonType.callout, FontWeight.w600)
+          .copyWith(color: Neon.textLo, letterSpacing: 0.3);
+
+  /// The status line in its state's colour (2026-09-30), lifted a third of
+  /// the way to white so the darkest (violet) still reads at AA on the
+  /// night, with a faint light of its own. Idle and paused stay quiet.
+  /// One style per state, made once.
+  static final Map<OrbMood, TextStyle> _status = {};
+  static TextStyle statusFor(OrbMood m) => _status[m] ??= switch (m) {
+        OrbMood.idle || OrbMood.paused => status,
+        _ => status.copyWith(
+            color: Color.lerp(orbMoodColor(m), Neon.textHi, 0.35),
+            shadows: [
+              Shadow(
+                  color: orbMoodColor(m).withValues(alpha: 0.55),
+                  blurRadius: 12),
+            ],
+          ),
+      };
   static final TextStyle error =
-      NeonType.manrope(NeonType.rowTitle, FontWeight.w600).copyWith(
-          color: Colors.white.withValues(alpha: 0.88), height: 1.3);
+      NeonType.manrope(NeonType.rowTitle, FontWeight.w600)
+          .copyWith(color: Neon.textHi, height: 1.3);
   static final TextStyle input =
       NeonType.manrope(NeonType.rowTitle, FontWeight.w500)
-          .copyWith(color: Colors.white);
+          .copyWith(color: Neon.textHi);
 
-  /// 52% white (was 45%, 4.4:1): 5.3:1 on the text box, pinned by
-  /// test/contrast_test.dart.
+  /// 52% of the text white (was 45%, 4.4:1): 5.3:1 on the text box,
+  /// pinned by test/contrast_test.dart.
   static final TextStyle hint =
       NeonType.manrope(NeonType.rowTitle, FontWeight.w500)
-          .copyWith(color: Colors.white.withValues(alpha: 0.52));
+          .copyWith(color: Neon.textHi.withValues(alpha: 0.52));
   static final TextStyle chip =
       NeonType.manrope(NeonType.footnote, FontWeight.w600)
-          .copyWith(color: Colors.white.withValues(alpha: 0.66));
+          .copyWith(color: Neon.textLo);
   static final TextStyle button =
       NeonType.manrope(NeonType.callout, FontWeight.w700);
   static final TextStyle mute =
@@ -853,19 +1007,66 @@ abstract final class _VoiceType {
       );
 }
 
-/// The session's ground: opaque, deep, tinted by the user's accent so it
-/// belongs to their theme. Always dark — the orb and captions are drawn
-/// for night, in both app themes.
+/// The session's ground: opaque, deep, always dark — the orb and captions
+/// are drawn for night. THE APP'S NAVY NIGHT (2026-09-30, the client's
+/// neon reference: deep navy to black), not a purple cast of the accent:
+/// the page ground with a trace of the accent at the top, deepest at the
+/// middle where the orb glows.
 LinearGradient _sessionGround() {
-  final h = HSLColor.fromColor(Neon.violet);
-  Color ink(double l, double s) =>
-      h.withLightness(l).withSaturation(s).toColor();
+  final bg = Neon.bg;
+  final h = HSLColor.fromColor(bg);
   return LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
-    colors: [ink(0.09, 0.45), ink(0.035, 0.40), ink(0.06, 0.40)],
+    colors: [
+      Color.alphaBlend(Neon.violet.withValues(alpha: 0.10), bg),
+      // Deeper at the middle — at night only (the app is always dark; a
+      // day page would turn grey here).
+      Neon.isDark ? h.withLightness(h.lightness * 0.62).toColor() : bg,
+      Color.alphaBlend(NeonTone.tip.rim.first.withValues(alpha: 0.04), bg),
+    ],
     stops: const [0.0, 0.5, 1.0],
   );
+}
+
+/// THE SPEAKER'S EDGE (2026-09-30): a soft lit line down the left of her
+/// words, in the state's colour — a bright core and two faint, wider
+/// strokes for its light (no blur: the captions repaint several times a
+/// second). His own words get a plain hairline.
+class _SpeakerEdge extends CustomPainter {
+  _SpeakerEdge(this.color);
+
+  /// Hers: the state's colour. Null: his (a plain hairline).
+  final Color? color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const top = 18.0;
+    final bottom = math.max(top, size.height - 10);
+    if (bottom - top < 4) return;
+    final a = const Offset(1.5, top), b = Offset(1.5, bottom);
+    final c = color;
+    if (c == null) {
+      canvas.drawLine(a, b, Paint()
+        ..strokeWidth = 1.2
+        ..strokeCap = StrokeCap.round
+        ..color = Neon.lineBright);
+      return;
+    }
+    for (final (width, alpha) in const [(9.0, 0.08), (5.0, 0.18), (2.2, 0.95)]) {
+      canvas.drawLine(a, b, Paint()
+        ..strokeWidth = width
+        ..strokeCap = StrokeCap.round
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [c.withValues(alpha: alpha), Neon.violet.withValues(alpha: alpha * 0.4)],
+        ).createShader(Rect.fromPoints(a, b)));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SpeakerEdge old) => old.color != color;
 }
 
 /// Mute the assistant's voice without ending the conversation — for the
@@ -958,27 +1159,28 @@ class _PillButton extends StatelessWidget {
           HapticFeedback.selectionClick();
           onTap();
         },
-        child: Container(
+        // HIERARCHY BY LIGHT (2026-09-30): the way forward is the brand
+        // gradient with its full glow; the other is a rim and nothing more.
+        child: PressScale(
+          scale: 0.96,
+          child: Container(
           // 48 dp tall: a comfortable target, as every tap target should be.
           constraints: const BoxConstraints(minHeight: 48, minWidth: 96),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: primary
-                ? Neon.violet.withValues(alpha: 0.22)
-                : Colors.white.withValues(alpha: 0.07),
+            gradient: primary ? Neon.gBrand : null,
+            color: primary ? null : Neon.textHi.withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: primary
-                  ? Neon.violet.withValues(alpha: 0.7)
-                  : Colors.white.withValues(alpha: 0.16),
-            ),
+            border: primary ? null : Border.all(color: Neon.lineBright),
+            boxShadow: primary ? Neon.halo(Neon.violet, strength: 1.1) : null,
           ),
           child: Text(
             label,
             style: _VoiceType.button.copyWith(
-              color: primary ? Colors.white : Colors.white.withValues(alpha: 0.8),
+              color: primary ? Neon.onBrand : Neon.textLo,
             ),
+          ),
           ),
         ),
       ),
@@ -1002,21 +1204,29 @@ class _MuteButton extends StatelessWidget {
           HapticFeedback.selectionClick();
           engine.setSpeakerMuted(!muted);
         },
-        child: AnimatedContainer(
+        // MUTED IS A WARNING (2026-09-30): she will not be heard, so the
+        // control lights amber with its own glow; sound on is a quiet rim.
+        child: PressScale(
+          scale: 0.95,
+          child: AnimatedContainer(curve: Motion.easeMove,
           duration: const Duration(milliseconds: 180),
           // 48 dp tall, like every other target on this screen (was 44).
           constraints: const BoxConstraints(minHeight: 48),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
           decoration: BoxDecoration(
             color: muted
-                ? Neon.violet.withValues(alpha: 0.20)
-                : Colors.white.withValues(alpha: 0.07),
+                ? NeonTone.warning.fill
+                : Neon.textHi.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(22),
             border: Border.all(
               color: muted
-                  ? Neon.violet.withValues(alpha: 0.65)
-                  : Colors.white.withValues(alpha: 0.14),
+                  ? NeonTone.warning.rim.first.withValues(alpha: 0.9)
+                  : Neon.lineBright,
+              width: muted ? 1.6 : 1,
             ),
+            boxShadow: muted
+                ? Neon.halo(NeonTone.warning.rim.first, strength: 0.8)
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -1025,17 +1235,18 @@ class _MuteButton extends StatelessWidget {
               Icon(
                 muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
                 size: 18,
-                color: muted ? Neon.violet : Colors.white.withValues(alpha: 0.75),
+                color: muted ? NeonTone.warning.ink : Neon.textLo,
               ),
               const SizedBox(width: 7),
               Text(
                 // "Sound" alone read as either a state or an action.
                 muted ? 'Muted' : 'Sound on',
                 style: _VoiceType.mute.copyWith(
-                  color: muted ? Neon.violet : Colors.white.withValues(alpha: 0.75),
+                  color: muted ? NeonTone.warning.ink : Neon.textLo,
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),
@@ -1045,6 +1256,61 @@ class _MuteButton extends StatelessWidget {
 
 /// Shown above the text box while the microphone is paused for typing and
 /// captions have pushed the status line off the screen.
+/// Camera or gallery, for the type bar's "+".
+class _PhotoSourceSheet extends StatelessWidget {
+  const _PhotoSourceSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    Widget row(IconData icon, String title, String hint, ImageSource src) =>
+        ListTile(
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: Neon.gBrand,
+            ),
+            child: Icon(icon, color: Neon.onBrand, size: 22),
+          ),
+          title: Text(title,
+              style: NeonType.manrope(NeonType.rowTitle, FontWeight.w700)
+                  .copyWith(color: Neon.textHi)),
+          subtitle: Text(hint,
+              style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote)),
+          onTap: () => Navigator.of(context).pop(src),
+        );
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      padding: EdgeInsets.fromLTRB(4, 12, 4, 8 + bottom),
+      decoration: BoxDecoration(
+        color: Neon.surface,
+        borderRadius: BorderRadius.circular(Neon.rLg),
+        border: Border.all(color: Neon.hairline),
+        boxShadow: Neon.lift,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Ask about a picture',
+                  style: NeonType.eyebrow.copyWith(color: Neon.textLo)),
+            ),
+          ),
+          row(Icons.photo_camera_rounded, 'Take a photo',
+              'A bill, a label, a sign, a whiteboard', ImageSource.camera),
+          row(Icons.photo_library_rounded, 'Choose from gallery',
+              'A screenshot or a saved picture', ImageSource.gallery),
+        ],
+      ),
+    );
+  }
+}
+
 class _MicPausedChip extends StatelessWidget {
   const _MicPausedChip();
 
@@ -1055,8 +1321,7 @@ class _MicPausedChip extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.mic_off_rounded,
-              size: 15, color: Colors.white.withValues(alpha: 0.66)),
+          Icon(Icons.mic_off_rounded, size: 15, color: Neon.textLo),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
@@ -1078,8 +1343,8 @@ class _MicPausedChip extends StatelessWidget {
 /// send instead of speaking into the app". For a name the mic keeps
 /// mishearing, a long number, or a room where you cannot speak.
 ///
-/// It goes down the SAME live socket the voice uses, not a second
-/// conversation beside it — see AssistantEngine.sendTypedMessage.
+/// It is a turn of the SAME conversation the voice is in (the brain's),
+/// not a second one beside it — see AssistantEngine.sendTypedMessage.
 class _TypeBar extends StatefulWidget {
   const _TypeBar({required this.engine});
   final AssistantEngine engine;
@@ -1168,6 +1433,27 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
     AppFeedback.sessionMargin = math.max(10.0, reach - base + 8);
   }
 
+  /// THE "+": a photo to ask about, from the camera or the gallery; what
+  /// is typed goes with it as the question (owner, 2026-09-30).
+  Future<void> _attach() async {
+    if (_connecting) return;
+    HapticFeedback.selectionClick();
+    final source = await showAppSheet<ImageSource>(
+      context: context,
+      backgroundColor: Neon.textHi.withValues(alpha: 0),
+      builder: (_) => const _PhotoSourceSheet(),
+    );
+    if (source == null || !mounted) return;
+    final q = _c.text.trim();
+    _c.clear();
+    final ok = await _engine.askWithPhoto(source, question: q);
+    if (!ok && mounted) {
+      if (q.isNotEmpty) _c.text = q;
+      AppFeedback.show("Couldn't get that picture. Try again.",
+          context: context);
+    }
+  }
+
   void _send() {
     final t = _c.text.trim();
     if (t.isEmpty || _connecting) return;
@@ -1217,30 +1503,48 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) => _report());
     return Padding(
       padding: const EdgeInsets.only(top: 14),
-      child: AnimatedContainer(
+      child: AnimatedContainer(curve: Motion.easeMove,
         duration: const Duration(milliseconds: 180),
         constraints: const BoxConstraints(minHeight: 54),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: focused ? 0.10 : 0.07),
-          borderRadius: BorderRadius.circular(28),
-          // The resting outline at 22% white: at 10% it was 1.26:1 and the
-          // box all but vanished when not focused.
-          border: Border.all(
-            color: focused
-                ? Neon.violet.withValues(alpha: 0.55)
-                : Colors.white.withValues(alpha: 0.22),
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(16, 3, 3, 3),
+        decoration: NightField.pill(focused: focused),
+        padding: const EdgeInsets.fromLTRB(3, 3, 3, 3),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // "+" — a picture to ask about (camera or gallery). 48 dp to
+            // the finger, in the place the keyboard glyph used to sit.
             Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Icon(Icons.keyboard_alt_outlined,
-                  size: 20, color: Colors.white.withValues(alpha: 0.40)),
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Semantics(
+                button: true,
+                label: 'Add a photo',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: connecting ? null : _attach,
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Center(
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Neon.textHi.withValues(alpha: 0.08),
+                          border: Border.all(
+                              color: NeonTone.tip.rim.first
+                                  .withValues(alpha: 0.55)),
+                        ),
+                        child: Icon(Icons.add_rounded,
+                            size: 20,
+                            color: connecting ? Neon.textDim : Neon.textHi),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 2),
             Expanded(
               child: TextField(
                 controller: _c,
@@ -1256,19 +1560,10 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                 // Keeps the keyboard up after sending, like the arrow does.
                 onEditingComplete: () {},
                 keyboardAppearance: Brightness.dark,
-                cursorColor: Neon.violet,
-                style: _VoiceType.input,
-                decoration: InputDecoration(
-                  isDense: true,
-                  filled: false,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  disabledBorder: InputBorder.none,
-                  hintText: connecting ? 'Connecting…' : 'Type a message…',
-                  hintStyle: _VoiceType.hint,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                ),
+                cursorColor: NeonTone.tip.rim.first,
+                style: NightField.input,
+                decoration: NightField.decoration(
+                    connecting ? 'Connecting…' : 'Type a message…'),
               ),
             ),
             const SizedBox(width: 5),
@@ -1284,10 +1579,10 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                   width: 48,
                   height: 48,
                   child: Center(
-                    child: AnimatedScale(
+                    child: AnimatedScale(curve: Motion.easeMove,
                       duration: const Duration(milliseconds: 160),
                       scale: canSend ? 1 : 0.9,
-                      child: AnimatedContainer(
+                      child: AnimatedContainer(curve: Motion.easeMove,
                         duration: const Duration(milliseconds: 160),
                         width: 42,
                         height: 42,
@@ -1296,14 +1591,16 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                           gradient: canSend ? Neon.gBrand : null,
                           color: canSend
                               ? null
-                              : Colors.white.withValues(alpha: 0.08),
+                              : Neon.textHi.withValues(alpha: 0.08),
+                          // Ready to send: the primary action glows.
+                          boxShadow: canSend
+                              ? Neon.halo(Neon.violet, strength: 0.9)
+                              : null,
                         ),
                         // Neon.onBrand on the gradient: white was 2.4:1 on
                         // the evening theme's pastel accent.
                         child: Icon(Icons.arrow_upward_rounded,
-                            color: canSend
-                                ? Neon.onBrand
-                                : Colors.white.withValues(alpha: 0.35),
+                            color: canSend ? Neon.onBrand : Neon.textDim,
                             size: 21),
                       ),
                     ),
@@ -1443,6 +1740,7 @@ class _AnswerAfterglowState extends State<AnswerAfterglow> {
       engine.pendingConfirmation != null ||
       engine.presentedText != null ||
       engine.searchResults.isNotEmpty ||
+      engine.searchSuggestions.isNotEmpty ||
       engine.generatedImage != null;
 
   @override

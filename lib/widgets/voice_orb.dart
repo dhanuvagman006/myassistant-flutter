@@ -41,7 +41,114 @@ import '../services/assistant_identity.dart';
 /// ─────────────────────────────────────────────────────────────────────
 
 /// How the orb is behaving, in the only terms the painting cares about.
-enum OrbMood { idle, listening, thinking, speaking }
+///
+/// SIX STATES YOU CAN TELL APART (2026-09-30, the client: the assistant
+/// should be the most obviously "AI" part of the app). Each has its own
+/// colour AND its own motion; with "Remove animations" on, the colour and
+/// the caption's words alone. The colours are the app's semantic neon
+/// ([NeonTone]), so a state reads the same here as on a card.
+enum OrbMood {
+  /// Connecting, at rest: dim cyan, one slow calm breath every ~5 s.
+  idle,
+
+  /// His turn: bright cyan into blue, the rings pushed by his voice.
+  listening,
+
+  /// Working the answer out: violet, a breath that rolls outward (4.5%).
+  thinking,
+
+  /// A tool is running: magenta into orange, and a light running round
+  /// the inner ring.
+  responding,
+
+  /// Her turn: pink into magenta, pushed by her voice, the ribbons swaying.
+  speaking,
+
+  /// The turn landed: one outward pulse in green into cyan.
+  done,
+
+  /// The mic is paused while he types: idle's colours, holding still —
+  /// no frames while the keyboard moves (test/smoothness_test.dart).
+  paused,
+}
+
+/// The colour a mood is known by: for the status words, the dock's halo
+/// and anything else that says the state. Six colours; paused is idle's.
+Color orbMoodColor(OrbMood m) => _MoodLight.of(m).key;
+
+/// A mood's light (2026-09-30): the colour the rings lean toward — [inner]
+/// at the innermost tier to [outer] at the frame — how far ([lean]), and
+/// how bright the whole speaker is ([level]: idle is dim). Worked out once:
+/// the tones are fixed, never per frame.
+class _MoodLight {
+  const _MoodLight(this.inner, this.outer, this.lean, this.level, this.key);
+
+  final Color inner, outer;
+  final double lean, level;
+
+  /// The one colour it is known by (see [orbMoodColor]).
+  final Color key;
+
+  static final List<_MoodLight> _all = [
+    for (final m in OrbMood.values) _make(m),
+  ];
+
+  static _MoodLight of(OrbMood m) => _all[m.index];
+
+  /// The same eight numbers the scene eases (see [_BackdropScene.light]).
+  static final List<Float64List> _targets = [
+    for (final l in _all)
+      Float64List.fromList([
+        l.inner.r, l.inner.g, l.inner.b, //
+        l.outer.r, l.outer.g, l.outer.b, //
+        l.lean, l.level,
+      ]),
+  ];
+
+  static Float64List targetOf(OrbMood m) => _targets[m.index];
+
+  static _MoodLight _make(OrbMood m) {
+    final tip = NeonTone.tip.rim, info = NeonTone.info.rim;
+    final act = NeonTone.action.rim, ok = NeonTone.success.rim;
+    final pink = Color.lerp(act[0], act[1], 0.35)!;
+    return switch (m) {
+      OrbMood.idle ||
+      OrbMood.paused =>
+        _MoodLight(tip[0], tip[0], 0.40, 0.62, tip[0]),
+      OrbMood.listening => _MoodLight(tip[0], info[0], 0.50, 1.0, info[0]),
+      OrbMood.thinking => _MoodLight(info[1], info[1], 0.58, 0.95, info[1]),
+      OrbMood.responding => _MoodLight(act[0], act[1], 0.42, 0.80, act[0]),
+      OrbMood.speaking => _MoodLight(pink, act[0], 0.52, 1.0, pink),
+      OrbMood.done => _MoodLight(ok[0], ok[1], 0.62, 1.0, ok[0]),
+    };
+  }
+}
+
+/// One channel of a colour leaned toward a mood's light: [base] toward
+/// [tint] by [lean], the whole scaled by [level]. The GPU path does this on
+/// every frame with the eased light; the Canvas path once per mood, with
+/// the settled light — so the two pictures agree once the light settles.
+double _lit(double base, double tint, double lean, double level) =>
+    ((base + (tint - base) * lean) * level).clamp(0.0, 1.0);
+
+/// Where on the inner-to-outer lean an element sits: its tier's share of
+/// the frame's. The ribbons, the sparkles and the wash have their own.
+double _tierShare(OrbElement el) => el.tier / OrbRings.frame;
+const double _ribbonNearShare = 0.25, _ribbonFarShare = 1.0;
+const double _ribbonAccentShare = 0.6;
+
+/// The wash leans toward a deep version of the light (lit haze, never a
+/// bright fog), and the sparkles only a little (they stay near white).
+const double _washShade = 0.16, _sparkleLean = 0.3;
+
+/// THE WORKING LIGHT (RESPONDING): a comet on the innermost ring, its
+/// head [_arcSpan] radians ahead of its tail, once round every
+/// [_arcTurn] seconds. Its radius in R (the innermost ring's).
+const double _arcRadius = 1.10, _arcSpan = 2.2, _arcTurn = 1.4;
+
+/// THE DONE PULSE: how long it runs (s), and each tier's bump.
+const double _pulseEnd = 0.9, _pulseLen = 0.34, _pulseLag = 0.05;
+const double _pulsePush = 0.065;
 
 /// The words in the disc for the assistant's [name]: "My Assistant" until
 /// the owner has named it (the neutral default, the same rule the splash
@@ -444,6 +551,14 @@ class VoiceOrbBackdrop extends StatefulWidget {
   @visibleForTesting
   static double debugPush = 0;
 
+  /// The working light's strength on the last frame (0..1), for tests.
+  @visibleForTesting
+  static double debugArc = 0;
+
+  /// The ribbons' sway on the last frame (in R), for tests.
+  @visibleForTesting
+  static double debugSway = 0;
+
   @override
   State<VoiceOrbBackdrop> createState() => _VoiceOrbBackdropState();
 }
@@ -459,31 +574,55 @@ class _BackdropScene extends ChangeNotifier {
   /// 0..1 — the bloom-in (see [_VoiceOrbBackdropState._bloomDelay]).
   double appear = 0;
 
-  /// Eased 0..1: thinking; the voice's loudness; a session running.
-  double think = 0, glow = 0, alive = 0;
+  /// Eased 0..1: thinking; the voice's loudness; idle's calm breath; her
+  /// voice's sway (2026-09-30: the ribbons sway only while she speaks).
+  double think = 0, glow = 0, calm = 0, swayK = 0;
 
   /// Each moving tier's push (a share of its radius) and its speed.
   final Float64List x = Float64List(5), v = Float64List(5);
 
+  /// THE MOOD'S LIGHT, eased (2026-09-30): inner rgb, outer rgb, lean,
+  /// level — see [_MoodLight]. The GPU path leans every colour by it.
+  final Float64List light = Float64List(8);
+
+  /// The mood whose meshes the Canvas path draws (its settled light).
+  OrbMood mood = OrbMood.idle;
+
+  /// The working light: 0..1 strength, and its head's angle (radians,
+  /// kept within one turn — never a clock).
+  double arc = 0, arcAngle = -math.pi / 2;
+
+  /// Seconds into the done pulse; [_pulseEnd] or more: none running.
+  double pulse = _pulseEnd;
+
   /// How much wider tier [t] is drawn than at rest.
   double scaleOf(int t) => t >= OrbRings.frame ? 1.0 : 1.0 + x[t];
 
-  /// The ribbons drift up and down a little while a session runs...
-  double get sway => alive * 0.022 * math.sin(0.47 * sec);
+  /// The ribbons drift up and down while she speaks...
+  double get sway => swayK * 0.03 * math.sin(0.9 * sec);
 
   /// ...and swell with the voice.
   double get stretch => 1 + 0.10 * glow;
+
+  /// Takes a mood's light at once (a new session, Remove animations).
+  void snapLight(OrbMood m) {
+    light.setAll(0, _MoodLight.targetOf(m));
+  }
 
   /// The GPU program's shader (see [_BackdropPainter._paintGpu]): made on
   /// the first frame drawn with it and reused.
   ui.FragmentShader? shader;
 
+  /// Every motion at rest (the light and the working light are not
+  /// motion: they are set to their mood's by the caller).
   void reset() {
     x.fillRange(0, 5, 0);
     v.fillRange(0, 5, 0);
     think = 0;
     glow = 0;
-    alive = 0;
+    calm = 0;
+    swayK = 0;
+    pulse = _pulseEnd;
   }
 
   void changed() => notifyListeners();
@@ -517,17 +656,39 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
       ((_shownFor - _bloomDelay) / _bloomFade).clamp(0.0, 1.0);
 
   /// "Remove animations" is on: the rings hold still (the bloom still
-  /// fades in — the app's rule is "fade only").
+  /// fades in — the app's rule is "fade only"), and a state is its colour
+  /// alone — taken at once, with the working light standing still.
   bool _still = false;
 
+  /// Something moves in this mood: every mood but [OrbMood.paused] (idle
+  /// breathes since 2026-09-30).
   bool get _moving =>
-      widget.active && widget.mood != OrbMood.idle && !_still;
+      widget.active && widget.mood != OrbMood.paused && !_still;
 
-  /// Fully faded in and every ring at rest: nothing left to move.
+  /// The working light's strength in this mood.
+  double get _arcTarget =>
+      widget.active && widget.mood == OrbMood.responding ? 1.0 : 0.0;
+
+  /// The light has reached its mood's.
+  bool get _lightSettled {
+    final t = _MoodLight.targetOf(widget.mood), l = _scene.light;
+    for (var i = 0; i < 8; i++) {
+      if ((l[i] - t[i]).abs() >= 1e-3) return false;
+    }
+    return true;
+  }
+
+  /// Fully faded in, every ring at rest and the light settled: nothing
+  /// left to move. A running working light never rests.
   bool get _settled {
     final sc = _scene;
     if (_appear < 1 || sc.think >= 0.01 || sc.glow >= 0.01) return false;
-    if (sc.alive >= 0.01) return false;
+    if (sc.calm >= 0.01 || sc.swayK >= 0.01 || sc.pulse < _pulseEnd) {
+      return false;
+    }
+    final arcTo = _arcTarget;
+    if ((sc.arc - arcTo).abs() >= 0.01 || (arcTo > 0 && !_still)) return false;
+    if (!_lightSettled) return false;
     for (var i = 0; i < 5; i++) {
       if (sc.x[i].abs() >= 1e-4 || sc.v[i].abs() >= 1e-3) return false;
     }
@@ -537,6 +698,9 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   @override
   void initState() {
     super.initState();
+    _scene
+      ..snapLight(widget.mood)
+      ..mood = widget.mood;
     // Load the GPU program now, while this sits built and hidden behind
     // Home, so the first session never draws with the fallback or waits.
     GpuProgram.voiceBackdrop.load();
@@ -553,14 +717,25 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   @override
   void didUpdateWidget(VoiceOrbBackdrop old) {
     super.didUpdateWidget(old);
-    // A new session: bloom in again, from rest. The screen was fully
-    // faded out while inactive, so starting from nothing is never seen.
+    final sc = _scene;
+    // A new session: bloom in again, from rest, in its mood's light. The
+    // screen was fully faded out while inactive, so starting from nothing
+    // is never seen.
     if (widget.active && !old.active) {
       _shownFor = 0;
-      _scene
+      sc
         ..appear = 0
-        ..reset();
+        ..reset()
+        ..snapLight(widget.mood)
+        ..arc = _arcTarget;
+    } else if (widget.mood == OrbMood.done &&
+        old.mood != OrbMood.done &&
+        widget.active &&
+        !_still) {
+      // The turn landed: one pulse, from wherever the rings are.
+      sc.pulse = 0;
     }
+    sc.mood = widget.mood;
     _sync();
   }
 
@@ -592,11 +767,15 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
   static double _ease(double v, double to, double rate, double dt) =>
       v + (to - v) * (1 - math.exp(-dt * rate));
 
+  /// A soft bump over 0..1 (nothing outside it).
+  static double _bump(double t) => t <= 0 || t >= 1 ? 0 : math.sin(math.pi * t);
+
   void _onTick(Duration elapsed) {
     final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.1);
     _lastTick = elapsed;
     final sc = _scene;
     final moving = _moving;
+    final mood = widget.mood;
 
     // A whisper does not move a speaker: below 3% is silence, and the
     // curve lifts quiet speech so it still shows (OrbRings.driveCurve:
@@ -608,24 +787,56 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
         : math.pow((heard - 0.03) / 0.97, OrbRings.driveCurve).toDouble();
     sc.glow = _ease(sc.glow, drive, drive > sc.glow ? 30 : 8, dt);
     sc.think =
-        _ease(sc.think, moving && widget.mood == OrbMood.thinking ? 1 : 0, 4, dt);
-    sc.alive = _ease(sc.alive, moving ? 1 : 0, 3, dt);
+        _ease(sc.think, moving && mood == OrbMood.thinking ? 1 : 0, 4, dt);
+    sc.calm = _ease(sc.calm, moving && mood == OrbMood.idle ? 1 : 0, 2, dt);
+    sc.swayK =
+        _ease(sc.swayK, moving && mood == OrbMood.speaking ? 1 : 0, 3, dt);
     sc.sec += dt;
     _shownFor += dt;
     sc.appear = _appear;
 
+    // THE LIGHT eases to the mood's in about a third of a second (a
+    // state change is seen at once, never a jump); held still, it is
+    // simply the mood's.
+    final to = _MoodLight.targetOf(mood);
+    for (var i = 0; i < 8; i++) {
+      sc.light[i] = _still ? to[i] : _ease(sc.light[i], to[i], 9, dt);
+    }
+    // THE WORKING LIGHT fades in and runs round; held still, it stands at
+    // the top.
+    final arcTo = _arcTarget;
+    if (_still) {
+      sc
+        ..arc = arcTo
+        ..arcAngle = -math.pi / 2 + _arcSpan / 2;
+    } else {
+      sc.arc = _ease(sc.arc, arcTo, 7, dt);
+      if (sc.arc > 0.001) {
+        sc.arcAngle = (sc.arcAngle + dt * 2 * math.pi / _arcTurn) % (2 * math.pi);
+      }
+    }
+    if (sc.pulse < _pulseEnd) sc.pulse = math.min(_pulseEnd, sc.pulse + dt);
+
     // THE SPEAKER. Each tier is a spring chasing the voice: pushed out as
     // far as OrbRings.push says at full voice, and — being under-damped —
     // it overshoots a little on the way back, the push-and-return of a
-    // cone. Thinking replaces the voice with a slow breath that rolls
-    // outward. Stepped in small pieces so a long frame stays stable.
+    // cone. Thinking replaces the voice with a breath that rolls outward
+    // (4.5% since 2026-09-30: at 1.8% nobody saw it), idle with a slow
+    // calm one, and done with a single pulse. Stepped in small pieces so a
+    // long frame stays stable.
     final steps = (dt * 240).ceil().clamp(1, 24);
     final h = dt / steps;
     for (var i = 0; i < 5; i++) {
       final breath = sc.think *
-          0.018 *
-          (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.12 * i) / 2.8));
-      final target = _still ? 0.0 : drive * OrbRings.push[i] + breath;
+              0.045 *
+              (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.16 * i) / 2.2)) +
+          sc.calm *
+              0.014 *
+              (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.2 * i) / 4.8));
+      final kick = _pulsePush *
+          (1 - 0.1 * i) *
+          _bump((sc.pulse - _pulseLag * i) / _pulseLen);
+      final target = _still ? 0.0 : drive * OrbRings.push[i] + breath + kick;
       final hz = OrbRings.springHz * (1 - OrbRings.springFalloff * i);
       final k = (2 * math.pi * hz) * (2 * math.pi * hz);
       final c = 2 * OrbRings.damping * math.sqrt(k);
@@ -642,10 +853,15 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     if (!moving && _settled) {
       // Come to rest exactly — the picture is the reference again — then
       // stop asking for frames.
-      sc.reset();
+      sc
+        ..reset()
+        ..snapLight(mood)
+        ..arc = arcTo;
       _ticker.stop();
     }
     VoiceOrbBackdrop.debugPush = sc.x[0];
+    VoiceOrbBackdrop.debugArc = sc.arc;
+    VoiceOrbBackdrop.debugSway = sc.sway;
     sc.changed();
   }
 
@@ -713,6 +929,18 @@ class _BackdropPainter extends CustomPainter {
   /// allocates nothing on a frame.
   void _f(double v) => _shader!.setFloat(_u++, v);
 
+  /// One colour, leaned toward the mood's eased light (see [_lit]) at
+  /// [share] of the way from the inner tier's tint to the outer's.
+  void _rgbLit(Color c, double share,
+      [double shade = 1, double leanScale = 1]) {
+    final l = scene.light;
+    final lean = l[6] * leanScale, level = l[7];
+    _f(_lit(c.r, (l[0] + (l[3] - l[0]) * share) * shade, lean, level));
+    _f(_lit(c.g, (l[1] + (l[4] - l[1]) * share) * shade, lean, level));
+    _f(_lit(c.b, (l[2] + (l[5] - l[2]) * share) * shade, lean, level));
+    _f(1);
+  }
+
   void _rgb(Color c) {
     _f(c.r);
     _f(c.g);
@@ -721,9 +949,10 @@ class _BackdropPainter extends CustomPainter {
   }
 
   /// THE GPU PATH: the whole picture — the teal wash under it, rings,
-  /// ribbons, sparkles — in ONE rectangle, drawn by
+  /// ribbons, sparkles, the working light — in ONE rectangle, drawn by
   /// shaders/voice_backdrop.frag. No offscreen layer, no paths, no blur,
-  /// nothing on the Canvas beside it.
+  /// nothing on the Canvas beside it. Every colour is leaned toward the
+  /// mood's light here, per frame (2026-09-30): the program is the same.
   void _paintGpu(Canvas canvas, Size size, ui.FragmentProgram program) {
     final sc = scene;
     final r = orbRadius;
@@ -750,16 +979,25 @@ class _BackdropPainter extends CustomPainter {
     // The palette, in the order the program declares it.
     final top = palette.elements, sides = palette.sides;
     for (var i = 0; i < top.length; i++) {
-      _rgb(top[i]);
+      _rgbLit(top[i], _tierShare(OrbRings.elements[i]));
     }
     for (var i = 0; i < sides.length; i++) {
-      if (!OrbRings.elements[i].lens) _rgb(sides[i]);
+      final el = OrbRings.elements[i];
+      if (!el.lens) _rgbLit(sides[i], _tierShare(el));
     }
-    _rgb(palette.ribbonNear);
-    _rgb(palette.ribbonFar);
-    _rgb(palette.ribbonAccent);
-    _rgb(palette.sparkle);
-    _rgb(palette.wash);
+    _rgbLit(palette.ribbonNear, _ribbonNearShare);
+    _rgbLit(palette.ribbonFar, _ribbonFarShare);
+    _rgbLit(palette.ribbonAccent, _ribbonAccentShare);
+    _rgbLit(palette.sparkle, 0, 1, _sparkleLean);
+    _rgbLit(palette.wash, 0, _washShade);
+    // uArc, uArcHead, uArcTail: the working light (strength 0: none).
+    final tone = NeonTone.action.rim;
+    _f(sc.arcAngle);
+    _f(sc.arc);
+    _f(_arcSpan);
+    _f(_arcRadius);
+    _rgb(tone[1]);
+    _rgb(tone[0]);
     if (_box.width != size.width || _box.height != size.height) {
       _box = Offset.zero & size;
     }
@@ -773,10 +1011,12 @@ class _BackdropPainter extends CustomPainter {
   /// its push, so the keyboard shrinking the orb or the voice pushing a
   /// ring rebuilds nothing. Each mesh carries its colours in its corners,
   /// and the GPU program interpolates exactly the same way, so the two
-  /// pictures match to a rounding step.
+  /// pictures match to a rounding step. The meshes carry a mood's settled
+  /// light (built once per mood): a change of state is a cut here, where
+  /// the GPU path eases it.
   void _paintCanvas(Canvas canvas, Size size) {
     final sc = scene;
-    final meshes = _OrbMeshes.of(palette);
+    final meshes = _OrbMeshes.of(palette, sc.mood);
     final r = orbRadius;
     final cx = size.width / 2, cy = size.height / 2;
     if (sc.appear != _meshAlpha) {
@@ -799,6 +1039,21 @@ class _BackdropPainter extends CustomPainter {
       canvas.drawVertices(meshes.elements[i], BlendMode.dst, _mesh);
       canvas.restore();
     }
+    // The working light: its strokes made once round the origin and
+    // turned into place (only while a tool runs).
+    if (sc.arc > 0.004) {
+      canvas.save();
+      canvas.translate(cx, cy);
+      canvas.rotate(sc.arcAngle);
+      canvas.scale(r, r);
+      final arc = _ArcStrokes.instance;
+      for (var i = 0; i < arc.paints.length; i++) {
+        final p = arc.paints[i]
+          ..color = Color.fromRGBO(0, 0, 0, arc.alphas[i] * sc.arc * sc.appear);
+        canvas.drawArc(arc.box, -_arcSpan, _arcSpan, false, p);
+      }
+      canvas.restore();
+    }
     canvas.save();
     canvas.translate(cx, cy + sc.sway * r);
     canvas.scale(r, r * sc.stretch);
@@ -816,8 +1071,77 @@ class _BackdropPainter extends CustomPainter {
       old.dpr != dpr;
 }
 
-/// THE CANVAS PAINTER'S MESHES, built once per palette (and kept: the
-/// palette only changes when the owner picks a new theme colour).
+/// THE WORKING LIGHT for the Canvas path: three strokes along the arc —
+/// a bright core and two fainter, wider ones for its light (a blur would
+/// cost a pass) — shaded from the tail (magenta, fading in) to the head
+/// (orange). In units of R, round the origin, head at angle 0; made once.
+class _ArcStrokes {
+  _ArcStrokes._() {
+    final tone = NeonTone.action.rim;
+    final shader = SweepGradient(
+      startAngle: 2 * math.pi - _arcSpan,
+      endAngle: 2 * math.pi,
+      colors: [tone[0].withValues(alpha: 0), tone[0], tone[1]],
+      stops: const [0.0, 0.45, 1.0],
+    ).createShader(box);
+    for (final (width, alpha) in const [
+      (0.11, 0.16),
+      (0.055, 0.35),
+      (0.022, 1.0),
+    ]) {
+      paints.add(Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = width
+        ..shader = shader);
+      alphas.add(alpha);
+    }
+  }
+
+  static final _ArcStrokes instance = _ArcStrokes._();
+
+  final Rect box = Rect.fromCircle(center: Offset.zero, radius: _arcRadius);
+  final List<Paint> paints = [];
+  final List<double> alphas = [];
+}
+
+/// A palette leaned toward one mood's settled light — what the Canvas
+/// path's meshes are built from (the GPU path leans per frame instead).
+class _LitPalette {
+  _LitPalette(OrbPalette p, OrbMood m)
+      : elements = [
+          for (var i = 0; i < p.elements.length; i++)
+            _c(p.elements[i], m, _tierShare(OrbRings.elements[i])),
+        ],
+        sides = [
+          for (var i = 0; i < p.sides.length; i++)
+            _c(p.sides[i], m, _tierShare(OrbRings.elements[i])),
+        ],
+        ribbonNear = _c(p.ribbonNear, m, _ribbonNearShare),
+        ribbonFar = _c(p.ribbonFar, m, _ribbonFarShare),
+        ribbonAccent = _c(p.ribbonAccent, m, _ribbonAccentShare),
+        sparkle = _c(p.sparkle, m, 0, 1, _sparkleLean),
+        wash = _c(p.wash, m, 0, _washShade);
+
+  final List<Color> elements, sides;
+  final Color ribbonNear, ribbonFar, ribbonAccent, sparkle, wash;
+
+  static Color _c(Color c, OrbMood m, double share,
+      [double shade = 1, double leanScale = 1]) {
+    final l = _MoodLight.targetOf(m);
+    final lean = l[6] * leanScale, level = l[7];
+    return Color.from(
+      alpha: 1,
+      red: _lit(c.r, (l[0] + (l[3] - l[0]) * share) * shade, lean, level),
+      green: _lit(c.g, (l[1] + (l[4] - l[1]) * share) * shade, lean, level),
+      blue: _lit(c.b, (l[2] + (l[5] - l[2]) * share) * shade, lean, level),
+    );
+  }
+}
+
+/// THE CANVAS PAINTER'S MESHES, built once per palette and mood (and kept:
+/// the palette only changes when the owner picks a new theme colour, and
+/// there are six lights).
 ///
 /// Across an element the mesh has six rows — the glow's outer edge, the
 /// bright edge, the core's two sides, the bright edge and the glow's
@@ -825,7 +1149,7 @@ class _BackdropPainter extends CustomPainter {
 /// renderer's own interpolation between the rows draws exactly the
 /// profile the GPU program works out per pixel.
 class _OrbMeshes {
-  _OrbMeshes._(OrbPalette p)
+  _OrbMeshes._(_LitPalette p)
       : wash = _wash(p.wash),
         elements = [
           for (var i = 0; i < OrbRings.elements.length; i++)
@@ -837,14 +1161,17 @@ class _OrbMeshes {
   final List<ui.Vertices> elements;
   final ui.Vertices ribbons;
 
-  static _OrbMeshes? _last;
+  static final Map<OrbMood, _OrbMeshes> _made = {};
   static Color? _lastSeed;
 
-  static _OrbMeshes of(OrbPalette p) {
-    final last = _last;
-    if (last != null && _lastSeed == p.seed) return last;
-    _lastSeed = p.seed;
-    return _last = _OrbMeshes._(p);
+  static _OrbMeshes of(OrbPalette p, OrbMood mood) {
+    if (_lastSeed != p.seed) {
+      _lastSeed = p.seed;
+      _made.clear();
+    }
+    // Paused wears idle's light: one set of meshes for both.
+    final m = mood == OrbMood.paused ? OrbMood.idle : mood;
+    return _made[m] ??= _OrbMeshes._(_LitPalette(p, m));
   }
 
   /// A colour with its alpha, for a vertex.
@@ -964,7 +1291,7 @@ class _OrbMeshes {
   /// Each side's sheet, its strands (three rows each: nothing, the line,
   /// nothing) and accent strands, then the sparkles as little soft discs —
   /// in the order the program paints them.
-  static ui.Vertices _ribbons(OrbPalette p) {
+  static ui.Vertices _ribbons(_LitPalette p) {
     final pos = <double>[];
     final col = <int>[];
     final idx = <int>[];

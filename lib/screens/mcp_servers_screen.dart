@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
+import '../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  MCP SERVERS — advanced settings.
@@ -45,14 +47,15 @@ class _McpServersScreenState extends State<McpServersScreen> {
     setState(() {
       _loading = false;
       if (r == null) {
-        _error = "Couldn't reach the server.";
+        _error = "Couldn't load your connected tools";
       } else {
         _servers = (r['servers'] as List?) ?? [];
       }
     });
   }
 
-  Future<void> _act(int id, String path, {String method = 'POST', Object? body}) async {
+  Future<void> _act(int id, String path,
+      {String method = 'POST', Object? body}) async {
     setState(() => _busy.add(id));
     final r = await ApiService.sendJson('/mcp/servers/$id$path',
         method: method, body: body);
@@ -71,12 +74,11 @@ class _McpServersScreenState extends State<McpServersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
-      appBar: appleAppBar(context, 'MCP servers'),
+    // The sky, and the theme's lit FAB (2026-09-30): the local fill
+    // colours matched the theme's and kept its glow off.
+    return NeonScaffold(
+      appBar: appleAppBar(context, 'Connected tools'),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Neon.violet,
-        foregroundColor: Neon.onAccent,
         onPressed: _addServer,
         icon: const Icon(Icons.add),
         label: const Text('Add server'),
@@ -84,7 +86,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const NeonLoader.page(semanticLabel: 'Loading your tools')
             : ListView(
                 padding: EdgeInsets.fromLTRB(
                     16, 8, 16, 96 + MediaQuery.paddingOf(context).bottom),
@@ -93,33 +95,32 @@ class _McpServersScreenState extends State<McpServersScreen> {
                     'Connect external tools — files, issue trackers, calendars — '
                     'and your assistant can use them in conversation. Optional: '
                     'everything works without them.',
+                    // textLo (2026-09-30): textDim fell under 4.5:1.
                     style: TextStyle(
-                        color: Neon.textDim, fontSize: 13),
+                        color: Neon.textLo, fontSize: NeonType.footnote),
                   ),
                   const SizedBox(height: 16),
+                  // A failed load hides the cards: their statuses would be
+                  // from before it, and could be wrong.
                   if (_error != null)
-                    _banner(_error!, AppleColors.orange),
-                  if (_servers.isEmpty && _error == null)
-                    _banner(
-                        'No servers yet. Add one to extend what your assistant can do.',
-                        Neon.textDim),
-                  ..._servers.map(_serverCard),
+                    NeonErrorState(message: _error!, onRetry: _load)
+                  else ...[
+                    if (_servers.isEmpty)
+                      NeonEmptyState(
+                        icon: Icons.extension_rounded,
+                        title: 'No servers yet',
+                        body: 'Add one to extend what your assistant can do.',
+                        actionLabel: 'Add server',
+                        actionIcon: Icons.add_rounded,
+                        onAction: _addServer,
+                      ),
+                    ..._servers.map(_serverCard),
+                  ],
                 ],
               ),
       ),
     );
   }
-
-  Widget _banner(String text, Color c) => Container(
-        padding: const EdgeInsets.all(14),
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: Neon.surface,
-          border: Border.all(color: Neon.line),
-        ),
-        child: Text(text, style: TextStyle(color: c)),
-      );
 
   Widget _serverCard(dynamic s) {
     final id = s['id'] as int;
@@ -128,130 +129,144 @@ class _McpServersScreenState extends State<McpServersScreen> {
     final busy = _busy.contains(id);
     final tools = (s['tools'] as List?) ?? [];
 
-    final (Color dot, String label) = switch (status) {
-      'connected' => (AppleColors.green, 'Connected'),
-      'connecting' || 'reconnecting' => (AppleColors.orange, 'Connecting…'),
-      'error' => (AppleColors.red, 'Error'),
-      'disabled' => (Neon.textDim, 'Disabled'),
-      _ => (Neon.textDim, 'Disconnected'),
+    // THE STATE IS THE LIGHT (2026-09-30): a live server's card is lit
+    // green, one connecting amber, a failed one red; an idle one stays a
+    // dark card with a hairline, so what needs a look stands out.
+    final (Color dot, String label, NeonTone? tone) = switch (status) {
+      'connected' => (Neon.success, 'Connected', NeonTone.success),
+      'connecting' || 'reconnecting' => (
+          Neon.warning,
+          'Connecting…',
+          NeonTone.warning
+        ),
+      'error' => (Neon.error, 'Error', NeonTone.danger),
+      'disabled' => (Neon.textDim, 'Disabled', null),
+      _ => (Neon.textDim, 'Disconnected', null),
     };
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: Neon.surface,
-        border: Border.all(color: Neon.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final body = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: dot,
+                    boxShadow:
+                        tone == null ? null : Neon.halo(dot, strength: 0.5))),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(s['name'] ?? '',
+                  style: TextStyle(
+                      color: Neon.textHi,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600)),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: busy
+                  ? null
+                  : (v) =>
+                      _act(id, '/enabled', method: 'PUT', body: {'enabled': v}),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '$label · ${s['transport']} · ${tools.length} tool${tools.length == 1 ? '' : 's'}',
+          style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote),
+        ),
+        if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(s['lastError'],
+              style: TextStyle(color: Neon.errorInk, fontSize: 12)),
+        ],
+        if (s['hasSecrets'] == true) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Text('Authentication: ',
+                style: TextStyle(color: Neon.textDim, fontSize: 13)),
+            // The credential itself is never sent to the app.
+            Text('••••••••',
+                style: TextStyle(color: Neon.textLo, letterSpacing: 2)),
+          ]),
+        ],
+        if (tools.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: tools.take(12).map<Widget>((t) {
+              final risk = t['risk'] ?? 'low';
+              final c = risk == 'high'
+                  ? Neon.errorInk
+                  : risk == 'medium'
+                      ? Neon.warningInk
+                      : Neon.textLo;
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Neon.line),
+                ),
+                child: Text(t['name'] ?? '',
+                    style: TextStyle(color: c, fontSize: 12)),
+              );
+            }).toList(),
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (busy)
+          const LinearProgressIndicator(minHeight: 2)
+        else
+          Wrap(
+            spacing: 8,
             children: [
-              Container(
-                  width: 9,
-                  height: 9,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: dot)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(s['name'] ?? '',
-                    style: TextStyle(
-                        color: Neon.textHi,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600)),
-              ),
-              Switch(
-                value: enabled,
-                activeThumbColor: Colors.white,
-                activeTrackColor: AppleColors.green,
-                onChanged: busy
-                    ? null
-                    : (v) => _act(id, '/enabled',
-                        method: 'PUT', body: {'enabled': v}),
-              ),
+              if (status == 'connected')
+                TextButton(
+                    onPressed: () => _act(id, '/disconnect'),
+                    child: const Text('Disconnect'))
+              else if (enabled)
+                TextButton(
+                    onPressed: () => _act(id, '/connect'),
+                    child: Text(status == 'error' ? 'Retry' : 'Connect')),
+              TextButton(
+                  onPressed: () => _confirmDelete(id, s['name'] ?? ''),
+                  child:
+                      Text('Remove', style: TextStyle(color: Neon.errorInk))),
             ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            '$label · ${s['transport']} · ${tools.length} tool${tools.length == 1 ? '' : 's'}',
-            style: TextStyle(
-                color: Neon.textDim, fontSize: 13),
-          ),
-          if ((s['lastError'] ?? '').toString().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(s['lastError'],
-                style: TextStyle(color: Neon.errorInk, fontSize: 12)),
-          ],
-          if (s['hasSecrets'] == true) ...[
-            const SizedBox(height: 8),
-            Row(children: [
-              Text('Authentication: ',
-                  style: TextStyle(
-                      color: Neon.textDim, fontSize: 13)),
-              // The credential itself is never sent to the app.
-              Text('••••••••',
-                  style: TextStyle(color: Neon.textLo, letterSpacing: 2)),
-            ]),
-          ],
-          if (tools.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: tools.take(12).map<Widget>((t) {
-                final risk = t['risk'] ?? 'low';
-                final c = risk == 'high'
-                    ? AppleColors.red
-                    : risk == 'medium'
-                        ? AppleColors.orange
-                        : Neon.textDim;
-                return Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Neon.line),
-                  ),
-                  child: Text(t['name'] ?? '',
-                      style: TextStyle(color: c, fontSize: 12)),
-                );
-              }).toList(),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: tone == null
+          ? Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(Neon.rLg),
+                color: Neon.surface,
+                border: Border.all(color: Neon.line),
+              ),
+              child: body,
+            )
+          : GlowCard(
+              tone: tone,
+              halo: status == 'error' ? 0.6 : 0.35,
+              rimWidth: 1.6,
+              padding: const EdgeInsets.all(14.4),
+              child: body,
             ),
-          ],
-          const SizedBox(height: 12),
-          if (busy)
-            const LinearProgressIndicator(minHeight: 2)
-          else
-            Wrap(
-              spacing: 8,
-              children: [
-                if (status == 'connected')
-                  TextButton(
-                      onPressed: () => _act(id, '/disconnect'),
-                      child: const Text('Disconnect'))
-                else if (enabled)
-                  TextButton(
-                      onPressed: () => _act(id, '/connect'),
-                      child: Text(status == 'error' ? 'Retry' : 'Connect')),
-                TextButton(
-                    onPressed: () => _confirmDelete(id, s['name'] ?? ''),
-                    child: Text('Remove',
-                        style: TextStyle(color: Neon.errorInk))),
-              ],
-            ),
-        ],
-      ),
     );
   }
 
   Future<void> _confirmDelete(int id, String name) async {
-    final ok = await showDialog<bool>(
+    final ok = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: Neon.surface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14)),
         title: Text('Remove $name?', style: TextStyle(color: Neon.textHi)),
         content: Text(
             'Its tools will no longer be available to your assistant. Stored credentials are deleted.',
@@ -262,8 +277,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: Text('Remove',
-                  style: TextStyle(color: Neon.errorInk))),
+              child: Text('Remove', style: TextStyle(color: Neon.errorInk))),
         ],
       ),
     );
@@ -276,12 +290,9 @@ class _McpServersScreenState extends State<McpServersScreen> {
     final token = TextEditingController();
     var transport = 'http';
 
-    final saved = await showModalBottomSheet<bool>(
+    final saved = await showAppSheet<bool>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(14))),
       builder: (c) => StatefulBuilder(
         builder: (c, setSheet) => Padding(
           padding: EdgeInsets.fromLTRB(
@@ -309,13 +320,12 @@ class _McpServersScreenState extends State<McpServersScreen> {
               const SizedBox(height: 10),
               _field(url, 'Server URL', 'https://example.com/mcp'),
               const SizedBox(height: 10),
-              _field(token, 'Access token (optional)', '',
-                  obscure: true),
+              _field(token, 'Access token (optional)', '', obscure: true),
               const SizedBox(height: 6),
               Text(
                 'The token is encrypted on the server and never sent back to this app.',
-                style: TextStyle(
-                    color: Neon.textDim, fontSize: 12),
+                style:
+                    TextStyle(color: Neon.textLo, fontSize: NeonType.caption),
               ),
               const SizedBox(height: 16),
               ApplePrimaryButton(
@@ -337,8 +347,7 @@ class _McpServersScreenState extends State<McpServersScreen> {
       'name': name.text.trim(),
       'transport': transport,
       'config': {'url': url.text.trim()},
-      if (token.text.trim().isNotEmpty)
-        'secrets': {'token': token.text.trim()},
+      if (token.text.trim().isNotEmpty) 'secrets': {'token': token.text.trim()},
     });
     if (r == null) {
       _toast("Couldn't add that server.");

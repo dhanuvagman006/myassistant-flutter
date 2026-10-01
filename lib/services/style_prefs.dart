@@ -21,7 +21,8 @@ class StylePrefs extends ChangeNotifier {
   String answerLength = 'balanced';
   String uiLanguage = 'en';
 
-  /// TTS voice speed. 0.52 is the tuned default in VoiceService.
+  /// Speed of the on-device fallback voice (0.52 tuned). The assistant now
+  /// speaks through Gemini TTS, which takes no rate: kept for the setting.
   double speechRate = 0.52;
 
   bool _loaded = false;

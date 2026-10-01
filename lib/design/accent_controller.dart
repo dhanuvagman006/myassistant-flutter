@@ -23,7 +23,10 @@ class AccentController {
   /// "set indigo as default theme" (it was the app's own violet) — now
   /// the fluorescent Indigo below. Anyone who already picked a colour
   /// keeps it (or its fluorescent twin, see [load]).
-  static const defaultSeed = Color(0xFF6E73FF);
+  // ELECTRIC (2026-09-30): the client's reference is electric blue with
+  // purple and magenta light; its partner is set by hand (Neon's
+  // signature pair). Anyone who picked a colour keeps it.
+  static const defaultSeed = Color(0xFF3D8BFF);
 
   /// Bumps whenever the accent changes; the app root rebuilds on it.
   static final ValueNotifier<Color> seed = ValueNotifier(defaultSeed);
@@ -39,6 +42,7 @@ class AccentController {
   /// glyphs on top (Neon.onAccent) — test/contrast_test.dart checks every
   /// swatch in both themes.
   static const swatches = <(String, Color)>[
+    ('Electric', Color(0xFF3D8BFF)),
     ('Indigo', Color(0xFF6E73FF)),
     ('Violet', Color(0xFFB14DFF)),
     ('Magenta', Color(0xFFFF2BD6)),
@@ -78,9 +82,19 @@ class AccentController {
     return to == null ? c : Color(to);
   }
 
+  /// Set once the reference design's colours were applied (2026-09-30).
+  static const _neonKey = 'accent_neon_v1';
+
   static Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // THE REFERENCE'S COLOURS FOR EVERYONE, ONCE (owner, 2026-09-30): a
+      // colour picked before the neon design would make it someone else's
+      // design. Choosing again in You → Theme colour still works.
+      if (!(prefs.getBool(_neonKey) ?? false)) {
+        await prefs.remove(_key);
+        await prefs.setBool(_neonKey, true);
+      }
       final v = prefs.getInt(_key);
       if (v != null) {
         final c = migrate(Color(v));

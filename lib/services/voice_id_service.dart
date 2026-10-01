@@ -11,16 +11,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import '../core/log.dart';
-import 'live_service.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  VoiceIdService — "only MY voice".
 ///
 ///  The user records ~8 seconds of speech once; a speaker-embedding model
 ///  (sherpa-onnx CAM++ zh/en, bundled, fully offline — the sample never
-///  leaves the phone) turns it into a voiceprint stored locally. Live mode
-///  then scores every utterance against it and silently drops other
-///  people's speech before a single byte reaches the model.
+///  leaves the phone) turns it into a voiceprint stored locally, and
+///  [scoreUtterance] scores raw PCM against it — for a voice path that
+///  holds the microphone's audio itself (the hands-free cooking mode's
+///  Live session). The brain's conversation listens through the phone's
+///  own recogniser, which never hands the audio over, so nothing is
+///  scored there.
 ///
 ///  Everything runs in a dedicated isolate: model load and per-utterance
 ///  embedding (~tens of ms) never touch the UI thread.
@@ -77,8 +79,6 @@ class VoiceIdService {
       final p = await SharedPreferences.getInstance();
       await p.setBool(_prefEnabled, on);
     } catch (_) {}
-    // A conversation may already be running — flip its gate live too.
-    LiveService.instance.speakerGateEnabled = gateEnabled;
     if (on) unawaited(_ensureWorker()); // warm the model before first use
   }
 

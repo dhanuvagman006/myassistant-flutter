@@ -4,12 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
 import '../../features/assistant/state/assistant_state.dart';
 import '../../features/assistant/widgets/siri_orb.dart';
 import '../../services/assistant_identity.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/glow_cta.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  WELCOME — the payoff moment, shown ONCE right after onboarding.
@@ -75,97 +76,102 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final first =
-        (AuthService.instance.user?.name ?? '').trim().split(RegExp(r'\s+')).first;
+    final first = (AuthService.instance.user?.name ?? '')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .first;
     final who = first.isEmpty ? 'aboard' : first;
     final assistant = AssistantIdentity.name;
 
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // Under Home's sky (2026-09-30): Welcome is the door into it.
+    return NeonScaffold(
       body: Stack(
         fit: StackFit.expand,
         children: [
           SafeArea(
             // Full height when there is room (the Spacers centre the
             // story); scrolls instead of overflowing when there is not.
-            child: LayoutBuilder(builder: (context, box) => SingleChildScrollView(
-            child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: box.maxHeight),
-            child: IntrinsicHeight(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Spacer(),
-                      _stage(
-                        0.0,
-                        0.45,
-                        // Alive from the very first frame — this is the
-                        // moment the product stops being a form.
-                        const Center(
-                          child: SiriOrb(
-                            size: 132,
-                            phase: AssistantPhase.listening,
-                            level: 0.3,
+            child: LayoutBuilder(
+                builder: (context, box) => SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: box.maxHeight),
+                        child: IntrinsicHeight(
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 420),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(24, 24, 24, 28),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    const Spacer(),
+                                    _stage(
+                                      0.0,
+                                      0.45,
+                                      // Alive from the very first frame — this is the
+                                      // moment the product stops being a form.
+                                      const Center(
+                                        child: SiriOrb(
+                                          size: 132,
+                                          phase: AssistantPhase.listening,
+                                          level: 0.3,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 34),
+                                    _stage(
+                                      0.25,
+                                      0.7,
+                                      Text(
+                                        first.isEmpty
+                                            ? 'Welcome aboard!'
+                                            : 'You\'re all set, $who!',
+                                        textAlign: TextAlign.center,
+                                        style: GoogleFonts.spaceGrotesk(
+                                          fontSize: 30,
+                                          fontWeight: FontWeight.w700,
+                                          color: Neon.textHi,
+                                          letterSpacing: -0.6,
+                                          height: 1.15,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _stage(
+                                      0.45,
+                                      0.85,
+                                      Text(
+                                        '$assistant is ready — calls, reminders, messages '
+                                        'and your day, all handled by voice.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                            color: Neon.textLo,
+                                            fontSize: 15,
+                                            height: 1.5),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    _stage(
+                                      0.6,
+                                      1.0,
+                                      GlowCta(
+                                        label: 'Meet $assistant',
+                                        onPressed: () {
+                                          HapticFeedback.lightImpact();
+                                          widget.onDone();
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 34),
-                      _stage(
-                        0.25,
-                        0.7,
-                        Text(
-                          first.isEmpty
-                              ? 'Welcome aboard!'
-                              : 'You\'re all set, $who!',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 30,
-                            fontWeight: FontWeight.w700,
-                            color: Neon.textHi,
-                            letterSpacing: -0.6,
-                            height: 1.15,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _stage(
-                        0.45,
-                        0.85,
-                        Text(
-                          '$assistant is ready — calls, reminders, messages '
-                          'and your day, all handled by voice.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Neon.textLo,
-                              fontSize: 15,
-                              height: 1.5),
-                        ),
-                      ),
-                      const Spacer(),
-                      _stage(
-                        0.6,
-                        1.0,
-                        ApplePrimaryButton(
-                          label: 'Meet $assistant',
-                          onPressed: () {
-                            HapticFeedback.lightImpact();
-                            widget.onDone();
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            ),
-            ),
-            )),
+                    )),
           ),
           // Confetti on top of everything, taps pass straight through.
           // ITS OWN LAYER, repainted straight from the controller
@@ -214,7 +220,7 @@ class _Particle {
     Neon.cyan,
     Neon.pink,
     Neon.lime,
-    const Color(0xFFF59E0B),
+    Neon.warning,
   ];
 
   factory _Particle.random(math.Random r) => _Particle(
@@ -246,11 +252,10 @@ class _ConfettiPainter extends CustomPainter {
       final local = ((t - p.delay) / (1 - p.delay)).clamp(0.0, 1.0);
       if (local <= 0) continue;
       final seconds = local * 2.6;
-      final x = (p.x0 + p.vx * seconds +
-              0.02 * math.sin(seconds * 5 + p.phase)) *
-          size.width;
-      final y =
-          (p.vy * seconds + 0.35 * seconds * seconds) * size.height - 12;
+      final x =
+          (p.x0 + p.vx * seconds + 0.02 * math.sin(seconds * 5 + p.phase)) *
+              size.width;
+      final y = (p.vy * seconds + 0.35 * seconds * seconds) * size.height - 12;
       if (y > size.height + 20) continue;
       // Fade out over the last third of each piece's life.
       final alpha = local < 0.66 ? 1.0 : (1 - (local - 0.66) / 0.34);
@@ -259,8 +264,7 @@ class _ConfettiPainter extends CustomPainter {
       canvas.translate(x, y);
       canvas.rotate(p.phase + p.spin * seconds);
       // Squash one axis over time — reads as a tumbling paper rectangle.
-      final squash =
-          0.4 + 0.6 * math.sin(seconds * 7 + p.phase).abs();
+      final squash = 0.4 + 0.6 * math.sin(seconds * 7 + p.phase).abs();
       canvas.drawRect(
         Rect.fromCenter(
             center: Offset.zero, width: p.size, height: p.size * squash),

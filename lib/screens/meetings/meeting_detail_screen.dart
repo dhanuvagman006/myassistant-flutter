@@ -6,16 +6,23 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/motion.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
+import '../../widgets/neon_cards.dart';
 import '../../services/meetings_service.dart';
 import '../../services/app_feedback.dart';
 
 /// THE MINUTES. Summary, what was decided, who does what by when, a
 /// follow-up message ready to send, and the whole thing as a PDF.
 class MeetingDetailScreen extends StatefulWidget {
-  const MeetingDetailScreen({super.key, required this.id});
+  const MeetingDetailScreen({super.key, required this.id, this.preview});
   final int id;
+
+  /// The Meetings list's row, shown in the header while the minutes load
+  /// — and what the row flies into (2026-09-30).
+  final Map<String, dynamic>? preview;
 
   @override
   State<MeetingDetailScreen> createState() => _MeetingDetailScreenState();
@@ -76,44 +83,55 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final m = _m;
+    final head = m ?? widget.preview;
     final done = m?['status'] == 'done';
-    return Scaffold(
-      backgroundColor: Neon.bg,
-      appBar: AppBar(
-        backgroundColor: Neon.bg,
-        elevation: 0,
-        iconTheme: IconThemeData(color: Neon.textHi),
-        title: Text((m?['title'] ?? 'Meeting').toString(),
-            style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w700)),
-        actions: [
-          if (done)
-            IconButton(
-              tooltip: 'Share minutes (PDF)',
-              onPressed: _sharing ? null : _sharePdf,
-              icon: _sharing
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Neon.cyan))
-                  : Icon(Icons.picture_as_pdf_rounded, color: Neon.cyan),
-            ),
-        ],
-      ),
+    // Under the night sky (2026-09-30).
+    return NeonScaffold(
+      appBar: appleAppBar(context, (head?['title'] ?? 'Meeting').toString(),
+          actions: [
+            if (done)
+              IconButton(
+                tooltip: 'Share minutes (PDF)',
+                onPressed: _sharing ? null : _sharePdf,
+                icon: _sharing
+                    ? const NeonLoader.inline(semanticLabel: 'Preparing PDF')
+                    : Icon(Icons.picture_as_pdf_rounded, color: Neon.cyan),
+              ),
+          ]),
       body: SafeArea(
-        child: _loading
-            ? Center(child: CircularProgressIndicator(color: Neon.textLo, strokeWidth: 2))
-            : m == null
-                ? Center(
-                    child: Text("Couldn't load this meeting.",
-                        style: TextStyle(color: Neon.textDim)))
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 30),
-                    children: [
-                      _header(m),
-                      const SizedBox(height: 12),
-                      ..._body(m),
-                    ],
+        child: m == null
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (head != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                      child: _header(head),
+                    ),
+                  Expanded(
+                    child: StateSwitch(
+                      state: _loading,
+                      child: _loading
+                          ? const NeonLoader.page()
+                          : NeonErrorState(
+                              message: "Couldn't load this meeting",
+                              onRetry: () {
+                                setState(() => _loading = true);
+                                _load();
+                              },
+                            ),
+                    ),
                   ),
+                ],
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 30),
+                children: [
+                  _header(m),
+                  const SizedBox(height: 12),
+                  ..._body(m),
+                ],
+              ),
       ),
     );
   }
@@ -128,38 +146,57 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
       if (mins > 0) '$mins min',
     ].join(' · ');
     final people = (m['participants'] ?? '').toString();
-    return _card(Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(line, style: TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w600)),
-        if (people.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(people, style: TextStyle(color: Neon.textDim, fontSize: 13)),
+    return cardHero(
+      context,
+      meetingHeroTag(widget.id),
+      RimCard(
+        radius: Neon.rLg,
+        child: Row(children: [
+          const ToneTile(Icons.groups_rounded, NeonTone.info, size: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(line,
+                    style: NeonType.manrope(NeonType.body, FontWeight.w600)
+                        .copyWith(color: Neon.textHi)),
+                if (people.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(people,
+                        style: TextStyle(
+                            color: Neon.textDim, fontSize: NeonType.footnote)),
+                  ),
+              ],
+            ),
           ),
-      ],
-    ));
+        ]),
+      ),
+      cardRadius: Neon.rMd,
+      pageRadius: Neon.rLg,
+    );
   }
 
   List<Widget> _body(Map<String, dynamic> m) {
     final status = (m['status'] ?? 'done').toString();
     if (status == 'processing') {
       return [
-        _card(Row(children: [
-          SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Neon.cyan)),
+        RimCard(tone: NeonTone.tip, radius: Neon.rLg, child: Row(children: [
+          const NeonLoader.inline(semanticLabel: 'Writing your minutes'),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
                 'Writing your minutes — this takes a few minutes. You can '
                 'leave; a notification comes when they are ready.',
-                style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.45)),
+                style: TextStyle(color: Neon.textLo, fontSize: NeonType.body, height: 1.45)),
           ),
         ])),
       ];
     }
     if (status == 'failed') {
       return [
-        _card(Row(children: [
+        RimCard(tone: NeonTone.warning, radius: Neon.rLg, child: Row(children: [
           Icon(Icons.error_outline_rounded, color: Neon.warning),
           const SizedBox(width: 12),
           Expanded(
@@ -178,14 +215,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
     final transcript = (m['transcript'] ?? '').toString();
     return [
       if ((m['summary'] ?? '').toString().isNotEmpty)
-        Reveal(child: _section(Icons.subject_rounded, 'Summary', Neon.violet,
+        Reveal(child: _section(Icons.subject_rounded, 'Summary', NeonTone.info,
             Text(m['summary'].toString(),
                 style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5)))),
       if (decisions.isNotEmpty) ...[
         const SizedBox(height: 12),
         Reveal(
           delayMs: 60,
-          child: _section(Icons.gavel_rounded, 'Decisions', Neon.cyan, Column(
+          child: _section(Icons.gavel_rounded, 'Decisions', NeonTone.tip, Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [for (final d in decisions) _bullet(d, Neon.cyan)],
           )),
@@ -195,7 +232,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
         const SizedBox(height: 12),
         Reveal(
           delayMs: 120,
-          child: _section(Icons.task_alt_rounded, 'Action items', Neon.success, Column(
+          child: _section(Icons.task_alt_rounded, 'Action items', NeonTone.success, Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               for (final a in actions)
@@ -229,7 +266,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
         const SizedBox(height: 12),
         Reveal(
           delayMs: 180,
-          child: _section(Icons.send_rounded, 'Follow-up message', Neon.pink, Column(
+          child: _section(Icons.send_rounded, 'Follow-up message', NeonTone.action, Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(follow, style: TextStyle(color: Neon.textLo, fontSize: 14, height: 1.5)),
@@ -266,15 +303,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
       ),
       if (transcript.isNotEmpty) ...[
         const SizedBox(height: 12),
-        _section(Icons.notes_rounded, 'Transcript', Neon.textLo, Column(
+        _section(Icons.notes_rounded, 'Transcript', NeonTone.discovery, Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_showTranscript)
-              Text(transcript,
-                  style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.5)),
-            TextButton(
+            // Opens in place on the app's clock (2026-09-30; it jumped).
+            Collapse(
+              open: _showTranscript,
+              child: Text(transcript,
+                  style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote, height: 1.5)),
+            ),
+            TextButton.icon(
               onPressed: () => setState(() => _showTranscript = !_showTranscript),
-              child: Text(_showTranscript ? 'Hide transcript' : 'Show full transcript'),
+              icon: ExpandChevron(open: _showTranscript, size: 18),
+              label: Text(_showTranscript ? 'Hide transcript' : 'Show full transcript'),
             ),
           ],
         )),
@@ -294,31 +335,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen> {
         ]),
       );
 
-  Widget _card(Widget child) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(Neon.rLg),
-          border: Border.all(color: Neon.line),
-        ),
-        child: child,
-      );
-
-  Widget _section(IconData icon, String title, Color tint, Widget body) => _card(Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Container(
-              width: 26,
-              height: 26,
-              decoration: BoxDecoration(color: tint.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(8)),
-              child: Icon(icon, size: 15, color: tint),
-            ),
-            const SizedBox(width: 9),
-            Text(title, style: TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w700)),
-          ]),
-          const SizedBox(height: 10),
-          body,
-        ],
-      ));
+  Widget _section(IconData icon, String title, NeonTone tone, Widget body) =>
+      NeonSection(icon: icon, title: title, tone: tone, child: body);
 }
+
+/// The tag a Meetings row and its minutes' header card fly under.
+Object meetingHeroTag(int id) => cardHeroTag(('meeting', id));

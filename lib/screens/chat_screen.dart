@@ -4,15 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../design/apple_kit.dart' show GroupedCard;
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../models/user_document.dart';
 import '../services/api_service.dart';
 import '../widgets/document_tile.dart'
     show documentGlyph, documentTypeLabel, openDocumentFile;
+import '../widgets/chat_bubble.dart';
 import 'chat_group_screen.dart';
 import 'chat_new_screen.dart';
 import '../services/app_feedback.dart';
@@ -133,6 +136,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// The tab's name in the app's light at night, as [LargeTitle] draws it.
+  static Widget _litTitle(Widget title) => Neon.isDark
+      ? ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (r) =>
+              LinearGradient(colors: [Neon.cyan, Neon.pink]).createShader(r),
+          child: title,
+        )
+      : title;
+
   String _when(int ms) {
     if (ms <= 0) return '';
     final d = DateTime.fromMillisecondsSinceEpoch(ms);
@@ -157,12 +170,15 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.fromLTRB(20, 18, 10, 8),
             child: Row(
               children: [
-                Text('Chat',
+                // 2026-09-30 visual QA: lit like Hub's and You's LargeTitle
+                // (cyan into magenta at night); it was the one plain white
+                // tab name.
+                _litTitle(Text('Chat',
                     style: GoogleFonts.spaceGrotesk(
                         fontSize: 32,
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.6,
-                        color: Neon.textHi)),
+                        color: Neon.isDark ? Colors.white : Neon.textHi))),
                 const Spacer(),
                 // NEW GROUP, then NEW CHAT — the order they are reached
                 // in: you make a group rarely and message somebody often,
@@ -178,10 +194,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 IconButton(
                   tooltip: 'New chat',
-                  onPressed: () => Navigator.of(context)
-                      .push(MaterialPageRoute(
-                          builder: (_) => const ChatNewScreen()))
-                      .then((_) => _load()),
+                  onPressed: _newChat,
                   icon: Icon(Icons.edit_square, color: Neon.textHi),
                 ),
               ],
@@ -194,61 +207,52 @@ class _ChatScreenState extends State<ChatScreen> {
               // No spinner flash on a quick load, and the list fades in.
               child: LoadSwitch(
               loading: _error == null && threads == null,
+              spinner: const NeonLoader.page(),
+              // In a list, so pulling down still retries too.
               child: _error != null
                   ? ListView(children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
-                        child: Column(children: [
-                          Icon(Icons.cloud_off_rounded,
-                              size: 34, color: Neon.textLo),
-                          const SizedBox(height: 12),
-                          Text("$_error Check your connection.",
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Neon.textLo, height: 1.45)),
-                          const SizedBox(height: 10),
-                          TextButton.icon(
-                            onPressed: () {
-                              setState(() => _error = null);
-                              _load();
-                            },
-                            icon: const Icon(Icons.refresh_rounded, size: 18),
-                            label: const Text('Try again'),
-                          ),
-                        ]),
+                      const SizedBox(height: 32),
+                      NeonErrorState(
+                        message: _error!,
+                        onRetry: () {
+                          setState(() => _error = null);
+                          _load();
+                        },
                       ),
                     ])
                   : threads == null
-                      ? const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const NeonLoader.page()
                       : (threads.isEmpty && _groups.isEmpty)
+                          // 2026-09-30: the shared empty state, with the
+                          // next step as its action.
                           ? ListView(children: [
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
-                                child: Column(children: [
-                                  Icon(Icons.forum_outlined,
-                                      size: 38, color: Neon.violet),
-                                  const SizedBox(height: 14),
-                                  Text(
-                                    'No chats yet.\n\nSay "send a message to '
-                                    '<name>" or "send my <document> to <name>" '
-                                    '— everything lands here.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        color: Neon.textLo,
-                                        height: 1.5,
-                                        fontSize: 14),
-                                  ),
-                                ]),
+                              const SizedBox(height: 32),
+                              NeonEmptyState(
+                                icon: Icons.forum_outlined,
+                                title: 'No chats yet',
+                                body: 'Say "send a message to <name>" or "send '
+                                    'my <document> to <name>" — everything '
+                                    'lands here.',
+                                actionLabel: 'New chat',
+                                actionIcon: Icons.edit_square,
+                                onAction: _newChat,
                               ),
                             ])
-                          : ListView.builder(
+                          // 2026-09-30: one lit group, like every list in
+                          // the app, instead of bare Material rows.
+                          : ListView(
                               // Clears the dock and the mic on every phone.
                               padding: EdgeInsets.fromLTRB(
-                                  12, 0, 12, Dock.clearance(context)),
-                              itemCount: _groups.length + threads.length,
-                              itemBuilder: (_, i) => i < _groups.length
-                                  ? _groupTile(_groups[i])
-                                  : _tile(threads[i - _groups.length]),
+                                  16, 4, 16, Dock.clearance(context)),
+                              children: [
+                                GroupedCard(
+                                  dividerInset: 76,
+                                  children: [
+                                    for (final g in _groups) _groupTile(g),
+                                    for (final t in threads) _tile(t),
+                                  ],
+                                ),
+                              ],
                             ),
               ),
             ),
@@ -258,103 +262,105 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _groupTile(_ChatGroup g) => ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+  void _newChat() => Navigator.of(context)
+      .push(MaterialPageRoute(builder: (_) => const ChatNewScreen()))
+      .then((_) => _load());
+
+  /// One row of the inbox: who, the last line, and on the right when and
+  /// how many are unread. It dips under the finger, as every row does.
+  Widget _row({
+    required Widget leading,
+    required String title,
+    required String subtitle,
+    required bool unread,
+    required Widget trailing,
+    required VoidCallback onTap,
+  }) =>
+      PressScale(
+        scale: 0.985,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 68),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              child: Row(
+                children: [
+                  leading,
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: NeonType.manrope(NeonType.callout,
+                                    unread ? FontWeight.w700 : FontWeight.w600)
+                                .copyWith(color: Neon.textHi)),
+                        const SizedBox(height: 2),
+                        Text(subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: unread ? Neon.textHi : Neon.textLo,
+                                fontSize: NeonType.footnote)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  trailing,
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  Widget _groupTile(_ChatGroup g) => _row(
         onTap: () => Navigator.of(context)
             .push(MaterialPageRoute(
               builder: (_) =>
                   ChatGroupScreen(groupId: g.id, title: g.title),
             ))
             .then((_) => _load()),
-        leading: CircleAvatar(
-          radius: 23,
-          backgroundColor: Neon.violet.withValues(alpha: 0.18),
-          child: Icon(Icons.groups_rounded, color: Neon.violet, size: 24),
-        ),
-        title: Text(g.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: Neon.textHi, fontWeight: FontWeight.w700, fontSize: 15)),
-        subtitle: Text(
-          g.last.isEmpty ? '${g.members} members' : g.last,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: Neon.textLo, fontSize: 13),
-        ),
+        leading: const ChatAvatar(icon: Icons.groups_rounded),
+        title: g.title,
+        subtitle: g.last.isEmpty ? '${g.members} members' : g.last,
+        unread: g.unread > 0,
         trailing: g.unread > 0
-            ? Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Neon.violet,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Text('${g.unread}',
-                    style: TextStyle(
-                        color: Neon.onAccent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700)),
-              )
-            : null,
+            ? ChatUnreadBadge(g.unread)
+            : const SizedBox.shrink(),
       );
 
-  Widget _tile(_ChatThread t) {
-    final initial =
-        t.name.isNotEmpty ? t.name.characters.first.toUpperCase() : '?';
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-      onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(
-            builder: (_) => ChatThreadScreen(phone: t.phone, name: t.name),
-          ))
-          .then((_) => _load()),
-      leading: CircleAvatar(
-        radius: 23,
-        backgroundColor: Neon.surfaceHigh,
-        child: Text(initial,
-            style: TextStyle(
-                color: Neon.violet,
-                fontSize: 17,
-                fontWeight: FontWeight.w700)),
-      ),
-      title: Text(t.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              color: Neon.textHi,
-              fontSize: 15,
-              fontWeight: t.unread > 0 ? FontWeight.w700 : FontWeight.w600)),
-      subtitle: Text(t.last,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              color: t.unread > 0 ? Neon.textHi : Neon.textLo, fontSize: 13)),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(_when(t.lastAt),
-              style: TextStyle(color: Neon.textDim, fontSize: 12)),
-          const SizedBox(height: 4),
-          if (t.unread > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: Neon.violet,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text('${t.unread}',
-                  style: TextStyle(
-                      color: Neon.onAccent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700)),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget _tile(_ChatThread t) => _row(
+        onTap: () => Navigator.of(context)
+            .push(MaterialPageRoute(
+              builder: (_) => ChatThreadScreen(phone: t.phone, name: t.name),
+            ))
+            .then((_) => _load()),
+        leading: ChatAvatar(name: t.name),
+        title: t.name,
+        subtitle: t.last,
+        unread: t.unread > 0,
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(_when(t.lastAt),
+                style: TextStyle(
+                    color: t.unread > 0 ? Neon.cyanInk : Neon.textDim,
+                    fontSize: NeonType.caption)),
+            if (t.unread > 0) ...[
+              const SizedBox(height: 4),
+              ChatUnreadBadge(t.unread),
+            ],
+          ],
+        ),
+      );
 }
 
 /* ====================================================================== */
@@ -420,7 +426,11 @@ class _AttachmentTile extends StatelessWidget {
       width: 190,
       constraints: const BoxConstraints(minHeight: 56),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      color: Neon.surfaceHigh,
+      decoration: BoxDecoration(
+        color: Neon.surfaceHigh,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Neon.lineBright),
+      ),
       child: Row(
         children: [
           Icon(g.icon, color: g.color, size: 26),
@@ -593,21 +603,20 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // 2026-09-30: under the app's sky (NeonScaffold); the menu takes the
+    // theme's floating surface.
+    return NeonScaffold(
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
         title: Text(widget.name,
             style: const TextStyle(fontSize: 17), maxLines: 1),
         actions: [
           PopupMenuButton<String>(
-            color: Neon.surface,
+            popUpAnimationStyle: appMenuAnimation(context),
             onSelected: _onMenu,
             itemBuilder: (_) => [
               PopupMenuItem(
                 value: 'mute',
-                child: Text(_muted ? 'Unmute' : 'Mute notifications',
-                    style: TextStyle(color: Neon.textHi)),
+                child: Text(_muted ? 'Unmute' : 'Mute notifications'),
               ),
               PopupMenuItem(
                 value: 'clear',
@@ -622,38 +631,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         children: [
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                ? const NeonLoader.page()
                 : _failed
-                    ? Center(
-                        // Scrolls: with the keyboard up there is little room.
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.cloud_off_rounded,
-                                  size: 34, color: Neon.textLo),
-                              const SizedBox(height: 12),
-                              Text(
-                                "Couldn't load this conversation. Check "
-                                'your connection.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Neon.textLo, height: 1.45),
-                              ),
-                              const SizedBox(height: 10),
-                              TextButton.icon(
-                                onPressed: () {
-                                  setState(() => _loading = true);
-                                  _load();
-                                },
-                                icon: const Icon(Icons.refresh_rounded,
-                                    size: 18),
-                                label: const Text('Try again'),
-                              ),
-                            ],
-                          ),
-                        ),
+                    // Scrolls when the keyboard leaves little room.
+                    ? NeonErrorState(
+                        message: "Couldn't load this conversation",
+                        onRetry: () {
+                          setState(() => _loading = true);
+                          _load();
+                        },
                       )
                 : ListView.builder(
                     controller: _scroll,
@@ -666,49 +652,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _input,
-                      minLines: 1,
-                      maxLines: 4,
-                      // The keyboard's Send key sends, as in group chat
-                      // (a multi-line field made it type a newline).
-                      keyboardType: TextInputType.text,
-                      textInputAction: TextInputAction.send,
-                      textCapitalization: TextCapitalization.sentences,
-                      onSubmitted: (_) => _send(),
-                      onEditingComplete: () {},
-                      decoration: InputDecoration(
-                        hintText: 'Message…',
-                        filled: true,
-                        fillColor: Neon.surfaceHigh,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _sending ? null : _send,
-                    style:
-                        IconButton.styleFrom(backgroundColor: Neon.violet),
-                    icon: _sending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.send_rounded,
-                            color: Colors.white, size: 20),
-                  ),
-                ],
+              // The keyboard's Send key sends, as in group chat; the rim
+              // lights while typing, the send button glows (2026-09-30).
+              child: ChatComposer(
+                controller: _input,
+                onSend: _send,
+                sending: _sending,
               ),
             ),
           ),
@@ -717,105 +666,82 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     );
   }
 
+  /// 2026-09-30: the shared bubble (lib/widgets/chat_bubble.dart) — yours
+  /// in the brand gradient with its halo, theirs on the raised surface
+  /// with a rim.
   Widget _bubble(_ChatItem m) {
-    final align = m.mine ? Alignment.centerRight : Alignment.centerLeft;
-    final bg = m.mine ? Neon.violet : Neon.surface;
-    return Align(
-      alignment: align,
-      child: GestureDetector(
-      onLongPress: () => _messageMenu(m),
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 3),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78),
-        decoration: BoxDecoration(
-          color: bg,
-          border: m.mine ? null : Border.all(color: Neon.line),
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(m.mine ? 16 : 4),
-            bottomRight: Radius.circular(m.mine ? 4 : 16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (m.auto)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Text('assistant · auto-reply',
-                    style: TextStyle(
-                        color: m.mine
-                            ? Neon.onAccent.withValues(alpha: 0.7)
-                            : Neon.textDim,
-                        fontSize: 12)),
-              ),
-            if (m.document != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: InkWell(
-                  onTap: () => _openDocument(m.document!),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: !m.document!.isImage
-                        // Not a picture: its type's glyph and title, not
-                        // an Image.network that can only fail.
-                        ? _AttachmentTile(document: m.document!)
-                        : Image.network(
-                            ApiService.documentFileUrl(m.documentId!),
-                            headers: ApiService.imageHeaders,
+    final ink = ChatBubble.ink(m.mine), quiet = ChatBubble.quietInk(m.mine);
+    final doc = m.document;
+    return ChatBubble(
+      mine: m.mine,
+      onLongPress: m.deleted || m.id == 0 ? null : () => _messageMenu(m),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (m.auto)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text('assistant · auto-reply',
+                  style: TextStyle(
+                      color: m.mine
+                          ? Neon.onAccent.withValues(alpha: 0.7)
+                          : Neon.textDim,
+                      fontSize: 12)),
+            ),
+          if (doc != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Tappable(
+                onTap: () => _openDocument(doc),
+                semanticLabel: doc.isImage ? 'Photo: ${doc.title}' : null,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: !doc.isImage
+                      // Not a picture: its type's glyph and title, not
+                      // an Image.network that can only fail.
+                      ? _AttachmentTile(document: doc)
+                      : Image.network(
+                          ApiService.documentFileUrl(m.documentId!),
+                          headers: ApiService.imageHeaders,
+                          width: 190,
+                          height: 140,
+                          fit: BoxFit.cover,
+                          // Decoded at the size it is drawn (2026-09-24):
+                          // 400 px was upscaled about 1.25x on his phone
+                          // (190 dp at 2.625) and looked soft. A tenth
+                          // over, for the crop.
+                          cacheWidth: (190 *
+                                  MediaQuery.devicePixelRatioOf(context) *
+                                  1.1)
+                              .round(),
+                          errorBuilder: (_, __, ___) => Container(
                             width: 190,
-                            height: 140,
-                            fit: BoxFit.cover,
-                            // Decoded at the size it is drawn (2026-09-24):
-                            // 400 px was upscaled about 1.25x on his phone
-                            // (190 dp at 2.625) and looked soft. A tenth
-                            // over, for the crop.
-                            cacheWidth: (190 *
-                                    MediaQuery.devicePixelRatioOf(context) *
-                                    1.1)
-                                .round(),
-                            errorBuilder: (_, __, ___) => Container(
-                              width: 190,
-                              height: 60,
-                              color: Neon.surfaceHigh,
-                              child: Icon(Icons.description_rounded,
-                                  color: Neon.violet),
-                            ),
+                            height: 60,
+                            color: Neon.surfaceHigh,
+                            child: Icon(Icons.description_rounded,
+                                color: Neon.violet),
                           ),
-                  ),
+                        ),
                 ),
               ),
-            m.deleted
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.block_rounded,
-                          size: 13,
-                          color: m.mine
-                              ? Neon.onAccent.withValues(alpha: 0.75)
-                              : Neon.textLo),
-                      const SizedBox(width: 5),
-                      Text('This message was deleted',
-                          style: TextStyle(
-                              color: m.mine
-                                  ? Neon.onAccent.withValues(alpha: 0.75)
-                                  : Neon.textLo,
-                              fontSize: 14,
-                              fontStyle: FontStyle.italic)),
-                    ],
-                  )
-                : Text(m.text,
-                    style: TextStyle(
-                        color: m.mine ? Neon.onAccent : Neon.textHi,
-                        fontSize: 14,
-                        height: 1.35)),
-          ],
-        ),
-      ),
+            ),
+          m.deleted
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.block_rounded, size: 13, color: quiet),
+                    const SizedBox(width: 5),
+                    Text('This message was deleted',
+                        style: TextStyle(
+                            color: quiet,
+                            fontSize: 14,
+                            fontStyle: FontStyle.italic)),
+                  ],
+                )
+              : Text(m.text,
+                  style: TextStyle(color: ink, fontSize: 14, height: 1.35)),
+        ],
       ),
     );
   }
@@ -830,12 +756,10 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       if (mounted) setState(() => _muted = r?['muted'] == true);
       return;
     }
-    final ok = await showDialog<bool>(
+    final ok = await showAppDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        backgroundColor: Neon.surface,
-        title: Text('Clear this chat?',
-            style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w700)),
+        title: const Text('Clear this chat?'),
         content: Text(
           'This removes the messages from your copy only. '
           '${widget.name} keeps theirs.',
@@ -868,12 +792,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   Future<void> _messageMenu(_ChatItem m) async {
     if (m.deleted || m.id == 0) return;
     HapticFeedback.selectionClick();
-    final choice = await showModalBottomSheet<String>(
+    final choice = await showAppSheet<String>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (c) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

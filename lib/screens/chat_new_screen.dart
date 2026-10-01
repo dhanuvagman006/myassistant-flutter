@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
+import '../widgets/chat_bubble.dart' show ChatAvatar;
 import 'chat_group_screen.dart';
 import 'chat_screen.dart';
 import '../services/app_feedback.dart';
+import '../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
 ///  WHO CAN I TALK TO, AND WHO DO I HAVE TO INVITE.
@@ -95,7 +98,7 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
 
   Future<void> _createGroup() async {
     if (_picked.isEmpty || _creating) return;
-    final name = await showDialog<String>(
+    final name = await showAppDialog<String>(
       context: context,
       builder: (_) => const _NameDialog(),
     );
@@ -126,10 +129,10 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
   Widget build(BuildContext context) {
     final onApp = (_onApp ?? const <_Person>[]).where(_matches).toList();
     final invite = _invite.where(_matches).toList();
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    // 2026-09-30: under the app's sky; the FAB, the one primary action,
+    // takes the theme's lit fill.
+    return NeonScaffold(
       appBar: AppBar(
-        backgroundColor: Neon.bg,
         title: Text(
           widget.pickForGroup ? 'Add people' : 'New chat',
           style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w700),
@@ -138,140 +141,146 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
       floatingActionButton: widget.pickForGroup && _picked.isNotEmpty
           ? FloatingActionButton.extended(
               onPressed: _creating ? null : _createGroup,
-              backgroundColor: Neon.violet,
               icon: _creating
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.arrow_forward_rounded, color: Colors.white),
+                  ? const NeonLoader.inline(semanticLabel: 'Creating the group')
+                  : Icon(Icons.arrow_forward_rounded, color: Neon.onAccent),
               label: Text('${_picked.length} selected',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700)),
+                  style: TextStyle(
+                      color: Neon.onAccent, fontWeight: FontWeight.w700)),
             )
           : null,
-      body: _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Text(_error!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Neon.textLo)),
-              ),
-            )
-          : _onApp == null
-              ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-              : Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-                      child: TextField(
-                        onChanged: (v) =>
-                            setState(() => _query = v.trim().toLowerCase()),
-                        style: TextStyle(color: Neon.textHi),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          prefixIcon: Icon(Icons.search_rounded,
-                              color: Neon.textLo, size: 20),
-                          hintText: 'Search contacts',
-                          hintStyle: TextStyle(color: Neon.textLo),
-                          filled: true,
-                          fillColor: Neon.surface,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: ListView(
-                        padding: EdgeInsets.only(
-                            bottom: 110 + MediaQuery.paddingOf(context).bottom),
-                        children: [
-                          if (onApp.isEmpty && invite.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.all(32),
-                              child: Text(
-                                'No contacts synced yet. Allow contacts '
-                                'access and they will appear here.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Neon.textLo, height: 1.5),
-                              ),
-                            ),
-                          if (onApp.isNotEmpty)
-                            _header('On My Assistant', onApp.length),
-                          ...onApp.map(_personTile),
-                          if (!widget.pickForGroup && invite.isNotEmpty) ...[
-                            _header('Invite to My Assistant', invite.length),
-                            ...invite.map(_inviteTile),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
+      body: StateSwitch.of(_body(onApp, invite)),
+    );
+  }
+
+  Widget _body(List<_Person> onApp, List<_Person> invite) {
+    if (_error != null) {
+      return NeonErrorState(
+        message: _error!,
+        onRetry: () {
+          setState(() => _error = null);
+          _load();
+        },
+      );
+    }
+    if (_onApp == null) return const NeonLoader.page();
+    // Built as they scroll into view: an address book runs to hundreds.
+    final rows = <Widget Function()>[
+      if (onApp.isNotEmpty)
+        () => _header('On My Assistant', onApp.length),
+      for (var i = 0; i < onApp.length; i++)
+        () => _segment(_personTile(onApp[i]),
+            first: i == 0, last: i == onApp.length - 1),
+      if (!widget.pickForGroup && invite.isNotEmpty) ...[
+        () => _header('Invite to My Assistant', invite.length),
+        for (var i = 0; i < invite.length; i++)
+          () => _segment(_inviteTile(invite[i]),
+              first: i == 0, last: i == invite.length - 1),
+      ],
+    ];
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: AppleSearchField(
+            hint: 'Search contacts',
+            onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+          ),
+        ),
+        Expanded(
+          child: onApp.isEmpty && invite.isEmpty
+              // The shared empty state (2026-09-30). With a search typed,
+              // the address book is not empty — nothing matched.
+              ? (_query.isNotEmpty
+                  ? NeonEmptyState(
+                      icon: Icons.search_off_rounded,
+                      title: 'No contacts match "$_query"',
+                    )
+                  : const NeonEmptyState(
+                      icon: Icons.contacts_rounded,
+                      title: 'No contacts synced yet',
+                      body: 'Allow contacts access and they will appear '
+                          'here.',
+                    ))
+              : ListView.builder(
+                  padding: EdgeInsets.fromLTRB(
+                      16, 0, 16, 110 + MediaQuery.paddingOf(context).bottom),
+                  itemCount: rows.length,
+                  itemBuilder: (_, i) => rows[i](),
                 ),
+        ),
+      ],
     );
   }
 
   Widget _header(String text, int n) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-        child: Text(
-          '${text.toUpperCase()}  ·  $n',
-          style: GoogleFonts.spaceGrotesk(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.6,
-            color: Neon.textLo,
-          ),
-        ),
+        padding: const EdgeInsets.only(top: 14),
+        child: GroupLabel('$text  ·  $n'),
       );
 
-  Widget _avatar(String name, {bool selected = false}) => CircleAvatar(
-        radius: 22,
-        backgroundColor: selected ? Neon.violet : Neon.surfaceHigh,
-        child: selected
-            ? const Icon(Icons.check_rounded, color: Colors.white, size: 22)
-            : Text(
-                name.isNotEmpty ? name.characters.first.toUpperCase() : '?',
-                style: TextStyle(
-                    color: Neon.textHi, fontWeight: FontWeight.w700),
-              ),
-      );
-
-  Widget _personTile(_Person p) {
-    final selected = _picked.contains(p.userId);
-    return ListTile(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        if (widget.pickForGroup) {
-          setState(() {
-            selected ? _picked.remove(p.userId) : _picked.add(p.userId);
-          });
-        } else {
-          Navigator.of(context).pushReplacement(MaterialPageRoute(
-            builder: (_) => ChatThreadScreen(phone: p.phone, name: p.name),
-          ));
-        }
-      },
-      leading: _avatar(p.name, selected: selected),
-      title: Text(p.name.isEmpty ? p.phone : p.name,
-          style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w600)),
-      subtitle: Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 13)),
+  /// One row of a group that is built as it scrolls in: the same raised,
+  /// violet-cast surface as [GroupedCard], rounded at the group's ends,
+  /// with the inset hairline between rows.
+  Widget _segment(Widget row, {required bool first, required bool last}) {
+    const r = Radius.circular(18);
+    return Material(
+      color: Color.alphaBlend(Neon.violet.withValues(alpha: 0.06), Neon.surface),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+            top: first ? r : Radius.zero, bottom: last ? r : Radius.zero),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!first)
+            Padding(
+              padding: const EdgeInsets.only(left: 76),
+              child: Divider(height: 1, thickness: 0.5, color: Neon.line),
+            ),
+          row,
+        ],
+      ),
     );
   }
 
-  Widget _inviteTile(_Person p) => ListTile(
-        leading: _avatar(p.name),
-        title: Text(p.name.isEmpty ? p.phone : p.name,
-            style: TextStyle(color: Neon.textHi, fontWeight: FontWeight.w600)),
-        subtitle:
-            Text(p.phone, style: TextStyle(color: Neon.textLo, fontSize: 13)),
-        trailing: TextButton(
+  Widget _personTile(_Person p) {
+    final selected = _picked.contains(p.userId);
+    // AppleRow dips, ticks and ripples; a picked person's round turns into
+    // the lit tick (2026-09-30).
+    return Semantics(
+      selected: widget.pickForGroup ? selected : null,
+      child: AppleRow(
+        onTap: () {
+          if (widget.pickForGroup) {
+            setState(() {
+              selected ? _picked.remove(p.userId) : _picked.add(p.userId);
+            });
+          } else {
+            Navigator.of(context).pushReplacement(MaterialPageRoute(
+              builder: (_) => ChatThreadScreen(phone: p.phone, name: p.name),
+            ));
+          }
+        },
+        leading: ChatAvatar(name: p.name, selected: selected, radius: 22),
+        title: p.name.isEmpty ? p.phone : p.name,
+        subtitle: p.phone,
+        trailing: widget.pickForGroup ? const SizedBox.shrink() : null,
+      ),
+    );
+  }
+
+  /// Invite is a secondary action on every row: a rim, no glow.
+  Widget _inviteTile(_Person p) => AppleRow(
+        leading: ChatAvatar(name: p.name, radius: 22),
+        title: p.name.isEmpty ? p.phone : p.name,
+        subtitle: p.phone,
+        trailing: OutlinedButton(
           onPressed: () => _sendInvite(p),
-          style: TextButton.styleFrom(foregroundColor: Neon.violet),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(48, 40),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
           child: const Text('Invite',
               style: TextStyle(fontWeight: FontWeight.w700)),
         ),
@@ -295,10 +304,7 @@ class _NameDialogState extends State<_NameDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        backgroundColor: Neon.surface,
-        title: Text('Name this group',
-            style: GoogleFonts.spaceGrotesk(
-                color: Neon.textHi, fontWeight: FontWeight.w700)),
+        title: const Text('Name this group'),
         content: TextField(
           controller: _c,
           autofocus: true,

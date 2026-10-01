@@ -191,8 +191,6 @@ class _HelpImproveRowState extends State<HelpImproveRow> {
       subtitle: 'Let our team check your chats to fix mistakes.',
       trailing: Switch(
         value: _prefs.isOn,
-        activeThumbColor: Colors.white,
-        activeTrackColor: AppleColors.green,
         onChanged: _busy
             ? null
             : (v) {

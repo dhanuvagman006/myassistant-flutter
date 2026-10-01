@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
+import 'ai/identity.dart';
 import 'core/bundled_fonts.dart';
 import 'design/accent_controller.dart';
 import 'design/motion.dart';
@@ -39,6 +42,9 @@ Future<void> main() async {
   final fonts = NeonType.preload();
   try {
     await Firebase.initializeApp();
+    // The assistant's AI Logic identity: App Check now, the Firebase user
+    // on every sign-in (lib/ai/identity.dart). Not awaited.
+    unawaited(AiIdentity.instance.start());
     await PushService.instance.init();
   } catch (e) {
     debugPrint('Firebase init failed (missing google-services.json?): $e');

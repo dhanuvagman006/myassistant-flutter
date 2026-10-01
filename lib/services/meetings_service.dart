@@ -39,9 +39,11 @@ class MeetingsService {
     return (jsonDecode(r.body)['id'] as num).toInt();
   }
 
-  static Future<List<Map<String, dynamic>>> list() async {
+  /// null = the fetch failed; [] = a real empty list.
+  static Future<List<Map<String, dynamic>>?> list() async {
     final r = await ApiService.getJson('/meetings?limit=30');
-    return ((r?['meetings'] as List?) ?? const [])
+    if (r == null) return null;
+    return ((r['meetings'] as List?) ?? const [])
         .whereType<Map>()
         .map((m) => m.cast<String, dynamic>())
         .toList();

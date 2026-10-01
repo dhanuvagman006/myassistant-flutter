@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -64,6 +65,30 @@ class NewsDeckController extends ChangeNotifier {
 /// precache must ask for the same thing, or the precache is wasted.
 ImageProvider newsImageProvider(String url, int? cacheWidth) =>
     ResizeImage.resizeIfNeeded(cacheWidth, null, NetworkImage(url));
+
+/// THE CARD'S PICTURE OPENS INTO THE STORY (2026-09-30, motion audit): the
+/// front card's picture and the story's carry this tag, and the picture
+/// flies from the card to the top of the page ([newsPictureFlight]).
+Object newsHeroTag(NewsItem item) => cardHeroTag(('news', item.key));
+
+/// The flight of [newsHeroTag]: the story's picture — already on screen,
+/// since the story draws the card's decoded copy under its own
+/// ([NewsImage.previewWidth]) — filling the flying box, its top corners
+/// straightening from the card's to the page's square edge.
+Widget newsPictureFlight(BuildContext flightContext, Animation<double> animation,
+    HeroFlightDirection direction, BuildContext fromContext, BuildContext toContext) {
+  final story = (direction == HeroFlightDirection.push ? toContext : fromContext)
+      .widget as Hero;
+  return AnimatedBuilder(
+    animation: animation,
+    builder: (context, child) => ClipRRect(
+      borderRadius: BorderRadius.vertical(
+          top: Radius.circular(lerpDouble(20, 0, animation.value.clamp(0.0, 1.0))!)),
+      child: child,
+    ),
+    child: story.child,
+  );
+}
 
 /// The request that asks the assistant to read [item] out and explain it
 /// — the same turn a spoken "read me that story" takes.
@@ -304,7 +329,11 @@ class _NewsDeckState extends State<NewsDeck>
       open(item, from);
     } else {
       openNewsStory(context, item,
-          from: from, onListen: widget.onListen, now: widget.now);
+          from: from,
+          onListen: widget.onListen,
+          now: widget.now,
+          heroTag: newsHeroTag(item),
+          previewWidth: _cacheWidth);
     }
   }
 
@@ -362,6 +391,8 @@ class _NewsDeckState extends State<NewsDeck>
                   item: widget.items[pos],
                   cacheWidth: _cacheWidth,
                   now: widget.now,
+                  // Only the front card's picture flies into its story.
+                  heroTag: pos == _index ? newsHeroTag(widget.items[pos]) : null,
                 ),
         ),
     };
@@ -400,6 +431,9 @@ class _NewsDeckState extends State<NewsDeck>
       onHorizontalDragCancel: _dragCancel,
       child: stack,
     );
+    // The deck answers a touch (2026-09-30): it dips under the finger and
+    // lets go the moment the finger starts a swipe (PressScale).
+    stack = PressScale(scale: 0.985, child: stack);
     // A jump — or any move with animations off — fades the deck in afresh.
     stack = KeyedSubtree(
       key: ValueKey(_jumps),
@@ -522,11 +556,16 @@ class _NewsDeckState extends State<NewsDeck>
 /// Lines are counted to fit the card, so large text shortens the summary
 /// and the picture before anything is cut.
 class NewsCard extends StatelessWidget {
-  const NewsCard({super.key, required this.item, this.cacheWidth, this.now});
+  const NewsCard(
+      {super.key, required this.item, this.cacheWidth, this.now, this.heroTag});
 
   final NewsItem item;
   final int? cacheWidth;
   final DateTime? now;
+
+  /// The picture flies into the story with this tag ([newsHeroTag]); null
+  /// for the cards behind the front one.
+  final Object? heroTag;
 
   static const double _padTop = 12, _padBottom = 14;
   static const double _gapMeta = 8, _gapTitle = 6;
@@ -568,12 +607,7 @@ class NewsCard extends StatelessWidget {
         hint: 'Opens the story',
         excludeSemantics: true,
         child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Neon.surface,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Neon.line),
-            boxShadow: Neon.cardShadow,
-          ),
+          decoration: newsCardSurface,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20),
             child: Column(
@@ -582,7 +616,17 @@ class NewsCard extends StatelessWidget {
                 if (picture > 0)
                   SizedBox(
                     height: picture,
-                    child: NewsImage(item: item, cacheWidth: cacheWidth),
+                    // The same tree either way, so a card that comes to
+                    // the front is not built again — only its flight is
+                    // switched on (and never with Remove animations).
+                    child: HeroMode(
+                      enabled: heroTag != null && !Motion.reduced(context),
+                      child: Hero(
+                        tag: heroTag ?? this,
+                        flightShuttleBuilder: newsPictureFlight,
+                        child: NewsImage(item: item, cacheWidth: cacheWidth),
+                      ),
+                    ),
                   ),
                 Expanded(
                   child: ClipRect(
@@ -656,13 +700,30 @@ class NewsCard extends StatelessWidget {
       [item.snippet, ...item.extra].where((s) => s.isNotEmpty).join(' ');
 }
 
+/// A news card's ground (2026-09-30, the neon reference): the raised
+/// surface, a thin rim of the brand's light and its soft halo — lit glass,
+/// not a grey sheet with a drop shadow. Drawn once per card: the deck only
+/// moves cards, it never repaints them.
+BoxDecoration get newsCardSurface => BoxDecoration(
+      color: Color.alphaBlend(Neon.violet.withValues(alpha: 0.06), Neon.surface),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Neon.violet.withValues(alpha: 0.42), width: 1.2),
+      boxShadow: Neon.halo(Neon.violet, strength: 0.35),
+    );
+
 /// A story's picture: the full one, then the small copy, then the
 /// gradient with the publisher's initial. Fades in when it arrives.
 class NewsImage extends StatefulWidget {
-  const NewsImage({super.key, required this.item, this.cacheWidth});
+  const NewsImage(
+      {super.key, required this.item, this.cacheWidth, this.previewWidth});
 
   final NewsItem item;
   final int? cacheWidth;
+
+  /// A smaller copy already decoded (the deck card's, 2026-09-30), drawn
+  /// under the full picture while that loads: the story opens on the
+  /// picture the card showed, never on the placeholder.
+  final int? previewWidth;
 
   @override
   State<NewsImage> createState() => _NewsImageState();
@@ -690,10 +751,19 @@ class _NewsImageState extends State<NewsImage> {
     if (_attempt >= urls.length) return ground;
     final attempt = _attempt;
     final still = Motion.reduced(context);
+    final preview = widget.previewWidth;
     return Stack(
       fit: StackFit.expand,
       children: [
         ground,
+        if (preview != null && preview != widget.cacheWidth)
+          Image(
+            key: ValueKey('${urls[attempt]}@$preview'),
+            image: newsImageProvider(urls[attempt], preview),
+            fit: BoxFit.cover,
+            excludeFromSemantics: true,
+            errorBuilder: (context, _, __) => const SizedBox.shrink(),
+          ),
         Image(
           key: ValueKey(urls[attempt]),
           image: newsImageProvider(urls[attempt], widget.cacheWidth),
@@ -767,7 +837,7 @@ class NewsFavicon extends StatelessWidget {
       width: size,
       height: size,
       alignment: Alignment.center,
-      decoration: BoxDecoration(color: Neon.violet, shape: BoxShape.circle),
+      decoration: BoxDecoration(color: Neon.accentFill, shape: BoxShape.circle),
       child: FittedBox(
         child: Padding(
           padding: const EdgeInsets.all(3),
@@ -804,12 +874,7 @@ class _CaughtUpCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Neon.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Neon.line),
-        boxShadow: Neon.cardShadow,
-      ),
+      decoration: newsCardSurface,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(20),
         child: Center(
@@ -819,7 +884,8 @@ class _CaughtUpCard extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle_rounded, size: 44, color: Neon.violet),
+                // Done reads as done: the success light (2026-09-30).
+                Icon(Icons.check_circle_rounded, size: 44, color: Neon.success),
                 const SizedBox(height: 12),
                 Text(
                   "You're all caught up",
@@ -836,11 +902,10 @@ class _CaughtUpCard extends StatelessWidget {
                 ),
                 if (onRefresh != null) ...[
                   const SizedBox(height: 16),
+                  // The theme's lit primary (its glow comes from the theme).
                   FilledButton.icon(
                     onPressed: onRefresh,
                     style: FilledButton.styleFrom(
-                      backgroundColor: Neon.violet,
-                      foregroundColor: Neon.onAccent,
                       minimumSize: const Size(48, 48),
                       textStyle:
                           NeonType.manrope(NeonType.rowTitle, FontWeight.w600),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../design/gpu_programs.dart';
 import '../state/assistant_state.dart';
+import '../../../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  SIRI ORB — the one control that always tells the truth.
@@ -83,11 +84,21 @@ class _SiriOrbState extends State<SiriOrb> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _t = AnimationController(vsync: this, duration: const Duration(seconds: 60))
-      ..addListener(_onFrame)
-      ..repeat();
+      ..addListener(_onFrame);
     // The shader for this orb: the splash shows it on the very first
     // frames of a cold start, so start loading it right away.
     GpuProgram.siriOrb.load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations": the orb holds its shape instead of drifting.
+    if (Motion.reduced(context)) {
+      _t.stop();
+    } else if (!_t.isAnimating) {
+      _t.repeat();
+    }
   }
 
   void _onFrame() {

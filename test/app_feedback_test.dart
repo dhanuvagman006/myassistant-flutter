@@ -92,6 +92,28 @@ void main() {
     expect(undone, isFalse);
   });
 
+  testWidgets('a failure with Try again: the button retries; the toast still closes by itself',
+      (tester) async {
+    await pumpApp(tester);
+    var tries = 0;
+    const line = "Couldn't reach the server — check your connection.";
+    AppFeedback.showRetry(line, context: ctx, onRetry: () => tries++);
+    await tester.pumpAndSettle();
+    expect(find.text('Try again'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget, reason: 'reads as an error');
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(tries, 1);
+    // The same failure after a retry is shown again — not dropped as a repeat.
+    AppFeedback.showRetry(line, context: ctx, onRetry: () => tries++);
+    await tester.pumpAndSettle();
+    expect(find.text('Try again'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(bar(), findsNothing, reason: 'every toast closes on its own');
+    expect(tries, 1);
+  });
+
   testWidgets('tapping Undo undoes and does not commit', (tester) async {
     await pumpApp(tester);
     SnackBarClosedReason? reason;

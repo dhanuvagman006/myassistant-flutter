@@ -4,6 +4,8 @@ import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../services/api_service.dart';
+import '../services/app_feedback.dart';
+import '../design/motion.dart';
 
 class StocksScreen extends StatefulWidget {
   const StocksScreen({super.key, this.loader = ApiService.fetchStocks});
@@ -30,16 +32,22 @@ class _StocksScreenState extends State<StocksScreen> {
       final res = await widget.loader();
       if (mounted) setState(() => _data = res);
     } catch (_) {
-      if (mounted) setState(() => _error = "Couldn't load market data.");
+      if (!mounted) return;
+      // Already loaded: keep the data and say the refresh missed.
+      if (_data != null) {
+        AppFeedback.show("Couldn't refresh.",
+            context: context, tone: FeedbackTone.error);
+        return;
+      }
+      setState(() => _error = "Couldn't load market data");
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Neon.bg,
+    return NeonScaffold(
       appBar: appleAppBar(context, 'Markets'),
-      body: SafeArea(child: _body()),
+      body: SafeArea(child: StateSwitch.of(_body())),
     );
   }
 
@@ -56,7 +64,9 @@ class _StocksScreenState extends State<StocksScreen> {
         },
       );
     }
-    if (_data == null) return const Center(child: NeonLoader());
+    if (_data == null) {
+      return const NeonLoader.page(semanticLabel: 'Loading market data');
+    }
 
     // Tolerant reads: a field the server leaves out means an empty section,
     // not a red crash screen (these were hard `as List` / `as String` casts).
@@ -67,6 +77,11 @@ class _StocksScreenState extends State<StocksScreen> {
     final news = maps('news');
     final summary = _data!['summary']?.toString();
     final indices = maps('indices');
+    final nothing = invest.isEmpty &&
+        sell.isEmpty &&
+        news.isEmpty &&
+        indices.isEmpty &&
+        (summary == null || summary.isEmpty);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
@@ -77,7 +92,13 @@ class _StocksScreenState extends State<StocksScreen> {
         // not a SEBI-registered adviser.
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
-          child: _card(
+          // A warning rim, unlit (2026-09-30): it must be seen, but it is
+          // not the page's news.
+          child: GlowCard(
+            tone: NeonTone.warning,
+            halo: 0,
+            rimWidth: 1.4,
+            padding: const EdgeInsets.all(14.6),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -88,7 +109,8 @@ class _StocksScreenState extends State<StocksScreen> {
                     'For information only — not investment advice. This app is not a '
                     'SEBI-registered adviser, and prices may be delayed. Do your own '
                     'research or consult a registered adviser before you invest.',
-                    style: TextStyle(color: Neon.textLo, fontSize: 13, height: 1.45),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: 13, height: 1.45),
                   ),
                 ),
               ],
@@ -110,12 +132,17 @@ class _StocksScreenState extends State<StocksScreen> {
         if (summary != null && summary.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 14),
-            child: _card(
+            // The page's one lit card (2026-09-30): the day's read of the
+            // market, in the blue of information.
+            child: GlowCard(
+              tone: NeonTone.info,
+              halo: 0.6,
+              padding: const EdgeInsets.all(14),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(Icons.insights_rounded,
-                      size: 18, color: AppleColors.blue),
+                      size: 18, color: NeonTone.info.ink),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -138,25 +165,41 @@ class _StocksScreenState extends State<StocksScreen> {
           ...sell.map((e) => _stockCard(e, false)),
           const SizedBox(height: 24),
         ],
-        const SizedBox(height: 24),
-        const GroupLabel('Important Market News'),
-        ...news.map((e) => _newsCard(e)),
+        // A heading only over something (it used to sit over nothing).
+        if (news.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          const GroupLabel('Important Market News'),
+          ...news.map((e) => _newsCard(e)),
+        ],
+        if (nothing)
+          NeonEmptyState(
+            icon: Icons.show_chart_rounded,
+            title: 'No market updates right now',
+            body: 'Check back later.',
+            actionLabel: 'Refresh',
+            actionIcon: Icons.refresh_rounded,
+            onAction: () {
+              setState(() => _data = null);
+              _load();
+            },
+          ),
       ],
     );
   }
 
+  // An ordinary card: the dark raised surface with the lit hairline.
   Widget _card({required Widget child}) => Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Neon.surface,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(Neon.rLg),
           border: Border.all(color: Neon.line),
         ),
         child: child,
       );
 
   Widget _stockCard(Map e, bool isBuy) {
-    final color = isBuy ? AppleColors.green : AppleColors.red;
+    final color = isBuy ? Neon.successInk : Neon.errorInk;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: _card(
@@ -168,18 +211,24 @@ class _StocksScreenState extends State<StocksScreen> {
                 Text(
                   _s(e, 'symbol'),
                   style: TextStyle(
-                      color: Neon.textHi, fontSize: 16, fontWeight: FontWeight.bold),
+                      color: Neon.textHi,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: color.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     _s(e, 'change'),
-                    style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -195,7 +244,8 @@ class _StocksScreenState extends State<StocksScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(isBuy ? Icons.trending_up : Icons.trending_down, size: 16, color: color),
+                Icon(isBuy ? Icons.trending_up : Icons.trending_down,
+                    size: 16, color: color),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -217,13 +267,13 @@ class _StocksScreenState extends State<StocksScreen> {
   Widget _indexChip(Map i) {
     final change = _s(i, 'change');
     final up = !change.startsWith('-');
-    final color = up ? AppleColors.green : AppleColors.red;
+    final color = up ? Neon.successInk : Neon.errorInk;
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(_s(i, 'name'),
-              style: TextStyle(color: Neon.textDim, fontSize: 12)),
+              style: TextStyle(color: Neon.textLo, fontSize: NeonType.caption)),
           const SizedBox(height: 4),
           Row(
             children: [
@@ -240,9 +290,7 @@ class _StocksScreenState extends State<StocksScreen> {
               ),
               Text(change,
                   style: TextStyle(
-                      color: color,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold)),
+                      color: color, fontSize: 12, fontWeight: FontWeight.bold)),
             ],
           ),
         ],
@@ -259,19 +307,24 @@ class _StocksScreenState extends State<StocksScreen> {
           children: [
             Text(
               _s(e, 'headline'),
-              style: TextStyle(color: Neon.textHi, fontSize: 14, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                  color: Neon.textHi,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 6),
             Row(
               children: [
                 Text(
                   _s(e, 'source'),
-                  style: TextStyle(color: AppleColors.blue, fontSize: 12),
+                  style: TextStyle(
+                      color: Neon.cyanInk, fontSize: NeonType.caption),
                 ),
                 const Spacer(),
                 Text(
                   _s(e, 'time'),
-                  style: TextStyle(color: Neon.textDim, fontSize: 12),
+                  style:
+                      TextStyle(color: Neon.textLo, fontSize: NeonType.caption),
                 ),
               ],
             ),

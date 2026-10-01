@@ -14,8 +14,8 @@ import 'api_service.dart';
 /// Owner, 2026-09-24: "my assistant should be aware of user location when
 /// he makes any requests". So the fix is kept CURRENT, not just present:
 /// the engine refreshes it every 5 minutes while the app is on screen and
-/// right before a voice session starts, and the live session is told when
-/// it moves (LiveService.maybeSendLocation).
+/// right before a voice session starts, and every turn carries it to the
+/// server (the brain's deviceContext: lat, lng, acc).
 class LocationService {
   LocationService._();
   static final LocationService instance = LocationService._();

@@ -8,17 +8,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('Indigo is the theme colour everyone gets until they choose', () {
-    final indigo = AccentController.swatches.firstWhere((s) => s.$1 == 'Indigo').$2;
-    expect(AccentController.defaultSeed, indigo);
-    expect(AccentController.seed.value, indigo);
+  test('Electric is the theme colour everyone gets until they choose', () {
+    // The client's neon reference, 2026-09-30 (it was Indigo).
+    final electric = AccentController.swatches.firstWhere((s) => s.$1 == 'Electric').$2;
+    expect(AccentController.defaultSeed, electric);
+    expect(AccentController.seed.value, electric);
+    expect(AccentController.swatches.first.$1, 'Electric');
   });
 
-  test('twelve distinct fluorescent swatches: vivid, bright, all different', () {
+  test('thirteen distinct fluorescent swatches: vivid, bright, all different', () {
     const s = AccentController.swatches;
-    expect(s.length, 12);
-    expect(s.map((e) => e.$1).toSet().length, 12, reason: 'names repeat');
-    expect(s.map((e) => e.$2.toARGB32()).toSet().length, 12, reason: 'colours repeat');
+    expect(s.length, 13);
+    expect(s.map((e) => e.$1).toSet().length, 13, reason: 'names repeat');
+    expect(s.map((e) => e.$2.toARGB32()).toSet().length, 13, reason: 'colours repeat');
     for (final (name, c) in s) {
       final h = HSLColor.fromColor(c);
       // Highlighter-bright: fully saturated and lit — the pastel row they
@@ -47,8 +49,24 @@ void main() {
     }
   });
 
+  test('the first launch of the neon design puts everyone on Electric, once', () async {
+    SharedPreferences.setMockInitialValues({'accent_seed_v1': 0xFF1A8CFF}); // Blue
+    await AccentController.load();
+    expect(AccentController.seed.value, AccentController.defaultSeed);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('accent_neon_v1'), isTrue);
+    // A colour chosen after that is kept.
+    await AccentController.set(const Color(0xFF1A8CFF));
+    await AccentController.load();
+    expect(AccentController.seed.value, const Color(0xFF1A8CFF));
+    await AccentController.set(AccentController.defaultSeed);
+  });
+
   test('load() moves a saved pastel to its twin and stores it once', () async {
-    SharedPreferences.setMockInitialValues({'accent_seed_v1': 0xFFFF8A65}); // Coral
+    SharedPreferences.setMockInitialValues({
+      'accent_seed_v1': 0xFFFF8A65, // Coral
+      'accent_neon_v1': true,
+    });
     await AccentController.load();
     final orange = AccentController.swatches.firstWhere((s) => s.$1 == 'Orange').$2;
     expect(AccentController.seed.value, orange);

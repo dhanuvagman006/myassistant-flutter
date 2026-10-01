@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../design/apple_kit.dart';
 import '../../design/neon_tokens.dart';
+import '../../design/neon_widgets.dart';
 import '../../features/assistant/widgets/action_cards.dart'
     show DocumentGalleryScreen;
 import '../../services/api_service.dart';
 import '../../services/studio_service.dart';
 import '../../services/app_feedback.dart';
+import '../../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  ONE LOOK — pick the details, make it, see it full screen.
@@ -111,25 +114,25 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
   }
 
   Future<void> _pickGarment() async {
-    final src = await showModalBottomSheet<ImageSource>(
+    final src = await showAppSheet<ImageSource>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      // The theme's sheet (2026-09-30): its lit edge and radius.
       builder: (c) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: Icon(Icons.photo_camera_rounded, color: Neon.textHi),
-              title: const Text('Photograph the item'),
-              subtitle: const Text('Lay it flat, or shoot it on the hanger'),
+            AppleRow(
+              leading: IconTile(Icons.photo_camera_rounded, Neon.accentA),
+              title: 'Photograph the item',
+              subtitle: 'Lay it flat, or shoot it on the hanger',
+              trailing: const SizedBox.shrink(),
               onTap: () => Navigator.pop(c, ImageSource.camera),
             ),
-            ListTile(
-              leading: Icon(Icons.photo_library_rounded, color: Neon.textHi),
-              title: const Text('Choose a photo'),
-              subtitle: const Text('A screenshot from a shopping app works'),
+            AppleRow(
+              leading: IconTile(Icons.photo_library_rounded, Neon.accentC),
+              title: 'Choose a photo',
+              subtitle: 'A screenshot from a shopping app works',
+              trailing: const SizedBox.shrink(),
               onTap: () => Navigator.pop(c, ImageSource.gallery),
             ),
             const SizedBox(height: 8),
@@ -156,11 +159,9 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
       _toast('Nothing in your wardrobe yet — photograph an item instead.');
       return;
     }
-    final chosen = await showModalBottomSheet<StudioPhoto>(
+    final chosen = await showAppSheet<StudioPhoto>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      // The theme's sheet (2026-09-30): its lit edge and radius.
       builder: (c) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -182,8 +183,10 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                     for (final p in w)
                       Padding(
                         padding: const EdgeInsets.only(right: 10),
-                        child: GestureDetector(
+                        child: Tappable(
                           onTap: () => Navigator.pop(c, p),
+                          semanticLabel: 'Wardrobe item',
+                          tapHint: 'choose',
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child: Container(
@@ -274,16 +277,13 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
           _toast('Still working — it will be in your files either way.');
         }
       },
-      child: Scaffold(
-        backgroundColor: Neon.bg,
-        appBar: AppBar(
-          backgroundColor: Neon.bg,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          foregroundColor: Neon.textHi,
-          title: Text(r.title,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+      // Under Home's sky, with the app's detail bar (2026-09-30).
+      child: NeonScaffold(
+        appBar: appleAppBar(
+          context,
+          r.title,
           leading: IconButton(
+            tooltip: 'Back',
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: () => Navigator.pop(context, _madeSomething),
           ),
@@ -327,7 +327,8 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
             Text(
               'AI-generated from your own photo. Saved to your files and '
               'labelled as AI-generated.',
-              style: TextStyle(color: Neon.textDim, fontSize: 12, height: 1.4),
+              style: TextStyle(
+                  color: Neon.textLo, fontSize: NeonType.caption, height: 1.4),
             ),
           ],
         ),
@@ -390,11 +391,9 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
   }
 
   Future<void> _switchBase() async {
-    final chosen = await showModalBottomSheet<StudioPhoto>(
+    final chosen = await showAppSheet<StudioPhoto>(
       context: context,
-      backgroundColor: Neon.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      // The theme's sheet (2026-09-30): its lit edge and radius.
       builder: (c) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -406,8 +405,10 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                 for (final p in widget.state.myPhotos)
                   Padding(
                     padding: const EdgeInsets.only(right: 10),
-                    child: GestureDetector(
+                    child: Tappable(
                       onTap: () => Navigator.pop(c, p),
+                      semanticLabel: 'Your photo',
+                      tapHint: 'choose',
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(10),
                         child: Container(
@@ -442,14 +443,14 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
               onSelected: _running
                   ? null
                   : (on) => setState(() => _preset = on ? p.id : null),
-              backgroundColor: Neon.surface,
-              selectedColor: Neon.textHi,
+              // THE CHOSEN LOOK IS LIT (2026-09-30): the theme's chip —
+              // a violet ground and a lit rim for the one picked, where a
+              // white slab stood.
               labelStyle: TextStyle(
-                color: _preset == p.id ? Neon.onInk : Neon.textHi,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+                color: _preset == p.id ? Neon.textHi : Neon.textLo,
+                fontWeight:
+                    _preset == p.id ? FontWeight.w700 : FontWeight.w500,
               ),
-              side: BorderSide(color: Neon.line),
               showCheckmark: false,
             ),
         ],
@@ -527,18 +528,9 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
       return DropdownButtonFormField<String>(
         initialValue: value,
         isExpanded: true,
+        // The theme's field and menu (2026-09-30).
         decoration: InputDecoration(
           labelText: p.label + (p.required ? ' *' : ''),
-          filled: true,
-          fillColor: Neon.surface,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(11),
-            borderSide: BorderSide(color: Neon.line),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(11),
-            borderSide: BorderSide(color: Neon.line),
-          ),
         ),
         hint: Text(p.required ? 'Choose one' : 'Let the assistant decide',
             style: TextStyle(color: Neon.textDim, fontSize: 14)),
@@ -561,29 +553,19 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
       decoration: InputDecoration(
         labelText: p.label + (p.required ? ' *' : ''),
         hintText: p.hint.isEmpty ? null : 'e.g. ${p.hint}',
-        hintStyle: TextStyle(color: Neon.textDim, fontSize: 14),
-        filled: true,
-        fillColor: Neon.surface,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: Neon.line),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(11),
-          borderSide: BorderSide(color: Neon.line),
-        ),
       ),
     );
   }
 
-  Widget _errorBox() => Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: Neon.error.withValues(alpha: 0.09),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: Neon.error.withValues(alpha: 0.28)),
-        ),
+  // Could-not, in the danger tone's rim (2026-09-30).
+  Widget _errorBox() => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: GlowCard(
+        tone: NeonTone.danger,
+        halo: 0.35,
+        rimWidth: 1.4,
+        radius: Neon.rSm,
+        padding: const EdgeInsets.all(11.6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -596,25 +578,29 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
             ),
           ],
         ),
+        ),
       );
 
-  Widget _runButton() => FilledButton(
+  // THE ONE LIT ACTION (2026-09-30): the accent fill with the brand's
+  // halo, and still lit while it works (it was a flat white slab, and a
+  // grey one while running).
+  Widget _runButton() => DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: Neon.halo(Neon.violet),
+        ),
+        child: FilledButton(
         onPressed: _running ? null : _run,
         style: FilledButton.styleFrom(
           minimumSize: const Size.fromHeight(52),
-          backgroundColor: Neon.textHi,
-          foregroundColor: Neon.onInk,
+          disabledBackgroundColor: _running ? Neon.accentFill : null,
+          disabledForegroundColor: _running ? Neon.onAccent : null,
         ),
         child: _running
             ? Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  SizedBox(
-                    height: 17,
-                    width: 17,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Neon.onInk),
-                  ),
+                  const NeonLoader.inline(size: 17, semanticLabel: 'Working'),
                   const SizedBox(width: 12),
                   Text(_progressWord(),
                       style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -623,6 +609,7 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
             : Text(_result == null ? 'Make it' : 'Make another',
                 style: const TextStyle(
                     fontWeight: FontWeight.w700, fontSize: 16)),
+        ),
       );
 
   /// Honest progress. There is no percentage to report, so the copy tracks
@@ -635,17 +622,18 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
     return 'Still working — ${_elapsed}s';
   }
 
-  Widget _resultCard(StudioResult out) => Container(
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: Neon.surface,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: Neon.line),
-        ),
+  // THE RESULT IS THE LIT CARD (2026-09-30): made and saved, in the
+  // green of done-and-well.
+  Widget _resultCard(StudioResult out) => GlowCard(
+        tone: NeonTone.success,
+        halo: 0.7,
+        padding: const EdgeInsets.all(11),
         child: Row(
           children: [
-            GestureDetector(
+            Tappable(
               onTap: () => _showFullScreen(out),
+              semanticLabel: 'Your new look',
+              tapHint: 'view',
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(9),
                 child: Container(
@@ -677,7 +665,8 @@ class _StudioLookScreenState extends State<StudioLookScreen> {
                     out.specSize.isNotEmpty
                         ? out.specSize
                         : 'Open it from Hub, My documents',
-                    style: TextStyle(color: Neon.textLo, fontSize: 12),
+                    style: TextStyle(
+                        color: Neon.textLo, fontSize: NeonType.caption),
                   ),
                 ],
               ),

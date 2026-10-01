@@ -43,14 +43,14 @@ void main() {
     await t.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('momentum_updated fetches the day again', (t) async {
+  testWidgets('momentum_updated asks nothing of the phone any more', (t) async {
     var gets = 0;
     MomentumService.transport = (method, path, {body}) async {
-      if (method == 'GET') gets++;
+      gets++;
       return const MomentumReply(500, null);
     };
     AssistantEngine.instance.debugHandleEvent({'type': 'momentum_updated'});
     await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
-    expect(gets, 1);
+    expect(gets, 0, reason: 'Momentum is gone from the app');
   });
 }

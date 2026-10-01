@@ -4,25 +4,25 @@ import 'package:google_fonts/google_fonts.dart';
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
-import '../features/assistant/widgets/today_panel.dart';
 import '../core/daily_quotes.dart';
+import '../features/home/home_cards.dart';
 import '../services/auth_service.dart';
-import '../services/momentum_service.dart';
-import '../services/brief_service.dart';
 import '../widgets/call_led.dart';
-import '../widgets/missed_calls_card.dart';
 import 'search_screen.dart';
 
-/// HOME TAB — the day at a glance, out in the open.
+/// HOME TAB — what needs you now (2026-09-29).
 ///
-/// What used to hide behind the Today pill is the resting state now:
-/// greeting, weather, messages, agenda, promises, circle — a feed the
-/// user reads without asking. The mic below is how they act on it.
+/// The greeting, then one Now card, up to two smaller ones, the next three
+/// things of the day and quick actions (features/home). The mic below is
+/// how the user acts on any of it. The month moved to its own page.
 class HomeDashboard extends StatelessWidget {
-  const HomeDashboard({super.key});
+  const HomeDashboard({super.key, this.clock = DateTime.now});
+
+  /// Test seam: the time the greeting, the date and the feed are for.
+  final DateTime Function() clock;
 
   String get _greeting {
-    final h = DateTime.now().hour;
+    final h = clock().hour;
     if (h < 12) return 'Good morning';
     if (h < 17) return 'Good afternoon';
     return 'Good evening';
@@ -30,7 +30,7 @@ class HomeDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
+    final now = clock();
     const wk = [
       'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
       'Sunday'
@@ -45,11 +45,8 @@ class HomeDashboard extends StatelessWidget {
     // beneath its text. Now greeting, date and quote are simply the top of
     // the list; only the call light stays put.
     final header = Reveal(
-        child: AnimatedBuilder(
-      animation: Listenable.merge([BriefService.instance, MomentumService.instance]),
-      builder: (context, _) {
-        final b = BriefService.instance.brief;
-        final streak = MomentumService.instance.summary?.streak ?? 0;
+        child: Builder(
+      builder: (context) {
         final first = (AuthService.instance.user?.name ?? '')
             .trim()
             .split(RegExp(r'\s+'))
@@ -57,119 +54,85 @@ class HomeDashboard extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Personal, with the name carrying the accent — one
-            // warm spot of color instead of a wall of gray. Search
-            // sits beside it: find anything, from the first screen.
+            // THE GREETING, LIT (2026-09-30, the client's reference): the
+            // time of day as a glowing sun or moon, the name on its own
+            // line in the app's light (cyan into magenta), search in a lit
+            // ring beside it. Read out as one line.
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 10),
+                  child: _DayIcon(hour: now.hour),
+                ),
                 Expanded(
-                  child: RichText(
-                    text: TextSpan(
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: NeonType.title2,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.5,
-                        color: Neon.textHi,
-                      ),
-                      children: [
-                        TextSpan(text: _greeting),
-                        if (first.isNotEmpty) ...[
-                          const TextSpan(text: ', '),
-                          TextSpan(
-                              text: first,
-                              style: TextStyle(color: Neon.violet)),
+                  child: Semantics(
+                    header: true,
+                    label: first.isEmpty ? _greeting : '$_greeting, $first',
+                    child: ExcludeSemantics(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            first.isEmpty ? _greeting : '$_greeting,',
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: NeonType.title2,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.5,
+                              color: Neon.textHi,
+                            ),
+                          ),
+                          if (first.isNotEmpty)
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: ShaderMask(
+                                blendMode: BlendMode.srcIn,
+                                shaderCallback: (r) => LinearGradient(
+                                  colors: [Neon.cyan, Neon.violet, Neon.pink],
+                                ).createShader(r),
+                                child: Text(
+                                  first,
+                                  style: GoogleFonts.spaceGrotesk(
+                                    fontSize: NeonType.largeTitle + 10,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.8,
+                                    height: 1.1,
+                                    color: Colors.white,
+                                    // its own glow, tinted by the gradient
+                                    shadows: [
+                                      Shadow(
+                                          color: Colors.white.withValues(alpha: 0.55),
+                                          blurRadius: 18),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Search',
-                  onPressed: () => Navigator.of(context).push(
+                _SearchRing(
+                  onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const SearchScreen())),
-                  icon: Icon(Icons.search_rounded, color: Neon.textHi, size: 26),
                 ),
               ],
             ),
             const SizedBox(height: 4),
-            // A Wrap, not a Row: with a larger system font (common
-            // on the phones this app is for) date + streak +
-            // weather did not fit one line and overflowed.
-            Wrap(
-              spacing: 10,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  '${wk[now.weekday - 1]}, ${now.day} ${mo[now.month - 1]}',
-                  style: TextStyle(
-                      color: Neon.textLo, fontSize: NeonType.body),
-                ),
-                // A quiet streak count beside the date — visible enough
-                // to notice, far from a game badge. Since 2026-09-25 it
-                // is Momentum's: days something got DONE, kept on the
-                // server, where it used to count days the app was opened.
-                if (streak > 1) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Neon.violet.withValues(alpha: 0.13),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.local_fire_department_rounded,
-                            size: 13, color: Neon.violet),
-                        const SizedBox(width: 4),
-                        // Plain ink at night: the violet words sat on the
-                        // brightest pool of the dark ambient at 3.4:1.
-                        Text(
-                          '$streak days',
-                          style: NeonType.manrope(
-                                  NeonType.caption, FontWeight.w700)
-                              .copyWith(
-                                  color: Neon.isDark
-                                      ? Neon.textHi
-                                      : Neon.violet),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                if (b.weatherLine != null) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Neon.cyan.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    // cyanInk: plain cyan words on this chip were 2.48:1.
-                    child: Text(
-                      b.weatherLine!,
-                      style: NeonType.manrope(
-                              NeonType.caption, FontWeight.w600)
-                          .copyWith(color: Neon.cyanInk),
-                    ),
-                  ),
-                ],
-              ],
+            // The date alone (owner, 2026-09-30: the weather chip beside
+            // it "looks bad"). Rain or heat worth knowing about still gets
+            // its own card in the feed.
+            Text(
+              '${wk[now.weekday - 1]}, ${now.day} ${mo[now.month - 1]}',
+              style: TextStyle(color: Neon.textLo, fontSize: NeonType.body),
             ),
-            // THE DAY'S LINE, as plain text under the date — no
-            // card, no tint, nothing to tap (his call, 2026-09-19:
-            // the three action tiles came out and this took their
-            // place). It reads as part of the header, which is
-            // what makes it feel considered rather than bolted on.
+            // THE DAY'S LINE, right under the date (owner, 2026-09-30: "need
+            // motivational quotes right below the date"). No card, no tint:
+            // an accent rule down the left, brighter ink, a size up — it
+            // reads as something meant, without a background of any kind.
             const SizedBox(height: 16),
-            // HIGHLIGHTED, BUT STILL JUST TEXT. A card was
-            // rejected, and a plain grey line was too easy to
-            // skip past — so it gets the editorial treatment
-            // instead: an accent rule down the left, brighter
-            // ink, a size up. It reads as something meant,
-            // without a background of any kind.
             IntrinsicHeight(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -182,18 +145,11 @@ class HomeDashboard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Medium, for real (it drew as regular): a step above
-                  // the feed, a step below the bold section titles.
                   Expanded(
                     child: Text(
                       DailyQuotes.today(),
-                      style: NeonType.manrope(
-                              NeonType.rowTitle, FontWeight.w500)
-                          .copyWith(
-                        color: Neon.textHi,
-                        height: 1.4,
-                        letterSpacing: 0.1,
-                      ),
+                      style: NeonType.manrope(NeonType.rowTitle, FontWeight.w500)
+                          .copyWith(color: Neon.textHi, height: 1.4, letterSpacing: 0.1),
                     ),
                   ),
                 ],
@@ -210,17 +166,73 @@ class HomeDashboard extends StatelessWidget {
         children: [
           // Shows only while the assistant is actually on a call.
           const CallLed(),
-          // Calls missed since the owner last looked, with Call back
-          // (owner, 2026-09-24). Nothing at all when there are none.
-          const MissedCallsCard(),
+          // Missed calls are cards in the feed now, ranked with the rest.
           Expanded(
-            child: TodayBriefBody(
+            child: HomeFeedView(
               leading: header,
+              clock: clock,
               // The last card clears the dock and the mic on every phone.
               padding: EdgeInsets.fromLTRB(20, 18, 20, Dock.clearance(context)),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The time of day, lit: a sun by day, the dusk in the evening, a moon at
+/// night — each with its own glow.
+class _DayIcon extends StatelessWidget {
+  const _DayIcon({required this.hour});
+  final int hour;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color) = hour >= 5 && hour < 17
+        ? (Icons.wb_sunny_rounded, const Color(0xFFFFC53D))
+        : hour >= 17 && hour < 20
+            ? (Icons.wb_twilight_rounded, const Color(0xFFFF9A4D))
+            : (Icons.nightlight_round, const Color(0xFFC9B8FF));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: Neon.halo(color, strength: 0.9),
+      ),
+      child: Icon(icon, size: 30, color: color),
+    );
+  }
+}
+
+/// Search in a lit ring: the app's rim around a round glass button.
+class _SearchRing extends StatelessWidget {
+  const _SearchRing({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          // A hairline of the app's light, no halo (premium pass).
+          colors: [for (final c in Neon.rim) c.withValues(alpha: 0.45)],
+        ),
+        boxShadow: Neon.lift,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(1),
+        child: Material(
+          color: Neon.surface,
+          shape: const CircleBorder(),
+          child: IconButton(
+            tooltip: 'Search',
+            onPressed: onTap,
+            icon: Icon(Icons.search_rounded, color: Neon.textHi, size: 24),
+          ),
+        ),
       ),
     );
   }
