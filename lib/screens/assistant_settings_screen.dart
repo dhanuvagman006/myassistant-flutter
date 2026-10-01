@@ -315,8 +315,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                     // (2026-09-29). Since the phone's own speech recogniser
                     // hears the owner, no audio reaches a voiceprint check,
                     // so the promise "answers only you" was no longer true.
-                    // VoiceIdService is kept for a mode that streams its own
-                    // microphone (hands-free cooking).
+                    // The voiceprint service and its 28 MB model were
+                    // removed on 2026-10-01 (nothing streamed audio to it).
                   ],
                 ),
                 const SizedBox(height: 24),

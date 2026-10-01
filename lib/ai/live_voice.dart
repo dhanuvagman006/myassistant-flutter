@@ -1002,10 +1002,19 @@ class LiveVoice {
 
   /// Warms the session (within [LiveTimeouts]) and opens the microphone.
   /// False: Live cannot answer now — the cascade listens instead.
+  /// Served switch: half a sentence is kept from the cascade.
+  bool get fragmentGuard => _configs.current.live.fragmentGuard;
+
   Future<bool> start() async {
     _stopped = false;
     if (!await warm()) return false;
     if (_stopped) return false;
+    // The served hangover, read per conversation so a bad value can be
+    // taken back from the server without a release.
+    final hang = _configs.current.live.vadHangoverMs;
+    if (hang >= 200 && hang <= 3000 && hang != room.hangoverMs) {
+      room = VoiceActivityDetector(hangoverMs: hang);
+    }
     _idle?.cancel();
     if (_micOn) return true;
     unawaited(_player.warm());

@@ -204,6 +204,24 @@ class AppTheme {
               fontWeight: FontWeight.w600, fontSize: NeonType.callout),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14)),
+          // FLUORESCENT FILL (2026-10-01, the client's neon brief: nothing
+          // plain left). Every primary button is the accent running into
+          // its partner colour. Static paint, no per-frame shader, so a
+          // Mali-G57 phone stays at 60 fps. Disabled stays the flat fill.
+          backgroundBuilder: (context, states, child) =>
+              states.contains(WidgetState.disabled)
+                  ? child!
+                  : DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Neon.accentFill, Neon.partnerFill],
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: child,
+                    ),
         ),
       ),
       // The secondary action: a lit rim, no fill, no glow.

@@ -177,6 +177,8 @@ class AiLive {
     this.endSensitivity = 'high',
     this.idleCloseSec = 180,
     this.affectiveDialog = false,
+    this.vadHangoverMs = 700,
+    this.fragmentGuard = true,
     this.voices = defaultVoices,
   });
 
@@ -209,6 +211,16 @@ class AiLive {
   /// comes from the instruction instead. The server can turn it on when
   /// the endpoint takes it.
   final bool affectiveDialog;
+
+  /// This phone's own end-of-speech hangover (ms) — how long a pause may
+  /// be before the TV gate feeds Live silence. 700 since 2026-10-01 (500
+  /// cut the client's think-pauses); served, so it can go back without a
+  /// release.
+  final int vadHangoverMs;
+
+  /// Half a sentence Live did not answer is never handed to the cascade
+  /// (2026-10-01). Served, so it can be turned off without a release.
+  final bool fragmentGuard;
 
   /// The voices the picker offers for Live.
   final List<String> voices;
@@ -244,6 +256,8 @@ class AiLive {
       idleCloseSec: _int(j['idleCloseSec'], d.idleCloseSec),
       affectiveDialog:
           j['affectiveDialog'] is bool ? j['affectiveDialog'] as bool : d.affectiveDialog,
+      vadHangoverMs: _int(j['vadHangoverMs'], d.vadHangoverMs),
+      fragmentGuard: j['fragmentGuard'] is bool ? j['fragmentGuard'] as bool : d.fragmentGuard,
       voices: voices.isEmpty ? defaultVoices : voices,
     );
   }

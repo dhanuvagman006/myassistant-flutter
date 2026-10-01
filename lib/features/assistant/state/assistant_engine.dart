@@ -1684,7 +1684,8 @@ class AssistantEngine extends ChangeNotifier {
     }
     final words = f.words;
     final line = f.line;
-    if (words != null && words.isNotEmpty && f.keepLive && looksUnfinished(words)) {
+    if (words != null && words.isNotEmpty && f.keepLive && _live.fragmentGuard &&
+        looksUnfinished(words)) {
       // HALF A SENTENCE IS NOT A QUESTION (client's phone, 2026-10-01):
       // "Tell me the", "Can you tell me about Dr.", "He is" reached the
       // cascade while he was still talking, and two answers came back.

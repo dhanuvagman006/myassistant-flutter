@@ -152,12 +152,12 @@ void main() {
   });
 
   group('the fast voice (live)', () {
-    test("absent: the app's own defaults — on, gemini-3.8-live, Sulafat, 500 ms", () {
+    test("absent: the app's own defaults — on, gemini-3.8-live, Sulafat, 800 ms", () {
       final c = AiConfig.fromJson(const {'models': {}});
       expect(c.live.on, isTrue);
       expect(c.live.model, 'gemini-3.8-live');
       expect(c.live.voice, 'Sulafat');
-      expect(c.live.silenceMs, 500);
+      expect(c.live.silenceMs, 800);
       expect(c.live.prefixMs, 100);
       expect(c.live.startSensitivity, 'low');
       expect(c.live.endSensitivity, 'high');

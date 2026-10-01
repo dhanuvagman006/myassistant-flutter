@@ -299,21 +299,6 @@ class ApiService {
 
   static RemoteConfig config = const RemoteConfig();
 
-  /// Fetched on every launch — drives feature flags, announcements, update prompts.
-  static Future<RemoteConfig> refreshConfig() async {
-    try {
-      final r = await http
-          .get(Uri.parse('$baseUrl/config'))
-          .timeout(const Duration(seconds: 10));
-      if (r.statusCode == 200) {
-        config = RemoteConfig.fromJson(jsonDecode(r.body));
-      }
-    } catch (_) {
-      // Offline or server down — keep the last known config. Never crash on config.
-    }
-    return config;
-  }
-
   /// Fire-and-forget connection warm-up. Called the instant the wake
   /// word fires so DNS/TLS (and a sleeping free-tier host) are already
   /// awake by the time the question finishes being spoken.
@@ -322,21 +307,6 @@ class ApiService {
         .get(Uri.parse('$baseUrl/health'))
         .timeout(const Duration(seconds: 8))
         .ignore();
-  }
-
-  /// Regional language from the caller's IP (server-side lookup —
-  /// no location permission needed). Returns e.g. 'kn_IN', or null.
-  static Future<String?> fetchRegionLocale() async {
-    try {
-      final r = await http
-          .get(Uri.parse('$baseUrl/region'), headers: _authHeaders)
-          .timeout(const Duration(seconds: 8));
-      if (r.statusCode != 200) return null;
-      final locale = jsonDecode(r.body)['locale'] as String?;
-      return (locale != null && locale.isNotEmpty) ? locale : null;
-    } catch (_) {
-      return null;
-    }
   }
 
   /// C3 — nearby places search; geo rides on the standard headers.
@@ -685,29 +655,6 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
-  /// File an already-saved document into a case file (or out of it).
-  static Future<void> linkDocumentToClient(int clientId, int docId) async {
-    final r = await _client
-        .post(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
-            headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('clients ${r.statusCode}');
-    }
-  }
-
-  static Future<void> unlinkDocumentFromClient(int clientId, int docId) async {
-    final r = await _client
-        .delete(Uri.parse('$baseUrl/clients/$clientId/docs/$docId'),
-            headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200 && r.statusCode != 404) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('clients ${r.statusCode}');
-    }
-  }
-
   // ---------------- AGENT CALLS ----------------
   // "Call Allen Lobo and ask him what time he'll be home": the BACKEND
   // places the call (Plivo — India-capable) and the AI talks on it; the app polls the
@@ -847,45 +794,6 @@ class ApiService {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
-  /// Starts a Pro/Family checkout → the Razorpay page URL to open.
-  static Future<String> startCheckout(String plan) async {
-    final r = await _client
-        .post(Uri.parse('$baseUrl/billing/checkout'),
-            headers: _authHeaders, body: jsonEncode({'plan': plan}))
-        .timeout(const Duration(seconds: 20));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception(
-          (jsonDecode(r.body)['error'] as String?) ?? 'checkout failed');
-    }
-    return jsonDecode(r.body)['url'] as String;
-  }
-
-  static Future<String> familyInvite() async {
-    final r = await _client
-        .post(Uri.parse('$baseUrl/billing/family/invite'),
-            headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception(
-          (jsonDecode(r.body)['error'] as String?) ?? 'invite failed');
-    }
-    return jsonDecode(r.body)['code'] as String;
-  }
-
-  static Future<void> familyJoin(String code) async {
-    final r = await _client
-        .post(Uri.parse('$baseUrl/billing/family/join'),
-            headers: _authHeaders, body: jsonEncode({'code': code}))
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception(
-          (jsonDecode(r.body)['error'] as String?) ?? 'could not join');
-    }
-  }
-
   /// Throws [QuotaExceeded] when the backend answers 402 (plan limit).
   static void checkQuota(int statusCode, String body) {
     if (statusCode != 402) return;
@@ -915,67 +823,7 @@ class ApiService {
         .toList();
   }
 
-  /// User teaches Hari a fact directly ("remember that I'm vegetarian").
-  static Future<void> addMemory(String key, String value,
-      {String category = 'fact'}) async {
-    final r = await http
-        .post(
-          Uri.parse('$baseUrl/memory'),
-          headers: _authHeaders,
-          body: jsonEncode({'key': key, 'value': value, 'category': category}),
-        )
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('Could not save (${r.statusCode})');
-    }
-  }
-
-  /// Forget one fact — powers the per-row delete button.
-  static Future<void> deleteMemory(int id) async {
-    final r = await http
-        .delete(Uri.parse('$baseUrl/memory/$id'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('Could not delete (${r.statusCode})');
-    }
-  }
-
   // ---------------- SWIGGY (FOOD ORDERING) ----------------
-
-  /// Whether this account has linked Swiggy (Builders Club MCP).
-  static Future<bool> swiggyLinked() async {
-    try {
-      final r = await http
-          .get(Uri.parse('$baseUrl/swiggy/status'), headers: _authHeaders)
-          .timeout(const Duration(seconds: 10));
-      return r.statusCode == 200 &&
-          (jsonDecode(r.body)['linked'] as bool? ?? false);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Browser URL for the Swiggy phone+OTP link flow (backend builds it
-  /// with PKCE; the app never sees Swiggy tokens).
-  static Future<String> swiggyConnectUrl() async {
-    final r = await http
-        .get(Uri.parse('$baseUrl/swiggy/connect'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception(
-          (jsonDecode(r.body)['error'] as String?) ?? 'Swiggy unavailable');
-    }
-    return jsonDecode(r.body)['url'] as String;
-  }
-
-  static Future<void> disconnectSwiggy() async {
-    await http
-        .delete(Uri.parse('$baseUrl/swiggy'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-  }
 
   // ---------------- GOOGLE (GMAIL + CALENDAR) ----------------
 
@@ -991,18 +839,6 @@ class ApiService {
       _flagAuthFailure(r.statusCode);
       throw Exception(
           (jsonDecode(r.body)['error'] as String?) ?? 'link failed');
-    }
-  }
-
-  static Future<bool> googleConnected() async {
-    try {
-      final r = await http
-          .get(Uri.parse('$baseUrl/google/status'), headers: _authHeaders)
-          .timeout(const Duration(seconds: 10));
-      return r.statusCode == 200 &&
-          (jsonDecode(r.body)['connected'] as bool? ?? false);
-    } catch (_) {
-      return false;
     }
   }
 
@@ -1144,34 +980,6 @@ class ApiService {
           .cast<Map<String, dynamic>>();
     } catch (_) {
       return null;
-    }
-  }
-
-  /// One sign-up interview answer → the backend extracts durable facts
-  /// from it immediately (no learning throttle).
-  static Future<void> submitInterviewAnswer(
-      String question, String answer) async {
-    final r = await http
-        .post(
-          Uri.parse('$baseUrl/memory/interview'),
-          headers: _authHeaders,
-          body: jsonEncode({'question': question, 'answer': answer}),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('Could not save (${r.statusCode})');
-    }
-  }
-
-  /// Forget everything — the nuclear "clear memory" button.
-  static Future<void> clearMemories() async {
-    final r = await http
-        .delete(Uri.parse('$baseUrl/memory'), headers: _authHeaders)
-        .timeout(const Duration(seconds: 15));
-    if (r.statusCode != 200) {
-      _flagAuthFailure(r.statusCode);
-      throw Exception('Could not clear (${r.statusCode})');
     }
   }
 

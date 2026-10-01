@@ -190,6 +190,23 @@ class Neon {
   static int? _fillKey;
   static Color? _fill;
 
+  /// The gradient partner as a fill that carries words — [pink] stepped
+  /// darker exactly as [accentFill] is, so a button painted accent →
+  /// partner keeps white words at 4.5:1 along its whole length
+  /// (2026-10-01, the fluorescent primary button).
+  static Color get partnerFill {
+    final a = pink;
+    final key = a.toARGB32();
+    if (key != _partnerKey) {
+      _partnerKey = key;
+      _partner = _deepenForWhite(a);
+    }
+    return _partner!;
+  }
+
+  static int? _partnerKey;
+  static Color? _partner;
+
   static Color _deepenForWhite(Color a) {
     // The same rule as onAccent: above 0.3 the words are near-black.
     if (a.computeLuminance() > 0.3) return a;

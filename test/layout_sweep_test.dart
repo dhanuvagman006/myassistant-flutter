@@ -15,7 +15,13 @@
 // go beyond overflow — nothing ends under the mic, the Home header scrolls
 // instead of covering the feed, the voice screen's text box and top row are
 // clear of the dock and the activity pill, and a long toast fits.
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:myassistant/theme/app_theme.dart';
+import 'package:myassistant/design/neon_tokens.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:myassistant/screens/assistant_settings_screen.dart';
 import 'package:myassistant/screens/business_card_flow.dart';
@@ -237,6 +243,8 @@ const phones = [
   Phone('small + keyboard', Size(720, 1280), 2.0, keyboardPx: 560),
   Phone('huge text', Size(1080, 2340), 2.625, text: 2.0),
 ];
+
+final _shot = GlobalKey();
 
 void _applyPhone(WidgetTester tester, Phone p) {
   tester.view.devicePixelRatio = p.dpr;
@@ -529,16 +537,46 @@ void main() {
           // Everything else (no network, no plugin in tests) is not what
           // this sweep is about.
         };
+        final rendering = (Platform.environment['RENDER_DIR'] ?? '').isNotEmpty;
+        if (rendering) {
+          Neon.setDark(true);
+          Neon.setAccent(const Color(0xFF3D8BFF)); // Electric, the shipped default
+        }
         try {
-          await tester.pumpWidget(MaterialApp(
-            home: MediaQuery.withClampedTextScaling(
-              minScaleFactor: p.text,
-              maxScaleFactor: p.text,
-              child: s.value(),
+          await tester.pumpWidget(RepaintBoundary(
+            key: _shot,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: AppTheme.light(),
+              home: MediaQuery.withClampedTextScaling(
+                minScaleFactor: p.text,
+                maxScaleFactor: p.text,
+                child: s.value(),
+              ),
             ),
           ));
           for (var i = 0; i < 6; i++) {
             await tester.pump(const Duration(milliseconds: 300));
+          }
+          // RENDER_DIR=<dir> flutter test test/layout_sweep_test.dart writes
+          // every screen (on the gesture-nav phone) as a PNG to look at —
+          // the design pass's "render each screen and look at it".
+          final renderDir = Platform.environment['RENDER_DIR'];
+          if (renderDir != null && renderDir.isNotEmpty && p.name == 'gesture nav' &&
+              s.key != 'Meeting recorder' /* its recorder plugin throws under real async */) {
+            // Real async runs here, so a screen's plugin calls may throw;
+            // a missing picture is not a layout failure.
+            try {
+              final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(_shot));
+              final png = await tester.runAsync(() async {
+                final image = await boundary.toImage(pixelRatio: 1.0);
+                final data = await image.toByteData(format: ui.ImageByteFormat.png);
+                return data!.buffer.asUint8List();
+              });
+              Directory(renderDir).createSync(recursive: true);
+              final name = s.key.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
+              if (png != null) File('$renderDir/$name.png').writeAsBytesSync(png);
+            } catch (_) {}
           }
           await tester.pumpWidget(const SizedBox());
           // The assistant keeps retrying its server offline (by design);
@@ -547,6 +585,10 @@ void main() {
           await tester.pump(const Duration(seconds: 5));
         } finally {
           FlutterError.onError = original;
+          if (rendering) {
+            Neon.setDark(false);
+            Neon.setAccent(null);
+          }
         }
         // Anything thrown outside layout is not this sweep's business.
         tester.takeException();
