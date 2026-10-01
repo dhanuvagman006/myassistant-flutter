@@ -29,9 +29,13 @@ final class HearPartial extends HearEvent {
 
 /// What the user said ('' when nothing was heard). Always the last event.
 final class HearFinal extends HearEvent {
-  const HearFinal(this.text, {this.fromCloud = false});
+  const HearFinal(this.text, {this.fromCloud = false, this.audio});
   final String text;
   final bool fromCloud;
+
+  /// What the microphone recorded, when the turn was recorded (record
+  /// mode): the engine sends it for review once the turn has a name.
+  final RecordedAudio? audio;
 }
 
 /// The microphone level, 0..1 (the orb).
@@ -401,6 +405,14 @@ class VoiceListener {
     }
     if (s.closed) return;
     if (!ready) return _runCloud(s);
+    // RECORD MODE (served, 2026-10-01): record the turn and let Gemini
+    // transcribe it in whatever language was spoken. The phone's own
+    // recogniser stays as the fallback when the recorder will not start.
+    final rec = recorder;
+    if (rec != null && transcriber != null && _config().listen.record) {
+      if (await rec.start()) return _runCloud(s, started: true);
+      if (s.closed) return;
+    }
     final locale = resolveLocale(s.language, await recognizer.localeIds());
     s.locale = locale;
     await _start(s, onDevice: s.preferOnDevice);
@@ -430,12 +442,12 @@ class VoiceListener {
     }
   }
 
-  Future<void> _runCloud(_Session s) async {
+  Future<void> _runCloud(_Session s, {bool started = false}) async {
     final rec = recorder;
     final tr = transcriber;
     s.cloud = true;
     if (rec == null || tr == null) return s.fail('unavailable', permanent: true);
-    if (!await rec.start()) return s.fail('recorder', permanent: true);
+    if (!started && !await rec.start()) return s.fail('recorder', permanent: true);
     if (s.closed) {
       await rec.cancel();
       return;
@@ -466,7 +478,7 @@ class VoiceListener {
       return s.finish('', fromCloud: true);
     }
     final text = await tr.transcribe(audio.bytes, audio.mimeType, languageCode: s.language);
-    s.finish(text, fromCloud: true);
+    s.finish(text, fromCloud: true, audio: audio);
   }
 }
 
@@ -609,9 +621,9 @@ class _Session {
     }
   }
 
-  void finish(String words, {bool fromCloud = false}) {
+  void finish(String words, {bool fromCloud = false, RecordedAudio? audio}) {
     if (closed) return;
-    emit(HearFinal(words.trim(), fromCloud: fromCloud));
+    emit(HearFinal(words.trim(), fromCloud: fromCloud, audio: audio));
     _close();
   }
 

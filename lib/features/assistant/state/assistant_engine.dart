@@ -1267,8 +1267,12 @@ class AssistantEngine extends ChangeNotifier {
             micLevel = level;
           case HearEndOfSpeech():
             micLevel = 0;
-          case HearFinal(:final text):
+          case HearFinal(:final text, :final audio):
             heard = text.trim();
+            if (audio != null) {
+              _heardAudio = audio;
+              _heardAt = DateTime.now();
+            }
           case final HearError err:
             failed = err;
         }
@@ -1654,9 +1658,29 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Live could not answer: the cascade does — the owner is never left
   /// without an answer, and nothing a tool did is done twice.
+  // The classic voice's recorded turn, waiting for the server to name
+  // the turn (record mode; see _uploadHeard).
+  RecordedAudio? _heardAudio;
+  DateTime? _heardAt;
+
+  /// Sends the recorded turn for review under the server's turn id (the
+  /// admin page matches audio to turns by it). Nothing on the hot path.
+  void _uploadHeard(String? turnId) {
+    final a = _heardAudio;
+    final at = _heardAt;
+    _heardAudio = null;
+    _heardAt = null;
+    if (a == null || turnId == null || turnId.isEmpty) return;
+    unawaited(TurnAudioUploader.sendUser(turnId, at ?? DateTime.now(), a));
+  }
+
   void _onLiveFallback(LiveFallback f) {
     AppLog.add('voice',
         'fast voice: ${f.reason}${f.keepLive ? '' : ' — the classic voice from here'}');
+    // The server keeps the reason (2026-10-01: "why did Live drop for the
+    // client?" could only be answered from the phone's own log).
+    unawaited(ApiService.postJson('/ai/live-fallback',
+        {'reason': f.reason, 'keep_live': f.keepLive, 'build': ApiService.appBuild}));
     final liveTurn = _liveTurnRunning;
     _liveTurnRunning = false;
     if (liveTurn) {
@@ -1825,6 +1849,7 @@ class AssistantEngine extends ChangeNotifier {
             );
             HapticFeedback.mediumImpact();
           case final BrainFinalText fin:
+            _uploadHeard(fin.turnId);
             _finishTools();
             live = _onFinal(fin, words, live);
           case BrainSpokenAudio():

@@ -148,10 +148,15 @@ final class BrainFinalText extends BrainEvent {
     this.corrected = false,
     this.sources = const [],
     this.searchSuggestionsHtml,
+    this.turnId,
   });
   final String text;
   final AiRoute route;
   final bool corrected;
+
+  /// The server's name for this turn (null when the server never named
+  /// it): the recorded audio is filed under it for review.
+  final String? turnId;
 
   /// Pages a Google-Search-grounded reply used.
   final List<SourceLink> sources;
@@ -660,7 +665,7 @@ class AssistantBrain {
         feed?.stream?.cancel();
         _history.add(ChatTurn('user', words));
         if (_history.length > 16) _history.removeRange(0, _history.length - 16);
-        t.emit(BrainFinalText(text: '', route: engine, corrected: true));
+        t.emit(BrainFinalText(text: '', route: engine, corrected: true, turnId: t.tid));
         return;
       }
       _remember(words, reply);
@@ -670,6 +675,7 @@ class AssistantBrain {
         corrected: corrected,
         sources: sources,
         searchSuggestionsHtml: suggestions,
+        turnId: t.tid,
       ));
       if (feed != null) {
         final early = feed.stream;

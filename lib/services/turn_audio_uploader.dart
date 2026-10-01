@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../ai/listen.dart' show RecordedAudio;
 import '../ai/live_voice.dart' show LiveTurnAudio;
 import '../core/log.dart';
 import 'api_service.dart';
@@ -25,6 +26,32 @@ class TurnAudioUploader {
   /// whether to keep it (helpImprove policy, default on). A test can
   /// override this to false.
   static bool Function() enabled = () => true;
+
+  /// One classic-voice turn, recorded (record mode): the microphone's WAV
+  /// goes up as the user half; the reply was text, so there is no agent
+  /// half. Same endpoint, same review rules.
+  static Future<void> sendUser(String turnId, DateTime startedAt, RecordedAudio audio) {
+    final pcm = wavPcm(audio.bytes);
+    if (pcm == null) return Future.value();
+    return send(LiveTurnAudio(turnId: turnId, startedAt: startedAt, user: [pcm], agent: const []));
+  }
+
+  /// The samples of a 16-bit mono WAV (the recorder's output), or null
+  /// when the bytes are not one.
+  static Uint8List? wavPcm(Uint8List b) {
+    if (b.length < 44 || String.fromCharCodes(b.sublist(0, 4)) != 'RIFF') return null;
+    var i = 12;
+    while (i + 8 <= b.length) {
+      final id = String.fromCharCodes(b.sublist(i, i + 4));
+      final size = b[i + 4] | (b[i + 5] << 8) | (b[i + 6] << 16) | (b[i + 7] << 24);
+      if (id == 'data') {
+        final end = (i + 8 + size).clamp(i + 8, b.length);
+        return b.sublist(i + 8, end);
+      }
+      i += 8 + size + (size.isOdd ? 1 : 0);
+    }
+    return null;
+  }
 
   static Future<void> send(LiveTurnAudio a) async {
     if (!enabled()) return;

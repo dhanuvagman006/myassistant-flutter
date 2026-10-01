@@ -263,12 +263,29 @@ class AiLive {
   }
 }
 
+/// HOW THE CLASSIC VOICE HEARS (served, 2026-10-01). 'device' is the
+/// phone's own recogniser: live captions, one locale, "Kannada" heard as
+/// "Canada". 'record' records the turn and has Gemini transcribe it in the
+/// language spoken — and the recording is sent for review, so every turn
+/// can be heard in the admin panel.
+class AiListen {
+  const AiListen({this.cloudStt = 'device'});
+  final String cloudStt;
+  bool get record => cloudStt == 'record';
+
+  factory AiListen.fromJson(Object? j) {
+    if (j is! Map) return const AiListen();
+    return AiListen(cloudStt: j['cloudStt'] == 'record' ? 'record' : 'device');
+  }
+}
+
 class AiConfig {
   const AiConfig({
     this.models = const AiModels(),
     this.routing = const AiRouting(),
     this.limits = const AiLimits(),
     this.live = const AiLive(),
+    this.listen = const AiListen(),
     this.fromServer = false,
   });
 
@@ -278,6 +295,9 @@ class AiConfig {
 
   /// The fast voice (Gemini Live).
   final AiLive live;
+
+  /// How the classic voice hears.
+  final AiListen listen;
 
   /// False for the safe defaults (the server was never reached).
   final bool fromServer;
@@ -290,6 +310,7 @@ class AiConfig {
         routing: routing,
         limits: limits,
         live: live,
+        listen: listen,
         fromServer: fromServer,
       );
 
@@ -298,6 +319,7 @@ class AiConfig {
         routing: AiRouting.fromJson(j['routing']),
         limits: AiLimits.fromJson(j['limits']),
         live: AiLive.fromJson(j['live']),
+        listen: AiListen.fromJson(j['listen']),
         fromServer: true,
       );
 }
