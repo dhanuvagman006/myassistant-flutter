@@ -29,7 +29,7 @@ import 'package:myassistant/features/assistant/state/assistant_state.dart';
 import 'package:myassistant/features/assistant/widgets/action_cards.dart';
 import 'package:myassistant/models/news_item.dart';
 import 'package:myassistant/screens/assistant_settings_screen.dart';
-import 'package:myassistant/screens/chat_screen.dart';
+import 'package:myassistant/screens/nearby_screen.dart';
 import 'package:myassistant/screens/home_dashboard.dart';
 import 'package:myassistant/screens/hub_screen.dart';
 import 'package:myassistant/services/brief_service.dart';
@@ -297,15 +297,15 @@ void main() {
         (tester) async {
       await home(tester);
       expect(ticks(tester, HomeDashboard), isTrue);
-      for (final hidden in [HubScreen, ChatScreen, AssistantSettingsScreen]) {
+      for (final hidden in [HubScreen, NearbyScreen, AssistantSettingsScreen]) {
         expect(ticks(tester, hidden), isFalse,
             reason: '$hidden animated behind Home (a spinner on a hidden '
                 'Chat kept the phone drawing 60 frames a second)');
       }
 
-      HomeShell.requestedTab.value = 2; // "open my chats"
+      HomeShell.requestedTab.value = 2; // the Nearby tab (Chat's old place)
       await _settle(tester, 3); // the move is 320 ms; the first pump starts it
-      expect(ticks(tester, ChatScreen), isTrue);
+      expect(ticks(tester, NearbyScreen), isTrue);
       expect(ticks(tester, HomeDashboard), isFalse);
 
       AssistantEngine.instance
@@ -314,7 +314,7 @@ void main() {
         ..notifyListeners();
       await _settle(tester, 3);
       expect(InlineCaptionOverlay.covering.value, isTrue);
-      expect(ticks(tester, ChatScreen), isFalse,
+      expect(ticks(tester, NearbyScreen), isFalse,
           reason: 'nobody can see the tab under the session move');
 
       AssistantEngine.instance
@@ -322,7 +322,7 @@ void main() {
         ..phase = AssistantPhase.idle
         ..notifyListeners();
       await _settle(tester, 2);
-      expect(ticks(tester, ChatScreen), isTrue);
+      expect(ticks(tester, NearbyScreen), isTrue);
       await _teardownShell(tester);
     });
 
@@ -365,9 +365,9 @@ void main() {
           reason: 'it overshot to ~1.13 on easeOutBack');
       final hub = tester.widget<Text>(
           find.descendant(of: dock, matching: find.text('Hub')));
-      final chat = tester.widget<Text>(
-          find.descendant(of: dock, matching: find.text('Chat')));
-      expect(hub.style!.fontWeight, chat.style!.fontWeight,
+      final nearby = tester.widget<Text>(
+          find.descendant(of: dock, matching: find.text('Nearby')));
+      expect(hub.style!.fontWeight, nearby.style!.fontWeight,
           reason: 'the label thickened and re-centred when selected');
       await _teardownShell(tester);
     });
