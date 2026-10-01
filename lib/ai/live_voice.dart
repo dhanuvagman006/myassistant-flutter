@@ -789,7 +789,10 @@ class LiveVoice {
   /// The room: its noise floor learnt while she is silent — from the first
   /// frame, not from her first reply (voice audit, 2026-09-30) — and the
   /// owner's own onset and end of speech.
-  VoiceActivityDetector room = VoiceActivityDetector(hangoverMs: 500);
+  /// 700 ms since 2026-10-01: at 500 the client's think-pauses ("Tell me
+  /// the …") ended his turn on this phone and the TV gate fed Live
+  /// silence, so half a sentence was answered.
+  VoiceActivityDetector room = VoiceActivityDetector(hangoverMs: 700);
   final _preRoll = MicPreRoll(keepMs: 480);
 
   /// THE TV GATE (2026-09-30, measured on gemini-3.8-live with a TV mixed

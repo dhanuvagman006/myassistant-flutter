@@ -1625,6 +1625,32 @@ class AssistantEngine extends ChangeNotifier {
     _maybeListen();
   }
 
+  /// Words that stop mid-thought: no sentence end, and ending on a word
+  /// that needs another ("the", "about", "Dr.", "is", "to", "and").
+  /// "What?", "Stop" and "Call Amma" are finished.
+  @visibleForTesting
+  static bool looksUnfinished(String words) {
+    final w = words.trim();
+    if (w.isEmpty) return true;
+    final toks = w.split(RegExp(r'\s+'));
+    final last = toks.last.toLowerCase().replaceAll(RegExp(r'[.,;:\-–]+$'), '');
+    // "Dr." / "Mr." end nothing: the name is still to come.
+    const titles = {'dr', 'mr', 'mrs', 'ms', 'prof', 'st'};
+    if (titles.contains(last)) return true;
+    if (RegExp(r'[.!?।]$').hasMatch(w)) return false;
+    // Words that need another after them. Short openers ("He is", "What
+    // is") hang on an auxiliary; a longer sentence ending on one ("tell
+    // me what time it is") is whole.
+    const auxiliaries = {'is', 'are', 'was', 'were', 'can', 'could', 'would', 'should', 'will'};
+    if (auxiliaries.contains(last)) return toks.length <= 3;
+    const hanging = {
+      'the', 'a', 'an', 'about', 'to', 'of', 'for', 'and', 'or', 'but',
+      'with', 'from', 'into', 'onto', 'than', 'as', 'if', 'my', 'his', 'her',
+      'their', 'our', 'your',
+    };
+    return hanging.contains(last);
+  }
+
   /// Live could not answer: the cascade does — the owner is never left
   /// without an answer, and nothing a tool did is done twice.
   void _onLiveFallback(LiveFallback f) {
@@ -1658,6 +1684,25 @@ class AssistantEngine extends ChangeNotifier {
     }
     final words = f.words;
     final line = f.line;
+    if (words != null && words.isNotEmpty && f.keepLive && looksUnfinished(words)) {
+      // HALF A SENTENCE IS NOT A QUESTION (client's phone, 2026-10-01):
+      // "Tell me the", "Can you tell me about Dr.", "He is" reached the
+      // cascade while he was still talking, and two answers came back.
+      // Live stays open and hears the rest; the cascade keeps quiet.
+      AppLog.add('voice', 'fast voice: "$words" is unfinished — waiting for the rest');
+      if (shown != null) transcript.remove(shown);
+      if (!_turnRunning) {
+        replyComplete = true;
+        if (_voiceOn && phase != AssistantPhase.listening) {
+          _setPhase(AssistantPhase.listening, silent: true);
+        }
+        final epoch = _voiceEpoch;
+        unawaited(micFree.whenComplete(() {
+          if (epoch == _voiceEpoch) _maybeListen();
+        }));
+      }
+      return;
+    }
     if (words != null && words.isNotEmpty) {
       // Its bubble is the cascade turn's own now.
       if (shown != null) transcript.remove(shown);

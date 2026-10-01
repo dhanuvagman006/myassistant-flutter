@@ -171,7 +171,7 @@ class AiLive {
     this.on = true,
     this.model = 'gemini-3.8-live',
     this.voice = 'Sulafat',
-    this.silenceMs = 500,
+    this.silenceMs = 800,
     this.prefixMs = 100,
     this.startSensitivity = 'low',
     this.endSensitivity = 'high',

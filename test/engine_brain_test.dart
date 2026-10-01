@@ -170,6 +170,7 @@ Future<void> until(bool Function() ok, {String what = 'the condition'}) async {
 Uint8List pcm(int ms) => Uint8List(24 * ms * 2);
 
 void main() {
+  _unfinishedWordsTests();
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   for (final c in [
@@ -532,7 +533,7 @@ void main() {
         live.debugFrame(Uint8List(1280), 0.6);
       }
       live.debugIn(LiveInContent(heard: words));
-      for (var i = 0; i < 14; i++) {
+      for (var i = 0; i < 20; i++) {
         live.debugFrame(Uint8List(1280), 0.005);
       }
     }
@@ -626,5 +627,22 @@ void main() {
       await until(() => !live.listening, what: 'the Live microphone closed');
       await until(() => ears.listens > 0, what: "the phone's recogniser listening");
     });
+  });
+}
+
+// Half a sentence must never reach the cascade while Live is still
+// listening (client's phone, 2026-10-01: "Tell me the", "He is" were
+// answered twice).
+void _unfinishedWordsTests() {
+  test('half a sentence is unfinished; a whole request is not', () {
+    for (final w in ['Tell me the', 'Can you tell me about Dr.', 'He is',
+        'Now tell me about', 'I want you to', 'Okay, can you tell me about']) {
+      expect(AssistantEngine.looksUnfinished(w), isTrue, reason: w);
+    }
+    for (final w in ['What?', 'Stop', 'Call Amma', 'Tell me the news',
+        'ಸುದ್ದಿ ಹೇಳು', 'Open Swiggy', 'Remind me at 6', 'what time is it',
+        'tell me what time it is', 'turn it on', 'who is he']) {
+      expect(AssistantEngine.looksUnfinished(w), isFalse, reason: w);
+    }
   });
 }

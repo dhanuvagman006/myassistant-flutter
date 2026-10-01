@@ -277,12 +277,12 @@ class _Rig {
 
   _Session get session => connector.sessions.last;
 
-  /// The owner says something: [ms] of speech, then half a second of quiet.
+  /// The owner says something: [ms] of speech, then 800 ms of quiet.
   void speak({int ms = 400}) {
     for (var i = 0; i < ms ~/ 40; i++) {
       live.debugFrame(frame(), 0.6);
     }
-    for (var i = 0; i < 14; i++) {
+    for (var i = 0; i < 20; i++) {
       live.debugFrame(frame(0), 0.005);
     }
   }
