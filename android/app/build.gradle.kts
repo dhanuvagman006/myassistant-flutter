@@ -6,10 +6,10 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
-    // Crash reports with symbols, and the start-up/network traces
-    // (services/telemetry.dart, 2026-10-01).
+    // Crash reports with symbols (services/telemetry.dart, 2026-10-01). The
+    // Performance Gradle plugin only instruments native HTTP and does not
+    // apply under AGP 9; the SDK's own traces need no plugin.
     id("com.google.firebase.crashlytics")
-    id("com.google.firebase.firebase-perf")
 }
 
 // Release signing: reads android/key.properties (git-ignored). If the file
