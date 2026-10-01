@@ -27,6 +27,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'services/background_scan.dart';
 import 'services/push_service.dart';
+import 'services/telemetry.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -42,6 +43,8 @@ Future<void> main() async {
   final fonts = NeonType.preload();
   try {
     await Firebase.initializeApp();
+    // Crashes, unhandled errors, turn traces and usage — from here on.
+    unawaited(Telemetry.instance.enable());
     // The assistant's AI Logic identity: App Check now, the Firebase user
     // on every sign-in (lib/ai/identity.dart). Not awaited.
     unawaited(AiIdentity.instance.start());

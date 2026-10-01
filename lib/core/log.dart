@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../services/telemetry.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  AppLog — the app's single in-memory log.
@@ -27,6 +28,8 @@ class AppLog {
     final ss = t.second.toString().padLeft(2, '0');
     final line = '$hh:$mm:$ss [$tag] $message';
     _lines.add(line);
+    // The last of these ride with a crash report (services/telemetry.dart).
+    Telemetry.instance.log(line);
     if (_lines.length > _cap) _lines.removeAt(0);
     revision.value++;
     // Mirrored to the platform log in ALL builds (not just debug): release

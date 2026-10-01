@@ -59,6 +59,7 @@
 library;
 
 import 'dart:async';
+import '../services/telemetry.dart';
 import 'dart:convert';
 import 'dart:io' show File, SocketException;
 import 'dart:typed_data';
@@ -548,6 +549,7 @@ class AssistantBrain {
     bool speak,
   ) async {
     final started = _now();
+      final span = Telemetry.instance.trace('assistant_turn');
     try {
       final words =
           rawText.trim().isEmpty && image != null ? 'What is in this picture?' : rawText.trim();
@@ -638,6 +640,18 @@ class AssistantBrain {
       final sid = t.sid;
       final tid = t.tid;
       if (sid != null && tid != null) {
+        final latencyMs = _now().difference(started).inMilliseconds;
+        span
+          ..attribute('engine', engine.name)
+          ..attribute('mode', mode.name)
+          ..metric('tools', toolLog.length)
+          ..stop();
+        Telemetry.instance.event('assistant_turn', {
+          'engine': engine.name,
+          'mode': mode.name,
+          'tools': toolLog.length,
+          'latency_ms': latencyMs,
+        });
         final receipt = await t.guard(_server.recordTurn(
           sessionId: sid,
           turnId: tid,
@@ -645,7 +659,7 @@ class AssistantBrain {
           reply: reply,
           engine: engine.name,
           tools: toolLog,
-          latencyMs: _now().difference(started).inMilliseconds,
+          latencyMs: latencyMs,
           mode: mode.name,
           timeout: timeouts.record,
         ));

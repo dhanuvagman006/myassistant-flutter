@@ -36,6 +36,7 @@ import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScr
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
 import '../screens/nearby_screen.dart';
+import '../services/telemetry.dart';
 import '../screens/hub_screen.dart';
 import '../features/poster/poster_screen.dart';
 import '../features/shopping/shopping_list_screen.dart' show ShoppingNav;
@@ -240,6 +241,7 @@ class _HomeShellState extends State<HomeShell>
   void _switchTab(int i, {Offset? from}) {
     AppFeedback.dismiss();
     HomeShell.lastTab = i;
+    Telemetry.instance.event('tab', {'name': const ['home', 'hub', 'nearby', 'you'][i.clamp(0, 3)]});
     _tabChanges.value++;
     setState(() {
       _tab = i;

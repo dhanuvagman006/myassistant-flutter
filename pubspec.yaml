@@ -113,6 +113,9 @@ dependencies:
 
   # flutter_sound's log level type (quieting its per-call debug trace).
   logger: ^2.0.0
+  firebase_crashlytics: ^5.4.0
+  firebase_performance: ^0.11.6
+  firebase_analytics: ^12.6.0
 
 dev_dependencies:
   # The patched firebase_ai socket test opens its own channel.
