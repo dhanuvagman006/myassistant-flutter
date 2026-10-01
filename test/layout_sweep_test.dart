@@ -31,6 +31,7 @@ import 'package:myassistant/widgets/activity_pill.dart';
 import 'package:myassistant/screens/calls_screen.dart';
 import 'package:myassistant/screens/chat_new_screen.dart';
 import 'package:myassistant/screens/chat_screen.dart';
+import 'package:myassistant/screens/nearby_screen.dart';
 import 'package:myassistant/screens/clients_screen.dart';
 import 'package:myassistant/screens/documents_screen.dart';
 import 'package:myassistant/screens/email_setup_screen.dart';
@@ -295,6 +296,7 @@ final screens = <String, Widget Function()>{
   'Calls': () => const CallsScreen(),
   'New chat': () => const ChatNewScreen(),
   'Chat': () => const ChatScreen(),
+  'Nearby': () => const NearbyScreen(),
   'Clients': () => const ClientsScreen(),
   'Documents': () => const DocumentsScreen(),
   'Email setup': () => const EmailSetupScreen(),

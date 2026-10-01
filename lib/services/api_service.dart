@@ -160,6 +160,37 @@ class ApiService {
   /// [timeout] defaults to the 6s probe budget; endpoints that think
   /// before answering (mail triage runs a model) must pass their own or
   /// they fail as "unreachable" while the server is still working.
+  // ---- NEARBY (2026-10-01): people around who share what they do ----
+  static Future<Map<String, dynamic>?> nearbyMe() => getJson('/nearby/me');
+
+  /// The profession and the switch; the phone's position rides along so
+  /// the server can keep a coarse one while sharing is on.
+  static Future<Map<String, dynamic>?> setNearbyMe({String? profession, bool? shared}) =>
+      sendJson('/nearby/me', method: 'PUT', body: {
+        if (profession != null) 'profession': profession,
+        if (shared != null) 'shared': shared,
+        if (geoLat != null) 'lat': geoLat,
+        if (geoLng != null) 'lng': geoLng,
+      });
+
+  static Future<List<Map<String, dynamic>>> nearbyProfessionals(String q) async {
+    final lat = geoLat;
+    final lng = geoLng;
+    if (lat == null || lng == null) return const [];
+    final j = await getJson(
+        '/nearby/professionals?q=${Uri.encodeQueryComponent(q)}&lat=$lat&lng=$lng',
+        timeout: const Duration(seconds: 12));
+    final list = j?['people'];
+    return list is List
+        ? list.whereType<Map>().map((m) => m.cast<String, dynamic>()).toList(growable: false)
+        : const [];
+  }
+
+  static Future<bool> nearbyContact(int userId, String text) async {
+    final j = await sendJson('/nearby/contact', body: {'user_id': userId, 'text': text});
+    return j?['ok'] == true;
+  }
+
   static Future<Map<String, dynamic>?> getJson(String path,
       {Duration timeout = const Duration(seconds: 6)}) async {
     try {

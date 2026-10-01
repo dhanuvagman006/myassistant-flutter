@@ -51,6 +51,7 @@ class FeaturesScreen extends StatelessWidget {
       ('Messages', 'To another user through their assistant, WhatsApp (you tap Send), plain SMS'),
       ('Email', 'Reads, replies and sends your mail; bills by email'),
       ('People memory', "Facts, notes, dates and addresses about people — 'what's Ravi's address'"),
+      ('Nearby', "Share your profession and be found; 'find me nearby lawyers' lists people on the app and real places"),
       ('Interpreter', 'Two languages across the table, live'),
       ('Phone control', 'Flashlight, volume, Bluetooth, brightness, silent, any settings page'),
       ('Apps', 'Open, install or remove any app; open a profile; show a picture of anyone or anything'),

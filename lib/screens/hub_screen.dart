@@ -8,6 +8,7 @@ import 'clients_screen.dart';
 import 'connected_apps_screen.dart';
 import 'calendar_screen.dart';
 import 'calls_screen.dart';
+import 'chat_screen.dart';
 import 'documents_screen.dart';
 import 'finance_screen.dart';
 import 'phone/call_notes_screen.dart';
@@ -104,6 +105,14 @@ class HubScreen extends StatelessWidget {
               Icons.phone_in_talk_rounded,
               Neon.accentD,
               (c) => const CallsScreen(),
+            ),
+            // The old Chat tab (2026-10-01): Nearby took its place in the dock.
+            _Row(
+              'Messages',
+              'What people sent you through their assistant — one thread per person',
+              Icons.chat_bubble_rounded,
+              Neon.accentD,
+              (c) => const ChatScreen(),
             ),
             _Row(
               'Call notes',

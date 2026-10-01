@@ -35,7 +35,7 @@ import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
-import '../screens/chat_screen.dart';
+import '../screens/nearby_screen.dart';
 import '../screens/hub_screen.dart';
 import '../features/poster/poster_screen.dart';
 import '../features/shopping/shopping_list_screen.dart' show ShoppingNav;
@@ -764,7 +764,7 @@ class _HomeShellState extends State<HomeShell>
               children: const [
                 HomeDashboard(),
                 HubScreen(),
-                ChatScreen(),
+                NearbyScreen(),
                 AssistantSettingsScreen(),
               ],
             ),
@@ -952,8 +952,10 @@ class _HomeShellState extends State<HomeShell>
             // One family for the resting icons (2026-09-24): Home and Hub
             // used the square-cornered outlines while Chat and You used
             // the rounded ones. The selected tab keeps its filled one.
-            _navItem(2, Icons.chat_bubble_outline, Icons.chat_bubble_rounded,
-                'Chat'),
+            // Nearby took the Chat tab (2026-10-01, the owner): people around
+            // who share what they do. Chat moved to the Hub (Messages).
+            _navItem(2, Icons.near_me_outlined, Icons.near_me_rounded,
+                'Nearby'),
             _navItem(3, Icons.person_outline, Icons.person_rounded, 'You'),
           ],
         ),
