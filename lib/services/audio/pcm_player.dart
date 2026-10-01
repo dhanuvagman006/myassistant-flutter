@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:logger/logger.dart' show Level;
 
 import '../../ai/speech.dart' show AudioSink;
 import 'echo_reference.dart';
@@ -32,7 +33,7 @@ class FlutterSoundOutput implements PcmOutput {
   Future<void> _ready = Future<void>.value();
 
   Future<void> _arm(int rate) async {
-    final fs = _fs ??= FlutterSoundPlayer();
+    final fs = _fs ??= FlutterSoundPlayer(logLevel: Level.error);
     if (!_open) {
       await fs.openPlayer();
       _open = true;

@@ -930,7 +930,8 @@ class AssistantEngine extends ChangeNotifier {
     ];
     final said = _live.greet('[SYSTEM] I just opened the conversation. Greet me '
         'now with exactly this, nothing before or after it: "$line" Then stop '
-        'and wait for me.'
+        'and wait for me. BUT if I have already said something by the time you '
+        'answer, skip the greeting completely and answer what I said.'
         '${back.isEmpty ? '' : ' If I ask to call someone back, use '
             'place_phone_call with the name or number: ${back.join('; ')}.'}');
     if (!said) AppLog.add('voice', 'hello skipped: he was already talking');

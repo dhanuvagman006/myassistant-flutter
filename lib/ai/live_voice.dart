@@ -1358,6 +1358,12 @@ class LiveVoice {
     if (t == null || t.finished || t.answered) return;
     t.endUs = _lastLoudUs;
     AppLog.add('live', 'turn ${t.index}: he stopped');
+    if (t.opening && t.speechMs >= _deafSpeechMs && !t.spoke) {
+      // He talked before the hello was said: the hello is dropped and
+      // his words are answered (owner's phone, 2026-10-01).
+      AppLog.add('live', 'turn ${t.index}: he spoke over the hello — answer him');
+      _session?.sendText('[SYSTEM] Skip the greeting: answer what I just said.');
+    }
     _emit(const LiveThinking());
     _armWatch(timeouts.firstReply);
     _armHearingCheck(t, timeouts.hearing);

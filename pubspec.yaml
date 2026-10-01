@@ -111,6 +111,9 @@ dependencies:
   # sign-in stays removed (test/phone_verify_test.dart guards it).
   firebase_auth: ^6.7.0
 
+  # flutter_sound's log level type (quieting its per-call debug trace).
+  logger: ^2.0.0
+
 dev_dependencies:
   # The patched firebase_ai socket test opens its own channel.
   web_socket_channel: ^3.0.1
