@@ -3089,9 +3089,17 @@ class AssistantEngine extends ChangeNotifier {
         // were coming from.
         {
           final docJson = e['document'];
-          if (docJson is Map) {
-            final doc = UserDocument.fromJson(docJson.cast<String, dynamic>());
-            final shown = onShowDocuments?.call([doc]) ?? false;
+          // Several pictures of a person (2026-10-02): the gallery swipes
+          // through all of them; `document` alone is the first.
+          final many = e['documents'];
+          final all = <UserDocument>[
+            if (many is List)
+              for (final d in many)
+                if (d is Map) UserDocument.fromJson(d.cast<String, dynamic>()),
+          ];
+          if (docJson is Map || all.isNotEmpty) {
+            final doc = all.isNotEmpty ? all.first : UserDocument.fromJson((docJson as Map).cast<String, dynamic>());
+            final shown = onShowDocuments?.call(all.isNotEmpty ? all : [doc]) ?? false;
             if (!shown) {
               // No host to pop a gallery over (rare) — fall back to the
               // in-conversation card rather than dropping it silently.
