@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/log.dart';
+import '../design/neon_widgets.dart';
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
@@ -50,6 +51,8 @@ bool _waitingForVoice(AssistantPhase p) => switch (p) {
 /// and the mic paused for typing holds still.
 OrbMood orbMoodFor(AssistantEngine e, {bool micPaused = false}) {
   final p = e.phase;
+  // Still connecting: the orb rests (dim, slow) — not the listening rings.
+  if (e.connecting) return OrbMood.idle;
   if (p == AssistantPhase.speaking) return OrbMood.speaking;
   if (p == AssistantPhase.responding ||
       p == AssistantPhase.searching ||
@@ -527,6 +530,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   /// for its moment (2026-09-30).
   String _status(bool micPaused) {
     final p = engine.phase;
+    if (engine.connecting) return 'Connecting… wait for the ping';
     if (micPaused && !_waitingForVoice(p) && p != AssistantPhase.speaking) {
       return 'Mic paused while you type';
     }
@@ -686,8 +690,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                 padding: EdgeInsets.only(
                     top: MediaQuery.of(context).viewPadding.top, bottom: 4),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [_InterruptButton(engine: engine), _MuteButton(engine: engine)],
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [_MuteButton(engine: engine)],
                 ),
               ),
               // ABOVE THE ORB, the room eases away for a long reply too
@@ -876,12 +880,22 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                         ? Align(
                             key: ValueKey('status|${_status(micPaused)}'),
                             alignment: Alignment.topCenter,
-                            child: Text(
-                              _status(micPaused),
-                              textAlign: TextAlign.center,
-                              // In the state's colour (2026-09-30), lifted
-                              // toward white so it reads at AA on the night.
-                              style: _VoiceType.statusFor(_mood(micPaused)),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // CONNECTING IS VISIBLY NOT LISTENING (2026-10-02).
+                                if (engine.connecting) ...[
+                                  const NeonLoader.inline(semanticLabel: 'Connecting'),
+                                  const SizedBox(height: 10),
+                                ],
+                                Text(
+                                  _status(micPaused),
+                                  textAlign: TextAlign.center,
+                                  // In the state's colour (2026-09-30), lifted
+                                  // toward white so it reads at AA on the night.
+                                  style: _VoiceType.statusFor(_mood(micPaused)),
+                                ),
+                              ],
                             ),
                           )
                         : KeyedSubtree(
@@ -1188,9 +1202,10 @@ class _PillButton extends StatelessWidget {
   }
 }
 
-/// INTERRUPT (the owner, 2026-10-02: "remove interruption completely and
-/// add a button that the user can click to interrupt"). Shown while she is
-/// thinking or speaking; one tap stops her and she listens.
+/// INTERRUPT — one small round icon beside the send button (the owner,
+/// 2026-10-02: "remove interruption completely and add a button … one
+/// small round icon, near the text box"). Shown only while she is thinking
+/// or speaking, taking no room otherwise; a tap stops her and she listens.
 class _InterruptButton extends StatelessWidget {
   const _InterruptButton({required this.engine});
   final AssistantEngine engine;
@@ -1205,44 +1220,45 @@ class _InterruptButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final shown = _shownIn.contains(engine.phase);
-    return AnimatedOpacity(
-      opacity: shown ? 1 : 0,
-      duration: const Duration(milliseconds: 160),
-      child: IgnorePointer(
-        ignoring: !shown,
-        child: Semantics(
-          button: true,
-          label: 'Interrupt the assistant',
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              HapticFeedback.mediumImpact();
-              engine.bargeIn();
-            },
-            child: PressScale(
-              scale: 0.95,
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 48),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                decoration: BoxDecoration(
-                  color: Neon.textHi.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Neon.lineBright, width: 1.2),
+    return ListenableBuilder(
+      listenable: engine,
+      builder: (context, _) {
+        final shown = _shownIn.contains(engine.phase);
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 160),
+          curve: Motion.easeMove,
+          child: !shown
+              ? const SizedBox.shrink()
+              : Semantics(
+                  button: true,
+                  label: 'Interrupt the assistant',
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      HapticFeedback.mediumImpact();
+                      engine.bargeIn();
+                    },
+                    // 48 dp to the finger, 36 dp to the eye.
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Neon.textHi.withValues(alpha: 0.10),
+                            border: Border.all(color: Neon.lineBright),
+                          ),
+                          child: Icon(Icons.stop_rounded, size: 20, color: Neon.textHi),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.pan_tool_rounded, size: 18, color: Neon.textHi),
-                    const SizedBox(width: 8),
-                    Text('Interrupt', style: _VoiceType.mute.copyWith(color: Neon.textHi)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1626,6 +1642,7 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(width: 5),
+            _InterruptButton(engine: widget.engine),
             // 48 dp to the finger, 42 dp to the eye.
             Semantics(
               button: true,

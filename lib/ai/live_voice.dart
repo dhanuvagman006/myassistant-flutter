@@ -769,6 +769,13 @@ class LiveVoice {
   ///    twice running: a FRESH session hears his words again ([_revive]);
   ///  - still deaf after that: the cascade takes over, and says so.
   int _lastFrameUs = 0;
+
+  /// Until this moment the room is sent as silence: the listening ping must
+  /// not reach the model as speech (2026-10-02).
+  int _holdUntilUs = 0;
+
+  /// The microphone sends silence for [d] (the ping is playing).
+  void holdMic(Duration d) => _holdUntilUs = _now() + d.inMicroseconds;
   int _lastInUs = 0;
   Timer? _micWatch;
   bool _restartingMic = false;
@@ -1225,6 +1232,10 @@ class LiveVoice {
     final ms = MicStream.msOf(c);
     final now = _now();
     _lastFrameUs = now;
+    if (now < _holdUntilUs) {
+      _send(Uint8List(c.length));
+      return;
+    }
     if (!_player.playing) {
       _wasPlaying = false;
       final ev = room.feed(c, level);

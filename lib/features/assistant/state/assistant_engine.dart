@@ -1044,6 +1044,11 @@ class AssistantEngine extends ChangeNotifier {
   /// (It used to mean the live socket was open; every screen asks it.)
   bool get liveActive => _voiceOn;
 
+  /// The fast voice is still connecting: nothing said now is heard
+  /// (2026-10-02, the owner: "the client is speaking while it is still
+  /// connecting — show something until it is ready, then a ping").
+  bool get connecting => _voiceOn && _liveStarting;
+
   /// Marks a conversation as running without its loop (widget tests that
   /// show the voice screen).
   @visibleForTesting
@@ -1402,6 +1407,7 @@ class AssistantEngine extends ChangeNotifier {
     }
     var ok = false;
     _liveStarting = true;
+    notifyListeners(); // "Connecting… wait for the ping" until it is ready
     try {
       ok = await _live.start();
     } catch (e) {
@@ -1437,10 +1443,19 @@ class AssistantEngine extends ChangeNotifier {
       // microphone and could cut the hello short).
       _openingDue = false;
       unawaited(_greetOnLive(epoch));
-    } else if (chime && _foreground) {
-      unawaited(ListeningChime.play());
+    } else {
+      // Ready: the ping says "speak now" — every time, not only the first.
+      _pingListening();
     }
     notifyListeners();
+  }
+
+  /// The listening ping, with the fast voice's microphone held silent
+  /// while it plays so the ping is never taken for speech.
+  void _pingListening() {
+    if (!_foreground || !_voiceOn) return;
+    _liveMade?.holdMic(const Duration(milliseconds: 700));
+    unawaited(ListeningChime.play());
   }
 
   /// The fast voice's microphone is being opened ([_listenLive]).
@@ -1617,6 +1632,7 @@ class AssistantEngine extends ChangeNotifier {
     if (interrupted || (user.isEmpty && reply.isEmpty)) {
       if (phase != AssistantPhase.listening) {
         _setPhase(AssistantPhase.listening, silent: true);
+        _pingListening();
       }
     } else {
       _setPhase(AssistantPhase.completed, silent: true);
@@ -1624,6 +1640,9 @@ class AssistantEngine extends ChangeNotifier {
         _doneTimer = null;
         if (_voiceOn && phase == AssistantPhase.completed) {
           _setPhase(AssistantPhase.listening, silent: true);
+          // Her reply is over: the ping says it is their turn (no voice
+          // interruption since 2026-10-02, so they wait for it).
+          _pingListening();
         }
       });
     }
