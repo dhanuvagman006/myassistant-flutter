@@ -78,6 +78,7 @@ class OpenAiLiveSession implements LiveSessionPort {
   final _ready = Completer<void>();
   StreamSubscription<dynamic>? _sub;
   bool _closed = false;
+  bool _responding = false;
   final _clock = Stopwatch()..start();
   int _pingMs = -1000;
 
@@ -114,9 +115,13 @@ class OpenAiLiveSession implements LiveSessionPort {
       case 'session.updated':
         if (!_ready.isCompleted) _ready.complete();
         _emit(const LiveInReady());
+      case 'response.created':
+        _responding = true;
       case 'input_audio_buffer.speech_started':
-        // Barge-in: the model stops itself (interrupt_response); the player stops here.
-        _emit(const LiveInContent(interrupted: true));
+        // Barge-in only while she is answering: the model stops itself
+        // (interrupt_response); the player stops here. Speech that opens a
+        // turn in silence is just the owner talking.
+        if (_responding) _emit(const LiveInContent(interrupted: true));
       case 'conversation.item.input_audio_transcription.completed':
         final heard = (e['transcript'] ?? '').toString();
         if (heard.trim().isNotEmpty) _emit(LiveInContent(heard: heard));
@@ -140,6 +145,7 @@ class OpenAiLiveSession implements LiveSessionPort {
         }
         _emit(LiveInToolCall([FunctionCall(name, args, id: (e['call_id'] ?? '').toString())]));
       case 'response.done':
+        _responding = false;
         _emit(const LiveInContent(turnComplete: true));
       case 'error':
         final err = e['error'];

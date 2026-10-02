@@ -20,6 +20,9 @@ void main() {
     final sub = session.messages.listen(got.add);
     frames
       ..add(jsonEncode({'type': 'session.created'}))
+      // the owner opening a turn in silence is not an interruption
+      ..add(jsonEncode({'type': 'input_audio_buffer.speech_started'}))
+      ..add(jsonEncode({'type': 'response.created'}))
       ..add(jsonEncode({'type': 'input_audio_buffer.speech_started'}))
       ..add(jsonEncode({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'set a timer'}))
       ..add(jsonEncode({'type': 'response.output_audio.delta', 'delta': base64Encode(List.filled(480, 1))}))
