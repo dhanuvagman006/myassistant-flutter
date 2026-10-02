@@ -554,7 +554,10 @@ class LiveVoicePreview {
 class LiveTimeouts {
   const LiveTimeouts({
     this.context = const Duration(seconds: 4),
-    this.connect = const Duration(seconds: 3),
+    // 9 s since 2026-10-02: OpenAI's voice needs a key from our server
+    // (~1.5 s) and then its own socket (~1.5 s); at 3 s it often missed by a
+    // fraction and the whole conversation fell back to the recorded path.
+    this.connect = const Duration(seconds: 9),
     this.firstReply = const Duration(seconds: 6),
     this.afterTool = const Duration(seconds: 10),
     this.turnIds = const Duration(seconds: 5),
