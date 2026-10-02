@@ -180,7 +180,12 @@ class AiLive {
     this.vadHangoverMs = 700,
     this.fragmentGuard = true,
     this.voices = defaultVoices,
+    this.transport = 'realtime',
   });
+
+  /// 'gpt-live': the owner's GPT-Live agent over WebRTC (154+); otherwise
+  /// the provider's own (Gemini Live or OpenAI Realtime).
+  final String transport;
 
   /// Off: every voice turn is the cascade's.
   final bool on;
@@ -259,6 +264,7 @@ class AiLive {
       vadHangoverMs: _int(j['vadHangoverMs'], d.vadHangoverMs),
       fragmentGuard: j['fragmentGuard'] is bool ? j['fragmentGuard'] as bool : d.fragmentGuard,
       voices: voices.isEmpty ? defaultVoices : voices,
+      transport: _str(j['transport'], d.transport),
     );
   }
 }

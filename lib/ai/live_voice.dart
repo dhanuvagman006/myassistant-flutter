@@ -243,6 +243,13 @@ abstract interface class CancellableReply {
   void cancelReply();
 }
 
+/// A session that carries the microphone and her voice itself (GPT-Live
+/// over WebRTC): the engine opens and closes the mic through it, and
+/// never plays audio for it.
+abstract interface class OwnsAudio {
+  void setMicOpen(bool open);
+}
+
 /// Opens Live sessions (firebase_ai, or a test's).
 abstract interface class LiveConnector {
   Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle});
@@ -1033,6 +1040,11 @@ class LiveVoice {
     }
     _idle?.cancel();
     if (_micOn) return true;
+    if (_session case final OwnsAudio own) {
+      own.setMicOpen(true);
+      _micOn = true;
+      return true;
+    }
     unawaited(_player.warm());
     final opened = await _openMic();
     if (!opened) {
@@ -1074,7 +1086,11 @@ class LiveVoice {
     if (!_micOn) return;
     _micOn = false;
     _micWatch?.cancel();
-    await _mic.stop();
+    if (_session case final OwnsAudio own) {
+      own.setMicOpen(false);
+    } else {
+      await _mic.stop();
+    }
     _armIdle();
   }
 
@@ -1186,7 +1202,11 @@ class LiveVoice {
     _turn = null;
     if (_micOn) {
       _micOn = false;
-      await _mic.stop();
+      if (_session case final OwnsAudio own) {
+        own.setMicOpen(false);
+      } else {
+        await _mic.stop();
+      }
     }
     await _closeSession();
     _backlog.clear();
@@ -1561,6 +1581,12 @@ class LiveVoice {
       t
         ..said += said
         ..answered = true;
+      // Her voice plays on the call itself: her words are the sign she spoke.
+      if (_session is OwnsAudio && !t.spoke) {
+        t.spoke = true;
+        _stalls = 0;
+        _emit(const LiveSpeaking());
+      }
       _watch?.cancel();
       _heardBack();
       _emit(LiveSaid(t.said.trim()));
