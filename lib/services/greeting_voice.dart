@@ -46,7 +46,7 @@ class GreetingVoice {
 
   SpeechEngine? _speechMade;
   SpeechEngine get _speech =>
-      _speechOverride ?? (_speechMade ??= SpeechEngine(port: FirebaseModelPort(), config: _config));
+      _speechOverride ?? (_speechMade ??= SpeechEngine(port: ModelPorts.cloud(), config: _config));
   AudioSink get _sink => _sinkOverride ?? PcmPlayer.instance;
 
   static const _magic = [0x50, 0x43, 0x4D, 0x31]; // "PCM1", then the rate

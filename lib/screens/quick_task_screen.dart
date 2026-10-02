@@ -52,7 +52,7 @@ class _QuickTaskScreenState extends State<QuickTaskScreen> {
   // transcription fallback — the same listener the conversation uses.
   // Made on the first tap of the mic, not with the screen.
   VoiceListener? _listener;
-  VoiceListener get _voice => _listener ??= VoiceListener.standard(FirebaseModelPort());
+  VoiceListener get _voice => _listener ??= VoiceListener.standard(ModelPorts.cloud());
   _Stage _stage = _Stage.idle;
 
   /// THE MIC LEVEL, READ BY THE ORB ON ITS OWN FRAMES (2026-09-24, GPU
