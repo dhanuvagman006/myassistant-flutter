@@ -238,6 +238,11 @@ abstract interface class LiveSessionPort {
   Future<void> close();
 }
 
+/// A session that can stop the reply being made (OpenAI Realtime).
+abstract interface class CancellableReply {
+  void cancelReply();
+}
+
 /// Opens Live sessions (firebase_ai, or a test's).
 abstract interface class LiveConnector {
   Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle});
@@ -1129,10 +1134,17 @@ class LiveVoice {
   /// gone (the cascade listens instead).
   Future<bool> resume() => start();
 
+  /// Talking over her stops her (off since 2026-10-02: only the
+  /// Interrupt button does). Tests of the old behaviour turn it on.
+  static bool autoBargeIn = false;
+
   /// A tap on her: she stops now, and the rest of that answer is dropped.
   Future<void> interrupt() async {
     final t = _turn;
     final answering = t != null && !t.finished && t.answered;
+    // The model stops making the rest of it too (OpenAI: response.cancel).
+    final s = _session;
+    if (s case final CancellableReply c) c.cancelReply();
     if (answering) {
       t.interrupted = true;
       t.cutOffAfter ??= _heardChars(t);
@@ -1254,6 +1266,14 @@ class LiveVoice {
       _preRoll.clear();
     }
     _preRoll.add(c, ms);
+    // NO VOICE INTERRUPTION (the owner, 2026-10-02: "it interrupts when
+    // someone speaks — remove interruption completely and add a button"):
+    // while she speaks the room is not sent, so nothing anyone says stops
+    // her. The Interrupt button on the voice screen does ([interrupt]).
+    if (!autoBargeIn) {
+      _send(Uint8List(c.length));
+      return;
+    }
     final heardUs = now - PcmPlayer.ringLatencyUs;
     final echo = _player.echo.maxBetween(heardUs - ms * 1000 - 300000, heardUs + 100000);
     final confirmed = detector.feed(

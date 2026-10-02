@@ -507,6 +507,10 @@ void main() {
 
     test('her echo reaches Live as silence; a real interruption stops her HERE and sends the pre-roll',
         () async {
+    // The voice interruption this pins is off in the app since 2026-10-02
+    // (an Interrupt button instead); the mechanism is kept and tested.
+    LiveVoice.autoBargeIn = true;
+    addTearDown(() => LiveVoice.autoBargeIn = false);
       final r = _Rig(fakeClock: true);
       await r.live.start();
       r.live.debugIn(const LiveInContent(heard: 'Tell me a long story'));

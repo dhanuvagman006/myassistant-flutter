@@ -686,8 +686,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                 padding: EdgeInsets.only(
                     top: MediaQuery.of(context).viewPadding.top, bottom: 4),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [_MuteButton(engine: engine)],
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [_InterruptButton(engine: engine), _MuteButton(engine: engine)],
                 ),
               ),
               // ABOVE THE ORB, the room eases away for a long reply too
@@ -1181,6 +1181,65 @@ class _PillButton extends StatelessWidget {
               color: primary ? Neon.onBrand : Neon.textLo,
             ),
           ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// INTERRUPT (the owner, 2026-10-02: "remove interruption completely and
+/// add a button that the user can click to interrupt"). Shown while she is
+/// thinking or speaking; one tap stops her and she listens.
+class _InterruptButton extends StatelessWidget {
+  const _InterruptButton({required this.engine});
+  final AssistantEngine engine;
+
+  static const _shownIn = {
+    AssistantPhase.thinking,
+    AssistantPhase.responding,
+    AssistantPhase.searching,
+    AssistantPhase.generatingVoice,
+    AssistantPhase.speaking,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = _shownIn.contains(engine.phase);
+    return AnimatedOpacity(
+      opacity: shown ? 1 : 0,
+      duration: const Duration(milliseconds: 160),
+      child: IgnorePointer(
+        ignoring: !shown,
+        child: Semantics(
+          button: true,
+          label: 'Interrupt the assistant',
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              HapticFeedback.mediumImpact();
+              engine.bargeIn();
+            },
+            child: PressScale(
+              scale: 0.95,
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 48),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                decoration: BoxDecoration(
+                  color: Neon.textHi.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: Neon.lineBright, width: 1.2),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.pan_tool_rounded, size: 18, color: Neon.textHi),
+                    const SizedBox(width: 8),
+                    Text('Interrupt', style: _VoiceType.mute.copyWith(color: Neon.textHi)),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),

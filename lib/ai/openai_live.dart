@@ -61,7 +61,7 @@ class OpenAiLiveConnector implements LiveConnector {
 
 /// One realtime session over a socket. Takes the incoming frames and two
 /// callbacks rather than a socket type, so a test can drive it.
-class OpenAiLiveSession implements LiveSessionPort {
+class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   OpenAiLiveSession(Stream<dynamic> incoming, this._send, this._close) {
     // A socket that dies before anyone awaits [ready] must not be an
     // unhandled error; whoever awaits it still gets the failure.
@@ -119,13 +119,9 @@ class OpenAiLiveSession implements LiveSessionPort {
       case 'response.created':
         _responding = true;
       case 'input_audio_buffer.speech_started':
-        // Barge-in only while she is answering: the model stops itself
-        // (interrupt_response); the player stops here. Speech that opens a
-        // turn in silence is just the owner talking.
-        if (_responding) {
-          _cutOff = true;
-          _emit(const LiveInContent(interrupted: true));
-        }
+        // Never an interruption (the owner, 2026-10-02): a voice in the room
+        // does not stop her; the Interrupt button does ([cancelReply]).
+        break;
       case 'conversation.item.input_audio_transcription.completed':
         final heard = (e['transcript'] ?? '').toString();
         if (heard.trim().isNotEmpty) {
@@ -206,6 +202,15 @@ class OpenAiLiveSession implements LiveSessionPort {
       AppLog.add('live', 'realtime send failed: ${err.runtimeType}');
       _finish();
     }
+  }
+
+  /// The Interrupt button: the reply being made stops, and its done event
+  /// (status cancelled) is not taken for the end of the next turn.
+  @override
+  void cancelReply() {
+    if (!_responding) return;
+    _cutOff = true;
+    _event({'type': 'response.cancel'});
   }
 
   @override

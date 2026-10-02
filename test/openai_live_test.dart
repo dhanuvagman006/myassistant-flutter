@@ -33,17 +33,18 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     final real = got.where((m) => m is! LiveInPing).toList();
     expect(real[0], isA<LiveInReady>());
-    expect((real[1] as LiveInContent).interrupted, isTrue);
-    expect((real[2] as LiveInContent).heard, 'set a timer');
-    final audio = (real[3] as LiveInContent).audio.single;
+    // Speech while she answers is NOT an interruption (2026-10-02).
+    expect(real.whereType<LiveInContent>().where((c) => c.interrupted), isEmpty);
+    expect((real[1] as LiveInContent).heard, 'set a timer');
+    final audio = (real[2] as LiveInContent).audio.single;
     expect(audio.$1.length, 480);
     expect(audio.$2, 24000);
-    expect((real[4] as LiveInContent).said, 'Sure, ');
-    final call = (real[5] as LiveInToolCall).calls.single;
+    expect((real[3] as LiveInContent).said, 'Sure, ');
+    final call = (real[4] as LiveInToolCall).calls.single;
     expect(call.name, 'set_timer');
     expect(call.args, {'minutes': 5});
     expect(call.id, 'call_1');
-    expect((real[6] as LiveInContent).turnComplete, isTrue);
+    expect((real[5] as LiveInContent).turnComplete, isTrue);
     await sub.cancel();
     await session.close();
   });
@@ -118,15 +119,21 @@ void main() {
     await session.close();
   });
 
-  test('a reply cut off by the user does not end the next turn; a foreign-script caption is dropped', () async {
+  test('the Interrupt button cancels the reply, and its cancelled end does not end the next turn', () async {
     final frames = StreamController<dynamic>();
-    final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});
+    final sent = <Map<String, dynamic>>[];
+    final session = OpenAiLiveSession(frames.stream, (s) => sent.add(jsonDecode(s) as Map<String, dynamic>), () async {});
     final got = <LiveIn>[];
     final sub = session.messages.listen(got.add);
     frames
       ..add(jsonEncode({'type': 'session.created'}))
       ..add(jsonEncode({'type': 'response.created'}))
-      ..add(jsonEncode({'type': 'response.output_audio_transcript.delta', 'delta': 'There is no'}))
+      ..add(jsonEncode({'type': 'response.output_audio_transcript.delta', 'delta': 'There is no'}));
+    await session.ready;
+    await Future<void>.delayed(Duration.zero);
+    session.cancelReply();
+    expect(sent.single['type'], 'response.cancel');
+    frames
       ..add(jsonEncode({'type': 'input_audio_buffer.speech_started'}))
       ..add(jsonEncode({'type': 'response.done', 'response': {'status': 'cancelled', 'output': []}}))
       ..add(jsonEncode({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'مسٹر شنکر بھٹ'}))
@@ -137,9 +144,9 @@ void main() {
     await session.ready;
     await Future<void>.delayed(Duration.zero);
     final real = got.where((m) => m is! LiveInPing && m is! LiveInReady).cast<LiveInContent>().toList();
-    expect(real.map((c) => c.interrupted).toList(), [false, true, false, false, false]);
-    expect(real[2].heard, 'Mr. Shankar Bhat');
-    expect(real[3].said, 'Shankar Bhat is a journalist.');
+    expect(real.where((c) => c.interrupted), isEmpty);
+    expect(real[1].heard, 'Mr. Shankar Bhat');
+    expect(real[2].said, 'Shankar Bhat is a journalist.');
     expect(real.where((c) => c.turnComplete).length, 1, reason: 'only the answered turn completes');
     expect(OpenAiLiveSession.plausible('ನಮಸ್ಕಾರ, how are you'), isTrue);
     expect(OpenAiLiveSession.plausible('नमस्ते'), isTrue);
