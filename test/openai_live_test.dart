@@ -80,6 +80,44 @@ void main() {
     await frames.close();
   });
 
+  test('a response that ends in a tool call does not end her turn', () async {
+    final frames = StreamController<dynamic>();
+    final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});
+    final got = <LiveIn>[];
+    final sub = session.messages.listen(got.add);
+    frames
+      ..add(jsonEncode({'type': 'session.created'}))
+      ..add(jsonEncode({'type': 'response.function_call_arguments.done', 'name': 'web_search', 'call_id': 'c9', 'arguments': '{"query":"x"}'}))
+      ..add(jsonEncode({
+        'type': 'response.done',
+        'response': {
+          'status': 'completed',
+          'output': [
+            {'type': 'function_call', 'name': 'web_search', 'call_id': 'c9'}
+          ]
+        }
+      }))
+      ..add(jsonEncode({'type': 'response.output_audio_transcript.delta', 'delta': 'It is 8:45.'}))
+      ..add(jsonEncode({
+        'type': 'response.done',
+        'response': {
+          'status': 'completed',
+          'output': [
+            {'type': 'message'}
+          ]
+        }
+      }));
+    await session.ready;
+    await Future<void>.delayed(Duration.zero);
+    final real = got.where((m) => m is! LiveInPing && m is! LiveInReady).toList();
+    expect(real[0], isA<LiveInToolCall>());
+    expect((real[1] as LiveInContent).said, 'It is 8:45.');
+    expect((real[2] as LiveInContent).turnComplete, isTrue);
+    expect(real.length, 3, reason: 'only the spoken response completes the turn');
+    await sub.cancel();
+    await session.close();
+  });
+
   test('a socket that closes before the session is acknowledged fails fast', () async {
     final frames = StreamController<dynamic>();
     final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});

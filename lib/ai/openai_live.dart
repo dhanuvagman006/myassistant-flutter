@@ -146,6 +146,19 @@ class OpenAiLiveSession implements LiveSessionPort {
         _emit(LiveInToolCall([FunctionCall(name, args, id: (e['call_id'] ?? '').toString())]));
       case 'response.done':
         _responding = false;
+        final resp = e['response'];
+        final status = resp is Map ? '${resp['status'] ?? ''}' : '';
+        final output = resp is Map ? resp['output'] : null;
+        final calledTools = output is List && output.any((o) => o is Map && o['type'] == 'function_call');
+        if (status == 'failed' || status == 'incomplete') {
+          AppLog.add('live', 'realtime response $status: ${resp is Map ? '${resp['status_details'] ?? ''}' : ''}');
+        }
+        // A response that ends in tool calls is not the end of her turn:
+        // OpenAI closes it before the tools run, and she speaks the result
+        // in the next response once the phone sends the outputs back. Told
+        // "turn complete" here, the engine heard silence and gave up with
+        // "no answer" (2026-10-02, the client's search).
+        if (calledTools && status == 'completed') break;
         _emit(const LiveInContent(turnComplete: true));
       case 'error':
         final err = e['error'];
