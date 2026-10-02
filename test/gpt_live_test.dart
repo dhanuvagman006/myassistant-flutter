@@ -74,6 +74,24 @@ void main() {
     expect(sent.first['item'], {'type': 'function_call_output', 'call_id': 'call_9', 'output': '{"ok":true}'});
   });
 
+  test('the backend working shows as working, through her "let me check", until her answer ends the turn', () async {
+    server({'type': 'session.started'});
+    await session.ready;
+    server({'type': 'session.delegation.created', 'delegation': {'id': 'item_1', 'target': 'responses'}});
+    server({'type': 'response.event', 'event': {'type': 'response.created'}});
+    server({'type': 'session.output_transcript.delta', 'delta': 'Let me check.', 'end_ms': 0});
+    server({'type': 'response.event', 'event': {'type': 'response.output_item.added', 'item': {'type': 'web_search_call'}}});
+    await settle(40);
+    final working = real().whereType<LiveInWorking>().toList();
+    expect(working.first.tool, isNull);
+    expect(working.last.tool, 'web_search');
+    expect(real().whereType<LiveInContent>().where((c) => c.turnComplete), isEmpty, reason: 'still searching');
+    server({'type': 'response.event', 'event': {'type': 'response.completed', 'response': {'output': [{'type': 'message'}]}}});
+    server({'type': 'session.output_transcript.delta', 'delta': 'Narendra Modi.', 'end_ms': 0});
+    await settle(40);
+    expect(real().whereType<LiveInContent>().where((c) => c.turnComplete), hasLength(1));
+  });
+
   test('the mic opens and closes on the track and tells GPT-Live; nothing is sent at startup', () async {
     server({'type': 'session.started'});
     await session.ready;

@@ -156,6 +156,11 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   final _clock = Stopwatch();
   Timer? _turnEnd;
   bool _speaking = false;
+
+  /// The backend is on their request (delegated, until its final answer).
+  bool _pending = false;
+  String? _tool;
+  Timer? _stall;
   bool _muted = false;
   bool _closing = false;
   bool _disposed = false;
@@ -201,6 +206,8 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         _speaking = true;
         _emit(LiveInContent(said: said));
         _armTurnEnd(e['end_ms']);
+      case 'session.delegation.created':
+        _work(null);
       case 'response.event':
         _onBackend(e['event']);
       case 'session.usage.updated':
@@ -210,6 +217,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         final err = e['error'];
         final msg = err is Map ? '${err['message'] ?? err['code'] ?? err}' : '$err';
         AppLog.add('live', 'gpt-live: $msg');
+        if (_pending) _done();
         if (!_ready.isCompleted) _ready.completeError(StateError(msg));
       case 'session.closed':
         AppLog.add('live', 'gpt-live closed (${e['reason'] ?? 'no reason'})');
@@ -224,7 +232,21 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   /// are the app's to run.
   void _onBackend(Object? inner) {
     if (inner is! Map) return;
-    if ('${inner['type'] ?? ''}' != 'response.output_item.done') return;
+    final type = '${inner['type'] ?? ''}';
+    final added = inner['item'] is Map ? inner['item'] as Map : const {};
+    if (!_pending && type == 'response.created') _work(null);
+    if (_pending) _armStall();
+    if (type == 'response.output_item.added' && added['type'] == 'web_search_call') _work('web_search');
+    if (type == 'response.completed' || type == 'response.failed' || type == 'response.incomplete') {
+      final resp = inner['response'];
+      final out = resp is Map ? resp['output'] : null;
+      final calls = out is List && out.any((o) => o is Map && o['type'] == 'function_call');
+      if (type != 'response.completed') AppLog.add('live', 'gpt-live backend: $type');
+      // A function call is the phone's to answer; the work goes on.
+      if (!calls || type != 'response.completed') _done();
+      return;
+    }
+    if (type != 'response.output_item.done') return;
     final item = inner['item'] is Map ? inner['item'] as Map : inner;
     final name = '${item['name'] ?? ''}';
     if (name.isEmpty || (item['type'] != null && item['type'] != 'function_call')) return;
@@ -239,16 +261,56 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     _emit(LiveInToolCall([FunctionCall(name, args, id: '${item['call_id'] ?? ''}')]));
   }
 
+  /// The backend took their request: show it working (again, once her
+  /// "let me check" has been said).
+  void _work(String? tool) {
+    _pending = true;
+    if (tool != null) _tool = tool;
+    _armStall();
+    _emit(LiveInWorking(_tool));
+  }
+
+  /// The backend's answer is in: she says it next. Words or not, the turn
+  /// ends — a few seconds' grace for her to start.
+  void _done() {
+    _pending = false;
+    _tool = null;
+    _stall?.cancel();
+    _turnEnd?.cancel();
+    _turnEnd = Timer(const Duration(seconds: 6), _endTurn);
+  }
+
+  /// Nothing from the backend for a minute: it is not coming.
+  void _armStall() {
+    _stall?.cancel();
+    _stall = Timer(const Duration(seconds: 60), () {
+      if (!_pending) return;
+      AppLog.add('live', 'gpt-live: the backend went quiet for 60 s');
+      _pending = false;
+      _tool = null;
+      _endTurn();
+    });
+  }
+
+  void _endTurn() {
+    _speaking = false;
+    _emit(const LiveInContent(turnComplete: true));
+  }
+
   /// Her turn is over once the audio of her last word has played: [endMs]
-  /// is where it ends on the session's clock.
+  /// is where it ends on the session's clock. While the backend is still
+  /// working, the end of her "let me check" shows it working instead.
   void _armTurnEnd(Object? endMs) {
     _turnEnd?.cancel();
     final end = endMs is num ? endMs.toInt() : _clock.elapsedMilliseconds;
     final wait = (end - _clock.elapsedMilliseconds).clamp(0, 30000) + tailMs;
     _turnEnd = Timer(Duration(milliseconds: wait), () {
+      if (_pending) {
+        _emit(LiveInWorking(_tool));
+        return;
+      }
       if (!_speaking) return;
-      _speaking = false;
-      _emit(const LiveInContent(turnComplete: true));
+      _endTurn();
     });
   }
 
@@ -282,6 +344,9 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   /// The stop button: her voice goes quiet here until they speak again.
   @override
   void cancelReply() {
+    _pending = false;
+    _tool = null;
+    _stall?.cancel();
     _muted = true;
     _speaker?.call(false);
     if (_speaking) {
@@ -325,6 +390,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     if (_disposed) return;
     _disposed = true;
     _turnEnd?.cancel();
+    _stall?.cancel();
     await _sub?.cancel();
     if (!_out.isClosed) unawaited(_out.close());
     await _dispose().catchError((Object _) {});

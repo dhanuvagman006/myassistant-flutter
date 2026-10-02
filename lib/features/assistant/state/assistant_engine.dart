@@ -1567,6 +1567,9 @@ class AssistantEngine extends ChangeNotifier {
       case LiveSpeaking():
         _liveTurnBegins();
         _finishTools();
+        // GPT-Live's voice plays on the call, not our player: her words
+        // are what turn the orb to speaking.
+        if (phase != AssistantPhase.speaking) _setPhase(AssistantPhase.speaking, silent: true);
       case LiveSaid(:final text):
         _lastLifeAt = DateTime.now();
         _liveTurnBegins();

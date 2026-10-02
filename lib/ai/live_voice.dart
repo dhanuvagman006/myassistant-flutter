@@ -172,6 +172,14 @@ final class LiveInToolCall extends LiveIn {
   final List<FunctionCall> calls;
 }
 
+/// The model is working on their request out of the phone's sight
+/// (GPT-Live's backend thinking or searching): [tool] names what it is
+/// doing when known (web_search), null for thinking.
+final class LiveInWorking extends LiveIn {
+  const LiveInWorking([this.tool]);
+  final String? tool;
+}
+
 final class LiveInToolCancel extends LiveIn {
   const LiveInToolCancel(this.ids);
   final List<String> ids;
@@ -763,6 +771,11 @@ class LiveVoice {
   Timer? _idle;
 
   bool _micOn = false;
+
+  /// Thinking or a tool is on show (GPT-Live): her next words switch the
+  /// orb back to speaking.
+  bool _working = false;
+  String? _shownTool;
   bool _wasPlaying = false;
 
   /// STUCK ON "LISTENING" (the client's S24 Ultra, 2026-09-30). Nothing
@@ -1531,6 +1544,17 @@ class LiveVoice {
         _onContent(m);
       case LiveInToolCall(:final calls):
         unawaited(_onToolCall(calls));
+      case LiveInWorking(:final tool):
+        // Shown, never mistaken for silence: no "no answer" fallback while
+        // the answer is being worked on.
+        _watch?.cancel();
+        _current().answered = true;
+        _working = true;
+        _emit(const LiveThinking());
+        if (tool != null && tool != _shownTool) {
+          _shownTool = tool;
+          _emit(LiveBrain(BrainToolCall(tool, const {})));
+        }
       case LiveInToolCancel(:final ids):
         _cancelledIds.addAll(ids);
         AppLog.add('live', 'tool call cancelled by the model');
@@ -1582,8 +1606,10 @@ class LiveVoice {
         ..said += said
         ..answered = true;
       // Her voice plays on the call itself: her words are the sign she spoke.
-      if (_session is OwnsAudio && !t.spoke) {
+      if (_session is OwnsAudio && (!t.spoke || _working)) {
         t.spoke = true;
+        _working = false;
+        _shownTool = null;
         _stalls = 0;
         _emit(const LiveSpeaking());
       }
