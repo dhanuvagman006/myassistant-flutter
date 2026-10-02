@@ -80,6 +80,10 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   bool _closed = false;
   bool _responding = false;
   bool _cutOff = false;
+  /// The calls of the response in progress. With parallel tool calls one
+  /// response can ask for several; they go to the engine together when it
+  /// ends, so their answers go back in one batch and ask for ONE reply.
+  final List<FunctionCall> _calls = [];
   final _clock = Stopwatch()..start();
   int _pingMs = -1000;
 
@@ -152,7 +156,7 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         } catch (_) {
           args = <String, Object?>{};
         }
-        _emit(LiveInToolCall([FunctionCall(name, args, id: (e['call_id'] ?? '').toString())]));
+        _calls.add(FunctionCall(name, args, id: (e['call_id'] ?? '').toString()));
       case 'response.done':
         _responding = false;
         final resp = e['response'];
@@ -167,6 +171,9 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         // in the next response once the phone sends the outputs back. Told
         // "turn complete" here, the engine heard silence and gave up with
         // "no answer" (2026-10-02, the client's search).
+        final calls = List.of(_calls);
+        _calls.clear();
+        if (calls.isNotEmpty && status != 'cancelled' && status != 'failed') _emit(LiveInToolCall(calls));
         if (calledTools && status == 'completed') break;
         // The reply they talked over: its turn already ended at the
         // interruption. Told "complete" again, the engine closed the NEW

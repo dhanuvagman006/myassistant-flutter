@@ -49,6 +49,35 @@ void main() {
     await session.close();
   });
 
+  test('parallel calls of one response reach the engine together, once it ends', () async {
+    final frames = StreamController<dynamic>();
+    final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});
+    final got = <LiveIn>[];
+    final sub = session.messages.listen(got.add);
+    frames
+      ..add(jsonEncode({'type': 'session.created'}))
+      ..add(jsonEncode({'type': 'response.function_call_arguments.done', 'name': 'get_weather', 'call_id': 'a', 'arguments': '{}'}))
+      ..add(jsonEncode({'type': 'response.function_call_arguments.done', 'name': 'set_timer', 'call_id': 'b', 'arguments': '{"minutes":2}'}))
+      ..add(jsonEncode({
+        'type': 'response.done',
+        'response': {
+          'status': 'completed',
+          'output': [
+            {'type': 'function_call', 'call_id': 'a'},
+            {'type': 'function_call', 'call_id': 'b'}
+          ]
+        }
+      }));
+    await session.ready;
+    await Future<void>.delayed(Duration.zero);
+    final calls = got.whereType<LiveInToolCall>().toList();
+    expect(calls, hasLength(1));
+    expect(calls.single.calls.map((c) => c.id), ['a', 'b']);
+    expect(got.whereType<LiveInContent>().where((c) => c.turnComplete), isEmpty);
+    await sub.cancel();
+    await session.close();
+  });
+
   test('what the phone sends: resampled audio, text turns, tool results', () async {
     final frames = StreamController<dynamic>();
     final sent = <Map<String, dynamic>>[];
