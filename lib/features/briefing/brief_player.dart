@@ -72,7 +72,7 @@ abstract interface class BriefAudio {
 /// speech engine, so stopping the brief never cancels a reply.
 class SpeechBriefVoice implements BriefVoice {
   SpeechBriefVoice([SpeechEngine? engine])
-      : _engine = engine ?? SpeechEngine(port: FirebaseModelPort());
+      : _engine = engine ?? SpeechEngine(port: ModelPorts.cloud());
   final SpeechEngine _engine;
   final _open = <SpeechStream>{};
 

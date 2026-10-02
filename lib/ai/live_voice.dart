@@ -527,7 +527,7 @@ class LiveVoicePreview {
     if (chunks == null) {
       final base = config ?? () => AiConfigStore.instance.current;
       final engine = SpeechEngine(
-        port: port ?? FirebaseModelPort(),
+        port: port ?? ModelPorts.cloud(),
         config: () => base().withVoice(voice),
       );
       final made = <SpeechChunk>[];

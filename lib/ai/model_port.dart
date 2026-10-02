@@ -3,6 +3,8 @@
 // fallback) goes through a [ModelPort], so tests can hand the modules a
 // fake and nothing in a unit test touches Firebase or the network.
 import 'dart:async';
+import 'config.dart';
+import 'server_model_port.dart';
 import 'dart:io';
 
 import 'package:firebase_ai/firebase_ai.dart';
@@ -56,6 +58,34 @@ abstract interface class ModelPort {
 /// SDK's cached App Check token is used and ONE keep-alive client carries
 /// every request, and [warmUp] fetches both tokens and opens the
 /// connection when the assistant opens and when the orb is tapped.
+/// THE PORT THE APP TALKS TO. With the served provider 'openai' every
+/// cloud answer, every spoken sentence and every recorded turn goes to our
+/// own server (server_model_port.dart); otherwise the phone calls
+/// Firebase AI Logic itself, as it always did. Decided per request from
+/// the cached config, so a server-side switch takes effect without a build.
+class ModelPorts {
+  ModelPorts._();
+  static ModelPort? _firebase;
+  static ModelPort? _server;
+  static AiConfig Function() config = () => AiConfigStore.instance.current;
+
+  static ModelPort cloud() => _Switching();
+
+  static ModelPort _pick() {
+    if (config().viaServer) return _server ??= ServerModelPort();
+    return _firebase ??= FirebaseModelPort();
+  }
+}
+
+class _Switching implements ModelPort {
+  @override
+  Stream<GenerateContentResponse> stream(ModelRequest request) => ModelPorts._pick().stream(request);
+  @override
+  Future<GenerateContentResponse> generate(ModelRequest request) => ModelPorts._pick().generate(request);
+  @override
+  Future<void> warmUp() => ModelPorts._pick().warmUp();
+}
+
 class FirebaseModelPort implements ModelPort {
   FirebaseModelPort({FirebaseAI Function()? ai}) : _ai = ai ?? defaultAi;
 

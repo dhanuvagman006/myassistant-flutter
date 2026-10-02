@@ -121,12 +121,12 @@ class AssistantEngine extends ChangeNotifier {
 
   VoiceListener? _listenerMade;
   VoiceListener get _listener =>
-      _listenerMade ??= VoiceListener.standard(FirebaseModelPort());
+      _listenerMade ??= VoiceListener.standard(ModelPorts.cloud());
 
   /// Speech with no model behind it: a fixed line (someone's message read
   /// out, a greeting) in the assistant's own voice.
   SpeechEngine? _speechMade;
-  SpeechEngine get _speech => _speechMade ??= SpeechEngine(port: FirebaseModelPort());
+  SpeechEngine get _speech => _speechMade ??= SpeechEngine(port: ModelPorts.cloud());
 
   /// Talking over her: the microphone listens while she speaks.
   BargeInWatch? _bargeMade;

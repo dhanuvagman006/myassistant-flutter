@@ -286,8 +286,14 @@ class AiConfig {
     this.limits = const AiLimits(),
     this.live = const AiLive(),
     this.listen = const AiListen(),
+    this.provider = 'gemini',
     this.fromServer = false,
   });
+
+  /// Who answers: 'gemini' (the phone calls Firebase AI Logic itself) or
+  /// 'openai' (the phone asks our server, which holds the key). Served.
+  final String provider;
+  bool get viaServer => provider == 'openai';
 
   final AiModels models;
   final AiRouting routing;
@@ -311,6 +317,7 @@ class AiConfig {
         limits: limits,
         live: live,
         listen: listen,
+        provider: provider,
         fromServer: fromServer,
       );
 
@@ -320,6 +327,7 @@ class AiConfig {
         limits: AiLimits.fromJson(j['limits']),
         live: AiLive.fromJson(j['live']),
         listen: AiListen.fromJson(j['listen']),
+        provider: j['provider'] == 'openai' ? 'openai' : 'gemini',
         fromServer: true,
       );
 }

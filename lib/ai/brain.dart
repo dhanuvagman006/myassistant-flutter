@@ -367,7 +367,7 @@ class AssistantBrain {
     Future<Map<String, Object?>> Function()? deviceContext,
     LocalToolRegistry? localTools,
   }) {
-    final port = FirebaseModelPort();
+    final port = ModelPorts.cloud();
     final configs = AiConfigStore.instance;
     return AssistantBrain(
       server: ToolServer(),
