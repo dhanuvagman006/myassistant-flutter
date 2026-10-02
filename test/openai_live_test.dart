@@ -118,6 +118,36 @@ void main() {
     await session.close();
   });
 
+  test('a reply cut off by the user does not end the next turn; a foreign-script caption is dropped', () async {
+    final frames = StreamController<dynamic>();
+    final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});
+    final got = <LiveIn>[];
+    final sub = session.messages.listen(got.add);
+    frames
+      ..add(jsonEncode({'type': 'session.created'}))
+      ..add(jsonEncode({'type': 'response.created'}))
+      ..add(jsonEncode({'type': 'response.output_audio_transcript.delta', 'delta': 'There is no'}))
+      ..add(jsonEncode({'type': 'input_audio_buffer.speech_started'}))
+      ..add(jsonEncode({'type': 'response.done', 'response': {'status': 'cancelled', 'output': []}}))
+      ..add(jsonEncode({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'مسٹر شنکر بھٹ'}))
+      ..add(jsonEncode({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Mr. Shankar Bhat'}))
+      ..add(jsonEncode({'type': 'response.created'}))
+      ..add(jsonEncode({'type': 'response.output_audio_transcript.delta', 'delta': 'Shankar Bhat is a journalist.'}))
+      ..add(jsonEncode({'type': 'response.done', 'response': {'status': 'completed', 'output': [{'type': 'message'}]}}));
+    await session.ready;
+    await Future<void>.delayed(Duration.zero);
+    final real = got.where((m) => m is! LiveInPing && m is! LiveInReady).cast<LiveInContent>().toList();
+    expect(real.map((c) => c.interrupted).toList(), [false, true, false, false, false]);
+    expect(real[2].heard, 'Mr. Shankar Bhat');
+    expect(real[3].said, 'Shankar Bhat is a journalist.');
+    expect(real.where((c) => c.turnComplete).length, 1, reason: 'only the answered turn completes');
+    expect(OpenAiLiveSession.plausible('ನಮಸ್ಕಾರ, how are you'), isTrue);
+    expect(OpenAiLiveSession.plausible('नमस्ते'), isTrue);
+    expect(OpenAiLiveSession.plausible('はい。'), isFalse);
+    await sub.cancel();
+    await session.close();
+  });
+
   test('a socket that closes before the session is acknowledged fails fast', () async {
     final frames = StreamController<dynamic>();
     final session = OpenAiLiveSession(frames.stream, (_) {}, () async {});

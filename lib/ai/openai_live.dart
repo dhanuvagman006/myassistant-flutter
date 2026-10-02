@@ -79,6 +79,7 @@ class OpenAiLiveSession implements LiveSessionPort {
   StreamSubscription<dynamic>? _sub;
   bool _closed = false;
   bool _responding = false;
+  bool _cutOff = false;
   final _clock = Stopwatch()..start();
   int _pingMs = -1000;
 
@@ -121,10 +122,22 @@ class OpenAiLiveSession implements LiveSessionPort {
         // Barge-in only while she is answering: the model stops itself
         // (interrupt_response); the player stops here. Speech that opens a
         // turn in silence is just the owner talking.
-        if (_responding) _emit(const LiveInContent(interrupted: true));
+        if (_responding) {
+          _cutOff = true;
+          _emit(const LiveInContent(interrupted: true));
+        }
       case 'conversation.item.input_audio_transcription.completed':
         final heard = (e['transcript'] ?? '').toString();
-        if (heard.trim().isNotEmpty) _emit(LiveInContent(heard: heard));
+        if (heard.trim().isNotEmpty) {
+          if (plausible(heard)) {
+            _emit(LiveInContent(heard: heard));
+          } else {
+            // "Mr. Shankar Bhat" came back in Urdu script (the client,
+            // 2026-10-02): the model heard the audio itself; a caption in a
+            // script nobody here speaks only misleads the fallback.
+            AppLog.add('live', 'realtime: dropped a transcript in an unexpected script');
+          }
+        }
       case 'response.output_audio.delta':
       case 'response.audio.delta':
         final b64 = (e['delta'] ?? '').toString();
@@ -159,6 +172,14 @@ class OpenAiLiveSession implements LiveSessionPort {
         // "turn complete" here, the engine heard silence and gave up with
         // "no answer" (2026-10-02, the client's search).
         if (calledTools && status == 'completed') break;
+        // The reply they talked over: its turn already ended at the
+        // interruption. Told "complete" again, the engine closed the NEW
+        // turn with nothing said and gave up with "no answer".
+        if (status == 'cancelled' && _cutOff) {
+          _cutOff = false;
+          break;
+        }
+        _cutOff = false;
         _emit(const LiveInContent(turnComplete: true));
       case 'error':
         final err = e['error'];
@@ -226,6 +247,15 @@ class OpenAiLiveSession implements LiveSessionPort {
     try {
       await _close();
     } catch (_) {}
+  }
+
+  /// Latin and the Indian scripts are always plausible here; Arabic, CJK,
+  /// Cyrillic and the rest only show up when the transcriber guessed wrong.
+  static bool plausible(String text) {
+    final letters = text.replaceAll(RegExp(r'[\s\d\p{P}\p{S}]', unicode: true), '');
+    if (letters.isEmpty) return true;
+    final ok = RegExp(r'[A-Za-zÀ-ɏऀ-෿]').allMatches(letters).length;
+    return ok / letters.length >= 0.5;
   }
 
   /// 16 kHz → 24 kHz, 16-bit mono: two input samples become three, the

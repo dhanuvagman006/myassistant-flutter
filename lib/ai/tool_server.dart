@@ -259,7 +259,9 @@ class ToolServer {
     required Map<String, Object?> args,
     required String userText,
     String? approvalToken,
-    Duration timeout = const Duration(seconds: 25),
+    // 45 s since 2026-10-02: a picture (made, then saved) took ~24 s and the
+    // old 25 s cut it off — the assistant then said it was not saved.
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     final (status, j) = await _send(
         'POST',
