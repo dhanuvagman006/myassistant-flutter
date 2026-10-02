@@ -1,7 +1,7 @@
 name: myassistant
 description: MYASSISTANT — AI personal assistant for Android and iOS.
 publish_to: 'none'
-version: 0.2.104+145
+version: 0.2.105+146
 
 environment:
   # Color.withValues() (used throughout lib/design) requires Dart 3.6 / Flutter 3.27+
@@ -13,6 +13,8 @@ dependencies:
 
   # Networking — talks to the backend only; AI keys never live in the app
   http: ^1.2.2
+  # The fast voice's own socket to OpenAI Realtime (lib/ai/openai_live.dart).
+  web_socket_channel: ^3.0.1
   # Live mode: bidirectional audio stream to the backend /live proxy.
   http_parser: ^4.0.2   # MediaType for vision multipart uploads
 
@@ -118,8 +120,6 @@ dependencies:
   firebase_analytics: ^12.6.0
 
 dev_dependencies:
-  # The patched firebase_ai socket test opens its own channel.
-  web_socket_channel: ^3.0.1
   flutter_test:
     sdk: flutter
   # The on-phone frame benchmark (integration_test/ux_bench_test.dart,

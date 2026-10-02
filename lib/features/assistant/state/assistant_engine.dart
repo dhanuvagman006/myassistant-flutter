@@ -2662,7 +2662,9 @@ class AssistantEngine extends ChangeNotifier {
         // through the shell; everything else is a pushed route.
         {
           final screen = e['screen'] as String? ?? '';
-          const tabs = {'home': 0, 'hub': 1, 'chat': 2, 'settings': 3};
+          // Nearby took Chat's place in the dock (2026-10-01); 'chat' now
+          // means the Messages thread list, pushed from the Hub.
+          const tabs = {'home': 0, 'hub': 1, 'nearby': 2, 'settings': 3};
           if (tabs.containsKey(screen)) {
             HomeShell.requestedTab.value = tabs[screen];
           } else {

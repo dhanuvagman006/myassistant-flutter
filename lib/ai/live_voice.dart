@@ -34,6 +34,7 @@
 library;
 
 import 'dart:async';
+import 'openai_live.dart';
 import 'dart:collection';
 import 'dart:typed_data';
 
@@ -694,7 +695,7 @@ class LiveVoice {
     void Function(LiveTurnAudio audio)? onTurnAudio,
   }) =>
       LiveVoice(
-        connector: FirebaseLiveConnector(),
+        connector: SwitchingLiveConnector(),
         server: ToolServer(),
         brain: brain,
         player: player,

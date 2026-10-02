@@ -346,14 +346,14 @@ void main() {
 
     test('the four tab names map to the shell\'s real tab order', () {
       final engine = _appSrc('lib/features/assistant/state/assistant_engine.dart');
-      expect(engine, contains("const tabs = {'home': 0, 'hub': 1, 'chat': 2, 'settings': 3};"));
+      expect(engine, contains("const tabs = {'home': 0, 'hub': 1, 'nearby': 2, 'settings': 3};"));
       final shell = _appSrc('lib/shell/home_shell.dart');
       final stack = _slice(shell, 'TabDeck(', ']');
-      final order = ['HomeDashboard()', 'HubScreen()', 'ChatScreen()', 'AssistantSettingsScreen()']
+      final order = ['HomeDashboard()', 'HubScreen()', 'NearbyScreen()', 'AssistantSettingsScreen()']
           .map(stack.indexOf)
           .toList();
       expect(order.every((i) => i >= 0), isTrue, reason: 'all four tabs are in the stack');
-      expect([...order]..sort(), order, reason: 'home, hub, chat, settings — in that order');
+      expect([...order]..sort(), order, reason: 'home, hub, nearby, settings — in that order');
     });
 
     test('every phone_control action is a case on the phone; go_home/app_info go as intents',

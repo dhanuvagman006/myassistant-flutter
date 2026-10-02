@@ -346,6 +346,9 @@ void main() {
 
   testWidgets('Hub uses the shared label and card', (t) async {
     tallPhone(t);
+    // Taller still since 2026-10-01: the Messages row (the old Chat tab)
+    // pushed the last group below a 5000 px list.
+    t.view.physicalSize = const Size(1080, 7000);
     await pumpOffline(t, const Scaffold(body: HubScreen()));
     // Seven since 2026-09-25: "Stay informed" holds News. Eight in build
     // 120: "Connections" holds Connected apps.
