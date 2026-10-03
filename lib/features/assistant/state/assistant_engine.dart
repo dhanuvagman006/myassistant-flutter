@@ -71,9 +71,6 @@ import '../../../services/listening_chime.dart';
 import '../../../services/usage_service.dart';
 import 'assistant_state.dart';
 import '../../../services/greeting_voice.dart';
-import '../../poster/poster_device_actions.dart';
-import '../../poster/poster_engine_host.dart';
-import '../../poster_studio/studio_actions.dart';
 // 2026-09-30: the spoken morning and Meeting Prep (features/briefing).
 import '../../briefing/briefing_directives.dart';
 import '../../people/address_sheet.dart';
@@ -430,11 +427,6 @@ class AssistantEngine extends ChangeNotifier {
   /// UI hook (registered by HomeShell): present recalled documents as the
   /// full-screen swipe gallery, over whatever screen the user is on.
   bool Function(List<UserDocument> documents)? onShowDocuments;
-
-  /// UI hook (registered by HomeShell): bring up the photo-card screen
-  /// over whatever is on top (gift cards, 2026-09-26). False when there is
-  /// no screen to push it on.
-  bool Function()? onShowPoster;
 
   /// Interpreter mode ("be my translator") — while true the model
   /// translates what it hears instead of assisting. Never survives the
@@ -2102,10 +2094,6 @@ class AssistantEngine extends ChangeNotifier {
     'open_camera',
     'ask_about_image',
     'scan_business_card',
-    'poster_pick_photo',
-    'poster_show',
-    'poster_share',
-    'poster_sign',
     'shortcut_run',
   };
 
@@ -2550,23 +2538,6 @@ class AssistantEngine extends ChangeNotifier {
           question: e['question'] as String? ?? '',
           source: e['source'] as String? ?? 'gallery',
         );
-        break;
-
-      case 'poster_pick_photo':
-      case 'poster_show':
-      case 'poster_share':
-      case 'poster_sign':
-        // PHOTO CARDS (client, 2026-09-26: "make a birthday card for my
-        // daughter… with my signature"). The server's card tools only send
-        // these from build 119; the card is drawn here, never by a model.
-        await PosterDeviceActions(EnginePosterHost(this)).handle(e);
-        break;
-
-      case 'open_poster_studio':
-        // POSTER STUDIO (2026-09-30, build 135+): create_event_poster's
-        // design and background open in the studio; the phone sets the
-        // words, the AI only painted the picture.
-        await PosterStudioActions().handle(e);
         break;
 
       case 'phone_control':

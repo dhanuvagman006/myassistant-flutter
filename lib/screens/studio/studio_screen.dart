@@ -15,9 +15,6 @@ import '../../models/user_document.dart';
 import '../../services/api_service.dart';
 import '../../services/studio_service.dart';
 import 'studio_look_screen.dart';
-import '../../features/poster/photo_source_sheet.dart';
-import '../../features/poster/poster_controller.dart';
-import '../../features/poster/poster_screen.dart';
 import '../../services/app_feedback.dart';
 import '../../design/motion.dart';
 
@@ -252,23 +249,6 @@ class _StudioScreenState extends State<StudioScreen> {
   /* ---------------------------------------------------------------- */
 
   Future<void> _openRecipe(StudioRecipe r) async {
-    // "Restore an old photo" is for the OLD photo he picks — never his own
-    // saved selfie, which is what this recipe used to run on. No AI for now
-    // (owner, 2026-09-26): the server gently cleans it up and the photo-card
-    // screen shows it before and after, with "Make a birthday card with it".
-    if (r.id == 'restore') {
-      PickedPhoto? picked;
-      try {
-        picked = await PhotoSourceSheet.pick(context, 'ask');
-      } on PhotoAccessDenied {
-        return; // the way to Settings is already on the screen
-      }
-      if (picked == null || !mounted) return;
-      unawaited(PosterController.instance.addLoosePhoto(picked));
-      await Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const PosterScreen()));
-      return;
-    }
     final s = _state;
     if (s == null) return;
     if (r.needsModel && s.myPhotos.isEmpty) {
@@ -358,7 +338,9 @@ class _StudioScreenState extends State<StudioScreen> {
     if (!s.consented) return _consentView();
 
     final groups = <String, List<StudioRecipe>>{};
-    for (final r in s.recipes) {
+    // "Restore an old photo" lived on the photo-card screen, removed
+    // with it (owner, 2026-10-02).
+    for (final r in s.recipes.where((r) => r.id != 'restore')) {
       groups.putIfAbsent(r.group, () => []).add(r);
     }
 

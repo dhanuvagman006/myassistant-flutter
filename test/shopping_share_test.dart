@@ -39,7 +39,7 @@ void main() {
       final add = src.substring(src.indexOf('Future<bool> _addToShoppingList('));
       expect(add, contains('AssistantEngine.instance.askAboutShared('));
       expect(add, contains('ShoppingShare.ask(text: text, picture: picture != null)'));
-      final sheet = _read('lib/features/poster/photo_source_sheet.dart');
+      final sheet = _read('lib/widgets/photo_source_sheet.dart');
       expect(sheet, contains("'Add to shopping list', 'shop'"));
       final engine = _read('lib/features/assistant/state/assistant_engine.dart');
       final ask = engine.substring(engine.indexOf('Future<void> askAboutShared('));

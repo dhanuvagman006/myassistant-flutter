@@ -20,8 +20,6 @@ import 'email_setup_screen.dart';
 import 'features_screen.dart';
 import 'stocks_screen.dart';
 import 'studio/studio_screen.dart';
-import '../features/poster/poster_screen.dart';
-import '../features/poster_studio/studio_screen.dart';
 import '../features/shopping/shopping_list_screen.dart';
 import '../design/motion.dart';
 
@@ -155,24 +153,6 @@ class HubScreen extends StatelessWidget {
             ),
           ]),
           _group(context, 'Looks', [
-            // AI POSTER STUDIO (2026-09-30): "make a poster for our event
-            // tomorrow" — an AI picture with the words set exactly.
-            _Row(
-              'Poster Studio',
-              'Event posters and flyers, designed with AI',
-              Icons.auto_fix_high_rounded,
-              Neon.accentA,
-              (c) => const PosterStudioScreen(),
-            ),
-            // Gift cards from his own photo (client, 2026-09-26: "make a
-            // birthday card for my daughter… with my signature").
-            _Row(
-              'Photo cards',
-              'Birthday cards from your own photo, with your words',
-              Icons.card_giftcard_rounded,
-              Neon.accentD,
-              (c) => const PosterScreen(openLatest: true),
-            ),
             _Row(
               'Style Studio',
               'Try on outfits and hairstyles on your own photo',

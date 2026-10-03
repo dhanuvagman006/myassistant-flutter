@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -7,14 +8,35 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart' show openAppSettings;
 
-import '../../core/log.dart';
-import '../../design/neon_tokens.dart';
-import 'poster_controller.dart';
-import '../../design/motion.dart';
+import '../core/log.dart';
+import '../design/neon_tokens.dart';
+import '../design/motion.dart';
 
 /// "From my photos" or "Take a picture of a printed photo" — two big
 /// choices, nothing else (an old print is usually in a drawer, not in the
 /// phone's gallery).
+/// A photo picked from the camera, the gallery or a share.
+class PickedPhoto {
+  final Uint8List bytes;
+  final String mime;
+
+  /// 'gallery' | 'camera' | 'share' | 'document'
+  final String source;
+  const PickedPhoto(this.bytes, {this.mime = 'image/jpeg', this.source = 'gallery'});
+}
+
+/// The camera (or his photos) are switched off for this app in the phone's
+/// settings. Not the same as closing the picker: asking "try again?" would
+/// only fail the same way, so he is shown the way to Settings instead.
+class PhotoAccessDenied implements Exception {
+  /// 'camera' | 'gallery'
+  final String source;
+  const PhotoAccessDenied(this.source);
+
+  @override
+  String toString() => 'PhotoAccessDenied($source)';
+}
+
 abstract final class PhotoSourceSheet {
   /// 'gallery' | 'camera', or null when he closes it.
   static Future<String?> ask(BuildContext context) => showAppSheet<String>(
@@ -90,8 +112,6 @@ abstract final class PhotoSourceSheet {
                     style: NeonType.manrope(NeonType.title3, FontWeight.w700)
                         .copyWith(color: Neon.textHi)),
                 const SizedBox(height: 14),
-                _choice(ctx, Icons.card_giftcard_rounded, 'Make a birthday card', 'card'),
-                const SizedBox(height: 12),
                 _choice(ctx, Icons.add_shopping_cart_rounded, 'Add to shopping list', 'shop'),
                 const SizedBox(height: 12),
                 _choice(ctx, Icons.save_alt_rounded, 'Just save it', 'save'),

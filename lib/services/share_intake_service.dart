@@ -9,9 +9,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../ai/types.dart' show AiAttachment;
 import '../core/log.dart';
 import '../features/assistant/state/assistant_engine.dart';
-import '../features/poster/photo_source_sheet.dart';
-import '../features/poster/poster_controller.dart';
-import '../features/poster/poster_screen.dart';
+import '../widgets/photo_source_sheet.dart';
 import '../features/shopping/shopping_share.dart';
 import '../models/user_document.dart' show DocumentUploadException;
 import 'avatar_message_service.dart';
@@ -346,25 +344,12 @@ class ShareIntakeService {
     if (ctx == null || f.path.isEmpty) return false;
     try {
       final choice = await PhotoSourceSheet.askShared(ctx);
+      // Photo cards are gone (owner, 2026-10-02): a card is asked for in
+      // words and drawn by the image model.
       if (choice == 'shop') return await _addToShoppingList(photo: f);
-      if (choice != 'card') return false;
-      final raw = await File(f.path).readAsBytes();
-      if (raw.isEmpty) return false;
-      // The same clean-up the picker gives a photo: a HEIC or a huge camera
-      // file is redrawn as one the server takes.
-      ({Uint8List bytes, String mime}) usable;
-      try {
-        usable = await PhotoSourceSheet.normalise(raw);
-      } catch (e) {
-        AppLog.add('share', 'shared photo does not open: $e');
-        AppFeedback.toast("That photo doesn't open here — please pick another one.");
-        return true;
-      }
-      await PosterNav.cardFromPhoto(
-          PickedPhoto(usable.bytes, mime: usable.mime, source: 'share'));
-      return true;
+      return false;
     } catch (e) {
-      AppLog.add('share', 'card from shared photo failed: $e');
+      AppLog.add('share', 'shared photo choice failed: $e');
       return false;
     }
   }

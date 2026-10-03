@@ -19,7 +19,6 @@ import 'services/api_service.dart';
 import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
-import 'features/poster/poster_controller.dart';
 import 'services/avatar_message_service.dart';
 import 'services/brief_service.dart';
 import 'services/style_prefs.dart';
@@ -105,7 +104,6 @@ Future<void> main() async {
   AvatarMessageService.wireSignOut();
   // …and the photo cards: the card, its photo and his signature on this
   // phone (review, 2026-09-26: they met the next account on a shared phone).
-  PosterController.wireSignOut();
   runApp(const MyAssistantApp());
 }
 

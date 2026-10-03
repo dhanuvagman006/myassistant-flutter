@@ -76,15 +76,13 @@ Set<String> _quoted(String s) =>
 const _directiveSources = [
   'src/tools/builtins.js',
   'src/tools/knowledge.js',
-  'src/posters/tools.js',
   'src/momentum/tools.js',
   // The shopping list (build 124): the list notice, open_app_screen,
   // shop_from_list's shop_handoff and share_shopping_list's open_url.
   'src/shopping/tools.js',
   'src/shopping/handoff.js',
   'src/shopping/share.js',
-  // Poster Studio, photo edits, the spoken brief and meeting prep (build 135).
-  'src/posters/studioTools.js',
+  // Photo edits, the spoken brief and meeting prep (build 135).
   'src/meetings/tools.js',
 ];
 
@@ -125,7 +123,6 @@ class _Call {
 }
 
 const _ai = 'lib/ai/tool_server.dart';
-const _post = 'lib/features/poster/poster_service.dart';
 const _mom = 'lib/services/momentum_service.dart';
 const _avm = 'lib/services/avatar_message_service.dart';
 const _api = 'lib/services/api_service.dart';
@@ -146,27 +143,6 @@ const _calls = <_Call>[
   _Call('post', _ai, "'/ai/turn'", '/ai', 'require("./ai/routes")', 'src/ai/routes.js', '/turn'),
   _Call('post', _ai, "'/ai/firebase-token'", '/ai', 'require("./ai/routes")',
       'src/ai/routes.js', '/firebase-token'),
-  // Photo cards (build 119).
-  _Call('post', _post, "'\$_base/photos'", '/posters', 'require("./routes/posters")',
-      'src/routes/posters.js', '/photos'),
-  _Call('post', _post, "'\$_base/photos/from-document'", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/photos/from-document'),
-  _Call('get', _post, "'\$_base/photos/\$photoId/file?v=", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/photos/:id/file'),
-  _Call('post', _post, "'\$_base/photos/\$photoId/colour'", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/photos/:id/colour'),
-  _Call('post', _post, "'\$_base/photos/\$photoId/keep'", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/photos/:id/keep'),
-  _Call('post', _post, '.post(Uri.parse(_base)', '/posters', 'require("./routes/posters")',
-      'src/routes/posters.js', '/'),
-  _Call('get', _post, "'\$_base/latest'", '/posters', 'require("./routes/posters")',
-      'src/routes/posters.js', '/latest'),
-  _Call('patch', _post, ".patch(Uri.parse('\$_base/\$id')", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/:id'),
-  _Call('post', _post, "'\$_base/\$id/final'", '/posters', 'require("./routes/posters")',
-      'src/routes/posters.js', '/:id/final'),
-  _Call('delete', _post, ".delete(Uri.parse('\$_base/\$id')", '/posters',
-      'require("./routes/posters")', 'src/routes/posters.js', '/:id'),
   // Momentum.
   _Call('put', _mom, "'/priorities',", '/momentum', 'require("./momentum/routes")',
       'src/momentum/routes.js', '/priorities'),
@@ -401,25 +377,6 @@ void main() {
           if (e.value > build) e.key: e.value
       };
       expect(tooNew, isEmpty, reason: 'this build ($build) would be told to update');
-    }, skip: _needsBackend);
-
-    test('photo cards are gated to the build that handles poster_* (119, not released 118)',
-        () {
-      final gate = int.parse(RegExp(r'const POSTER_MIN_BUILD = (\d+);')
-          .firstMatch(_beSrc('src/posters/tools.js'))!
-          .group(1)!);
-      expect(_engineCases(),
-          containsAll(['poster_pick_photo', 'poster_show', 'poster_share', 'poster_sign']));
-      // Build 118 is what users have, and it has no poster_* handler.
-      expect(gate, greaterThanOrEqualTo(119));
-      expect(gate, lessThanOrEqualTo(_appBuild()));
-      // Every poster tool carries the gate (the declaration filter) …
-      final tools = _beSrc('src/posters/tools.js');
-      final registered = 'registry.register('.allMatches(tools).length;
-      expect('minAppBuild: POSTER_MIN_BUILD'.allMatches(tools).length, registered,
-          reason: 'a poster tool without the gate is offered to build 118');
-      // … and an old phone that still reaches one gets an honest refusal.
-      expect(tools, contains('b > 0 && b < POSTER_MIN_BUILD'));
     }, skip: _needsBackend);
 
     // 2026-09-30: remember_address / show_address send `show_address`; the
