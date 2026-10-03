@@ -1528,7 +1528,15 @@ class AssistantEngine extends ChangeNotifier {
   void _onLive(LiveEvent e) {
     if (!_voiceOn || !_liveMode) {
       // A device action is always answered, or its tool waits 30 s.
-      if (e case LiveBrain(event: BrainDeviceAction(:final respond))) {
+      if (e case LiveBrain(event: BrainDeviceAction(:final tool, :final action, :final respond))) {
+        // A picture they asked for is shown even when the conversation
+        // closed while it was being made (~15 s; the owner, 2026-10-03:
+        // "it's not appearing on the screen").
+        final type = '${action['type'] ?? ''}';
+        if (type == 'show_image' || type == 'show_video') {
+          unawaited(_performForBrain(tool, action, respond));
+          return;
+        }
         respond(const DeviceOutcome.failed('The conversation had ended.'));
       }
       return;
@@ -3095,11 +3103,21 @@ class AssistantEngine extends ChangeNotifier {
           if (docJson is Map || all.isNotEmpty) {
             final doc = all.isNotEmpty ? all.first : UserDocument.fromJson((docJson as Map).cast<String, dynamic>());
             final shown = onShowDocuments?.call(all.isNotEmpty ? all : [doc]) ?? false;
-            if (!shown) {
-              // No host to pop a gallery over (rare) — fall back to the
-              // in-conversation card rather than dropping it silently.
+            final nav = AvatarMessageService.navigatorKey.currentState;
+            if (!shown && nav != null) {
+              // No gallery to pop: the Documents page, where it is saved.
+              unawaited(nav.push(MaterialPageRoute(builder: (_) => const DocumentsScreen())));
+            } else if (!shown) {
+              // Nothing to push on (rare) — the in-conversation card rather
+              // than dropping it silently.
               generatedImage = doc;
               generatedImagePrompt = e['prompt'] as String? ?? '';
+            }
+            // WHERE IT IS (the owner, 2026-10-03: "user cannot make out
+            // where it is saved"): said on screen every time.
+            if (e['type'] == 'show_image' && e['documents'] == null) {
+              AppFeedback.toast('Saved in your Documents (Hub → My documents)',
+                  tone: FeedbackTone.success);
             }
           }
         }
