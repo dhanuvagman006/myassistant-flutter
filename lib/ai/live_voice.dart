@@ -1,4 +1,4 @@
-/// THE FAST VOICE — Gemini Live through Firebase AI Logic (2026-09-30).
+/// THE FAST VOICE — the app's Live session connector.
 ///
 /// Measured from the PC that morning (the same proxy firebase_ai uses, the
 /// App Check debug token): the cascade — the phone's recogniser, 1.4 s of
@@ -485,8 +485,9 @@ final class LiveFallback extends LiveEvent {
 
 // ---------------------------------------------------------------- settings
 
-/// The owner's choices: the fast voice on or off, and its voice. Kept on
-/// the phone (the Voice screen), read when a conversation starts.
+/// The owner's Live setting and voice. Kept on the phone, read when a
+/// conversation starts. A voice left over from the former Gemini picker is
+/// ignored when it is not in the server's current voice list.
 class LiveVoicePrefs {
   static const onKey = 'live_voice_on';
   static const voiceKey = 'live_voice_name';
@@ -523,14 +524,23 @@ class LiveVoicePrefs {
 
   /// The voice a session uses: the owner's pick, else the server's.
   static String voiceFor(AiLive live) {
-    final v = (chosenVoice ?? '').trim();
-    return v.isEmpty ? live.voice : v;
+    String? offeredMatch(String value) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized.isEmpty) return null;
+      for (final voice in live.voices) {
+        if (voice.toLowerCase() == normalized) return voice;
+      }
+      return null;
+    }
+
+    return offeredMatch(chosenVoice ?? '') ??
+        offeredMatch(live.voice) ??
+        (live.voices.isNotEmpty ? live.voices.first : live.voice);
   }
 }
 
-/// A short sample of a Live voice for the picker. The Live voices are the
-/// same prebuilt voices the speech model speaks, so the sample is made
-/// with it (no session to open) and kept, so a second tap is instant.
+/// A short sample of a classic speech voice. GPT Live samples are served
+/// by the backend so they match the selected Live voice exactly.
 class LiveVoicePreview {
   static final _cache = <String, List<SpeechChunk>>{};
 

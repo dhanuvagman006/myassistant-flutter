@@ -84,12 +84,15 @@ import 'package:myassistant/features/shopping/shopping_service.dart';
 import 'package:myassistant/design/tab_deck.dart';
 
 /// The server's answer for the Notion card in [status], with a long name.
-JsonTransport _connections(String status) => (method, path, [body]) async =>
-    path == '/connections'
+JsonTransport _connections(String status) =>
+    (method, path, [body]) async => path == '/connections'
         ? {
             'connections': [
               {
-                'id': 'notion', 'name': 'Notion', 'available': true, 'status': status,
+                'id': 'notion',
+                'name': 'Notion',
+                'available': true,
+                'status': status,
                 'workspace': status == 'not_connected'
                     ? null
                     : "Dhanush's workspace for the family business and the school trust",
@@ -118,9 +121,10 @@ class _VoiceScreenState extends State<_VoiceScreen> {
     AssistantEngine.instance
       ..inlineVoice = true
       ..phase = AssistantPhase.listening;
-    AssistantEngine.instance.caption.value = const CaptionLine('you',
+    AssistantEngine.instance.caption.value = const CaptionLine(
+        'you',
         'Book a table for four at a quiet place near the office for tomorrow at eight and '
-        'tell me the menu highlights before you confirm anything with them');
+            'tell me the menu highlights before you confirm anything with them');
   }
 
   @override
@@ -133,7 +137,8 @@ class _VoiceScreenState extends State<_VoiceScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => const Scaffold(body: InlineCaptionOverlay());
+  Widget build(BuildContext context) =>
+      const Scaffold(body: InlineCaptionOverlay());
 }
 
 /// The voice screen as it is during a conversation — INSIDE the shell, so
@@ -153,7 +158,8 @@ class _ShellVoiceState extends State<_ShellVoice> {
         ..inlineVoice = true
         ..phase = AssistantPhase.listening
         ..notifyListeners();
-      AssistantEngine.instance.activityLabel.value = 'Searching the web — one moment';
+      AssistantEngine.instance.activityLabel.value =
+          'Searching the web — one moment';
     });
   }
 
@@ -182,7 +188,8 @@ final _news = [
       url: 'https://example.com/$i',
       source: 'timesofindia.indiatimes.example',
       age: '2 hours ago',
-      snippet: 'A long summary that goes on for a while, so that the card has to '
+      snippet:
+          'A long summary that goes on for a while, so that the card has to '
           'cut it at two lines on a phone of any size and with any text size.',
       extra: const ['A second snippet with a few more words about the story.'],
       image: 'https://img.example/$i.jpg',
@@ -231,7 +238,10 @@ class Phone {
   final double navDp;
   final double statusDp;
   const Phone(this.name, this.px, this.dpr,
-      {this.text = 1.0, this.keyboardPx = 0, this.navDp = 0, this.statusDp = 0});
+      {this.text = 1.0,
+      this.keyboardPx = 0,
+      this.navDp = 0,
+      this.statusDp = 0});
 }
 
 const phones = [
@@ -250,9 +260,11 @@ final _shot = GlobalKey();
 void _applyPhone(WidgetTester tester, Phone p) {
   tester.view.devicePixelRatio = p.dpr;
   tester.view.physicalSize = p.px;
-  if (p.keyboardPx > 0) tester.view.viewInsets = FakeViewPadding(bottom: p.keyboardPx);
+  if (p.keyboardPx > 0)
+    tester.view.viewInsets = FakeViewPadding(bottom: p.keyboardPx);
   if (p.navDp > 0 || p.statusDp > 0) {
-    final pad = FakeViewPadding(top: p.statusDp * p.dpr, bottom: p.navDp * p.dpr);
+    final pad =
+        FakeViewPadding(top: p.statusDp * p.dpr, bottom: p.navDp * p.dpr);
     tester.view.padding = pad;
     tester.view.viewPadding = pad;
   }
@@ -267,7 +279,9 @@ Future<List<String>> _overflowsDuring(Future<void> Function() body) async {
   FlutterError.onError = (d) {
     final msg = d.exceptionAsString();
     if (msg.contains('overflowed') || msg.contains('presented off screen')) {
-      final at = RegExp(r'lib/[^\s:]+\.dart:\d+').firstMatch(d.toString())?.group(0) ?? '?';
+      final at =
+          RegExp(r'lib/[^\s:]+\.dart:\d+').firstMatch(d.toString())?.group(0) ??
+              '?';
       overflows.add('${msg.split('\n').first} at $at');
     }
   };
@@ -332,42 +346,65 @@ final screens = <String, Widget Function()>{
   // shops and links, two amounts on one line, bought lines.
   'Shopping list (none yet)': () {
     ShoppingService.transport = (method, path, {body}) async =>
-        const ShoppingReply(200, {'items': [], 'updatedAt': null, 'categories': []});
+        const ShoppingReply(
+            200, {'items': [], 'updatedAt': null, 'categories': []});
     ShoppingService.instance.debugSeed(const []);
     return const ShoppingListScreen();
   },
   'Shopping list (filled in)': () {
-    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
+    ShoppingService.instance
+        .debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
     return const ShoppingListScreen();
   },
   'Shopping list (one kind)': () {
-    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
+    ShoppingService.instance
+        .debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']));
     return const ShoppingListScreen(category: 'clothing_footwear');
   },
   'Shopping list (offline, saved list)': () {
-    ShoppingService.transport = (method, path, {body}) async => const ShoppingReply(0, null);
-    ShoppingService.instance.debugSeed(ShoppingItem.listFrom(_shoppingJson()['items']), failed: true);
+    ShoppingService.transport =
+        (method, path, {body}) async => const ShoppingReply(0, null);
+    ShoppingService.instance.debugSeed(
+        ShoppingItem.listFrom(_shoppingJson()['items']),
+        failed: true);
     return const ShoppingListScreen();
   },
   'Shopping list (offline, nothing saved)': () {
-    ShoppingService.transport = (method, path, {body}) async => const ShoppingReply(0, null);
+    ShoppingService.transport =
+        (method, path, {body}) async => const ShoppingReply(0, null);
     ShoppingService.instance.debugSeed(null, failed: true);
     return const ShoppingListScreen();
   },
   'Focus (running)': () => const FocusScreen(
-      minutes: 25, label: 'Quarterly report for the board meeting', autoStart: true),
+      minutes: 25,
+      label: 'Quarterly report for the board meeting',
+      autoStart: true),
   'Sign in': () => const AuthScreen(),
   'Phone verify': () => const PhoneVerifyScreen(),
   'Welcome': () => WelcomeScreen(onDone: () {}),
   'Guide': () => GuideScreen(onDone: () {}),
   'Permissions': () => PermissionsScreen(onDone: () {}),
   'Home (with dock)': () => const HomeShell(),
-  'Call detail': () => const CallDetailScreen(callId: 1, peerLabel: 'Ravi Kumar (Sales, Bengaluru office)'),
+  'Call detail': () => const CallDetailScreen(
+      callId: 1, peerLabel: 'Ravi Kumar (Sales, Bengaluru office)'),
   'Voice picker': () => const VoicePickerScreen(voices: [
-        ('kore', 'Kore', 'Warm, calm — good for long answers'),
-        ('puck', 'Puck', 'Bright and quick'),
-      ], selectedId: 'kore'),
-  'Meeting recorder': () => const MeetingRecorderScreen(title: 'Quarterly review with the regional sales team'),
+        VoiceCatalogItem(
+          id: 'gleam',
+          name: 'Gleam',
+          gender: 'female',
+          accent: 'North American',
+          tagline: 'Warm and conversational',
+        ),
+        VoiceCatalogItem(
+          id: 'ripple',
+          name: 'Ripple',
+          gender: 'male',
+          accent: 'Australian',
+          tagline: 'Warm and conversational',
+        ),
+      ], selectedId: 'gleam'),
+  'Meeting recorder': () => const MeetingRecorderScreen(
+      title: 'Quarterly review with the regional sales team'),
   'Studio': () => const StudioScreen(),
   'Diagnostics': () => const DiagnosticsScreen(),
   'Avatar identity': () => const AvatarIdentityScreen(),
@@ -388,19 +425,22 @@ final screens = <String, Widget Function()>{
   'Record your video': () => const IdentityRecordScreen(),
   // CONNECTED APPS (build 120): the Notion card in all four states.
   'Connected apps (not connected)': () => _connectedApps('not_connected'),
-  'Connected apps (connecting)': () => _connectedApps('not_connected', connecting: true),
+  'Connected apps (connecting)': () =>
+      _connectedApps('not_connected', connecting: true),
   'Connected apps (connected)': () => _connectedApps('connected'),
   'Connected apps (needs reconnect)': () => _connectedApps('needs_reconnect'),
   // HELP IMPROVE (build 120): the one-time card, and the dialog behind it.
   'Help improve card': () => Scaffold(
         body: Align(
           alignment: Alignment.bottomCenter,
-          child: SingleChildScrollView(child: HelpImproveAskCard(days: 14, onAnswer: (_) {})),
+          child: SingleChildScrollView(
+              child: HelpImproveAskCard(days: 14, onAnswer: (_) {})),
         ),
       ),
   'Help improve notice': () => Builder(
         builder: (c) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => showHelpImproveNotice(c, 14));
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => showHelpImproveNotice(c, 14));
           return const Scaffold(body: SizedBox());
         },
       ),
@@ -409,8 +449,10 @@ final screens = <String, Widget Function()>{
   'Chat (with dock)': () => _shellAt(2),
   'You (with dock)': () => _shellAt(3),
   'Voice screen (in the shell)': () => const _ShellVoice(),
-  'Group chat': () => const ChatGroupScreen(groupId: 1, title: 'Weekend trip planning committee'),
-  'Chat thread': () => const ChatThreadScreen(phone: '+919845012345', name: 'Ravi Kumar'),
+  'Group chat': () => const ChatGroupScreen(
+      groupId: 1, title: 'Weekend trip planning committee'),
+  'Chat thread': () =>
+      const ChatThreadScreen(phone: '+919845012345', name: 'Ravi Kumar'),
   'Card result': () => const Scaffold(
         body: CardResultSheet(person: {
           'name': 'Priya Sharma',
@@ -425,12 +467,31 @@ final screens = <String, Widget Function()>{
 
 List<Shortcut> _shortcutsSeed() => [
       Shortcut.fromJson({
-        'id': 1, 'name': 'Office mode for the long drive to the factory', 'version': 1,
+        'id': 1,
+        'name': 'Office mode for the long drive to the factory',
+        'version': 1,
         'other_names': ['ഓഫീസ് മോഡ്'],
         'steps': [
-          {'i': 0, 'tool': 'phone_control', 'label': 'Phone on silent', 'class': 'in_app'},
-          {'i': 1, 'tool': 'send_whatsapp_message', 'label': 'Chat message to Priya Shetty: “Leaving now, will call from the car” (you tap Send)', 'class': 'hand_back'},
-          {'i': 2, 'tool': 'start_navigation', 'label': 'Directions to 4th floor, Mangalore One, MG Road, Bengaluru', 'class': 'stays'},
+          {
+            'i': 0,
+            'tool': 'phone_control',
+            'label': 'Phone on silent',
+            'class': 'in_app'
+          },
+          {
+            'i': 1,
+            'tool': 'send_whatsapp_message',
+            'label':
+                'Chat message to Priya Shetty: “Leaving now, will call from the car” (you tap Send)',
+            'class': 'hand_back'
+          },
+          {
+            'i': 2,
+            'tool': 'start_navigation',
+            'label':
+                'Directions to 4th floor, Mangalore One, MG Road, Bengaluru',
+            'class': 'stays'
+          },
         ],
       }),
     ];
@@ -438,22 +499,44 @@ List<Shortcut> _shortcutsSeed() => [
 /// A full shopping list, as GET /shopping sends it.
 Map<String, dynamic> _shoppingJson() {
   Map<String, dynamic> line(int id, String name, String category,
-          {String amount = '', String details = '', String? store, String? link, bool checked = false}) =>
+          {String amount = '',
+          String details = '',
+          String? store,
+          String? link,
+          bool checked = false}) =>
       {
-        'id': id, 'name': name, 'quantity': null, 'unit': null, 'amountText': amount,
-        'details': details, 'link': link, 'store': store, 'note': '', 'category': category,
-        'recipe': null, 'source': 'manual', 'checked': checked, 'createdAt': id, 'updatedAt': id,
+        'id': id,
+        'name': name,
+        'quantity': null,
+        'unit': null,
+        'amountText': amount,
+        'details': details,
+        'link': link,
+        'store': store,
+        'note': '',
+        'category': category,
+        'recipe': null,
+        'source': 'manual',
+        'checked': checked,
+        'createdAt': id,
+        'updatedAt': id,
       };
   return {
     'items': [
       line(1, 'Onion', 'vegetables_fruit', amount: '1.5 kg + 2 pcs'),
-      line(2, 'Organic cold-pressed groundnut oil from the farm shop near Mysore', 'oils',
+      line(
+          2,
+          'Organic cold-pressed groundnut oil from the farm shop near Mysore',
+          'oils',
           amount: '2 L'),
       line(3, 'Kurti', 'clothing_footwear',
-          details: 'M, blue floral print, cotton, full sleeves — for Amma’s birthday next Sunday',
+          details:
+              'M, blue floral print, cotton, full sleeves — for Amma’s birthday next Sunday',
           store: 'Myntra',
-          link: 'https://www.myntra.com/kurtas/biba/blue-floral-printed-cotton-kurta/123456/buy'),
-      line(4, 'USB-C fast charger 25W with a two-metre braided cable', 'electronics_accessories',
+          link:
+              'https://www.myntra.com/kurtas/biba/blue-floral-printed-cotton-kurta/123456/buy'),
+      line(4, 'USB-C fast charger 25W with a two-metre braided cable',
+          'electronics_accessories',
           details: 'Samsung', store: 'Croma'),
       line(5, 'Dolo 650', 'health_medicines', amount: '2 strips'),
       line(6, 'Milk', 'dairy_eggs', amount: '2 L', checked: true),
@@ -470,31 +553,67 @@ Map<String, dynamic> momentumJsonForTests() => _momentumJson();
 Map<String, dynamic> _momentumJson() {
   final today = MomentumService.today;
   final d = DateTime.parse(today);
-  String day(int back) => MomentumService.dayOf(d.subtract(Duration(days: back)));
+  String day(int back) =>
+      MomentumService.dayOf(d.subtract(Duration(days: back)));
   return {
     'ok': true,
     'day': today,
     'priorities': [
-      {'id': 1, 'title': 'Finish the quarterly report for the board meeting', 'done': true, 'position': 0},
-      {'id': 2, 'title': 'Call the bank about the home loan paperwork', 'done': false, 'position': 1},
+      {
+        'id': 1,
+        'title': 'Finish the quarterly report for the board meeting',
+        'done': true,
+        'position': 0
+      },
+      {
+        'id': 2,
+        'title': 'Call the bank about the home loan paperwork',
+        'done': false,
+        'position': 1
+      },
       {'id': 3, 'title': 'Book tickets', 'done': false, 'position': 2},
     ],
     'habits': [
-      for (final (i, t) in ['Drink water', 'Walk 30 minutes', 'Read 10 pages', 'Meditate'].indexed)
+      for (final (i, t) in [
+        'Drink water',
+        'Walk 30 minutes',
+        'Read 10 pages',
+        'Meditate'
+      ].indexed)
         {
-          'id': 10 + i, 'title': t, 'emoji': '💧', 'remindAt': i == 0 ? '09:00' : null,
-          'doneToday': i.isEven, 'streak': 12 - i, 'best': 30,
+          'id': 10 + i,
+          'title': t,
+          'emoji': '💧',
+          'remindAt': i == 0 ? '09:00' : null,
+          'doneToday': i.isEven,
+          'streak': 12 - i,
+          'best': 30,
           'last7': [true, false, true, true, true, i.isOdd, i.isEven],
         },
     ],
     'focus': {'todayMin': 95, 'weekMin': 610, 'totalMin': 12450},
-    'streak': {'current': 128, 'best': 128, 'activeToday': true, 'graceUsedThisWeek': true},
+    'streak': {
+      'current': 128,
+      'best': 128,
+      'activeToday': true,
+      'graceUsedThisWeek': true
+    },
     'week': {
       'days': [
         for (var k = 6; k >= 0; k--)
-          {'day': day(k), 'active': k != 3, 'wins': k * 2, 'focusMin': 20 * k, 'habits': 3, 'forgiven': k == 3},
+          {
+            'day': day(k),
+            'active': k != 3,
+            'wins': k * 2,
+            'focusMin': 20 * k,
+            'habits': 3,
+            'forgiven': k == 3
+          },
       ],
-      'wins': 42, 'focusMin': 610, 'habitsKept': 21, 'bestDay': day(6),
+      'wins': 42,
+      'focusMin': 610,
+      'habitsKept': 21,
+      'bestDay': day(6),
     },
     'milestones': [
       {'id': 'streak_100', 'label': '100-day streak', 'earned': true},
@@ -533,7 +652,10 @@ void main() {
           final msg = d.exceptionAsString();
           if (msg.contains('overflowed')) {
             // Where: the widget's source line, so the report is actionable.
-            final at = RegExp(r'lib/[^\s:]+\.dart:\d+').firstMatch(d.toString())?.group(0) ?? '?';
+            final at = RegExp(r'lib/[^\s:]+\.dart:\d+')
+                    .firstMatch(d.toString())
+                    ?.group(0) ??
+                '?';
             overflows.add('${msg.split('\n').first} at $at');
           }
           // Everything else (no network, no plugin in tests) is not what
@@ -542,7 +664,8 @@ void main() {
         final rendering = (Platform.environment['RENDER_DIR'] ?? '').isNotEmpty;
         if (rendering) {
           Neon.setDark(true);
-          Neon.setAccent(const Color(0xFF3D8BFF)); // Electric, the shipped default
+          Neon.setAccent(
+              const Color(0xFF3D8BFF)); // Electric, the shipped default
         }
         try {
           await tester.pumpWidget(RepaintBoundary(
@@ -564,20 +687,26 @@ void main() {
           // every screen (on the gesture-nav phone) as a PNG to look at —
           // the design pass's "render each screen and look at it".
           final renderDir = Platform.environment['RENDER_DIR'];
-          if (renderDir != null && renderDir.isNotEmpty && p.name == 'gesture nav' &&
-              s.key != 'Meeting recorder' /* its recorder plugin throws under real async */) {
+          if (renderDir != null &&
+              renderDir.isNotEmpty &&
+              p.name == 'gesture nav' &&
+              s.key !=
+                  'Meeting recorder' /* its recorder plugin throws under real async */) {
             // Real async runs here, so a screen's plugin calls may throw;
             // a missing picture is not a layout failure.
             try {
-              final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(_shot));
+              final boundary =
+                  tester.renderObject<RenderRepaintBoundary>(find.byKey(_shot));
               final png = await tester.runAsync(() async {
                 final image = await boundary.toImage(pixelRatio: 1.0);
-                final data = await image.toByteData(format: ui.ImageByteFormat.png);
+                final data =
+                    await image.toByteData(format: ui.ImageByteFormat.png);
                 return data!.buffer.asUint8List();
               });
               Directory(renderDir).createSync(recursive: true);
               final name = s.key.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
-              if (png != null) File('$renderDir/$name.png').writeAsBytesSync(png);
+              if (png != null)
+                File('$renderDir/$name.png').writeAsBytesSync(png);
             } catch (_) {}
           }
           await tester.pumpWidget(const SizedBox());
@@ -594,14 +723,17 @@ void main() {
         }
         // Anything thrown outside layout is not this sweep's business.
         tester.takeException();
-        expect(overflows, isEmpty, reason: '${s.key} on ${p.name}: ${overflows.join(' | ')}');
+        expect(overflows, isEmpty,
+            reason: '${s.key} on ${p.name}: ${overflows.join(' | ')}');
       });
     }
   }
 
   // ── Beyond overflow: what sits on top of what ───────────────────────────
-  const threeButton = Phone('3-button nav', Size(720, 1280), 2.0, navDp: 48, statusDp: 24);
-  const gesture = Phone('gesture nav', Size(1080, 2340), 2.625, navDp: 16, statusDp: 24);
+  const threeButton =
+      Phone('3-button nav', Size(720, 1280), 2.0, navDp: 48, statusDp: 24);
+  const gesture =
+      Phone('gesture nav', Size(1080, 2340), 2.625, navDp: 16, statusDp: 24);
 
   group('dock clearance', () {
     for (final p in const [threeButton, gesture]) {
@@ -620,9 +752,11 @@ void main() {
           expect(fade.bottom, screen.bottom);
           // The visible tab's list reserves room for the dock AND the mic.
           final lists = find
-              .descendant(of: find.byType(TabDeck), matching: find.byType(ListView))
+              .descendant(
+                  of: find.byType(TabDeck), matching: find.byType(ListView))
               .hitTestable();
-          if (tab == 3 && lists.evaluate().isEmpty) return; // still loading offline
+          if (tab == 3 && lists.evaluate().isEmpty)
+            return; // still loading offline
           final list = tester.widget<ListView>(lists.first);
           final pad = (list.padding! as EdgeInsets).bottom;
           expect(screen.bottom - pad, lessThanOrEqualTo(orb.top - 8),
@@ -640,7 +774,8 @@ void main() {
       // is the top of the list either way.
       expect(
           find.descendant(
-              of: find.byType(Scrollable), matching: find.textContaining('Good ', findRichText: true)),
+              of: find.byType(Scrollable),
+              matching: find.textContaining('Good ', findRichText: true)),
           findsOneWidget,
           reason: 'a pinned header let the feed slide under the greeting');
       await _teardownApp(tester);
@@ -665,7 +800,8 @@ void main() {
 
   group('voice screen in the shell', () {
     for (final p in const [threeButton, gesture]) {
-      testWidgets('text box, Sound button and activity pill are all clear — ${p.name}',
+      testWidgets(
+          'text box, Sound button and activity pill are all clear — ${p.name}',
           (tester) async {
         _applyPhone(tester, p);
         await tester.pumpWidget(const MaterialApp(home: _ShellVoice()));
@@ -687,7 +823,8 @@ void main() {
   });
 
   group('toasts', () {
-    const long = 'Contacts permission is off — the call to "Ravi Kumar" was NOT '
+    const long =
+        'Contacts permission is off — the call to "Ravi Kumar" was NOT '
         'placed. Enable Contacts in Settings, then ask me again and I will try.';
     for (final p in phones) {
       testWidgets('a three-line toast fits — ${p.name}', (tester) async {
@@ -695,7 +832,8 @@ void main() {
         final overflows = await _overflowsDuring(() async {
           await tester.pumpWidget(MaterialApp(home: _shellAt(0)));
           await tester.pump();
-          AppFeedback.show(long, context: tester.element(find.byType(HomeShell)));
+          AppFeedback.show(long,
+              context: tester.element(find.byType(HomeShell)));
           await _settle(tester);
           expect(find.text(long), findsOneWidget);
           await _teardownApp(tester);
@@ -706,7 +844,8 @@ void main() {
     }
 
     for (final p in const [threeButton, gesture]) {
-      testWidgets('a toast never covers the dock, the mic or the text box — ${p.name}',
+      testWidgets(
+          'a toast never covers the dock, the mic or the text box — ${p.name}',
           (tester) async {
         _applyPhone(tester, p);
         await tester.pumpWidget(const MaterialApp(home: _ShellVoice()));
@@ -716,10 +855,13 @@ void main() {
             context: tester.element(find.byType(HomeShell)));
         await _settle(tester);
         final bar = tester.getRect(find
-            .descendant(of: find.byType(SnackBar), matching: find.byType(Material))
+            .descendant(
+                of: find.byType(SnackBar), matching: find.byType(Material))
             .first);
-        expect(bar.overlaps(tester.getRect(find.byType(BottomAppBar))), isFalse);
-        expect(bar.overlaps(tester.getRect(find.byType(AssistantOrbButton))), isFalse);
+        expect(
+            bar.overlaps(tester.getRect(find.byType(BottomAppBar))), isFalse);
+        expect(bar.overlaps(tester.getRect(find.byType(AssistantOrbButton))),
+            isFalse);
         expect(bar.overlaps(tester.getRect(find.byType(TextField))), isFalse,
             reason: 'during a session the toast is lifted over the text box');
         await _teardownApp(tester);

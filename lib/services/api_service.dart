@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
@@ -54,8 +55,10 @@ class ApiService {
       final p = await SharedPreferences.getInstance();
       final v = p.getString(_serverPrefKey);
       if (v != null && overrideAllowed(v)) _runtimeBaseUrl = v;
-      AppLog.add('api', 'server = $baseUrl'
-          '${_runtimeBaseUrl != null ? ' (runtime override)' : ''}');
+      AppLog.add(
+          'api',
+          'server = $baseUrl'
+              '${_runtimeBaseUrl != null ? ' (runtime override)' : ''}');
     } catch (_) {}
   }
 
@@ -67,7 +70,8 @@ class ApiService {
       _runtimeBaseUrl = null;
       await p.remove(_serverPrefKey);
     } else if (!overrideAllowed(clean)) {
-      AppLog.add('api', 'server override refused (release builds need https): $clean');
+      AppLog.add(
+          'api', 'server override refused (release builds need https): $clean');
       return;
     } else {
       _runtimeBaseUrl = clean.replaceAll(RegExp(r'/+$'), '');
@@ -106,13 +110,21 @@ class ApiService {
       late final http.Response r;
       switch (method) {
         case 'PUT':
-          r = await _client.put(uri, headers: headers, body: payload).timeout(timeout);
+          r = await _client
+              .put(uri, headers: headers, body: payload)
+              .timeout(timeout);
         case 'PATCH':
-          r = await _client.patch(uri, headers: headers, body: payload).timeout(timeout);
+          r = await _client
+              .patch(uri, headers: headers, body: payload)
+              .timeout(timeout);
         case 'DELETE':
-          r = await _client.delete(uri, headers: headers, body: payload).timeout(timeout);
+          r = await _client
+              .delete(uri, headers: headers, body: payload)
+              .timeout(timeout);
         default:
-          r = await _client.post(uri, headers: headers, body: payload).timeout(timeout);
+          r = await _client
+              .post(uri, headers: headers, body: payload)
+              .timeout(timeout);
       }
       if (r.statusCode >= 300) {
         _flagAuthFailure(r.statusCode);
@@ -144,6 +156,7 @@ class ApiService {
   /// next cold start. Throttled: one burst of failing calls is one signal.
   static void Function()? onSessionRejected;
   static DateTime _lastAuthReject = DateTime.fromMillisecondsSinceEpoch(0);
+
   /// For clients outside this file (the voice loop's session and posts):
   /// a 401 there means the same thing as a 401 here.
   static void noteAuthStatus(int status) => _flagAuthFailure(status);
@@ -165,7 +178,8 @@ class ApiService {
 
   /// The profession and the switch; the phone's position rides along so
   /// the server can keep a coarse one while sharing is on.
-  static Future<Map<String, dynamic>?> setNearbyMe({String? profession, bool? shared}) =>
+  static Future<Map<String, dynamic>?> setNearbyMe(
+          {String? profession, bool? shared}) =>
       sendJson('/nearby/me', method: 'PUT', body: {
         if (profession != null) 'profession': profession,
         if (shared != null) 'shared': shared,
@@ -173,7 +187,8 @@ class ApiService {
         if (geoLng != null) 'lng': geoLng,
       });
 
-  static Future<List<Map<String, dynamic>>> nearbyProfessionals(String q) async {
+  static Future<List<Map<String, dynamic>>> nearbyProfessionals(
+      String q) async {
     final lat = geoLat;
     final lng = geoLng;
     if (lat == null || lng == null) return const [];
@@ -182,12 +197,16 @@ class ApiService {
         timeout: const Duration(seconds: 12));
     final list = j?['people'];
     return list is List
-        ? list.whereType<Map>().map((m) => m.cast<String, dynamic>()).toList(growable: false)
+        ? list
+            .whereType<Map>()
+            .map((m) => m.cast<String, dynamic>())
+            .toList(growable: false)
         : const [];
   }
 
   static Future<bool> nearbyContact(int userId, String text) async {
-    final j = await sendJson('/nearby/contact', body: {'user_id': userId, 'text': text});
+    final j = await sendJson('/nearby/contact',
+        body: {'user_id': userId, 'text': text});
     return j?['ok'] == true;
   }
 
@@ -234,6 +253,28 @@ class ApiService {
     }
   }
 
+  /// GET a protected binary resource (voice samples, for example).
+  /// Uses the same authentication and failure logging as the JSON helpers.
+  static Future<Uint8List?> getBytes(String path,
+      {Duration timeout = const Duration(seconds: 40)}) async {
+    try {
+      final headers = Map<String, String>.of(_authHeaders)
+        ..remove('Content-Type');
+      final r = await _client
+          .get(Uri.parse('$baseUrl$path'), headers: headers)
+          .timeout(timeout);
+      if (r.statusCode < 200 || r.statusCode >= 300) {
+        _flagAuthFailure(r.statusCode);
+        AppLog.add('api', 'GET $path -> ${r.statusCode}');
+        return null;
+      }
+      return r.bodyBytes;
+    } catch (e) {
+      AppLog.add('api', 'GET $path -> $e');
+      return null;
+    }
+  }
+
   /// DELETE, for the places a resource is removed rather than changed.
   /// Same contract as [getJson] and [postJson]: null on anything that is
   /// not a success, so a caller never has to tell a refusal from a dead
@@ -276,8 +317,10 @@ class ApiService {
 
   static Map<String, String> get _authHeaders => {
         'Content-Type': 'application/json',
-        if (sessionToken != null) 'Authorization': 'Bearer $sessionToken'
-        else if (_appApiKey.isNotEmpty) 'X-App-Key': _appApiKey,
+        if (sessionToken != null)
+          'Authorization': 'Bearer $sessionToken'
+        else if (_appApiKey.isNotEmpty)
+          'X-App-Key': _appApiKey,
         // Clock + place on EVERY call: the brief, the calendar and the
         // classic voice path all parse times server-side, and without
         // this header every user on earth was stamped IST (+330).
@@ -362,8 +405,8 @@ class ApiService {
       '$baseUrl/places/photo?ref=${Uri.encodeQueryComponent(ref)}';
 
   /// Auth headers for Image.network on protected endpoints (place photos).
-  static Map<String, String> get imageHeaders => Map.of(_authHeaders)
-    ..remove('Content-Type');
+  static Map<String, String> get imageHeaders =>
+      Map.of(_authHeaders)..remove('Content-Type');
 
   // ---------------------------------------------------------------------
   // SAVED DOCUMENTS — Hari's long-term document memory. Upload once; the
@@ -453,7 +496,8 @@ class ApiService {
   }
 
   /// [scope] personal (My Documents), clients (filed in case files) or all.
-  static Future<List<UserDocument>> fetchDocuments({String scope = 'personal'}) async {
+  static Future<List<UserDocument>> fetchDocuments(
+      {String scope = 'personal'}) async {
     final r = await _client
         .get(Uri.parse('$baseUrl/docs?scope=$scope'), headers: _authHeaders)
         .timeout(const Duration(seconds: 15));
@@ -538,9 +582,8 @@ class ApiService {
       _flagAuthFailure(r.statusCode);
       throw Exception('clients ${r.statusCode}');
     }
-    return Client.fromJson(
-        (jsonDecode(r.body) as Map<String, dynamic>)['client']
-            as Map<String, dynamic>);
+    return Client.fromJson((jsonDecode(r.body)
+        as Map<String, dynamic>)['client'] as Map<String, dynamic>);
   }
 
   /// The full case file: profile + notes (newest first) + linked documents.
@@ -564,7 +607,9 @@ class ApiService {
       client: Client.fromJson(j['client'] as Map<String, dynamic>),
       notes: ClientNote.listFromJson(j['notes']),
       documents: UserDocument.listFromJson(j['documents']),
-      recall: j['recall'] is Map ? (j['recall'] as Map).cast<String, dynamic>() : null,
+      recall: j['recall'] is Map
+          ? (j['recall'] as Map).cast<String, dynamic>()
+          : null,
       balance: (j['balance'] as num?)?.toDouble() ?? 0,
     );
   }
@@ -578,9 +623,8 @@ class ApiService {
       _flagAuthFailure(r.statusCode);
       throw Exception('clients ${r.statusCode}');
     }
-    return Client.fromJson(
-        (jsonDecode(r.body) as Map<String, dynamic>)['client']
-            as Map<String, dynamic>);
+    return Client.fromJson((jsonDecode(r.body)
+        as Map<String, dynamic>)['client'] as Map<String, dynamic>);
   }
 
   /// Deletes the person's card + notes. Their saved documents are KEPT
@@ -607,9 +651,8 @@ class ApiService {
       _flagAuthFailure(r.statusCode);
       throw Exception('clients ${r.statusCode}');
     }
-    return ClientNote.fromJson(
-        (jsonDecode(r.body) as Map<String, dynamic>)['note']
-            as Map<String, dynamic>);
+    return ClientNote.fromJson((jsonDecode(r.body)
+        as Map<String, dynamic>)['note'] as Map<String, dynamic>);
   }
 
   /// Throws unless the server confirmed (404 = already gone).
@@ -782,8 +825,7 @@ class ApiService {
       _flagAuthFailure(r.statusCode);
       throw Exception('export failed ${r.statusCode}');
     }
-    return const JsonEncoder.withIndent('  ')
-        .convert(jsonDecode(r.body));
+    return const JsonEncoder.withIndent('  ').convert(jsonDecode(r.body));
   }
 
   /// Permanent, irreversible account deletion (server erases every row
@@ -1016,7 +1058,6 @@ class ApiService {
       return null;
     }
   }
-
 }
 
 /// The backend answered 402 pro_required — this feature needs Pro.

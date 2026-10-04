@@ -68,6 +68,7 @@ import '../../../services/phone_state_guard.dart';
 import '../../../services/brief_service.dart';
 import '../../../services/contacts_sync_service.dart';
 import '../../../services/listening_chime.dart';
+import '../../draft/draft_pad.dart';
 import '../../../services/usage_service.dart';
 import 'assistant_state.dart';
 import '../../../services/greeting_voice.dart';
@@ -1218,13 +1219,8 @@ class AssistantEngine extends ChangeNotifier {
       await _bargeMade?.stop();
     } catch (_) {}
     if (epoch != _voiceEpoch || !_listening) return;
-    if (_chimeOnListen) {
-      _chimeOnListen = false;
-      // THE MOMENT IT IS LISTENING (after the hello has played): one chime
-      // is the whole signal to start talking (his ask, 2026-09-20) — and
-      // never off-screen.
-      if (_foreground) unawaited(ListeningChime.play());
-    }
+    // No listening ping (owner, 2026-10-04): the orb shows it is listening.
+    _chimeOnListen = false;
     if (phase != AssistantPhase.listening) {
       _setPhase(AssistantPhase.listening, silent: true);
     }
@@ -1399,7 +1395,7 @@ class AssistantEngine extends ChangeNotifier {
     }
     var ok = false;
     _liveStarting = true;
-    notifyListeners(); // "Connecting… wait for the ping" until it is ready
+    notifyListeners(); // "Connecting…" until it is ready
     try {
       ok = await _live.start();
     } catch (e) {
@@ -1435,19 +1431,8 @@ class AssistantEngine extends ChangeNotifier {
       // microphone and could cut the hello short).
       _openingDue = false;
       unawaited(_greetOnLive(epoch));
-    } else {
-      // Ready: the ping says "speak now" — every time, not only the first.
-      _pingListening();
     }
     notifyListeners();
-  }
-
-  /// The listening ping, with the fast voice's microphone held silent
-  /// while it plays so the ping is never taken for speech.
-  void _pingListening() {
-    if (!_foreground || !_voiceOn) return;
-    _liveMade?.holdMic(const Duration(milliseconds: 700));
-    unawaited(ListeningChime.play());
   }
 
   /// The fast voice's microphone is being opened ([_listenLive]).
@@ -1635,7 +1620,6 @@ class AssistantEngine extends ChangeNotifier {
     if (interrupted || (user.isEmpty && reply.isEmpty)) {
       if (phase != AssistantPhase.listening) {
         _setPhase(AssistantPhase.listening, silent: true);
-        _pingListening();
       }
     } else {
       _setPhase(AssistantPhase.completed, silent: true);
@@ -1643,9 +1627,6 @@ class AssistantEngine extends ChangeNotifier {
         _doneTimer = null;
         if (_voiceOn && phase == AssistantPhase.completed) {
           _setPhase(AssistantPhase.listening, silent: true);
-          // Her reply is over: the ping says it is their turn (no voice
-          // interruption since 2026-10-02, so they wait for it).
-          _pingListening();
         }
       });
     }
@@ -3059,6 +3040,19 @@ class AssistantEngine extends ChangeNotifier {
           presentedTitle = e['title'] as String? ?? 'From ${AssistantIdentity.name}';
           presentedText = content;
         }
+        break;
+
+      // THE DRAFT PAD (2026-10-04): draft_text / edit_draft. The pad
+      // streams the words itself; the voice turn does not wait.
+      case 'open_draft':
+        unawaited(DraftPad.instance.write(
+          title: e['title'] as String? ?? 'Draft',
+          instruction: e['instruction'] as String? ?? '',
+        ));
+        break;
+
+      case 'edit_draft':
+        unawaited(DraftPad.instance.edit(e['instruction'] as String? ?? ''));
         break;
 
       // 2026-09-30 HOOK (features/briefing): play_daily_brief and

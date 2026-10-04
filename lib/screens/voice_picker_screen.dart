@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,26 +8,61 @@ import '../ai/config.dart';
 import '../ai/live_voice.dart';
 import '../design/apple_kit.dart';
 import '../design/neon_tokens.dart';
+import '../services/api_service.dart';
 import '../services/app_feedback.dart';
 import '../services/audio/pcm_player.dart';
 
-/// VOICE — its own screen, reached from Settings → Voice.
-///
-/// Six rows of voice names took as much room as everything else on the
-/// settings page for a choice made once. The row on Settings names the
-/// current voice; this is where it changes.
-///
-/// 2026-09-30: the FAST LIVE VOICE (Gemini Live) — a switch, on unless the
-/// owner turns it off, and its own voices with a short sample each. The
-/// classic voice (Fola by default) still answers when the fast voice is
-/// off or cannot, and speaks typed replies.
+/// One voice supported by GPT Live, from GET /ai/voices.
+class VoiceCatalogItem {
+  const VoiceCatalogItem({
+    required this.id,
+    required this.name,
+    required this.gender,
+    required this.accent,
+    required this.tagline,
+  });
+
+  final String id;
+  final String name;
+  final String gender;
+  final String accent;
+  final String tagline;
+
+  factory VoiceCatalogItem.fromJson(Map value) {
+    String field(String key) => (value[key] ?? '').toString().trim();
+    final id = field('id').toLowerCase();
+    final gender = field('gender').toLowerCase();
+    if (id.isEmpty || (gender != 'female' && gender != 'male')) {
+      throw const FormatException('Invalid GPT Live voice entry');
+    }
+    return VoiceCatalogItem(
+      id: id,
+      name: field('name').isEmpty
+          ? '${id[0].toUpperCase()}${id.substring(1)}'
+          : field('name'),
+      gender: gender,
+      accent: field('accent'),
+      tagline: field('tagline'),
+    );
+  }
+}
+
+/// VOICE — compact GPT Live voice selection, reached from Settings → Voice.
+/// Voice samples come from GPT Live itself, not a separate speech provider.
 class VoicePickerScreen extends StatefulWidget {
-  final List<(String, String, String)> voices;
   final String selectedId;
+
+  /// Optional data sources make the real catalogue and audio path testable.
+  final List<VoiceCatalogItem>? voices;
+  final Future<Uint8List?> Function(String id)? sampleLoader;
+  final PcmPlayer? player;
+
   const VoicePickerScreen({
     super.key,
-    required this.voices,
     required this.selectedId,
+    this.voices,
+    this.sampleLoader,
+    this.player,
   });
 
   @override
@@ -34,42 +70,86 @@ class VoicePickerScreen extends StatefulWidget {
 }
 
 class _VoicePickerScreenState extends State<VoicePickerScreen> {
-  late String _sel = widget.selectedId;
+  late String _selected = widget.selectedId.toLowerCase();
   bool _fast = LiveVoicePrefs.enabled;
-  String _liveVoice = LiveVoicePrefs.voiceFor(AiConfigStore.instance.current.live);
-
-  /// The voice whose sample is playing (or being made).
+  String? _serverDefault;
+  List<VoiceCatalogItem> _voices = const [];
+  bool _loading = true;
+  bool _loadFailed = false;
   String? _previewing;
 
-  /// What each Live voice sounds like, in Google's own words for them.
-  static const _liveTaglines = {
-    'Callirrhoe': 'Easy-going',
-    'Achernar': 'Soft',
-    'Aoede': 'Breezy',
-    'Vindemiatrix': 'Gentle',
-    'Sulafat': 'Warm',
-    'Kore': 'Firm',
-    'Charon': 'Informative',
-    'Achird': 'Friendly',
-  };
+  PcmPlayer get _player => widget.player ?? PcmPlayer.instance;
 
   @override
   void initState() {
     super.initState();
+    final supplied = widget.voices;
+    if (supplied != null) {
+      _voices = supplied;
+      _loading = false;
+      _selectDefault();
+    } else {
+      unawaited(_loadVoices());
+    }
     unawaited(LiveVoicePrefs.load().then((_) {
-      if (!mounted) return;
-      setState(() {
-        _fast = LiveVoicePrefs.enabled;
-        _liveVoice = LiveVoicePrefs.voiceFor(AiConfigStore.instance.current.live);
-      });
+      if (mounted) setState(() => _fast = LiveVoicePrefs.enabled);
     }));
   }
 
   @override
   void dispose() {
-    if (_previewing != null) unawaited(PcmPlayer.instance.stop());
+    if (_previewing != null) unawaited(_player.stop());
     super.dispose();
   }
+
+  void _selectDefault() {
+    if (_voices.any((v) => v.id == _selected)) return;
+    final configured = _serverDefault?.toLowerCase();
+    _selected = _voices.any((v) => v.id == configured)
+        ? configured!
+        : _voices.isEmpty
+            ? ''
+            : _voices.first.id;
+  }
+
+  Future<void> _loadVoices() async {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    final response = await ApiService.getJson('/ai/voices');
+    if (!mounted) return;
+    final rawVoices = response?['voices'];
+    if (rawVoices is! List) {
+      setState(() {
+        _loading = false;
+        _loadFailed = true;
+      });
+      return;
+    }
+    try {
+      final loaded = rawVoices
+          .whereType<Map>()
+          .map(VoiceCatalogItem.fromJson)
+          .toList(growable: false);
+      if (loaded.isEmpty) throw const FormatException('No GPT Live voices');
+      setState(() {
+        _voices = loaded;
+        _serverDefault = response?['default']?.toString();
+        _loading = false;
+        _selectDefault();
+      });
+    } on FormatException {
+      setState(() {
+        _loading = false;
+        _loadFailed = true;
+      });
+    }
+  }
+
+  Future<Uint8List?> _fetchSample(String id) => widget.sampleLoader == null
+      ? ApiService.getBytes('/ai/voices/$id/sample')
+      : widget.sampleLoader!(id);
 
   Future<void> _setFast(bool on) async {
     HapticFeedback.selectionClick();
@@ -77,29 +157,49 @@ class _VoicePickerScreenState extends State<VoicePickerScreen> {
     await LiveVoicePrefs.setEnabled(on);
   }
 
-  Future<void> _pickLive(String voice) async {
-    setState(() => _liveVoice = voice);
-    await LiveVoicePrefs.setVoice(voice);
+  Future<void> _preview(VoiceCatalogItem voice) async {
+    if (_previewing != null) return;
+    HapticFeedback.selectionClick();
+    setState(() => _previewing = voice.id);
+    try {
+      await _player.stop();
+      final wav = await _fetchSample(voice.id);
+      if (!mounted) return;
+      final audio = wav == null ? null : _decodePcmWav(wav);
+      if (audio == null) {
+        AppFeedback.show(
+          "Couldn't play the sample. Check your connection and try again.",
+          context: context,
+          tone: FeedbackTone.error,
+        );
+        return;
+      }
+      await _player.play(audio.pcm, sampleRate: audio.sampleRate);
+      await _player.drained().timeout(const Duration(seconds: 35));
+    } on TimeoutException {
+      await _player.stop();
+      if (mounted) {
+        AppFeedback.show(
+          'The voice sample took too long to play.',
+          context: context,
+          tone: FeedbackTone.error,
+        );
+      }
+    } finally {
+      if (mounted && _previewing == voice.id) {
+        setState(() => _previewing = null);
+      }
+    }
   }
 
-  Future<void> _preview(String voice) async {
+  void _choose(VoiceCatalogItem voice) {
     HapticFeedback.selectionClick();
-    setState(() => _previewing = voice);
-    final ok = await LiveVoicePreview.play(voice, sink: PcmPlayer.instance);
-    if (!ok && mounted && _previewing == voice) {
-      AppFeedback.show("Couldn't play the sample. Check your connection.",
-          context: context, tone: FeedbackTone.error);
-    }
-    try {
-      await PcmPlayer.instance.drained().timeout(const Duration(seconds: 8));
-    } catch (_) {}
-    if (mounted && _previewing == voice) setState(() => _previewing = null);
+    Navigator.of(context).pop(voice.id);
   }
 
   @override
   Widget build(BuildContext context) {
     final live = AiConfigStore.instance.current.live;
-    final liveOffered = live.on;
     return Scaffold(
       backgroundColor: Neon.bg,
       appBar: appleAppBar(context, 'Assistant voice'),
@@ -107,89 +207,186 @@ class _VoicePickerScreenState extends State<VoicePickerScreen> {
         padding: EdgeInsets.fromLTRB(
             16, 12, 16, 40 + MediaQuery.paddingOf(context).bottom),
         children: [
-          if (liveOffered) ...[
+          if (live.on) ...[
             GroupedCard(
               dividerInset: 60,
               children: [
                 AppleRow(
                   leading: IconTile(Icons.bolt_rounded, Neon.cyan),
-                  title: 'Fast live voice',
+                  title: 'GPT Live voice',
                   subtitle: _fast
-                      ? 'Answers in about a second, and you can talk over her'
-                      : 'Off: the classic voice answers, a few seconds slower',
+                      ? 'Fast, natural conversations'
+                      : 'Off: conversations use the classic reply voice',
                   trailing: Semantics(
-                    label: 'Fast live voice',
+                    label: 'GPT Live voice',
                     child: Switch(value: _fast, onChanged: _setFast),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            if (_fast) ...[
-              const GroupLabel('Live voice'),
-              GroupedCard(
-                dividerInset: 16,
-                children: [
-                  for (final v in live.voices) _liveRow(v),
-                ],
-              ),
-              const SizedBox(height: 24),
-            ],
+            const SizedBox(height: 20),
           ],
-          const GroupLabel('Classic voice'),
           Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 14),
+            padding: const EdgeInsets.only(left: 4, bottom: 12),
             child: Text(
-              liveOffered
-                  ? 'Used when the fast voice is off, and for typed replies.'
-                  : 'Tap a voice — the next reply uses it.',
+              'Preview a voice, then tap its name to use it.',
               style: TextStyle(color: Neon.textLo, fontSize: 14),
             ),
           ),
-          GroupedCard(
-            children: [
-              for (final (id, title, tagline) in widget.voices)
+          if (_loading)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Center(
+                child: CircularProgressIndicator(color: Neon.cyan),
+              ),
+            )
+          else if (_loadFailed)
+            GroupedCard(
+              children: [
                 AppleRow(
-                  title: title,
-                  subtitle: tagline,
-                  trailing: _sel == id
-                      ? Icon(Icons.check_rounded, color: Neon.violet, size: 20)
-                      : const SizedBox(width: 20),
-                  onTap: () {
-                    setState(() => _sel = id);
-                    Navigator.of(context).pop(id);
-                  },
+                  leading: IconTile(Icons.wifi_off_rounded, Neon.textLo),
+                  title: "Couldn't load GPT Live voices",
+                  subtitle: 'Check your connection and try again.',
+                  trailing: TextButton(
+                    onPressed: _loadVoices,
+                    child: const Text('Retry'),
+                  ),
                 ),
-            ],
-          ),
+              ],
+            )
+          else ...[
+            _genderGroup('female', 'Female voices', Icons.female_rounded),
+            const SizedBox(height: 12),
+            _genderGroup('male', 'Male voices', Icons.male_rounded),
+          ],
         ],
       ),
     );
   }
 
-  Widget _liveRow(String voice) {
-    final chosen = voice == _liveVoice;
-    final playing = _previewing == voice;
+  Widget _genderGroup(String gender, String title, IconData icon) {
+    final voices = _voices.where((voice) => voice.gender == gender).toList();
+    if (voices.isEmpty) return const SizedBox.shrink();
+    return GroupedCard(
+      children: [
+        ExpansionTile(
+          key: PageStorageKey<String>('gpt-live-$gender-voices'),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: EdgeInsets.zero,
+          leading: Icon(icon, color: Neon.cyan, size: 22),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: Neon.textHi,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          subtitle: Text(
+            '${voices.length} voices',
+            style: TextStyle(color: Neon.textLo, fontSize: 13),
+          ),
+          children: [
+            for (final voice in voices) _voiceRow(voice),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _voiceRow(VoiceCatalogItem voice) {
+    final selected = voice.id == _selected;
+    final playing = _previewing == voice.id;
     return AppleRow(
-      // 48 dp, and named for a screen reader by its tooltip.
       leading: SizedBox.square(
         dimension: 48,
         child: IconButton(
           onPressed: _previewing == null ? () => _preview(voice) : null,
-          tooltip: playing ? 'Playing a sample of $voice' : 'Play a sample of $voice',
-          icon: Icon(
-            playing ? Icons.graphic_eq_rounded : Icons.play_circle_outline_rounded,
-            color: playing ? Neon.cyan : Neon.textLo,
-          ),
+          tooltip: playing
+              ? 'Playing a sample of ${voice.name}'
+              : 'Play a sample of ${voice.name}',
+          icon: playing
+              ? SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Neon.cyan,
+                  ),
+                )
+              : const Icon(Icons.play_circle_outline_rounded),
+          color: playing ? Neon.cyan : Neon.textLo,
         ),
       ),
-      title: voice,
-      subtitle: _liveTaglines[voice] ?? '',
-      trailing: chosen
-          ? Icon(Icons.check_rounded, color: Neon.cyan, size: 20,
-              semanticLabel: 'Selected')
+      title: voice.name,
+      subtitle: [
+        if (voice.accent.isNotEmpty) voice.accent,
+        if (voice.tagline.isNotEmpty) voice.tagline,
+      ].join(' · '),
+      trailing: selected
+          ? Icon(
+              Icons.check_rounded,
+              color: Neon.cyan,
+              size: 20,
+              semanticLabel: 'Selected',
+            )
           : const SizedBox(width: 20),
-      onTap: () => _pickLive(voice),
+      onTap: () => _choose(voice),
     );
   }
+}
+
+final class _WavPcm {
+  const _WavPcm(this.pcm, this.sampleRate);
+
+  final Uint8List pcm;
+  final int sampleRate;
+}
+
+_WavPcm? _decodePcmWav(Uint8List wav) {
+  if (wav.length < 44) return null;
+  String fourCc(int offset) =>
+      String.fromCharCodes(wav.sublist(offset, offset + 4));
+  if (fourCc(0) != 'RIFF' || fourCc(8) != 'WAVE') return null;
+
+  final data = ByteData.sublistView(wav);
+  int? format;
+  int? channels;
+  int? sampleRate;
+  int? bitsPerSample;
+  int? dataStart;
+  int? dataLength;
+  var offset = 12;
+  while (offset + 8 <= wav.length) {
+    final size = data.getUint32(offset + 4, Endian.little);
+    final start = offset + 8;
+    final end = start + size;
+    if (end > wav.length) return null;
+    switch (fourCc(offset)) {
+      case 'fmt ':
+        if (size < 16) return null;
+        format = data.getUint16(start, Endian.little);
+        channels = data.getUint16(start + 2, Endian.little);
+        sampleRate = data.getUint32(start + 4, Endian.little);
+        bitsPerSample = data.getUint16(start + 14, Endian.little);
+      case 'data':
+        dataStart = start;
+        dataLength = size;
+    }
+    offset = end + (size.isOdd ? 1 : 0);
+  }
+  if (format != 1 ||
+      channels != 1 ||
+      sampleRate == null ||
+      sampleRate == 0 ||
+      bitsPerSample != 16 ||
+      dataStart == null ||
+      dataLength == null ||
+      dataLength < 2 ||
+      dataLength.isOdd) {
+    return null;
+  }
+  return _WavPcm(
+    Uint8List.sublistView(wav, dataStart, dataStart + dataLength),
+    sampleRate,
+  );
 }

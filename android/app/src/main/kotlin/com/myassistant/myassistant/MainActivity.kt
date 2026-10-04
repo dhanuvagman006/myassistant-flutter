@@ -105,6 +105,23 @@ class MainActivity : FlutterFragmentActivity() {
         // PHONE CALENDAR. Auto-understood documents (a shared timetable,
         // an invite) mirror their events into the user's real calendar —
         // the one their home-screen widget shows. Insert-only.
+        // PASTE & EDIT (2026-10-04): when the newest clip was copied, from its
+        // description only — the text itself is read by Flutter after a tap,
+        // so no "pasted from your clipboard" notice on every return.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/clipboard")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "stamp") { result.notImplemented(); return@setMethodCallHandler }
+                try {
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    val d = cm.primaryClipDescription
+                    val isText = d != null && (d.hasMimeType("text/*"))
+                    val stamp = if (isText && android.os.Build.VERSION.SDK_INT >= 26) d!!.timestamp else 0L
+                    result.success(stamp)
+                } catch (e: Exception) {
+                    result.success(0L)
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hari/calendar")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

@@ -530,7 +530,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   /// for its moment (2026-09-30).
   String _status(bool micPaused) {
     final p = engine.phase;
-    if (engine.connecting) return 'Connecting… wait for the ping';
+    if (engine.connecting) return 'Connecting…';
     if (micPaused && !_waitingForVoice(p) && p != AssistantPhase.speaking) {
       return 'Mic paused while you type';
     }

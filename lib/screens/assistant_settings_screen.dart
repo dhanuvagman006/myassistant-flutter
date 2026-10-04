@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../ai/config.dart';
+import '../ai/live_voice.dart';
 import '../design/accent_controller.dart';
 import '../features/home/home_memory.dart';
 import '../design/apple_kit.dart';
@@ -44,24 +46,13 @@ class AssistantSettingsScreen extends StatefulWidget {
 }
 
 class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
-  String _voice = '';
+  String _voice = 'gleam';
   List<dynamic> _rules = [];
   // Nearby (2026-10-01): what I share with people around me.
   String _profession = '';
   bool _shared = false;
   final _newRule = TextEditingController();
   bool _loading = true;
-
-  /// Voices the speech model supports, with what they sound
-  /// like — a picker the user can read, not a bare dropdown.
-  static const _voices = [
-    ('', 'Fola', 'Expressive · Female · the default'),
-    ('Kore', 'Kore', 'Warm · Female'),
-    ('Aoede', 'Aoede', 'Bright · Female'),
-    ('Puck', 'Puck', 'Upbeat · Male'),
-    ('Charon', 'Charon', 'Deep · Male'),
-    ('Fenrir', 'Fenrir', 'Bold · Male'),
-  ];
 
   @override
   void initState() {
@@ -78,6 +69,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
   }
 
   Future<void> _load() async {
+    await LiveVoicePrefs.load();
     // Side by side, not one after another: the tab opened on sequential
     // round-trips.
     final results = await Future.wait([
@@ -94,7 +86,21 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       _profession = (n?['profession'] ?? '').toString();
       _shared = n?['shared'] == true;
       final a = (p?['assistant'] as Map?) ?? {};
-      _voice = (a['voice'] as String?) ?? '';
+      final offered = AiConfigStore.instance.current.live.voices
+          .map((v) => v.toLowerCase())
+          .toSet();
+      final chosen = LiveVoicePrefs.chosenVoice?.trim().toLowerCase();
+      final profileVoice = (a['voice'] as String?)?.trim().toLowerCase();
+      final configured =
+          AiConfigStore.instance.current.live.voice.toLowerCase();
+      _voice = [
+        chosen,
+        profileVoice,
+        configured,
+      ].whereType<String>().firstWhere(
+            (v) => offered.contains(v),
+            orElse: () => 'gleam',
+          );
       _rules = (r?['instructions'] as List?) ?? [];
     });
   }
@@ -109,19 +115,25 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
           controller: c,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(hintText: 'Lawyer, electrician, teacher…'),
+          decoration:
+              const InputDecoration(hintText: 'Lawyer, electrician, teacher…'),
           onSubmitted: (v) => Navigator.of(ctx).pop(v),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(c.text), child: const Text('Save')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(c.text),
+              child: const Text('Save')),
         ],
       ),
     );
     if (saved == null) return;
     final me = await ApiService.setNearbyMe(profession: saved.trim());
     if (!mounted) return;
-    setState(() => _profession = (me?['profession'] ?? saved.trim()).toString());
+    setState(
+        () => _profession = (me?['profession'] ?? saved.trim()).toString());
   }
 
   Future<void> _setShared(bool v) async {
@@ -130,8 +142,10 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       await LocationService.instance.refresh();
       if (ApiService.geoLat == null) {
         if (!mounted) return;
-        AppFeedback.show('Turn on location first so people nearby can find you.',
-            context: context, tone: FeedbackTone.error);
+        AppFeedback.show(
+            'Turn on location first so people nearby can find you.',
+            context: context,
+            tone: FeedbackTone.error);
         return;
       }
     }
@@ -140,23 +154,21 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     setState(() => _shared = me?['shared'] == true);
   }
 
-  /// Voice saves the moment it's tapped — 'default' clears the override.
   String _voiceName(String id) {
-    for (final (vid, title, _) in _voices) {
-      if (vid == id) return title;
-    }
-    return 'Default';
+    if (id.isEmpty) return 'Gleam';
+    return '${id[0].toUpperCase()}${id.substring(1)}';
   }
 
   Future<void> _pickVoice(String v) async {
     HapticFeedback.selectionClick();
     final prev = _voice;
     setState(() => _voice = v);
+    await LiveVoicePrefs.setVoice(v);
     // The cached orb greeting is in the OLD voice — drop it so the next
     // tap is greeted in the one they just picked.
     unawaited(GreetingVoice.instance.clear());
     final r = await ApiService.sendJson('/profile/assistant',
-        method: 'PUT', body: {'voice': v.isEmpty ? 'default' : v});
+        method: 'PUT', body: {'voice': v});
     if (!mounted) return;
     if (r == null || r['rejected'] == true) {
       setState(() => _voice = prev);
@@ -164,6 +176,8 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       // — show THAT, not a generic failure.
       final why = (r?['message'] ?? "Couldn't save the voice.").toString();
       AppFeedback.show(why, context: context, tone: FeedbackTone.error);
+      await LiveVoicePrefs.setVoice(prev.isEmpty ? 'gleam' : prev);
+      return;
     }
   }
 
@@ -252,14 +266,16 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                   children: [
                     AppleRow(
                       leading: IconTile(Icons.badge_rounded, AppleColors.teal),
-                      title: _profession.isEmpty ? 'Your profession' : _profession,
+                      title:
+                          _profession.isEmpty ? 'Your profession' : _profession,
                       subtitle: _profession.isEmpty
                           ? 'Tell people nearby what you do — tap to add'
                           : 'Tap to change',
                       onTap: _editProfession,
                     ),
                     AppleRow(
-                      leading: IconTile(Icons.near_me_rounded, AppleColors.green),
+                      leading:
+                          IconTile(Icons.near_me_rounded, AppleColors.green),
                       title: 'Be found by people nearby',
                       subtitle: _shared
                           ? 'Your profession and area are shown — never your exact location or number'
@@ -357,7 +373,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                       leading:
                           IconTile(Icons.graphic_eq_rounded, AppleColors.teal),
                       title: 'Assistant voice',
-                      subtitle: 'Fast live voice, or the classic voice',
+                      subtitle: 'Preview and choose an OpenAI voice',
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -377,12 +393,11 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
                         final picked = await Navigator.of(context).push<String>(
                           MaterialPageRoute(
                             builder: (_) => VoicePickerScreen(
-                              voices: _voices,
                               selectedId: _voice,
                             ),
                           ),
                         );
-                        if (picked != null && mounted) _pickVoice(picked);
+                        if (picked != null && mounted) await _pickVoice(picked);
                       },
                     ),
                     // "Live captions" was here: a switch nothing read

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'features/draft/draft_pad.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -266,6 +267,12 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     // as "changes only appear after closing and reopening the app".
     if (state == AppLifecycleState.resumed) {
       BriefService.instance.refresh(force: true);
+      // "Paste & edit" for text copied in another app (2026-10-04); after a
+      // beat, because Android lets a window read the clipboard only once
+      // it has focus again.
+      if (AuthService.instance.isSignedIn) {
+        Future.delayed(const Duration(milliseconds: 600), ClipboardOffer.instance.check);
+      }
       // Re-assert the FCM token too. Idempotent and instant when already
       // registered; rescues devices whose launch-time registration failed
       // (offline start) and would otherwise miss every push until the next
