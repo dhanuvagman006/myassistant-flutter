@@ -119,6 +119,12 @@ class ReminderNotifications {
   static void _tapped(NotificationResponse r) {
     final p = destinationOf(r);
     if (p == null) return;
+    route(p);
+  }
+
+  /// Opens a payload's destination now, or once the shell can navigate
+  /// (a push that launched the app).
+  static void route(String p) {
     final f = _onOpen;
     if (f != null) {
       f(p);

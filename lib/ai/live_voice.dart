@@ -34,6 +34,7 @@
 library;
 
 import 'dart:async';
+import 'gpt_live.dart';
 import 'openai_live.dart';
 import 'dart:collection';
 import 'dart:typed_data';
@@ -737,6 +738,9 @@ class LiveVoice {
       );
 
   final LiveConnector _connector;
+
+  /// Only the real connector builds a GPT-Live peer early (tests use fakes).
+  bool get _prepareGptLive => _connector is SwitchingLiveConnector;
   final ToolServer _server;
   final AssistantBrain _brain;
   final PcmPlayer _player;
@@ -900,11 +904,14 @@ class LiveVoice {
     if (!_enabled()) return false;
     final started = _now();
     try {
-      final cfg = (await _configs.get()).live;
+      final all = await _configs.get();
+      final cfg = all.live;
       if (!cfg.on) {
         AppLog.add('live', 'off in the config: the cascade answers');
         return false;
       }
+      // The call's phone side is built while the context is fetched.
+      if (all.viaServer && cfg.transport == 'gpt-live' && _prepareGptLive) GptLiveConnector.prepare();
       final ctx = await _server.context(
         text: '',
         mode: 'live',

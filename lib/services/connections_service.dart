@@ -13,7 +13,11 @@ class ConnectionInfo {
   final String? workspace;
   final int minBuild;
 
+  /// What linking it lets the assistant do (the other apps, 2026-10-04).
+  final String description;
+
   const ConnectionInfo({
+    this.description = '',
     required this.id,
     required this.name,
     required this.available,
@@ -33,6 +37,7 @@ class ConnectionInfo {
             : 'not_connected',
         workspace: j['workspace'] is String ? j['workspace'] as String : null,
         minBuild: (j['minBuild'] as num?)?.toInt() ?? 120,
+        description: (j['description'] ?? '').toString(),
       );
 }
 
@@ -83,8 +88,11 @@ class ConnectionsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<ConnectResult> connectNotion() async {
-    final start = await transport('POST', '/connections/notion/start');
+  Future<ConnectResult> connectNotion() => connect('notion');
+
+  /// Any app in the list: the server's consent page, then back here.
+  Future<ConnectResult> connect(String id) async {
+    final start = await transport('POST', '/connections/$id/start');
     final url = start?['authUrl'];
     if (url is! String || url.isEmpty) return ConnectResult.failed;
     final scheme = (start?['callbackScheme'] ?? 'com.myassistant.myassistant').toString();
@@ -100,7 +108,7 @@ class ConnectionsService extends ChangeNotifier {
     await load();
     // The server is the truth: a closed tab after a finished exchange is
     // still a connection.
-    if (notion?.connected == true) return ConnectResult.connected;
+    if (items.any((c) => c.id == id && c.connected)) return ConnectResult.connected;
     return result == 'cancelled' ? ConnectResult.cancelled : ConnectResult.failed;
   }
 
@@ -111,8 +119,14 @@ class ConnectionsService extends ChangeNotifier {
     return r[0]?['connected'] == true || r[1]?['connected'] == true;
   }
 
-  Future<bool> disconnectNotion() async {
-    final r = await transport('DELETE', '/connections/notion');
+  /// Google (Gmail + Calendar) links through the phone's own Google sign-in.
+  Future<bool> googleLinked() async =>
+      (await transport('GET', '/google/status'))?['connected'] == true;
+
+  Future<bool> disconnectNotion() => disconnect('notion');
+
+  Future<bool> disconnect(String id) async {
+    final r = await transport('DELETE', '/connections/$id');
     await load();
     return r != null;
   }

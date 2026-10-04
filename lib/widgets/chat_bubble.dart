@@ -62,10 +62,20 @@ class ChatBubble extends StatelessWidget {
     required this.child,
     this.onLongPress,
     this.maxWidthFactor = 0.78,
+    this.at = 0,
   });
 
   final bool mine;
   final Widget child;
+
+  /// When it was sent (ms); shown small under the words. 0 = no time.
+  final int at;
+
+  static String clock(int ms) {
+    final t = DateTime.fromMillisecondsSinceEpoch(ms);
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'am' : 'pm'}';
+  }
   final VoidCallback? onLongPress;
 
   /// The widest it may be, as a share of the screen.
@@ -107,7 +117,18 @@ class ChatBubble extends StatelessWidget {
               borderRadius: radius,
               border: Border.all(color: Neon.lineBright, width: 1),
             ),
-      child: child,
+      child: at <= 0
+          ? child
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(alignment: Alignment.centerLeft, widthFactor: 1, child: child),
+                const SizedBox(height: 3),
+                Text(clock(at),
+                    style: TextStyle(color: quietInk(mine), fontSize: 11, height: 1)),
+              ],
+            ),
     );
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,

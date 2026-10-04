@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:simple_icons/simple_icons.dart';
 
 import '../design/apple_kit.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
+import '../services/api_service.dart';
 import '../services/app_feedback.dart';
+import '../services/auth_service.dart';
 import '../services/connections_service.dart';
 import 'email_setup_screen.dart';
 
@@ -28,6 +31,10 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
   bool _connecting = false;
   bool _failed = false;
   bool? _mailLinked;
+  bool? _googleLinked;
+
+  /// The app being linked or unlinked right now (one at a time).
+  String? _busyId;
 
   @override
   void initState() {
@@ -49,7 +56,7 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Back from the browser (or from Notion itself): the link may be made.
-    if (state == AppLifecycleState.resumed && !_connecting) _svc.load();
+    if (state == AppLifecycleState.resumed && !_connecting && _busyId == null) _svc.load();
   }
 
   void _sync() {
@@ -57,9 +64,106 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
   }
 
   Future<void> _loadMail() async {
-    final linked = await _svc.mailLinked();
+    final r = await Future.wait([_svc.mailLinked(), _svc.googleLinked()]);
     if (!mounted) return;
-    setState(() => _mailLinked = linked);
+    setState(() {
+      _mailLinked = r[0];
+      _googleLinked = r[1];
+    });
+  }
+
+  // ── Google and the other apps (owner, 2026-10-04) ─────────────────────
+
+
+  Future<void> _toggleGoogle() async {
+    if (_busyId != null) return;
+    HapticFeedback.selectionClick();
+    final linked = _googleLinked == true;
+    if (linked && !await _confirmUnlink('Google')) return;
+    setState(() => _busyId = 'google');
+    var ok = false;
+    String? msg;
+    try {
+      if (linked) {
+        ok = await ApiService.disconnectGoogle();
+      } else {
+        await AuthService.instance.linkGoogleData();
+        ok = true;
+      }
+    } on AuthException catch (e) {
+      msg = e.message;
+    } catch (_) {}
+    await _loadMail();
+    if (!mounted) return;
+    setState(() => _busyId = null);
+    _toast(msg ??
+        (ok
+            ? (linked ? 'Google is disconnected.' : 'Google is connected.')
+            : "Couldn't do that. Please try again."));
+  }
+
+  Future<bool> _confirmUnlink(String name) async =>
+      await showAppDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Text('Disconnect $name?'),
+          content: const Text("I'll stop using it for you. Nothing in it is deleted."),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c, false),
+                child: const Text('Keep it')),
+            FilledButton(
+                onPressed: () => Navigator.pop(c, true),
+                child: const Text('Disconnect')),
+          ],
+        ),
+      ) ==
+      true;
+
+  Future<void> _toggleApp(ConnectionInfo a) async {
+    if (_busyId != null || !a.available) return;
+    HapticFeedback.selectionClick();
+    if (a.connected) {
+      if (!await _confirmUnlink(a.name)) return;
+      setState(() => _busyId = a.id);
+      final ok = await _svc.disconnect(a.id);
+      if (!mounted) return;
+      setState(() => _busyId = null);
+      _toast(ok ? '${a.name} is disconnected.' : "Couldn't disconnect. Please try again.");
+      return;
+    }
+    setState(() => _busyId = a.id);
+    final r = await _svc.connect(a.id);
+    if (!mounted) return;
+    setState(() => _busyId = null);
+    if (r == ConnectResult.connected) _toast('${a.name} is connected.');
+    if (r == ConnectResult.failed) _toast("Couldn't connect ${a.name}. Please try again.");
+  }
+
+  Widget _appRow({
+    required String id,
+    required String name,
+    required String subtitle,
+    required bool connected,
+    required bool available,
+    required VoidCallback onTap,
+  }) {
+    final busy = _busyId == id;
+    return AppleRow(
+      leading: BrandLogo(id),
+      title: name,
+      subtitle: subtitle,
+      onTap: available && !busy ? onTap : null,
+      trailing: busy
+          ? const NeonLoader.inline()
+          : !available
+              ? Text('Soon', style: TextStyle(color: Neon.textDim, fontSize: NeonType.caption))
+              : Text(connected ? 'Connected' : 'Connect',
+                  style: TextStyle(
+                      color: connected ? Neon.successInk : Neon.violet,
+                      fontWeight: FontWeight.w700,
+                      fontSize: NeonType.footnote)),
+    );
   }
 
   void _toast(String text) {
@@ -150,8 +254,7 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
             child: Column(
               children: [
                 AppleRow(
-                  leading:
-                      IconTile(Icons.sticky_note_2_rounded, AppleColors.blue),
+                  leading: const BrandLogo('notion'),
                   title: 'Notion',
                   subtitle: subtitle,
                   trailing: _connecting ? const NeonLoader.inline() : null,
@@ -212,6 +315,39 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
             const GroupLabel('Notes'),
             _notionCard(n),
           ],
+          const GroupLabel('Google'),
+          GroupedCard(dividerInset: 60, children: [
+            _appRow(
+              id: 'google',
+              name: 'Google',
+              subtitle: _googleLinked == true
+                  ? 'Gmail and Calendar are linked. Tap to disconnect.'
+                  : 'Gmail and Google Calendar — one sign-in',
+              connected: _googleLinked == true,
+              available: _googleLinked != null,
+              onTap: _toggleGoogle,
+            ),
+          ]),
+          const SizedBox(height: 24),
+          if (_svc.items.any((c) => c.id != 'notion')) ...[
+            const GroupLabel('More apps'),
+            GroupedCard(dividerInset: 60, children: [
+              for (final a in _svc.items.where((c) => c.id != 'notion'))
+                _appRow(
+                  id: a.id,
+                  name: a.name,
+                  subtitle: a.connected
+                      ? 'Connected${a.workspace != null ? ' to ${a.workspace}' : ''}. Tap to disconnect.'
+                      : a.status == 'needs_reconnect'
+                          ? 'Needs a quick reconnect'
+                          : a.description,
+                  connected: a.connected,
+                  available: a.available,
+                  onTap: () => _toggleApp(a),
+                ),
+            ]),
+            const SizedBox(height: 24),
+          ],
           const GroupLabel('Mail & calendar'),
           GroupedCard(
             dividerInset: 60,
@@ -235,6 +371,55 @@ class _ConnectedAppsScreenState extends State<ConnectedAppsScreen>
           ),
         ],
       ),
+    );
+  }
+}
+
+/// THE APP'S OWN LOGO (owner, 2026-10-04): the real brand mark in its brand
+/// colour on a plain white tile — no tinted icon. Microsoft's four squares
+/// are drawn (Simple Icons does not carry them).
+class BrandLogo extends StatelessWidget {
+  const BrandLogo(this.id, {super.key, this.size = 34});
+  final String id;
+  final double size;
+
+  static const _marks = <String, (IconData, Color)>{
+    'google': (SimpleIcons.google, SimpleIconColors.google),
+    'notion': (SimpleIcons.notion, SimpleIconColors.notion),
+    'todoist': (SimpleIcons.todoist, SimpleIconColors.todoist),
+    'asana': (SimpleIcons.asana, SimpleIconColors.asana),
+    'spotify': (SimpleIcons.spotify, SimpleIconColors.spotify),
+    'zoom': (SimpleIcons.zoom, SimpleIconColors.zoom),
+    'dropbox': (SimpleIcons.dropbox, SimpleIconColors.dropbox),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final mark = _marks[id];
+    final Widget inner;
+    if (id == 'microsoft') {
+      final q = size * 0.24;
+      Widget sq(int c) => Container(width: q, height: q, color: Color(c));
+      inner = Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(mainAxisSize: MainAxisSize.min,
+            children: [sq(0xfff25022), SizedBox(width: q * 0.12), sq(0xff7fba00)]),
+        SizedBox(height: q * 0.12),
+        Row(mainAxisSize: MainAxisSize.min,
+            children: [sq(0xff00a4ef), SizedBox(width: q * 0.12), sq(0xffffb900)]),
+      ]);
+    } else {
+      inner = Icon(mark?.$1 ?? Icons.apps_rounded,
+          color: mark?.$2 ?? Colors.black54, size: size * 0.6);
+    }
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(size * 0.3),
+      ),
+      child: inner,
     );
   }
 }

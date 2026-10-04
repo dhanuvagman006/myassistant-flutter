@@ -463,6 +463,13 @@ class ChatThreadScreen extends StatefulWidget {
   final String phone, name;
   const ChatThreadScreen({super.key, required this.phone, required this.name});
 
+  /// The person whose chat is on screen (their pushes are not shown as
+  /// banners; the chat refreshes instead).
+  static String? openPhone;
+
+  /// Set to the sender's phone whenever a direct message push arrives.
+  static final ValueNotifier<String> pushed = ValueNotifier<String>('');
+
   @override
   State<ChatThreadScreen> createState() => _ChatThreadScreenState();
 }
@@ -483,6 +490,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   @override
   void initState() {
     super.initState();
+    ChatThreadScreen.openPhone = widget.phone;
+    ChatThreadScreen.pushed.addListener(_onPush);
     _load();
     _poll = Timer.periodic(const Duration(seconds: 10), (_) {
       if (!mounted ||
@@ -494,8 +503,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     });
   }
 
+  /// A message from this person just arrived: show it now.
+  void _onPush() {
+    if (mounted && ChatThreadScreen.pushed.value == widget.phone) _load();
+  }
+
   @override
   void dispose() {
+    if (ChatThreadScreen.openPhone == widget.phone) ChatThreadScreen.openPhone = null;
+    ChatThreadScreen.pushed.removeListener(_onPush);
     _poll?.cancel();
     _input.dispose();
     _scroll.dispose();
@@ -607,8 +623,17 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     // theme's floating surface.
     return NeonScaffold(
       appBar: AppBar(
-        title: Text(widget.name,
-            style: const TextStyle(fontSize: 17), maxLines: 1),
+        titleSpacing: 0,
+        title: Row(children: [
+          ChatAvatar(name: widget.name, radius: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(widget.name,
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+        ]),
         actions: [
           PopupMenuButton<String>(
             popUpAnimationStyle: appMenuAnimation(context),
@@ -674,6 +699,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     final doc = m.document;
     return ChatBubble(
       mine: m.mine,
+      at: m.at,
       onLongPress: m.deleted || m.id == 0 ? null : () => _messageMenu(m),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

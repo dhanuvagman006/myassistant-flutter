@@ -28,7 +28,7 @@ import '../../../screens/phone/call_notes_screen.dart';
 import '../../../screens/reminders_screen.dart';
 import '../../../screens/business_card_flow.dart';
 import '../../../screens/meetings/meeting_recorder_screen.dart';
-import '../../../screens/meetings/meetings_screen.dart';
+import '../../../screens/nearby_screen.dart';
 import '../../../screens/clients_screen.dart';
 import '../../../screens/finance_screen.dart';
 import '../../../screens/stocks_screen.dart';
@@ -923,10 +923,11 @@ class AssistantEngine extends ChangeNotifier {
       for (final g in CallHistory.group(calls).take(CallHistory.maxEntries))
         if (g.latest.dialable.isNotEmpty) '${g.latest.label} (${g.latest.dialable})',
     ];
-    final said = _live.greet('[SYSTEM] I just opened the conversation. Greet me '
-        'now with exactly this, nothing before or after it: "$line" Then stop '
-        'and wait for me. BUT if I have already said something by the time you '
-        'answer, skip the greeting completely and answer what I said.'
+    // GPT-Live speaks first only when told plainly to begin now (OpenAI's
+    // guide: say what to say, that it starts immediately, then listen).
+    final said = _live.greet('[SYSTEM] Speak first, right now, in English: say exactly '
+        '"$line" and nothing before or after it. Then stop and listen. BUT if I '
+        'have already said something, skip the greeting and answer what I said.'
         '${back.isEmpty ? '' : ' If I ask to call someone back, use '
             'place_phone_call with the name or number: ${back.join('; ')}.'}');
     if (!said) AppLog.add('voice', 'hello skipped: he was already talking');
@@ -995,7 +996,9 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Long enough that flicking to another app and back is silent, short
   /// enough that coming back to the app later is still greeted.
-  static const _greetCooldown = Duration(minutes: 15);
+  // NONE (owner, 2026-10-04): "Hello Sir" on EVERY tap of the orb, in the
+  // voice she answers in — every conversation, not only the first. Was 15 min.
+  static const _greetCooldown = Duration.zero;
 
   /// A call started/rang — a real phone call always wins the audio: the
   /// conversation ends, nothing speaks and nothing listens.
@@ -2648,7 +2651,8 @@ class AssistantEngine extends ChangeNotifier {
           final screen = e['screen'] as String? ?? '';
           // Nearby took Chat's place in the dock (2026-10-01); 'chat' now
           // means the Messages thread list, pushed from the Hub.
-          const tabs = {'home': 0, 'hub': 1, 'nearby': 2, 'settings': 3};
+          // Chats (meetings) took Nearby's tab (2026-10-04); Nearby is pushed.
+          const tabs = {'home': 0, 'hub': 1, 'meetings': 2, 'settings': 3};
           if (tabs.containsKey(screen)) {
             HomeShell.requestedTab.value = tabs[screen];
           } else {
@@ -4157,7 +4161,7 @@ class AssistantEngine extends ChangeNotifier {
   WidgetBuilder? _appScreenBuilder(String screen,
           [Map<String, dynamic> e = const {}]) =>
       switch (screen) {
-        'meetings' => (_) => const MeetingsScreen(),
+        'nearby' => (_) => const NearbyScreen(),
         // "Record this meeting" — straight into recording.
         'meeting_recorder' => (_) => MeetingRecorderScreen(
               autoStart: true,

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../screens/chat_screen.dart' show ChatThreadScreen;
+import '../screens/chat_group_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -35,7 +37,7 @@ import '../services/auth_service.dart';
 import '../features/assistant/widgets/action_cards.dart' show DocumentGalleryScreen;
 import '../screens/assistant_settings_screen.dart';
 import '../screens/home_dashboard.dart';
-import '../screens/nearby_screen.dart';
+import '../screens/meetings/meetings_screen.dart';
 import '../services/telemetry.dart';
 import '../screens/hub_screen.dart';
 import '../features/shopping/shopping_list_screen.dart' show ShoppingNav;
@@ -68,6 +70,30 @@ Future<void> openNotificationPayload(String what,
     return ShoppingNav.fromNotification(what);
   }
   if (what == 'focus') return FocusNav.open();
+  // A direct message (2026-10-04): that person's chat.
+  if (what.startsWith('dm:')) {
+    final parts = what.split(':');
+    final phone = parts.length > 1 ? parts[1] : '';
+    final nav = AvatarMessageService.navigatorKey.currentState;
+    if (phone.isEmpty || nav == null || ChatThreadScreen.openPhone == phone) {
+      return Future<void>.value();
+    }
+    final name = parts.length > 2 ? parts.sublist(2).join(':') : 'Chat';
+    return nav.push(MaterialPageRoute<void>(
+        builder: (_) => ChatThreadScreen(phone: phone, name: name)));
+  }
+  // A group message (2026-10-04): that group's chat.
+  if (what.startsWith('group:')) {
+    final parts = what.split(':');
+    final id = int.tryParse(parts.length > 1 ? parts[1] : '');
+    final nav = AvatarMessageService.navigatorKey.currentState;
+    if (id == null || nav == null || ChatGroupScreen.openGroupId == id) {
+      return Future<void>.value();
+    }
+    final title = parts.length > 2 ? parts.sublist(2).join(':') : 'Group';
+    return nav.push(MaterialPageRoute<void>(
+        builder: (_) => ChatGroupScreen(groupId: id, title: title)));
+  }
   // A reminder's own notification (2026-09-30): its pop-up.
   if (what.startsWith(ReminderNotifications.reminderPayload)) {
     return ReminderPopup.openFromPayload(what);
@@ -240,7 +266,7 @@ class _HomeShellState extends State<HomeShell>
   void _switchTab(int i, {Offset? from}) {
     AppFeedback.dismiss();
     HomeShell.lastTab = i;
-    Telemetry.instance.event('tab', {'name': const ['home', 'hub', 'nearby', 'you'][i.clamp(0, 3)]});
+    Telemetry.instance.event('tab', {'name': const ['home', 'hub', 'chats', 'you'][i.clamp(0, 3)]});
     _tabChanges.value++;
     setState(() {
       _tab = i;
@@ -752,7 +778,7 @@ class _HomeShellState extends State<HomeShell>
               children: const [
                 HomeDashboard(),
                 HubScreen(),
-                NearbyScreen(),
+                MeetingsScreen(),
                 AssistantSettingsScreen(),
               ],
             ),
@@ -942,8 +968,9 @@ class _HomeShellState extends State<HomeShell>
             // the rounded ones. The selected tab keeps its filled one.
             // Nearby took the Chat tab (2026-10-01, the owner): people around
             // who share what they do. Chat moved to the Hub (Messages).
-            _navItem(2, Icons.near_me_outlined, Icons.near_me_rounded,
-                'Nearby'),
+            // Chats took Nearby's tab (owner, 2026-10-04); Nearby is in the Hub.
+            _navItem(2, Icons.chat_bubble_outline_rounded,
+                Icons.chat_bubble_rounded, 'Chats'),
             _navItem(3, Icons.person_outline, Icons.person_rounded, 'You'),
           ],
         ),

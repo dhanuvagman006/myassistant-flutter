@@ -28,8 +28,45 @@ class GptLiveConnector implements LiveConnector {
 
   final Future<Map<String, dynamic>?> Function(Map<String, Object?> body) _create;
 
-  @override
-  Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) async {
+  /// FASTER CONNECT (owner, 2026-10-04: "it takes too much time to
+  /// connect"). The phone's half of the call — microphone, data channel,
+  /// SDP offer — does not depend on the instruction, so [prepare] builds it
+  /// while the context is fetched, and [connect] takes it. Unused for a
+  /// minute, it is closed (it holds the microphone, track disabled).
+  static Future<_Peer>? _spare;
+  static Timer? _spareTtl;
+
+  static void prepare() {
+    if (_spare != null) return;
+    final f = _openPeer();
+    _spare = f;
+    f.catchError((Object _) {
+      if (identical(_spare, f)) _spare = null;
+      return _Peer.none;
+    });
+    _spareTtl?.cancel();
+    _spareTtl = Timer(const Duration(seconds: 60), () {
+      final left = _spare;
+      _spare = null;
+      left?.then((p) => p.dispose()).catchError((Object _) {});
+    });
+  }
+
+  static Future<_Peer> _take() async {
+    final spare = _spare;
+    _spare = null;
+    _spareTtl?.cancel();
+    if (spare != null) {
+      try {
+        final p = await spare;
+        if (p.pc != null) return p;
+      } catch (_) {}
+    }
+    return _openPeer();
+  }
+
+  static Future<_Peer> _openPeer() async {
+    final sw = Stopwatch()..start();
     RTCPeerConnection? pc;
     MediaStream? mic;
     try {
@@ -62,6 +99,29 @@ class GptLiveConnector implements LiveConnector {
       final local = await pc.getLocalDescription();
       final sdp = local?.sdp ?? '';
       if (sdp.isEmpty) throw StateError('no local SDP offer');
+      AppLog.add('live', 'gpt-live: phone side ready in ${sw.elapsedMilliseconds} ms');
+      return _Peer(pc, mic, track, remote, channel, incoming, sdp);
+    } catch (_) {
+      for (final t in mic?.getTracks() ?? const <MediaStreamTrack>[]) {
+        unawaited(t.stop().catchError((Object _) {}));
+      }
+      unawaited(pc?.close().catchError((Object _) {}));
+      rethrow;
+    }
+  }
+
+  @override
+  Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) async {
+    final p = await _take();
+    final pc = p.pc!;
+    final mic = p.mic!;
+    final track = p.track!;
+    final remote = p.remote;
+    final channel = p.channel!;
+    final incoming = p.incoming!;
+    final sdp = p.sdp;
+    final sw = Stopwatch()..start();
+    try {
       final created = await _create({
         'sdp': sdp,
         'instructions': setup.system,
@@ -72,7 +132,7 @@ class GptLiveConnector implements LiveConnector {
       final answer = transport is Map ? '${transport['sdp'] ?? ''}' : '';
       if (answer.isEmpty) throw StateError('no GPT-Live session from the server');
       final id = created?['session'] is Map ? '${(created!['session'] as Map)['id'] ?? ''}' : '';
-      AppLog.add('live', 'gpt-live session $id');
+      AppLog.add('live', 'gpt-live session $id (server ${sw.elapsedMilliseconds} ms)');
       await pc.setRemoteDescription(RTCSessionDescription(answer, 'answer'));
       unawaited(Helper.setSpeakerphoneOn(true).catchError((Object _) {}));
       final peer = pc;
@@ -98,12 +158,10 @@ class GptLiveConnector implements LiveConnector {
         },
       );
       await session.ready.timeout(const Duration(seconds: 12));
+      AppLog.add('live', 'gpt-live: started ${sw.elapsedMilliseconds} ms after the offer');
       return session;
     } catch (_) {
-      for (final t in mic?.getTracks() ?? const <MediaStreamTrack>[]) {
-        unawaited(t.stop().catchError((Object _) {}));
-      }
-      unawaited(pc?.close().catchError((Object _) {}));
+      await p.dispose();
       rethrow;
     }
   }
@@ -115,10 +173,34 @@ class GptLiveConnector implements LiveConnector {
     pc.onIceGatheringState = (s) {
       if (s == RTCIceGatheringState.RTCIceGatheringStateComplete && !done.isCompleted) done.complete();
     };
-    await done.future.timeout(const Duration(seconds: 10), onTimeout: () {
-      // What was gathered by now is usually enough (host + srflx).
-      AppLog.add('live', 'gpt-live: ICE gathering still running after 10 s, offering what there is');
+    // 1.5 s, not 10 (2026-10-04): OpenAI's side has a public address, so
+    // the phone's own host candidates gathered by now are enough; a slow
+    // interface (often IPv6) used to hold the whole connect.
+    await done.future.timeout(const Duration(milliseconds: 1500), onTimeout: () {
+      AppLog.add('live', 'gpt-live: ICE gathering still running after 1.5 s, offering what there is');
     });
+  }
+}
+
+/// The phone's half of a GPT-Live call, before the server has answered.
+class _Peer {
+  _Peer(this.pc, this.mic, this.track, this.remote, this.channel, this.incoming, this.sdp);
+  static final none = _Peer(null, null, null, const [], null, null, '');
+  final RTCPeerConnection? pc;
+  final MediaStream? mic;
+  final MediaStreamTrack? track;
+  final List<MediaStreamTrack> remote;
+  final RTCDataChannel? channel;
+  final StreamController<String>? incoming;
+  final String sdp;
+
+  Future<void> dispose() async {
+    for (final t in mic?.getTracks() ?? const <MediaStreamTrack>[]) {
+      await t.stop().catchError((Object _) {});
+    }
+    await mic?.dispose().catchError((Object _) {});
+    await channel?.close().catchError((Object _) {});
+    await pc?.close().catchError((Object _) {});
   }
 }
 

@@ -91,7 +91,8 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: ConnectedAppsScreen()));
     await tester.pumpAndSettle();
     expect(find.text('Notion'), findsOneWidget);
-    expect(find.text('Connect'), findsOneWidget);
+    // Notion's and Google's (2026-10-04).
+    expect(find.text('Connect'), findsNWidgets(2));
 
     available = false;
     await tester.pumpWidget(const SizedBox());
@@ -126,7 +127,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Disconnect'));
     await tester.pumpAndSettle();
     expect(calls.where((c) => c.$1 == 'DELETE' && c.$2 == '/connections/notion').length, 1);
-    expect(find.text('Connect'), findsOneWidget);
+    expect(find.text('Connect'), findsNWidgets(2));
     await tester.pump(const Duration(seconds: 6));
   });
 

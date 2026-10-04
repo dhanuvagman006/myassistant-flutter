@@ -44,6 +44,7 @@ class TabDeck extends StatefulWidget {
     required this.onSwipe,
     this.origin,
     this.swipe = true,
+    this.animate = false,
   });
 
   /// The tab on screen.
@@ -60,6 +61,9 @@ class TabDeck extends StatefulWidget {
 
   /// Whether sideways swipes move between tabs.
   final bool swipe;
+
+  /// Whether a tap or voice switch animates; off by the owner's ask.
+  final bool animate;
 
   @override
   State<TabDeck> createState() => _TabDeckState();
@@ -116,7 +120,9 @@ class _TabDeckState extends State<TabDeck> with TickerProviderStateMixin {
     }
     _finishNow();
     if (to == _shown) return;
-    if (Motion.reduced(context)) {
+    // NO TAB ANIMATION (owner, 2026-10-04): a tap or voice switches tabs
+    // instantly (no fade, scale or burst). A swipe still follows the finger.
+    if (!widget.animate || Motion.reduced(context)) {
       _shown = to;
       return;
     }

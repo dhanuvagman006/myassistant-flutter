@@ -10,6 +10,7 @@ import '../services/api_service.dart';
 import '../services/app_feedback.dart';
 import '../design/motion.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/task_list_card.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
 ///  A GROUP, WITH THE ASSISTANT IN IT.
@@ -33,6 +34,13 @@ class ChatGroupScreen extends StatefulWidget {
   final int groupId;
   final String title;
 
+  /// The group on screen right now (its pushes are not shown as banners;
+  /// the chat itself refreshes).
+  static int? openGroupId;
+
+  /// Bumped with the group id whenever a group message push arrives.
+  static final ValueNotifier<int> pushed = ValueNotifier<int>(0);
+
   @override
   State<ChatGroupScreen> createState() => _ChatGroupScreenState();
 }
@@ -42,7 +50,11 @@ class _Msg {
   final String name, text;
   final bool mine, deleted;
   final int at;
-  const _Msg(this.id, this.name, this.text, this.mine, this.at, this.deleted);
+
+  /// A shared task list (2026-10-04); null for a plain message.
+  final TaskList? tasks;
+  const _Msg(this.id, this.name, this.text, this.mine, this.at, this.deleted,
+      [this.tasks]);
 }
 
 class _ChatGroupScreenState extends State<ChatGroupScreen> {
@@ -61,6 +73,8 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   @override
   void initState() {
     super.initState();
+    ChatGroupScreen.openGroupId = widget.groupId;
+    ChatGroupScreen.pushed.addListener(_onPush);
     _load();
     // The push nudge is the real-time signal; this keeps an open screen
     // honest without a socket.
@@ -84,10 +98,17 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
 
   @override
   void dispose() {
+    if (ChatGroupScreen.openGroupId == widget.groupId) ChatGroupScreen.openGroupId = null;
+    ChatGroupScreen.pushed.removeListener(_onPush);
     _poll?.cancel();
     _c.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// A message for this group just arrived: show it now, not in 12 s.
+  void _onPush() {
+    if (mounted && ChatGroupScreen.pushed.value == widget.groupId) _load(quiet: true);
   }
 
   Future<void> _load({bool quiet = false}) async {
@@ -112,6 +133,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                 m['mine'] == true,
                 (m['at'] as num?)?.toInt() ?? 0,
                 m['deleted'] == true,
+                TaskList.fromJson(m['tasks']),
               ))
           .toList();
       final grew = list.length != _messages.length;
@@ -164,6 +186,16 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
     _toBottom();
     await ApiService.postJson('/chat/groups/${widget.groupId}/send', {'text': t});
     await _load(quiet: true);
+  }
+
+  Future<void> _newTaskList() async {
+    final shared = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => NewTaskListSheet(groupId: widget.groupId),
+    );
+    if (shared == true) await _load(quiet: true);
   }
 
   /// CLEARING AND LEAVING ARE NOT UNDOABLE, SO THEY ASK FIRST. Muting is,
@@ -303,20 +335,27 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
             ],
           ),
         ],
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.spaceGrotesk(
-                    fontWeight: FontWeight.w700, fontSize: 17)),
-            Text(
-              _members > 0 ? '$_members members' : 'Group',
-              style: TextStyle(color: Neon.textLo, fontSize: 12),
+        titleSpacing: 0,
+        title: Row(children: [
+          const ChatAvatar(icon: Icons.groups_rounded, radius: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.spaceGrotesk(
+                        fontWeight: FontWeight.w700, fontSize: 17)),
+                Text(
+                  _members > 0 ? '$_members members' : 'Group',
+                  style: TextStyle(color: Neon.textLo, fontSize: 12),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ]),
       ),
       body: Column(
         children: [
@@ -361,20 +400,21 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   /// LIT WHEN ON (2026-09-30): the room's one important state, so the
   /// card glows while assistants may answer here and sits quiet when not.
   Widget _agentBar() => Padding(
-        padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
         child: GlowCard(
           tone: NeonTone.brand,
           radius: Neon.rMd,
-          rimWidth: _agentReplies ? 1.8 : 1.2,
-          halo: _agentReplies ? 0.6 : 0,
-          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+          // Calm (2026-10-04): a setting, not an alert.
+          rimWidth: 1,
+          halo: 0,
+          padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
           // One node for a screen reader: the switch is named by the words
           // beside it (it was an unlabelled toggle).
           child: MergeSemantics(
             child: Row(
               children: [
                 Icon(Icons.support_agent_rounded,
-                    size: 19,
+                    size: 18,
                     color: _agentReplies ? Neon.violet : Neon.textLo),
                 const SizedBox(width: 10),
                 Expanded(
@@ -385,7 +425,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                         'Let my assistant reply here',
                         style: TextStyle(
                             color: Neon.textHi,
-                            fontSize: 14,
+                            fontSize: 13.5,
                             fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 2),
@@ -393,7 +433,7 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
                         'In this group, members’ assistants may answer for '
                         'them while they are away.',
                         style: TextStyle(
-                            color: Neon.textLo, fontSize: 12, height: 1.35),
+                            color: Neon.textLo, fontSize: 11.5, height: 1.3),
                       ),
                     ],
                   ),
@@ -413,9 +453,20 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
   /// with a rim and the sender's first name in the accent.
   Widget _bubble(_Msg m) {
     final mine = m.mine;
+    if (m.tasks != null && !m.deleted) {
+      return TaskListCard(
+        groupId: widget.groupId,
+        list: m.tasks!,
+        mine: mine,
+        sender: mine ? '' : m.name,
+        at: m.at,
+        onLongPress: () => _messageMenu(m),
+      );
+    }
     final quiet = ChatBubble.quietInk(mine);
     return ChatBubble(
       mine: mine,
+      at: m.at,
       maxWidthFactor: 0.74,
       onLongPress: m.deleted || m.id == 0 ? null : () => _messageMenu(m),
       child: Column(
@@ -464,13 +515,23 @@ class _ChatGroupScreenState extends State<ChatGroupScreen> {
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
           // The shared composer (2026-09-30): the rim lights while typing,
           // the send button glows.
-          child: ChatComposer(
-            controller: _c,
-            onSend: _send,
-            hintText: 'Message',
-            sendIcon: Icons.arrow_upward_rounded,
-            textCapitalization: TextCapitalization.none,
-          ),
+          child: Row(children: [
+            // TEAM TASK LIST (2026-10-04): share a checklist the group ticks off.
+            IconButton(
+              tooltip: 'Share a task list',
+              onPressed: _newTaskList,
+              icon: Icon(Icons.checklist_rounded, color: Neon.cyanInk),
+            ),
+            Expanded(
+              child: ChatComposer(
+                controller: _c,
+                onSend: _send,
+                hintText: 'Message',
+                sendIcon: Icons.send_rounded,
+                textCapitalization: TextCapitalization.none,
+              ),
+            ),
+          ]),
         ),
       );
 }

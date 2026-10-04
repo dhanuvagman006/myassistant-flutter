@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../screens/chat_screen.dart' show ChatThreadScreen;
+import '../screens/chat_group_screen.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:myassistant/services/api_service.dart';
@@ -102,6 +104,43 @@ class PushService {
           _checkForUpdateNow();
           return;
         }
+        // A TASK LIST CHANGED (2026-10-04): a silent push; the open chat refetches.
+        if (kind == 'group_tasks') {
+          final gid = int.tryParse('${m.data['groupId']}') ?? 0;
+          if (ChatGroupScreen.pushed.value == gid) {
+            // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+            ChatGroupScreen.pushed.notifyListeners();
+          } else {
+            ChatGroupScreen.pushed.value = gid;
+          }
+          return;
+        }
+        // A GROUP MESSAGE (2026-10-04): the open chat and the Meetings list
+        // refresh at once; no banner for the group already on screen.
+        final group = kind == 'group_message' ? _groupPayload(m) : null;
+        if (group != null) {
+          final gid = int.tryParse('${m.data['groupId']}') ?? 0;
+          if (ChatGroupScreen.pushed.value == gid) {
+            // ValueNotifier skips an unchanged value: re-notify for the same group.
+            // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+            ChatGroupScreen.pushed.notifyListeners();
+          } else {
+            ChatGroupScreen.pushed.value = gid;
+          }
+          if (ChatGroupScreen.openGroupId == gid) return;
+        }
+        // A DIRECT MESSAGE, the same way (2026-10-04).
+        final dm = kind == 'direct_message' ? _dmPayload(m) : null;
+        if (dm != null) {
+          final from = '${m.data['fromPhone']}';
+          if (ChatThreadScreen.pushed.value == from) {
+            // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+            ChatThreadScreen.pushed.notifyListeners();
+          } else {
+            ChatThreadScreen.pushed.value = from;
+          }
+          if (ChatThreadScreen.openPhone == from) return;
+        }
         final n = m.notification;
         if (n != null &&
             kind != 'agent_message' &&
@@ -110,7 +149,7 @@ class PushService {
           ReminderNotifications.instance.showNow(
             n.title ?? 'MyAssistant',
             n.body ?? '',
-            payload: isMail ? 'bills_email' : null,
+            payload: isMail ? 'bills_email' : (group ?? dm),
           );
         }
       });
@@ -128,6 +167,14 @@ class PushService {
         if (m.data['kind'] == 'scheduled_call') {
           AppLog.add('push', 'scheduled call opened from notification');
           _placeScheduledCall(m);
+        }
+        if (m.data['kind'] == 'group_message') {
+          final g = _groupPayload(m);
+          if (g != null) ReminderNotifications.route(g);
+        }
+        if (m.data['kind'] == 'direct_message') {
+          final g = _dmPayload(m);
+          if (g != null) ReminderNotifications.route(g);
         }
         if (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm') {
           AppLog.add('push', 'bills email opened');
@@ -148,6 +195,14 @@ class PushService {
           AppLog.add('push', 'scheduled call launched the app');
           _placeScheduledCall(m);
         }
+        if (m != null && m.data['kind'] == 'group_message') {
+          final g = _groupPayload(m);
+          if (g != null) ReminderNotifications.route(g);
+        }
+        if (m != null && m.data['kind'] == 'direct_message') {
+          final g = _dmPayload(m);
+          if (g != null) ReminderNotifications.route(g);
+        }
         if (m != null && (m.data['kind'] == 'mail_filed' || m.data['kind'] == 'mail_confirm')) {
           AppLog.add('push', 'bills email launched the app');
           unawaited(BillsEmailNav.open());
@@ -157,6 +212,20 @@ class PushService {
     } catch (e) {
       AppLog.add('push', 'init failed: $e');
     }
+  }
+
+  /// "group:<id>:<title>" for a group message push (title = the group's name).
+  static String? _groupPayload(RemoteMessage m) {
+    final id = int.tryParse('${m.data['groupId'] ?? ''}');
+    if (id == null) return null;
+    return 'group:$id:${m.notification?.title ?? 'Group'}';
+  }
+
+  /// "dm:<phone>:<name>" for a direct message push.
+  static String? _dmPayload(RemoteMessage m) {
+    final phone = '${m.data['fromPhone'] ?? ''}'.trim();
+    if (phone.isEmpty) return null;
+    return 'dm:$phone:${m.data['fromName'] ?? m.notification?.title ?? 'Chat'}';
   }
 
   /// Notification permission is off — say so ONCE per app run, with the

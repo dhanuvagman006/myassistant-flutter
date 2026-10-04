@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -10,6 +11,7 @@ import '../widgets/chat_bubble.dart' show ChatAvatar;
 import 'chat_group_screen.dart';
 import 'chat_screen.dart';
 import '../services/app_feedback.dart';
+import '../services/contacts_sync_service.dart';
 import '../design/motion.dart';
 
 /// ─────────────────────────────────────────────────────────────────────
@@ -46,7 +48,7 @@ class _Person {
   const _Person(this.userId, this.name, this.phone);
 }
 
-class _ChatNewScreenState extends State<ChatNewScreen> {
+class _ChatNewScreenState extends State<ChatNewScreen> with WidgetsBindingObserver {
   List<_Person>? _onApp;
   List<_Person> _invite = const [];
   final Set<int> _picked = {};
@@ -54,11 +56,93 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
   String? _error;
   bool _creating = false;
 
+  /// Contacts permission is missing (true) — the list can only show who
+  /// is already known to the server. [_blocked]: Android will not ask
+  /// again, only Settings can grant it.
+  bool _noContacts = false;
+  bool _blocked = false;
+  bool _syncing = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+    _syncContacts(ask: true);
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Back from Settings: if contacts were allowed there, sync now.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _noContacts) _syncContacts(ask: false);
+  }
+
+  /// CONTACTS ON ENTRY (owner, 2026-10-04): ask for the permission here if
+  /// it is missing, then upload the address book and reload, so the people
+  /// on My Assistant show up without waiting for the 12-hour sync.
+  Future<void> _syncContacts({required bool ask}) async {
+    var status = await Permission.contacts.status;
+    if (!status.isGranted && ask) status = await Permission.contacts.request();
+    if (!mounted) return;
+    if (!status.isGranted) {
+      setState(() {
+        _noContacts = true;
+        _blocked = status.isPermanentlyDenied || status.isRestricted;
+      });
+      return;
+    }
+    setState(() {
+      _noContacts = false;
+      _syncing = true;
+    });
+    await ContactsSyncService.instance.maybeSync(force: true);
+    if (!mounted) return;
+    await _load();
+    if (mounted) setState(() => _syncing = false);
+  }
+
+  Future<void> _allowContacts() async {
+    if (_blocked) {
+      await openAppSettings();
+      return;
+    }
+    await _syncContacts(ask: true);
+  }
+
+  Widget _contactsBanner() => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          decoration: BoxDecoration(
+            color: Neon.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Neon.violet.withValues(alpha: 0.4)),
+          ),
+          child: Row(children: [
+            Icon(Icons.contacts_rounded, color: Neon.violet),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _blocked
+                    ? 'Contacts are off for My Assistant. Turn them on in Settings to see who you can message.'
+                    : 'Allow contacts to see which of your contacts are on My Assistant.',
+                style: TextStyle(color: Neon.textHi, fontSize: NeonType.footnote, height: 1.35),
+              ),
+            ),
+            TextButton(
+              onPressed: _allowContacts,
+              child: Text(_blocked ? 'Settings' : 'Allow',
+                  style: TextStyle(color: Neon.violet, fontWeight: FontWeight.w700)),
+            ),
+          ]),
+        ),
+      );
 
   Future<void> _load() async {
     try {
@@ -180,6 +264,17 @@ class _ChatNewScreenState extends State<ChatNewScreen> {
     ];
     return Column(
       children: [
+        if (_noContacts) _contactsBanner(),
+        if (_syncing)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(children: [
+              const NeonLoader.inline(size: 14, semanticLabel: 'Syncing contacts'),
+              const SizedBox(width: 8),
+              Text('Syncing your contacts…',
+                  style: TextStyle(color: Neon.textLo, fontSize: NeonType.caption)),
+            ]),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
           child: AppleSearchField(
