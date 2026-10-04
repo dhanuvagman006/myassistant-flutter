@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,7 +10,6 @@ import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/log.dart';
-import '../design/neon_widgets.dart';
 import '../design/dock_metrics.dart';
 import '../design/motion.dart';
 import '../design/neon_tokens.dart';
@@ -51,8 +51,10 @@ bool _waitingForVoice(AssistantPhase p) => switch (p) {
 /// and the mic paused for typing holds still.
 OrbMood orbMoodFor(AssistantEngine e, {bool micPaused = false}) {
   final p = e.phase;
-  // Still connecting: the orb rests (dim, slow) — not the listening rings.
-  if (e.connecting) return OrbMood.idle;
+  // HER HELLO COVERS THE CONNECT (2026-10-04): while it plays she is
+  // speaking; after it, the orb is awake, never the dim "waiting" rest.
+  if (e.greetingPlaying) return OrbMood.speaking;
+  if (e.connecting) return OrbMood.listening;
   if (p == AssistantPhase.speaking) return OrbMood.speaking;
   if (p == AssistantPhase.responding ||
       p == AssistantPhase.searching ||
@@ -530,7 +532,8 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
   /// for its moment (2026-09-30).
   String _status(bool micPaused) {
     final p = engine.phase;
-    if (engine.connecting) return 'Connecting…';
+    // Never "Connecting…" (2026-10-04): it tells the user they are waiting.
+    if (engine.connecting) return 'One moment…';
     if (micPaused && !_waitingForVoice(p) && p != AssistantPhase.speaking) {
       return 'Mic paused while you type';
     }
@@ -538,13 +541,13 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
       AssistantPhase.speaking => '',
       // The fast voice still connecting is not listening yet.
       AssistantPhase.listening =>
-        engine.liveActive && !engine.micOpen ? 'Connecting…' : 'Listening…',
-      AssistantPhase.completed => engine.liveActive ? 'Done' : 'Connecting…',
+        engine.liveActive && !engine.micOpen ? 'One moment…' : 'Listening…',
+      AssistantPhase.completed => engine.liveActive ? 'Done' : 'One moment…',
       // "Listening…" only while the microphone is actually open (client,
       // 1 Oct: it said Listening when it was not).
       AssistantPhase.idle => engine.liveActive
           ? (engine.micOpen ? 'Listening…' : 'One moment…')
-          : 'Connecting…',
+          : 'One moment…',
       _ => engine.phaseLabel,
     };
   }
@@ -796,12 +799,26 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                             active: show,
                           ),
                         ),
+                        // THE WAKE-UP (2026-10-04): every tap, a bloom of
+                        // light and three rings rolling out from the orb
+                        // while it pops into place — the 2 s her session
+                        // takes to open read as her waking, not a wait.
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: _WakeBurst(
+                              wake: engine.wake,
+                              orbSize: _orbSize * scale,
+                            ),
+                          ),
+                        ),
                         OverflowBox(
                           minWidth: _orbBox,
                           maxWidth: _orbBox,
                           minHeight: _orbBox,
                           maxHeight: _orbBox,
-                          child: Transform.scale(
+                          child: _WakePop(
+                            wake: engine.wake,
+                            child: Transform.scale(
                             key: const ValueKey('orb-scale'),
                             scale: scale,
                             // The assistant's own name under the mic
@@ -829,6 +846,7 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                                 ),
                               ),
                             ),
+                          ),
                           ),
                         ),
                       ],
@@ -884,10 +902,6 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 // CONNECTING IS VISIBLY NOT LISTENING (2026-10-02).
-                                if (engine.connecting) ...[
-                                  const NeonLoader.inline(semanticLabel: 'Connecting'),
-                                  const SizedBox(height: 10),
-                                ],
                                 Text(
                                   _status(micPaused),
                                   textAlign: TextAlign.center,
@@ -935,6 +949,155 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
 /// outline of its own: the app theme gives every TextField a fill (light
 /// by day) and an outline, and `border: none` alone does not switch off
 /// the enabled/focused ones.
+/// The orb pops into place on each wake: 0.8 → 1.06 → 1.
+class _WakePop extends StatefulWidget {
+  const _WakePop({required this.wake, required this.child});
+  final ValueListenable<int> wake;
+  final Widget child;
+
+  @override
+  State<_WakePop> createState() => _WakePopState();
+}
+
+class _WakePopState extends State<_WakePop> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 750), value: 1);
+  late final Animation<double> _s = TweenSequence<double>([
+    TweenSequenceItem(tween: Tween(begin: 0.8, end: 1.06).chain(CurveTween(curve: Curves.easeOutCubic)), weight: 60),
+    TweenSequenceItem(tween: Tween(begin: 1.06, end: 1.0).chain(CurveTween(curve: Curves.easeInOutSine)), weight: 40),
+  ]).animate(_c);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.wake.addListener(_go);
+    // Built by the very tap that woke it: play this wake too.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (DateTime.now().difference(AssistantEngine.instance.wokeAt) < const Duration(milliseconds: 700)) _go();
+    });
+  }
+
+  void _go() {
+    if (mounted && !Motion.reduced(context)) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    widget.wake.removeListener(_go);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      ScaleTransition(scale: _s, child: widget.child);
+}
+
+/// A bloom of light behind the orb and three rings rolling out from it,
+/// 2.4 s, once per wake.
+class _WakeBurst extends StatefulWidget {
+  const _WakeBurst({required this.wake, required this.orbSize});
+  final ValueListenable<int> wake;
+  final double orbSize;
+
+  @override
+  State<_WakeBurst> createState() => _WakeBurstState();
+}
+
+class _WakeBurstState extends State<_WakeBurst> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 2400));
+
+  @override
+  void initState() {
+    super.initState();
+    widget.wake.addListener(_go);
+    // Built by the very tap that woke it: play this wake too.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (DateTime.now().difference(AssistantEngine.instance.wokeAt) < const Duration(milliseconds: 700)) _go();
+    });
+  }
+
+  void _go() {
+    if (mounted && !Motion.reduced(context)) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    widget.wake.removeListener(_go);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) => !_c.isAnimating
+            ? const SizedBox.shrink()
+            : CustomPaint(
+                painter: _WakePainter(_c.value, widget.orbSize, Neon.cyan, Neon.violet, Neon.pink),
+              ),
+      );
+}
+
+class _WakePainter extends CustomPainter {
+  _WakePainter(this.t, this.orb, this.a, this.b, this.c);
+  final double t, orb;
+  final Color a, b, c;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final o = size.center(Offset.zero);
+    final r0 = orb / 2;
+    // The bloom: up fast, then settles away.
+    final bloom = t < 0.15 ? t / 0.15 : (1 - (t - 0.15) / 0.85);
+    final br = r0 * (1.4 + 1.2 * Curves.easeOutCubic.transform(t));
+    canvas.drawCircle(
+      o,
+      br,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          Colors.white.withValues(alpha: 0.55 * bloom),
+          b.withValues(alpha: 0.75 * bloom),
+          a.withValues(alpha: 0.35 * bloom),
+          a.withValues(alpha: 0),
+        ], stops: const [0.0, 0.35, 0.7, 1.0])
+            .createShader(Rect.fromCircle(center: o, radius: br)),
+    );
+    // Three rings, 0.35 of the run apart, each rolling out and fading.
+    for (var i = 0; i < 3; i++) {
+      final k = ((t - i * 0.2) / 0.6).clamp(0.0, 1.0);
+      if (k <= 0 || k >= 1) continue;
+      final e = Curves.easeOutCubic.transform(k);
+      final r = r0 * (1.0 + 2.2 * e);
+      final fade = 1 - e;
+      // A soft glow under a bright, thick line.
+      canvas.drawCircle(
+        o,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 22 * fade + 4
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10)
+          ..color = b.withValues(alpha: 0.55 * fade),
+      );
+      canvas.drawCircle(
+        o,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 7 * fade + 1.5
+          ..shader = SweepGradient(colors: [a, b, c, Colors.white, a])
+              .createShader(Rect.fromCircle(center: o, radius: r))
+          ..color = Colors.white.withValues(alpha: fade),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WakePainter old) => old.t != t || old.orb != orb;
+}
+
 abstract final class NightField {
   static BoxDecoration pill({required bool focused}) => BoxDecoration(
         color: Neon.textHi.withValues(alpha: focused ? 0.10 : 0.07),
@@ -1638,7 +1801,7 @@ class _TypeBarState extends State<_TypeBar> with WidgetsBindingObserver {
                 cursorColor: NeonTone.tip.rim.first,
                 style: NightField.input,
                 decoration: NightField.decoration(
-                    connecting ? 'Connecting…' : 'Type a message…'),
+                    connecting ? 'Or type a message…' : 'Type a message…'),
               ),
             ),
             const SizedBox(width: 5),

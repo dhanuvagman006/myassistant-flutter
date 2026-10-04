@@ -4,6 +4,7 @@ import '../screens/chat_screen.dart' show ChatThreadScreen;
 import '../screens/chat_group_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../ai/config.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -384,6 +385,8 @@ class _HomeShellState extends State<HomeShell>
   /// The greeting the orb will speak, cached in the assistant's voice.
   Future<void> _warmGreeting() async {
     try {
+      // The config says which voice makes it (the live voice on GPT-Live).
+      await AiConfigStore.instance.get();
       final u = AuthService.instance.user;
       await GreetingVoice.instance.prewarm(
         AssistantEngine.orbGreeting(name: u?.name, gender: u?.gender),
@@ -908,6 +911,13 @@ class _HomeShellState extends State<HomeShell>
       // quiet entrance when it returns (AssistantOrbButton).
       floatingActionButton: Visibility(
         visible: !keyboardUp,
+        // THE CONNECT STARTS AS THE FINGER LANDS (2026-10-04), not when it
+        // lifts: the fast voice gets that head start too.
+        child: Listener(
+        onPointerDown: (_) {
+          final e = AssistantEngine.instance;
+          if (!e.starting && !e.inlineVoice && !e.liveActive) e.prewarmVoice();
+        },
         child: AssistantOrbButton(
         onTap: () async {
           HapticFeedback.mediumImpact();
@@ -942,6 +952,7 @@ class _HomeShellState extends State<HomeShell>
             await engine.endInlineConversation();
           }
         },
+      ),
       ),
       ),
       bottomNavigationBar: _DockRim(child: BottomAppBar(

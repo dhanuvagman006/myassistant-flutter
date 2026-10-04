@@ -4,17 +4,17 @@ import 'package:myassistant/features/assistant/state/assistant_engine.dart';
 void main() {
   test('the orb greets the owner the respectful Indian way', () {
     expect(AssistantEngine.orbGreeting(name: 'Dhanush K', gender: 'male'),
-        'Hello Sir!');
+        'Hello Sir, how can I help you today?');
     expect(AssistantEngine.orbGreeting(name: 'Asha', gender: 'female'),
-        "Hello Ma'am!");
+        "Hello Ma'am, how can I help you today?");
   });
 
   test('Sir unless the profile says female — never "<name> ji"', () {
     expect(AssistantEngine.orbGreeting(name: 'Ravi Kumar', gender: null),
-        'Hello Sir!');
+        'Hello Sir, how can I help you today?');
     expect(AssistantEngine.orbGreeting(name: 'Ravi', gender: 'other'),
-        'Hello Sir!');
-    expect(AssistantEngine.orbGreeting(), 'Hello Sir!');
+        'Hello Sir, how can I help you today?');
+    expect(AssistantEngine.orbGreeting(), 'Hello Sir, how can I help you today?');
   });
 
   test('never the bare first name', () {

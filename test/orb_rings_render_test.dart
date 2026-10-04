@@ -155,7 +155,7 @@ void main() {
       AssistantEngine.instance.debugStarting = true;
       _phase(AssistantPhase.idle);
       await _frames(tester, 60);
-      expect(find.text('Connecting…'), findsWidgets);
+      expect(find.text('One moment…'), findsWidgets);
       expect(VoiceOrbBackdrop.debugPush.abs(), lessThan(0.02));
       await _save(tester, '1_idle_$tag');
     });

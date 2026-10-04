@@ -36,6 +36,13 @@ class GptLiveConnector implements LiveConnector {
   static Future<_Peer>? _spare;
   static Timer? _spareTtl;
 
+  /// Sound to the loudspeaker (call mode routes it to the earpiece).
+  static Future<void> loudspeaker() async {
+    try {
+      await Helper.setSpeakerphoneOn(true);
+    } catch (_) {}
+  }
+
   static void prepare() {
     if (_spare != null) return;
     final f = _openPeer();
@@ -133,6 +140,17 @@ class GptLiveConnector implements LiveConnector {
       if (answer.isEmpty) throw StateError('no GPT-Live session from the server');
       final id = created?['session'] is Map ? '${(created!['session'] as Map)['id'] ?? ''}' : '';
       AppLog.add('live', 'gpt-live session $id (server ${sw.elapsedMilliseconds} ms)');
+      pc.onIceConnectionState = (st) {
+        if (st == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+          AppLog.add('live', 'gpt-live: network connected ${sw.elapsedMilliseconds} ms after the offer');
+        }
+      };
+      channel.onDataChannelState = (st) {
+        if (st == RTCDataChannelState.RTCDataChannelOpen) {
+          AppLog.add('live', 'gpt-live: channel open ${sw.elapsedMilliseconds} ms after the offer');
+        }
+        if (st == RTCDataChannelState.RTCDataChannelClosed && !incoming.isClosed) unawaited(incoming.close());
+      };
       await pc.setRemoteDescription(RTCSessionDescription(answer, 'answer'));
       unawaited(Helper.setSpeakerphoneOn(true).catchError((Object _) {}));
       final peer = pc;
@@ -150,7 +168,14 @@ class GptLiveConnector implements LiveConnector {
           await channel.close();
           await peer.close();
         },
-        mic: (open) => track.enabled = open,
+        mic: (open) {
+          track.enabled = open;
+          // LOUDSPEAKER ON EVERY OPEN (2026-10-04, "the volume has dropped"):
+          // a session warmed in the background set it while the previous
+          // call was still closing, and that close put Android back on the
+          // earpiece — her voice came out of the phone's top speaker.
+          if (open) unawaited(Helper.setSpeakerphoneOn(true).catchError((Object _) {}));
+        },
         speaker: (on) {
           for (final t in remote) {
             t.enabled = on;

@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../ai/brain.dart';
 import '../../../ai/listen.dart';
+import '../../../ai/gpt_live.dart' show GptLiveConnector;
 import '../../../ai/live_voice.dart';
 import '../../../ai/model_port.dart';
 import '../../../ai/search_suggestions.dart';
@@ -287,6 +288,11 @@ class AssistantEngine extends ChangeNotifier {
   bool inlineVoice = false;
 
   /// Starts the inline conversation from the Home orb.
+  /// Bumped on every tap that starts a conversation: the voice screen
+  /// plays its wake-up animation (2026-10-04).
+  final ValueNotifier<int> wake = ValueNotifier<int>(0);
+  DateTime wokeAt = DateTime(2000);
+
   Future<void> beginInlineConversation({String? name}) async {
     // A second tap while a start is still running must not stack another
     // one on top of it.
@@ -294,6 +300,8 @@ class AssistantEngine extends ChangeNotifier {
       AppLog.add('orb', 'start already in progress — ignoring tap');
       return;
     }
+    wokeAt = DateTime.now();
+    wake.value++;
     _starting = true;
     unawaited(ListeningChime.warm()); // decoded before it is needed
     // THE FAST VOICE CONNECTS WHILE THE HELLO PLAYS (2026-09-30): the
@@ -312,7 +320,22 @@ class AssistantEngine extends ChangeNotifier {
       // once her session is up (_greetOnLive) — with the missed calls in
       // it. The recording below is for the classic voice only.
       _lastGreetedAt = now;
-      _openingDue = true;
+      if (MissedCallsService.instance.hasUnmentioned) {
+        // Live says it, with the missed calls in it.
+        _openingDue = true;
+      } else {
+        // HER RECORDED HELLO, AT ONCE (2026-10-04): GPT-Live ignored the
+        // "greet now" instruction too often. Recorded from GPT-Live in her
+        // own voice (GreetingVoice), played the instant the orb is tapped,
+        // while the session connects. Not cached yet: Live is asked, as before.
+        final hello = orbGreeting(
+          name: name ?? greetingName ?? AuthService.instance.user?.name,
+          gender: AuthService.instance.user?.gender,
+        );
+        _greeting = _sayGreeting(hello).then((played) {
+          if (!played) _openingDue = true;
+        });
+      }
     } else if (now.difference(_lastGreetedAt) >= _greetCooldown &&
         MissedCallsService.instance.hasUnmentioned) {
       // CALLS WERE MISSED: the greeting is the one that mentions them,
@@ -367,13 +390,46 @@ class AssistantEngine extends ChangeNotifier {
 
   /// The orb's hello, in the assistant's own (cached) voice. An uncached
   /// greeting is SILENT rather than spoken in another voice.
-  Future<void> _sayGreeting(String hello) async {
+  /// Her recorded hello is playing (the orb shows her speaking).
+  bool greetingPlaying = false;
+
+  Future<bool> _sayGreeting(String hello) async {
+    Timer? typing;
     try {
+      // THE WORDS TYPE OUT AS SHE SAYS THEM (2026-10-04): eyes and ears are
+      // both busy while the fast voice connects.
+      // LOUDSPEAKER FIRST (2026-10-04, "very low audio"): the fast voice
+      // keeps Android in call mode, where sound goes to the earpiece until
+      // the loudspeaker is chosen — and the hello plays before her session
+      // opens the microphone (where it used to be chosen).
+      if (_liveWanted) await GptLiveConnector.loudspeaker();
+      final len = await GreetingVoice.instance.lengthOf(hello);
+      if (len != null) {
+        final words = hello.split(' ');
+        var shown = 1;
+        greetingPlaying = true;
+        _captionLine('hari', words.first);
+        notifyListeners();
+        final step = Duration(microseconds: len.inMicroseconds ~/ words.length);
+        typing = Timer.periodic(step, (t) {
+          shown++;
+          _captionLine('hari', words.take(shown).join(' '));
+          if (shown >= words.length) t.cancel();
+        });
+      }
       if (await GreetingVoice.instance.play(hello)) {
         replyComplete = true;
         _captionLine('hari', hello);
+        return true;
       }
-    } catch (_) {/* a greeting that fails is simply silent */}
+    } catch (_) {/* a greeting that fails is simply silent */} finally {
+      typing?.cancel();
+      if (greetingPlaying) {
+        greetingPlaying = false;
+        notifyListeners();
+      }
+    }
+    return false;
   }
 
   /// The orb's hello while it is being started (the mic waits for it).
@@ -1144,6 +1200,12 @@ class AssistantEngine extends ChangeNotifier {
     if (was) {
       AppLog.add('voice', 'conversation ends');
       _audioFocus(false);
+      // THE NEXT TAP IS INSTANT (2026-10-04: each tap after the first took
+      // ~5 s, the session being rebuilt). Once this one has closed, a fresh
+      // session waits, microphone shut; unused, it closes by itself.
+      Timer(const Duration(seconds: 2), () {
+        if (_foreground) prewarmVoice();
+      });
     }
     try {
       await _listenerMade?.cancel();
@@ -1400,6 +1462,12 @@ class AssistantEngine extends ChangeNotifier {
     _liveStarting = true;
     notifyListeners(); // "Connecting…" until it is ready
     try {
+      final hello = _greeting;
+      if (hello != null) {
+        try {
+          await hello.timeout(const Duration(seconds: 4));
+        } catch (_) {}
+      }
       ok = await _live.start();
     } catch (e) {
       AppLog.add('voice', 'fast voice failed to start: $e');
@@ -2223,9 +2291,13 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   /// What the orb tap says, instantly, in the assistant's own voice.
+  /// About 2 s spoken (2026-10-04): it plays the instant the orb is tapped
+  /// and covers the fast voice's connect, so nobody waits in silence.
   static String orbGreeting({String? name, String? gender}) {
     final who = honorific(name: name, gender: gender);
-    return who.isEmpty ? 'Hello!' : 'Hello $who!';
+    return who.isEmpty
+        ? 'Hello! How can I help you today?'
+        : 'Hello $who, how can I help you today?';
   }
 
   /// Time-appropriate greeting text.
