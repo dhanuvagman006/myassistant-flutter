@@ -52,6 +52,7 @@ import '../../../models/schedule_item.dart';
 import '../../../services/api_service.dart';
 import '../../../services/audio/mic_stream.dart' show BargeInWatch;
 import '../../../services/audio/pcm_player.dart';
+import '../../../services/greeting_voice.dart';
 import '../../../services/document_events.dart';
 import '../../../services/device_control_service.dart';
 import '../../../services/sms_service.dart';
@@ -72,7 +73,6 @@ import '../../../services/listening_chime.dart';
 import '../../draft/draft_pad.dart';
 import '../../../services/usage_service.dart';
 import 'assistant_state.dart';
-import '../../../services/greeting_voice.dart';
 // 2026-09-30: the spoken morning and Meeting Prep (features/briefing).
 import '../../briefing/briefing_directives.dart';
 import '../../people/address_sheet.dart';
@@ -125,7 +125,8 @@ class AssistantEngine extends ChangeNotifier {
   /// Speech with no model behind it: a fixed line (someone's message read
   /// out, a greeting) in the assistant's own voice.
   SpeechEngine? _speechMade;
-  SpeechEngine get _speech => _speechMade ??= SpeechEngine(port: ModelPorts.cloud());
+  SpeechEngine get _speech =>
+      _speechMade ??= SpeechEngine(port: ModelPorts.cloud());
 
   /// Talking over her: the microphone listens while she speaks.
   BargeInWatch? _bargeMade;
@@ -216,7 +217,8 @@ class AssistantEngine extends ChangeNotifier {
     // minute (a revoked one still counts within a minute).
     final now = DateTime.now();
     final cached = _caps;
-    if (cached == null || now.difference(_capsAt) > const Duration(minutes: 1)) {
+    if (cached == null ||
+        now.difference(_capsAt) > const Duration(minutes: 1)) {
       _caps = await AssistantBrain.phoneContext();
       _capsAt = now;
     }
@@ -304,51 +306,28 @@ class AssistantEngine extends ChangeNotifier {
     wake.value++;
     _starting = true;
     unawaited(ListeningChime.warm()); // decoded before it is needed
-    // THE FAST VOICE CONNECTS WHILE THE HELLO PLAYS (2026-09-30): the
-    // instruction, the tools and the Live session are ready by the time
-    // the microphone opens.
+    // THE FAST VOICE CONNECTS AS THE ORB OPENS: the instruction, tools and
+    // session are warmed in parallel so the microphone can open promptly.
     if (_liveWanted) unawaited(_live.warm().catchError((Object _) => false));
     inlineVoice = true;
     notifyListeners();
-    // GREET ON THE TAP, NEVER ON APP OPEN (his two calls, 2026-09-20: no
-    // greeting when the app opens; "I click on that mic orb, it should
-    // greet"). Spoken on the DEVICE from a cached recording of the
-    // assistant's own voice — instant, no model, no round trip.
+    // Play the shared, server-cached greeting in the same fixed female
+    // voice used by every OpenAI live conversation.
     final now = DateTime.now();
     if (_liveWanted && now.difference(_lastGreetedAt) >= _greetCooldown) {
-      // ON THE FAST VOICE SHE SAYS IT HERSELF, in the voice she answers in,
-      // once her session is up (_greetOnLive) — with the missed calls in
-      // it. The recording below is for the classic voice only.
+      // A cache miss falls back to a fixed-line response from the Live voice.
       _lastGreetedAt = now;
-      if (MissedCallsService.instance.hasUnmentioned) {
-        // Live says it, with the missed calls in it.
-        _openingDue = true;
-      } else {
-        // HER RECORDED HELLO, AT ONCE (2026-10-04): GPT-Live ignored the
-        // "greet now" instruction too often. Recorded from GPT-Live in her
-        // own voice (GreetingVoice), played the instant the orb is tapped,
-        // while the session connects. Not cached yet: Live is asked, as before.
-        final hello = orbGreeting(
-          name: name ?? greetingName ?? AuthService.instance.user?.name,
-          gender: AuthService.instance.user?.gender,
-        );
-        _greeting = _sayGreeting(hello).then((played) {
-          if (!played) _openingDue = true;
-        });
-      }
+      _openingDue = true;
+      _openingClip = _playOpeningGreeting();
     } else if (now.difference(_lastGreetedAt) >= _greetCooldown &&
         MissedCallsService.instance.hasUnmentioned) {
       // CALLS WERE MISSED: the greeting is the one that mentions them,
-      // said once the conversation is up. The cached hello as well would
-      // say hello twice.
+      // said once the conversation is up. A separate hello would repeat it.
       _lastGreetedAt = now;
       _helloInMention = true;
     } else if (now.difference(_lastGreetedAt) >= _greetCooldown) {
       _lastGreetedAt = now;
-      final hello = orbGreeting(
-        name: name ?? greetingName ?? AuthService.instance.user?.name,
-        gender: AuthService.instance.user?.gender,
-      );
+      const hello = 'Hello sir.';
       // The microphone opens only once this has played: it comes out of
       // the same loudspeaker, and heard, it would be the owner's first
       // words.
@@ -388,43 +367,51 @@ class AssistantEngine extends ChangeNotifier {
     }
   }
 
-  /// The orb's hello, in the assistant's own (cached) voice. An uncached
-  /// greeting is SILENT rather than spoken in another voice.
-  /// Her recorded hello is playing (the orb shows her speaking).
+  /// True while the greeting is being synthesised through the same speech
+  /// engine used for cascade replies.
   bool greetingPlaying = false;
 
+  Future<bool>? _openingClip;
+
+  Future<bool> _playOpeningGreeting() async {
+    const line = 'Hello sir.';
+    greetingPlaying = true;
+    _captionLine('hari', line);
+    notifyListeners();
+    final played = await GreetingVoice.instance.play(line);
+    if (!played) {
+      greetingPlaying = false;
+      notifyListeners();
+      unawaited(GreetingVoice.instance.prewarm(line));
+      return false;
+    }
+    await _player.drained();
+    greetingPlaying = false;
+    notifyListeners();
+    return true;
+  }
+
   Future<bool> _sayGreeting(String hello) async {
-    Timer? typing;
+    final line = hello.trim();
+    if (line.isEmpty) return false;
+    final epoch = ++_sayEpoch;
+    greetingPlaying = true;
+    _captionLine('hari', line);
+    notifyListeners();
     try {
-      // THE WORDS TYPE OUT AS SHE SAYS THEM (2026-10-04): eyes and ears are
-      // both busy while the fast voice connects.
-      // LOUDSPEAKER FIRST (2026-10-04, "very low audio"): the fast voice
-      // keeps Android in call mode, where sound goes to the earpiece until
-      // the loudspeaker is chosen — and the hello plays before her session
-      // opens the microphone (where it used to be chosen).
-      if (_liveWanted) await GptLiveConnector.loudspeaker();
-      final len = await GreetingVoice.instance.lengthOf(hello);
-      if (len != null) {
-        final words = hello.split(' ');
-        var shown = 1;
-        greetingPlaying = true;
-        _captionLine('hari', words.first);
-        notifyListeners();
-        final step = Duration(microseconds: len.inMicroseconds ~/ words.length);
-        typing = Timer.periodic(step, (t) {
-          shown++;
-          _captionLine('hari', words.take(shown).join(' '));
-          if (shown >= words.length) t.cancel();
-        });
+      // Use the exact speech pipeline that speaks cascade replies.
+      await for (final chunk in _speech.synthesizeChunks(line)) {
+        if (epoch != _sayEpoch) return false;
+        await _player.play(chunk.pcm, sampleRate: chunk.sampleRate);
       }
-      if (await GreetingVoice.instance.play(hello)) {
-        replyComplete = true;
-        _captionLine('hari', hello);
-        return true;
-      }
-    } catch (_) {/* a greeting that fails is simply silent */} finally {
-      typing?.cancel();
-      if (greetingPlaying) {
+      if (epoch != _sayEpoch) return false;
+      await _player.drained();
+      replyComplete = true;
+      return true;
+    } catch (e) {
+      AppLog.add('voice', 'could not speak the greeting: $e');
+    } finally {
+      if (epoch == _sayEpoch) {
         greetingPlaying = false;
         notifyListeners();
       }
@@ -809,7 +796,11 @@ class AssistantEngine extends ChangeNotifier {
         _setPhase(AssistantPhase.speaking, silent: true);
       }
       // The fast voice watches for barge-in on its own microphone.
-      if (_voiceOn && _bargeWatchOn && !speakerMuted && _foreground && !_liveMode) {
+      if (_voiceOn &&
+          _bargeWatchOn &&
+          !speakerMuted &&
+          _foreground &&
+          !_liveMode) {
         unawaited(_barge.start(_onBargeIn));
       }
     } else {
@@ -817,7 +808,8 @@ class AssistantEngine extends ChangeNotifier {
       _lastLifeAt = DateTime.now(); // her answer was the last sign of life
       if (_bargeWatchOn) unawaited(_bargeMade?.stop());
       if (phase == AssistantPhase.speaking && !_turnRunning) {
-        _setPhase(_voiceOn ? AssistantPhase.listening : AssistantPhase.completed,
+        _setPhase(
+            _voiceOn ? AssistantPhase.listening : AssistantPhase.completed,
             silent: true);
       }
       _maybeListen();
@@ -905,6 +897,9 @@ class AssistantEngine extends ChangeNotifier {
     unawaited(LiveVoicePrefs.load());
     // The saved server override must win the race against the first turn.
     await ApiService.loadServerOverride();
+    // Begin the realtime handshake as soon as the app is ready, so the
+    // user's mic tap can start listening without waiting for the socket.
+    if (_foreground) prewarmVoice();
     // INCOMING-CALL GUARD: the instant the phone rings or a call connects,
     // the assistant goes silent and lets go of the microphone.
     PhoneStateGuard.instance.start(
@@ -956,48 +951,40 @@ class AssistantEngine extends ChangeNotifier {
   /// closes itself ([AiLive.idleCloseSec]).
   void prewarmVoice() {
     if (_voiceOn || !_liveWanted) return;
+    // Have the speaker stream ready before the user taps. Live can answer
+    // the opening greeting while Android is bringing up the microphone.
+    unawaited(_player.warm());
+    unawaited(_prewarmOpeningGreeting());
     unawaited(_live.warm().catchError((Object _) => false));
   }
 
+  Future<void> _prewarmOpeningGreeting() async {
+    await Future.wait([AiConfigStore.instance.get(), LiveVoicePrefs.load()]);
+    await GreetingVoice.instance.prewarm('Hello sir.');
+  }
+
   /// HER HELLO ON THE FAST VOICE: said by Live itself, in the voice she
-  /// answers in, the moment her session and the microphone are up — the
-  /// missed calls in it when there are any.
-  Future<void> _greetOnLive(int epoch) async {
-    try {
-      await (_missedCheck ?? Future<void>.value()).timeout(const Duration(seconds: 1));
-    } catch (_) {}
-    if (epoch != _voiceEpoch || !_foreground || PhoneStateGuard.instance.inCall) return;
-    final svc = MissedCallsService.instance;
-    final calls = svc.unmentioned;
-    final u = AuthService.instance.user;
-    final line = svc.takeMention(
-          honorific: honorific(gender: u?.gender),
-          hello: true,
-        ) ??
-        orbGreeting(name: greetingName ?? u?.name, gender: u?.gender);
-    final back = [
-      for (final g in CallHistory.group(calls).take(CallHistory.maxEntries))
-        if (g.latest.dialable.isNotEmpty) '${g.latest.label} (${g.latest.dialable})',
-    ];
+  /// answers in, as soon as the prewarmed session is ready and before the
+  /// microphone opens.
+  Future<bool> _greetOnLive(int epoch) async {
+    if (epoch != _voiceEpoch || !_foreground || PhoneStateGuard.instance.inCall)
+      return false;
+    // Keep the realtime opener short and deterministic. The realtime voice
+    // says this itself after the mic is live; no separately recorded clip.
+    const line = 'Hello sir.';
     // GPT-Live speaks first only when told plainly to begin now (OpenAI's
     // guide: say what to say, that it starts immediately, then listen).
-    final said = _live.greet('[SYSTEM] Speak first, right now, in English: say exactly '
+    final said = await _live.greet(
+        '[SYSTEM] Speak first, right now, in English: say exactly '
         '"$line" and nothing before or after it. Then stop and listen. BUT if I '
-        'have already said something, skip the greeting and answer what I said.'
-        '${back.isEmpty ? '' : ' If I ask to call someone back, use '
-            'place_phone_call with the name or number: ${back.join('; ')}.'}');
+        'have already said something, skip the greeting and answer what I said.');
     if (!said) AppLog.add('voice', 'hello skipped: he was already talking');
+    return said;
   }
 
   /// The classic voice's greeting, when the fast voice could not start.
   Future<void> _greetOnCascade() async {
-    if (MissedCallsService.instance.hasUnmentioned) {
-      _helloInMention = true;
-      await _mentionMissedCalls(_missedCheck ?? Future<void>.value());
-      return;
-    }
-    final u = AuthService.instance.user;
-    await _sayGreeting(orbGreeting(name: greetingName ?? u?.name, gender: u?.gender));
+    await _sayGreeting('Hello sir.');
   }
 
   /// THE GREETING MENTIONS MISSED CALLS, ONCE.
@@ -1066,7 +1053,8 @@ class AssistantEngine extends ChangeNotifier {
     _sayEpoch++;
     await _brainMade?.cancel();
     await _player.stop();
-    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    if (phase != AssistantPhase.idle)
+      _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
   }
 
@@ -1166,7 +1154,7 @@ class AssistantEngine extends ChangeNotifier {
     unawaited(_refreshLocation());
     _setPhase(AssistantPhase.listening, silent: true);
     notifyListeners();
-    final hello = _greeting;
+    final hello = _liveWanted ? null : _greeting;
     if (hello != null) {
       try {
         await hello.timeout(const Duration(seconds: 4));
@@ -1185,7 +1173,8 @@ class AssistantEngine extends ChangeNotifier {
   /// nothing (MainActivity "audioFocus").
   static const _device = MethodChannel('hari/device');
   void _audioFocus(bool on) {
-    _device.invokeMethod<bool>('audioFocus', {'on': on}).catchError((Object _) => false);
+    _device.invokeMethod<bool>(
+        'audioFocus', {'on': on}).catchError((Object _) => false);
   }
 
   /// Lets go of everything the conversation holds: the listener, the turn,
@@ -1196,16 +1185,13 @@ class AssistantEngine extends ChangeNotifier {
     _voiceEpoch++;
     _listening = false;
     _sayEpoch++;
+    greetingPlaying = false;
     _notes.clear();
     if (was) {
       AppLog.add('voice', 'conversation ends');
       _audioFocus(false);
-      // THE NEXT TAP IS INSTANT (2026-10-04: each tap after the first took
-      // ~5 s, the session being rebuilt). Once this one has closed, a fresh
-      // session waits, microphone shut; unused, it closes by itself.
-      Timer(const Duration(seconds: 2), () {
-        if (_foreground) prewarmVoice();
-      });
+      // Stop means the live socket is closed too. It will be warmed again
+      // the next time the app comes to the foreground.
     }
     try {
       await _listenerMade?.cancel();
@@ -1256,7 +1242,8 @@ class AssistantEngine extends ChangeNotifier {
       unawaited(_nextNote());
       return;
     }
-    if (DateTime.now().difference(_lastLifeAt) >= quietClose && !_sessionWaiting) {
+    if (DateTime.now().difference(_lastLifeAt) >= quietClose &&
+        !_sessionWaiting) {
       AppLog.add('voice', 'a minute of quiet — closing the conversation');
       unawaited(_closeAfterQuiet());
       return;
@@ -1300,7 +1287,8 @@ class AssistantEngine extends ChangeNotifier {
       if (epoch != _voiceEpoch || !_listening) return;
       // Still reporting (a long dictation, the cloud transcribing it): once
       // more, never for ever.
-      if (!extended && DateTime.now().difference(lastEvent) < const Duration(seconds: 15)) {
+      if (!extended &&
+          DateTime.now().difference(lastEvent) < const Duration(seconds: 15)) {
         extended = true;
         _listenGuard = Timer(listenDeadline, onDeadline);
         return;
@@ -1447,9 +1435,8 @@ class AssistantEngine extends ChangeNotifier {
   TranscriptEntry? _liveUser;
   TranscriptEntry? _liveBubble;
 
-  /// Listens on the fast voice: the session (warmed on the orb tap) and
-  /// its microphone. Anything short of ready within LiveTimeouts and the
-  /// cascade listens instead, for the rest of this conversation.
+  /// Greets through the warmed session before opening the microphone. This
+  /// keeps the owner's first words from reaching Live before "Hello sir".
   Future<void> _listenLive(int epoch) async {
     _listening = true;
     partial = '';
@@ -1461,14 +1448,38 @@ class AssistantEngine extends ChangeNotifier {
     var ok = false;
     _liveStarting = true;
     notifyListeners(); // "Connecting…" until it is ready
+    if (epoch != _voiceEpoch || !_voiceOn) return;
+    if (epoch != _voiceEpoch || !_voiceOn) return;
+    // Play the shared cached voice clip while the session warms. A cache
+    // miss falls back to the exact active session voice.
     try {
-      final hello = _greeting;
-      if (hello != null) {
-        try {
-          await hello.timeout(const Duration(seconds: 4));
-        } catch (_) {}
+      final openingClip = _openingClip;
+      _openingClip = null;
+      if (openingClip != null && await openingClip) _openingDue = false;
+      if (epoch != _voiceEpoch || !_voiceOn) return;
+      if (_openingDue) {
+        // Connect first, then finish the greeting before opening the mic.
+        // Otherwise buffered speech can arrive at the model before its hello.
+        final ready = await _live.warm();
+        if (epoch != _voiceEpoch || !_voiceOn) return;
+        _openingDue = false;
+        if (ready) {
+          final greeted = await _greetOnLive(epoch);
+          if (!greeted) {
+            // If Live could not say the opener, keep the fallback greeting
+            // and the rest of this conversation on the same speech path.
+            await _live.stop();
+            await _greetOnCascade();
+          }
+          ok = greeted && await _live.start();
+        } else {
+          await _greetOnCascade();
+          ok = false;
+        }
+        if (epoch != _voiceEpoch || !_voiceOn) return;
+      } else {
+        ok = await _live.start();
       }
-      ok = await _live.start();
     } catch (e) {
       AppLog.add('voice', 'fast voice failed to start: $e');
     } finally {
@@ -1485,11 +1496,6 @@ class AssistantEngine extends ChangeNotifier {
       _liveMode = false;
       _liveGaveUp = true;
       AppLog.add('voice', 'fast voice unavailable — the classic voice listens');
-      if (_openingDue) {
-        _openingDue = false;
-        await _greetOnCascade();
-        if (epoch != _voiceEpoch) return;
-      }
       _chimeOnListen = chime;
       _maybeListen();
       return;
@@ -1497,12 +1503,6 @@ class AssistantEngine extends ChangeNotifier {
     if (!_liveMode) AppLog.add('voice', 'fast voice listening');
     _liveMode = true;
     _armLiveQuiet();
-    if (_openingDue) {
-      // Her hello is the cue to talk: no chime (it would reach her
-      // microphone and could cut the hello short).
-      _openingDue = false;
-      unawaited(_greetOnLive(epoch));
-    }
     notifyListeners();
   }
 
@@ -1534,7 +1534,8 @@ class AssistantEngine extends ChangeNotifier {
         _maybeListen();
         return;
       }
-      if (_turnRunning || _player.playing || (_liveMade?.turnOpen ?? false)) return;
+      if (_turnRunning || _player.playing || (_liveMade?.turnOpen ?? false))
+        return;
       if (_sessionWaiting || _notes.isNotEmpty) return;
       if (DateTime.now().difference(_lastLifeAt) >= quietClose) {
         AppLog.add('voice', 'a minute of quiet — closing the conversation');
@@ -1547,6 +1548,7 @@ class AssistantEngine extends ChangeNotifier {
 
   /// A Live turn is running (from THINKING until DONE).
   bool _liveTurnRunning = false;
+  bool _liveTimedTranscript = false;
 
   /// A Live turn is under way from here (THINKING or later).
   void _liveTurnBegins() {
@@ -1558,7 +1560,12 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   /// The owner's words on the fast voice, as they are heard.
-  void _liveHeard(String text) {
+  void _liveHeard(
+    String text, {
+    String? delta,
+    int? startMs,
+    int? endMs,
+  }) {
     _lastLifeAt = DateTime.now();
     if (text.isEmpty) return;
     partial = text;
@@ -1569,22 +1576,65 @@ class AssistantEngine extends ChangeNotifier {
       pendingConfirmation = null;
       _maybeAskLocationFor(text);
     }
-    final entry = TranscriptEntry(TranscriptRole.user, text);
-    final i = _liveUser == null ? -1 : transcript.lastIndexOf(_liveUser!);
-    if (i >= 0) {
-      transcript[i] = entry;
+    if (delta != null && startMs != null && endMs != null) {
+      _liveTimedTranscript = true;
+      _appendTimedTranscriptDelta(
+        TranscriptRole.user,
+        delta,
+        startMs,
+        endMs,
+      );
     } else {
-      transcript.add(entry);
+      final entry = TranscriptEntry(TranscriptRole.user, text);
+      final i = _liveUser == null ? -1 : transcript.lastIndexOf(_liveUser!);
+      if (i >= 0) {
+        transcript[i] = entry;
+      } else if (!_liveTimedTranscript) {
+        transcript.add(entry);
+      }
+      _liveUser = entry;
     }
-    _liveUser = entry;
     _captionLine('you', text);
+  }
+
+  void _appendTimedTranscriptDelta(
+    TranscriptRole role,
+    String delta,
+    int startMs,
+    int endMs,
+  ) {
+    if (delta.isEmpty) return;
+    if (transcript.isNotEmpty) {
+      final last = transcript.last;
+      if (last.role == role && last.endMs == startMs) {
+        transcript[transcript.length - 1] = TranscriptEntry(
+          role,
+          '${last.text}$delta',
+          startMs: last.startMs,
+          endMs: endMs,
+        );
+        return;
+      }
+    }
+    transcript.add(TranscriptEntry(
+      role,
+      delta,
+      startMs: startMs,
+      endMs: endMs,
+    ));
   }
 
   /// Everything the fast voice reports.
   void _onLive(LiveEvent e) {
-    if (!_voiceOn || !_liveMode) {
+    // The opening greeting is deliberately requested before microphone
+    // startup finishes. Accept its audio/transcript events during that
+    // short window instead of dropping the first spoken response.
+    if (!_voiceOn || (!_liveMode && !_liveStarting)) {
       // A device action is always answered, or its tool waits 30 s.
-      if (e case LiveBrain(event: BrainDeviceAction(:final tool, :final action, :final respond))) {
+      if (e
+          case LiveBrain(
+            event: BrainDeviceAction(:final tool, :final action, :final respond)
+          )) {
         // A picture they asked for is shown even when the conversation
         // closed while it was being made (~15 s; the owner, 2026-10-03:
         // "it's not appearing on the screen").
@@ -1598,8 +1648,18 @@ class AssistantEngine extends ChangeNotifier {
       return;
     }
     switch (e) {
-      case LiveHeard(:final text):
-        _liveHeard(text);
+      case LiveHeard(
+          :final text,
+          :final delta,
+          :final startMs,
+          :final endMs
+        ):
+        _liveHeard(
+          text,
+          delta: delta,
+          startMs: startMs,
+          endMs: endMs,
+        );
       case LiveThinking():
         _liveTurnBegins();
         _setPhase(AssistantPhase.thinking, silent: true);
@@ -1625,19 +1685,45 @@ class AssistantEngine extends ChangeNotifier {
         _finishTools();
         // GPT-Live's voice plays on the call, not our player: her words
         // are what turn the orb to speaking.
-        if (phase != AssistantPhase.speaking) _setPhase(AssistantPhase.speaking, silent: true);
-      case LiveSaid(:final text):
+        if (phase != AssistantPhase.speaking)
+          _setPhase(AssistantPhase.speaking, silent: true);
+      case LiveSaid(
+          :final text,
+          :final delta,
+          :final startMs,
+          :final endMs
+        ):
         _lastLifeAt = DateTime.now();
         _liveTurnBegins();
         _finishTools();
         _captionLine('hari', text);
-        _liveBubble = _liveReply(_liveBubble, text);
+        if (delta != null && startMs != null && endMs != null) {
+          _liveTimedTranscript = true;
+          _appendTimedTranscriptDelta(
+            TranscriptRole.assistant,
+            delta,
+            startMs,
+            endMs,
+          );
+          _liveBubble = _liveReply(_liveBubble, text, record: false);
+        } else {
+          _liveBubble = _liveReply(
+            _liveBubble,
+            text,
+            record: !_liveTimedTranscript,
+          );
+        }
       case LiveInterrupted():
         _lastLifeAt = DateTime.now();
         replyComplete = true;
         activityLabel.value = null;
         _setPhase(AssistantPhase.listening, silent: true);
-      case LiveTurnDone(:final user, :final reply, :final interrupted, :final opening):
+      case LiveTurnDone(
+          :final user,
+          :final reply,
+          :final interrupted,
+          :final opening
+        ):
         // Her hello goes straight to listening (no DONE flash).
         _onLiveTurnDone(user, reply, interrupted || opening);
       case LiveCorrected(:final text):
@@ -1669,12 +1755,17 @@ class AssistantEngine extends ChangeNotifier {
     activityLabel.value = null;
     replyComplete = true;
     partial = '';
-    if (user.isNotEmpty) _liveHeard(user);
+    final timedTranscript = _liveTimedTranscript;
+    if (user.isNotEmpty && !timedTranscript) _liveHeard(user);
     if (reply.isNotEmpty) {
       connected = true;
       _turnFailures = 0;
       if (!interrupted) {
-        _liveBubble = _liveReply(_liveBubble, reply);
+        _liveBubble = _liveReply(
+          _liveBubble,
+          reply,
+          record: !timedTranscript,
+        );
         _captionLine('hari', reply);
       }
       _refreshBriefSoon();
@@ -1682,6 +1773,7 @@ class AssistantEngine extends ChangeNotifier {
     if (user.isNotEmpty && isFarewell(user)) _endAfterTurn = true;
     _liveUser = null;
     _liveBubble = null;
+    _liveTimedTranscript = false;
     if (_endAfterTurn) {
       _endAfterTurn = false;
       unawaited(_endWhenQuiet());
@@ -1722,12 +1814,42 @@ class AssistantEngine extends ChangeNotifier {
     // Words that need another after them. Short openers ("He is", "What
     // is") hang on an auxiliary; a longer sentence ending on one ("tell
     // me what time it is") is whole.
-    const auxiliaries = {'is', 'are', 'was', 'were', 'can', 'could', 'would', 'should', 'will'};
+    const auxiliaries = {
+      'is',
+      'are',
+      'was',
+      'were',
+      'can',
+      'could',
+      'would',
+      'should',
+      'will'
+    };
     if (auxiliaries.contains(last)) return toks.length <= 3;
     const hanging = {
-      'the', 'a', 'an', 'about', 'to', 'of', 'for', 'and', 'or', 'but',
-      'with', 'from', 'into', 'onto', 'than', 'as', 'if', 'my', 'his', 'her',
-      'their', 'our', 'your',
+      'the',
+      'a',
+      'an',
+      'about',
+      'to',
+      'of',
+      'for',
+      'and',
+      'or',
+      'but',
+      'with',
+      'from',
+      'into',
+      'onto',
+      'than',
+      'as',
+      'if',
+      'my',
+      'his',
+      'her',
+      'their',
+      'our',
+      'your',
     };
     return hanging.contains(last);
   }
@@ -1755,8 +1877,11 @@ class AssistantEngine extends ChangeNotifier {
         'fast voice: ${f.reason}${f.keepLive ? '' : ' — the classic voice from here'}');
     // The server keeps the reason (2026-10-01: "why did Live drop for the
     // client?" could only be answered from the phone's own log).
-    unawaited(ApiService.postJson('/ai/live-fallback',
-        {'reason': f.reason, 'keep_live': f.keepLive, 'build': ApiService.appBuild}));
+    unawaited(ApiService.postJson('/ai/live-fallback', {
+      'reason': f.reason,
+      'keep_live': f.keepLive,
+      'build': ApiService.appBuild
+    }));
     final liveTurn = _liveTurnRunning;
     _liveTurnRunning = false;
     if (liveTurn) {
@@ -1785,13 +1910,17 @@ class AssistantEngine extends ChangeNotifier {
     }
     final words = f.words;
     final line = f.line;
-    if (words != null && words.isNotEmpty && f.keepLive && _live.fragmentGuard &&
+    if (words != null &&
+        words.isNotEmpty &&
+        f.keepLive &&
+        _live.fragmentGuard &&
         looksUnfinished(words)) {
       // HALF A SENTENCE IS NOT A QUESTION (client's phone, 2026-10-01):
       // "Tell me the", "Can you tell me about Dr.", "He is" reached the
       // cascade while he was still talking, and two answers came back.
       // Live stays open and hears the rest; the cascade keeps quiet.
-      AppLog.add('voice', 'fast voice: "$words" is unfinished — waiting for the rest');
+      AppLog.add(
+          'voice', 'fast voice: "$words" is unfinished — waiting for the rest');
       if (shown != null) transcript.remove(shown);
       if (!_turnRunning) {
         replyComplete = true;
@@ -1951,18 +2080,25 @@ class AssistantEngine extends ChangeNotifier {
   }
 
   /// The assistant's bubble being written, replaced as the reply grows.
-  TranscriptEntry _liveReply(TranscriptEntry? live, String text) {
+  TranscriptEntry _liveReply(
+    TranscriptEntry? live,
+    String text, {
+    bool record = true,
+  }) {
     final entry = TranscriptEntry(TranscriptRole.assistant, text);
-    final i = live == null ? -1 : transcript.lastIndexOf(live);
-    if (i >= 0) {
-      transcript[i] = entry;
-    } else {
-      transcript.add(entry);
+    if (record) {
+      final i = live == null ? -1 : transcript.lastIndexOf(live);
+      if (i >= 0) {
+        transcript[i] = entry;
+      } else {
+        transcript.add(entry);
+      }
     }
     return entry;
   }
 
-  TranscriptEntry? _onFinal(BrainFinalText e, String asked, TranscriptEntry? live) {
+  TranscriptEntry? _onFinal(
+      BrainFinalText e, String asked, TranscriptEntry? live) {
     connected = true;
     _turnFailures = 0;
     final text = e.text.trim();
@@ -1981,7 +2117,8 @@ class AssistantEngine extends ChangeNotifier {
       searchResults = [
         for (final s in e.sources.take(5))
           SearchResult(
-            title: (s.title ?? '').trim().isEmpty ? _host(s.uri) : s.title!.trim(),
+            title:
+                (s.title ?? '').trim().isEmpty ? _host(s.uri) : s.title!.trim(),
             url: s.uri,
             snippet: '',
             source: (s.title ?? '').trim().isEmpty ? '' : s.title!.trim(),
@@ -2231,7 +2368,8 @@ class AssistantEngine extends ChangeNotifier {
     // THE CLOSING HALF OF THE PAIR: only when something was listening, and
     // never off-screen.
     final wasListening = _voiceOn || inlineVoice;
-    if (chime && wasListening && _foreground) unawaited(ListeningChime.playStop());
+    if (chime && wasListening && _foreground)
+      unawaited(ListeningChime.playStop());
     _idleStop?.cancel();
     _idleStop = null;
     _conversationOpen = false;
@@ -2256,11 +2394,13 @@ class AssistantEngine extends ChangeNotifier {
     // a bad link, for many seconds — while the overlay still said
     // Listening and a second tap read as "stop" again.
     micLevel = 0;
-    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    if (phase != AssistantPhase.idle)
+      _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
     await _stopVoice();
     micLevel = 0;
-    if (phase != AssistantPhase.idle) _setPhase(AssistantPhase.idle, silent: true);
+    if (phase != AssistantPhase.idle)
+      _setPhase(AssistantPhase.idle, silent: true);
     notifyListeners();
   }
 
@@ -2325,7 +2465,8 @@ class AssistantEngine extends ChangeNotifier {
     if (DateTime.now().difference(_lastGreetedAt) < _greetCooldown) return;
     if (_turnRunning || PhoneStateGuard.instance.inCall) return;
     _lastGreetedAt = DateTime.now();
-    final text = greetingFor(greetingName, gender: AuthService.instance.user?.gender);
+    final text =
+        greetingFor(greetingName, gender: AuthService.instance.user?.gender);
     transcript.add(TranscriptEntry(TranscriptRole.assistant, text));
     replyComplete = true;
     _captionLine('hari', text);
@@ -2335,7 +2476,8 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Resets the greeting clock — used when a DIFFERENT user signs in, so
   /// the next person is greeted properly.
-  void resetGreeting() => _lastGreetedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  void resetGreeting() =>
+      _lastGreetedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // ---------------- GOODBYE ----------------
 
@@ -2388,7 +2530,8 @@ class AssistantEngine extends ChangeNotifier {
     if (t.isEmpty) return;
     final now = DateTime.now();
     if (t == _lastAsk && now.difference(_lastAskAt) < _askDedupeWindow) {
-      AppLog.add('ask', 'ignored a repeat of "${t.length > 40 ? '${t.substring(0, 40)}…' : t}"');
+      AppLog.add('ask',
+          'ignored a repeat of "${t.length > 40 ? '${t.substring(0, 40)}…' : t}"');
       return;
     }
     _lastAsk = t;
@@ -2428,11 +2571,13 @@ class AssistantEngine extends ChangeNotifier {
               .toList() ??
           const [];
       if (list.isEmpty) return;
-      await ApiService.sendJson('/messages/read',
-          body: {'ids': [for (final m in list) m['id']]});
+      await ApiService.sendJson('/messages/read', body: {
+        'ids': [for (final m in list) m['id']]
+      });
 
       // A personal relay, not a readout: "Hey Allen, Dhanush said: …".
-      final meFull = (greetingName ?? AuthService.instance.user?.name ?? '').trim();
+      final meFull =
+          (greetingName ?? AuthService.instance.user?.name ?? '').trim();
       final me = meFull.isEmpty ? '' : meFull.split(RegExp(r'\s+')).first;
       final hey = me.isEmpty ? 'Hey,' : 'Hey $me,';
       final lines = [
@@ -2482,7 +2627,8 @@ class AssistantEngine extends ChangeNotifier {
       if (approved && (pending?.contact?.phone.isNotEmpty ?? false)) {
         await _dialAndReport(pending!.contact!);
       } else {
-        await _tellModel('[SYSTEM] I declined the call to $who. Acknowledge briefly.');
+        await _tellModel(
+            '[SYSTEM] I declined the call to $who. Acknowledge briefly.');
       }
       return;
     }
@@ -2505,7 +2651,8 @@ class AssistantEngine extends ChangeNotifier {
     }
     // No call is waiting on it here: the name goes to the assistant as the
     // owner's answer.
-    await _runTurn(m.name, mode: _voiceOn ? BrainMode.voice : BrainMode.chat, speak: true);
+    await _runTurn(m.name,
+        mode: _voiceOn ? BrainMode.voice : BrainMode.chat, speak: true);
   }
 
   /// Cancel whatever is in flight: the turn, her voice, a card waiting on
@@ -2579,7 +2726,8 @@ class AssistantEngine extends ChangeNotifier {
 
       case 'analyze_camera':
         // Voice-driven vision analysis ("what tablet is this")
-        await _analyzeCamera(e['question'] as String? ?? 'What is in this image?');
+        await _analyzeCamera(
+            e['question'] as String? ?? 'What is in this image?');
         break;
 
       case 'capture_document':
@@ -2623,7 +2771,8 @@ class AssistantEngine extends ChangeNotifier {
           final msg = (e['message'] ?? '').toString();
           final err = await SmsService.instance.send(to, msg);
           final ok = err == null;
-          AppFeedback.toast(ok ? 'Text sent to $who.' : "Couldn't text $who — $err.");
+          AppFeedback.toast(
+              ok ? 'Text sent to $who.' : "Couldn't text $who — $err.");
           try {
             await ApiService.sendJson('/outcomes', method: 'POST', body: {
               'kind': 'message',
@@ -2634,7 +2783,8 @@ class AssistantEngine extends ChangeNotifier {
             });
           } catch (_) {}
           if (!ok) {
-            await _tellModel('[SYSTEM] ERROR: the SMS to $who FAILED — $err. It was NOT '
+            await _tellModel(
+                '[SYSTEM] ERROR: the SMS to $who FAILED — $err. It was NOT '
                 'sent; tell me plainly and suggest fixing the permission '
                 'or trying again.');
           }
@@ -2668,7 +2818,9 @@ class AssistantEngine extends ChangeNotifier {
           final name = client is Map ? (client['name'] ?? '').toString() : '';
           final doc = e['document'];
           if (doc is Map) {
-            documentCards = [UserDocument.fromJson(doc.cast<String, dynamic>())];
+            documentCards = [
+              UserDocument.fromJson(doc.cast<String, dynamic>())
+            ];
             notifyListeners();
           }
           DocumentEvents.bump();
@@ -2713,7 +2865,8 @@ class AssistantEngine extends ChangeNotifier {
         // this switch already performs and reports on; the runner decides
         // when (in-app at once, the chat message, the app that stays open,
         // a phone task last) and keeps the rest for the owner's return.
-        unawaited(ShortcutRunner.instance.run(ShortcutRunDirective.fromJson(e), shortcutPorts));
+        unawaited(ShortcutRunner.instance
+            .run(ShortcutRunDirective.fromJson(e), shortcutPorts));
         break;
 
       case 'open_app_screen':
@@ -2733,7 +2886,8 @@ class AssistantEngine extends ChangeNotifier {
             if (nav == null || builder == null) {
               _reportDeviceFailure('open_app_screen',
                   target: screen, reason: 'that screen is not available');
-            } else if (screen == 'shopping_list' && ShoppingListScreen.showing > 0) {
+            } else if (screen == 'shopping_list' &&
+                ShoppingListScreen.showing > 0) {
               // Already open: it redraws with what the assistant just did
               // rather than stacking a second list.
               unawaited(ShoppingService.instance.refresh());
@@ -2752,10 +2906,12 @@ class AssistantEngine extends ChangeNotifier {
           final minutes = (e['minutes'] as num?)?.toInt() ?? 25;
           final label = (e['label'] ?? '').toString();
           if (nav == null) {
-            _reportDeviceFailure('start_focus', reason: 'the focus timer could not open');
+            _reportDeviceFailure('start_focus',
+                reason: 'the focus timer could not open');
           } else {
             nav.push(MaterialPageRoute(
-                builder: (_) => FocusScreen(minutes: minutes, label: label, autoStart: true)));
+                builder: (_) => FocusScreen(
+                    minutes: minutes, label: label, autoStart: true)));
           }
         }
         break;
@@ -2807,14 +2963,15 @@ class AssistantEngine extends ChangeNotifier {
           final extras = (e['extras'] as Map?)?.cast<String, dynamic>() ?? {};
           if (action.isNotEmpty) {
             await const MethodChannel('hari/intent')
-                .invokeMethod<Map<Object?, Object?>>(
-                    'clockIntent', {'action': action, 'extras': extras})
-                .then((res) {
+                .invokeMethod<Map<Object?, Object?>>('clockIntent',
+                    {'action': action, 'extras': extras}).then((res) {
               final ok = res?['ok'] == true;
               final reason = (res?['reason'] as String?) ?? 'failed';
-              AppLog.add('clock', '$action -> ${ok ? "started" : "FAILED ($reason)"}');
+              AppLog.add(
+                  'clock', '$action -> ${ok ? "started" : "FAILED ($reason)"}');
               if (ok) return;
-              _reportDeviceFailure('clock_intent', target: action, reason: reason);
+              _reportDeviceFailure('clock_intent',
+                  target: action, reason: reason);
               // WHAT THE USER CAN ACTUALLY DO ABOUT IT.
               //
               // SET_ALARM is an install-time permission: Android grants it
@@ -2887,9 +3044,8 @@ class AssistantEngine extends ChangeNotifier {
           // question is asked.
           final mayInstall = e['install'] == true;
           _leftForExternalApp = true;
-          await const MethodChannel('hari/intent')
-              .invokeMethod<String>('launchApp', {'name': want, 'pkg': pkg})
-              .then((opened) async {
+          await const MethodChannel('hari/intent').invokeMethod<String>(
+              'launchApp', {'name': want, 'pkg': pkg}).then((opened) async {
             if (opened == null || opened.isEmpty) {
               _leftForExternalApp = false;
               // NOT INSTALLED MEANS THE STORE. Owner, 2026-09-23: "open
@@ -2898,9 +3054,8 @@ class AssistantEngine extends ChangeNotifier {
               // package is known), and the phone opens the app once it is
               // installed (InstallWatch).
               if (e['store_if_missing'] == true) {
-                await const MethodChannel('hari/intent')
-                    .invokeMethod<bool>('openStore', {'query': want, 'pkg': pkg})
-                    .then((ok) async {
+                await const MethodChannel('hari/intent').invokeMethod<bool>(
+                    'openStore', {'query': want, 'pkg': pkg}).then((ok) async {
                   if (ok == true) {
                     _leftForExternalApp = true;
                     if (!mayInstall) {
@@ -2963,12 +3118,12 @@ class AssistantEngine extends ChangeNotifier {
         {
           final want = (e['name'] as String? ?? '').trim();
           final pkg = (e['pkg'] as String? ?? '').trim();
-          await const MethodChannel('hari/intent')
-              .invokeMethod<Object?>('uninstallApp', {'name': want, 'pkg': pkg})
-              .then((r) {
+          await const MethodChannel('hari/intent').invokeMethod<Object?>(
+              'uninstallApp', {'name': want, 'pkg': pkg}).then((r) {
             final m = r is Map ? r : const {};
             final status = '${m['status'] ?? 'failed'}';
-            final label = '${m['label'] ?? want}'.trim().isEmpty ? want : '${m['label']}';
+            final label =
+                '${m['label'] ?? want}'.trim().isEmpty ? want : '${m['label']}';
             AppLog.add('uninstall', status);
             final String line;
             switch (status) {
@@ -2980,7 +3135,8 @@ class AssistantEngine extends ChangeNotifier {
                 line = "Okay, I've kept $label.";
                 break;
               case 'no_answer':
-                line = 'The uninstall screen closed without an answer, so $label is still on your phone.';
+                line =
+                    'The uninstall screen closed without an answer, so $label is still on your phone.';
                 break;
               case 'not_found':
                 line = "I couldn't find an app called $want on your phone.";
@@ -2991,21 +3147,26 @@ class AssistantEngine extends ChangeNotifier {
                     : "$label came with your phone, so Android won't let it be uninstalled — you can disable it in Settings, Apps.";
                 break;
               case 'self':
-                line = "I can't uninstall myself — you can do that from Settings, Apps.";
+                line =
+                    "I can't uninstall myself — you can do that from Settings, Apps.";
                 break;
               case 'busy':
-                line = 'The uninstall screen is already open — tap OK or Cancel there first.';
+                line =
+                    'The uninstall screen is already open — tap OK or Cancel there first.';
                 break;
               case 'device_admin':
                 // Found before the dialog opens: Android would refuse it.
-                line = '$label is a device admin app, so Android won\'t remove it until '
+                line =
+                    '$label is a device admin app, so Android won\'t remove it until '
                     'that is switched off — in Settings, under Device admin apps. Then ask me again.';
                 break;
               case 'blocked_by_policy':
-                line = "Your phone's settings don't allow uninstalling $label, so it's still on your phone.";
+                line =
+                    "Your phone's settings don't allow uninstalling $label, so it's still on your phone.";
                 break;
               case 'failed_after_confirm':
-                line = "Android didn't remove $label — it's still on your phone.";
+                line =
+                    "Android didn't remove $label — it's still on your phone.";
                 break;
               default:
                 line = "I couldn't open the uninstall screen for $label.";
@@ -3013,23 +3174,26 @@ class AssistantEngine extends ChangeNotifier {
             // EVERY outcome but a real removal goes back as a failure, so
             // "did you uninstall it?" is never answered from a stale "ok".
             if (status != 'uninstalled') {
-              _reportDeviceFailure('uninstall_app', target: want, reason: status);
+              _reportDeviceFailure('uninstall_app',
+                  target: want, reason: status);
             }
-            _tellModel('[SYSTEM] Uninstall "$want" finished: $status. Say exactly '
+            _tellModel(
+                '[SYSTEM] Uninstall "$want" finished: $status. Say exactly '
                 'this, nothing before or after it: "$line"');
           }).catchError((err) {
             AppLog.add('uninstall', 'channel error: $err');
-            _reportDeviceFailure('uninstall_app', target: want, reason: 'channel');
-            _tellModel('[SYSTEM] ERROR: the uninstall screen could not be opened, '
+            _reportDeviceFailure('uninstall_app',
+                target: want, reason: 'channel');
+            _tellModel(
+                '[SYSTEM] ERROR: the uninstall screen could not be opened, '
                 'so NOTHING was removed. Say that plainly in one sentence.');
           });
         }
         break;
 
       case 'live_voice_changed':
-        // The voice is /ai/config's (Gemini TTS): fetched again, the next
-        // sentence is said in the new one. The cached greeting was made in
-        // the old voice.
+        // The next session uses the new voice; also invalidate any retained
+        // greeting audio used by legacy callers or previews.
         unawaited(AiConfigStore.instance.refresh());
         unawaited(GreetingVoice.instance.clear());
         break;
@@ -3072,7 +3236,8 @@ class AssistantEngine extends ChangeNotifier {
             AppLog.add('update', 'no context to show the update sheet');
             AppFeedback.toast('Open the app first, then ask me to update.',
                 spoken: true);
-            _reportDeviceFailure('check_for_update', reason: 'no screen to show it on');
+            _reportDeviceFailure('check_for_update',
+                reason: 'no screen to show it on');
             await _tellModel(
                 '[SYSTEM] ERROR: the update screen could NOT be opened on '
                 'this phone, so nothing is installing. Tell me that '
@@ -3113,7 +3278,8 @@ class AssistantEngine extends ChangeNotifier {
         // card shows it; the spoken line is only a pointer to the screen.
         final content = e['content'] as String? ?? '';
         if (content.isNotEmpty) {
-          presentedTitle = e['title'] as String? ?? 'From ${AssistantIdentity.name}';
+          presentedTitle =
+              e['title'] as String? ?? 'From ${AssistantIdentity.name}';
           presentedText = content;
         }
         break;
@@ -3171,12 +3337,17 @@ class AssistantEngine extends ChangeNotifier {
                 if (d is Map) UserDocument.fromJson(d.cast<String, dynamic>()),
           ];
           if (docJson is Map || all.isNotEmpty) {
-            final doc = all.isNotEmpty ? all.first : UserDocument.fromJson((docJson as Map).cast<String, dynamic>());
-            final shown = onShowDocuments?.call(all.isNotEmpty ? all : [doc]) ?? false;
+            final doc = all.isNotEmpty
+                ? all.first
+                : UserDocument.fromJson(
+                    (docJson as Map).cast<String, dynamic>());
+            final shown =
+                onShowDocuments?.call(all.isNotEmpty ? all : [doc]) ?? false;
             final nav = AvatarMessageService.navigatorKey.currentState;
             if (!shown && nav != null) {
               // No gallery to pop: the Documents page, where it is saved.
-              unawaited(nav.push(MaterialPageRoute(builder: (_) => const DocumentsScreen())));
+              unawaited(nav.push(
+                  MaterialPageRoute(builder: (_) => const DocumentsScreen())));
             } else if (!shown) {
               // Nothing to push on (rare) — the in-conversation card rather
               // than dropping it silently.
@@ -3220,8 +3391,10 @@ class AssistantEngine extends ChangeNotifier {
       case 'open_video':
         // Face-to-face video rode the live socket, which is gone: said
         // plainly rather than opening an empty room.
-        _reportDeviceFailure('open_video', reason: 'face-to-face video is not in this version');
-        await _tellModel('[SYSTEM] ERROR: face-to-face video is not available in '
+        _reportDeviceFailure('open_video',
+            reason: 'face-to-face video is not in this version');
+        await _tellModel(
+            '[SYSTEM] ERROR: face-to-face video is not available in '
             'this version of the app, so nothing opened. Say that plainly in '
             'one sentence.');
         break;
@@ -3252,7 +3425,8 @@ class AssistantEngine extends ChangeNotifier {
       shot = await holdMicDuring(() => _pick(ImageSource.camera));
     } catch (e) {
       AppLog.add('vision', 'camera failed: $e');
-      _reportDeviceFailure('analyze_camera', reason: 'the camera would not open');
+      _reportDeviceFailure('analyze_camera',
+          reason: 'the camera would not open');
       await _tellModel('[SYSTEM] ERROR: the camera could not be opened, so no '
           'photo was taken. Say so plainly in one sentence.');
       return;
@@ -3286,13 +3460,16 @@ class AssistantEngine extends ChangeNotifier {
           ));
     } catch (e) {
       AppLog.add('vision', 'picker failed: $e');
-      _reportDeviceFailure('look_at_screenshot', reason: 'the picker would not open');
-      await _tellModel('[SYSTEM] ERROR: the gallery would not open, so NO image was '
+      _reportDeviceFailure('look_at_screenshot',
+          reason: 'the picker would not open');
+      await _tellModel(
+          '[SYSTEM] ERROR: the gallery would not open, so NO image was '
           'read. Say so plainly.');
       return;
     }
     if (shot == null) {
-      await _tellModel('[SYSTEM] The user closed the picker without choosing an image. '
+      await _tellModel(
+          '[SYSTEM] The user closed the picker without choosing an image. '
           'Nothing was read. Acknowledge briefly and move on.');
       return;
     }
@@ -3322,9 +3499,12 @@ class AssistantEngine extends ChangeNotifier {
       AppLog.add('vision', 'photo unreadable: $e');
       return false;
     }
-    final mime = shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-    final image = AiAttachment(kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
-    final ask = question.trim().isEmpty ? 'What is in this picture?' : question.trim();
+    final mime =
+        shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    final image = AiAttachment(
+        kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
+    final ask =
+        question.trim().isEmpty ? 'What is in this picture?' : question.trim();
     await _runTurn(ask,
         mode: BrainMode.chat, speak: _voiceOn || inlineVoice, image: image);
     return true;
@@ -3332,26 +3512,33 @@ class AssistantEngine extends ChangeNotifier {
 
   /// The picture and the question as a turn of their own, once the turn
   /// that asked for it is over.
-  Future<void> _askWithPicture(XFile shot, String question, {bool offerEventCard = false}) async {
+  Future<void> _askWithPicture(XFile shot, String question,
+      {bool offerEventCard = false}) async {
     Uint8List bytes;
     try {
       bytes = await shot.readAsBytes();
     } catch (e) {
       AppLog.add('vision', 'photo unreadable: $e');
-      await _tellModel('[SYSTEM] ERROR: the photo could not be read on the phone, so '
+      await _tellModel(
+          '[SYSTEM] ERROR: the photo could not be read on the phone, so '
           'nothing was looked at. Say so and offer to try again.');
       return;
     }
-    final mime = shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-    final image = AiAttachment(kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
-    final ask = question.trim().isEmpty ? 'What is in this picture?' : question.trim();
+    final mime =
+        shot.path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+    final image = AiAttachment(
+        kind: 'image', mimeType: mime, bytes: bytes, path: shot.path);
+    final ask =
+        question.trim().isEmpty ? 'What is in this picture?' : question.trim();
     // After the turn that opened the camera, never instead of it.
     while (_turnRunning) {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
-    final remove = offerEventCard ? brain.localTools.register(_eventCardTool) : null;
+    final remove =
+        offerEventCard ? brain.localTools.register(_eventCardTool) : null;
     try {
-      await _runTurn(ask, mode: BrainMode.voice, image: image, fromOwner: false);
+      await _runTurn(ask,
+          mode: BrainMode.voice, image: image, fromOwner: false);
     } finally {
       remove?.call();
     }
@@ -3374,13 +3561,17 @@ class AssistantEngine extends ChangeNotifier {
           'title': {'type': 'string', 'description': 'What the event is.'},
           'startIso': {
             'type': 'string',
-            'description': 'When it starts: ISO 8601 with the time zone offset.',
+            'description':
+                'When it starts: ISO 8601 with the time zone offset.',
           },
           'endIso': {
             'type': 'string',
             'description': 'When it ends, if the picture says (ISO 8601).',
           },
-          'location': {'type': 'string', 'description': 'Where, if the picture says.'},
+          'location': {
+            'type': 'string',
+            'description': 'Where, if the picture says.'
+          },
         },
         'required': ['title', 'startIso'],
       },
@@ -3388,7 +3579,8 @@ class AssistantEngine extends ChangeNotifier {
     handler: (call) async {
       final event = VisionAction.fromJson({...call.args, 'type': 'calendar'});
       if (event == null || !event.isUpcoming()) {
-        return const LocalToolResult.failed('That is not an upcoming event with a date.');
+        return const LocalToolResult.failed(
+            'That is not an upcoming event with a date.');
       }
       seenEvent = event;
       notifyListeners();
@@ -3430,11 +3622,13 @@ class AssistantEngine extends ChangeNotifier {
             source == 'gallery' ? ImageSource.gallery : ImageSource.camera,
           ));
     } catch (_) {
-      await _tellModel('Say this to me now, in my language: "I couldn\'t open the camera."');
+      await _tellModel(
+          'Say this to me now, in my language: "I couldn\'t open the camera."');
       return;
     }
     if (shot == null) {
-      await _tellModel('Say this to me now, in my language: "Okay, nothing saved."');
+      await _tellModel(
+          'Say this to me now, in my language: "Okay, nothing saved."');
       return;
     }
     try {
@@ -3487,10 +3681,12 @@ class AssistantEngine extends ChangeNotifier {
           ? e.message
           : 'the server refused the upload (${e.statusCode})';
       AppFeedback.toast("Couldn't save the scan — $why.", spoken: true);
-      await _tellModel('[SYSTEM] ERROR: the scan was NOT saved — $why. Say that '
+      await _tellModel(
+          '[SYSTEM] ERROR: the scan was NOT saved — $why. Say that '
           'plainly in one sentence; nothing was saved.');
     } catch (_) {
-      AppFeedback.toast("Couldn't save the scan — check your connection.", spoken: true);
+      AppFeedback.toast("Couldn't save the scan — check your connection.",
+          spoken: true);
       await _tellModel('[SYSTEM] ERROR: the scan could not be uploaded (no '
           'connection), so NOTHING was saved. Say so and suggest trying again.');
     }
@@ -3516,6 +3712,7 @@ class AssistantEngine extends ChangeNotifier {
   String? _localCallTone;
 
   String? _localCallVoice;
+
   /// The language the relayed message is to be spoken in ('ml' for
   /// Malayalam…), as the server worked it out when the user confirmed the
   /// read-back (2026-09-26). Null: the usual.
@@ -3694,7 +3891,10 @@ class AssistantEngine extends ChangeNotifier {
     // below routes it to WhatsApp.
     final whatsapp = _localCallVia.startsWith('whatsapp');
 
-    if (!whatsapp && task != null && task.isNotEmpty && _localCallAgentAvailable) {
+    if (!whatsapp &&
+        task != null &&
+        task.isNotEmpty &&
+        _localCallAgentAvailable) {
       String? id;
       try {
         id = await ApiService.startAgentCall(
@@ -3802,7 +4002,8 @@ class AssistantEngine extends ChangeNotifier {
         if (r == 'needs_access') {
           final opened = await _askDndAccess();
           ok = true; // nothing failed: it is waiting on his switch
-          report = '[SYSTEM] Do Not Disturb was NOT changed: it needs Do Not Disturb '
+          report =
+              '[SYSTEM] Do Not Disturb was NOT changed: it needs Do Not Disturb '
               'access${opened ? ' — it is the switch on the screen I opened' : ', which they can allow later'}. '
               'Say that in one short line.';
         } else {
@@ -3815,8 +4016,8 @@ class AssistantEngine extends ChangeNotifier {
       report =
           '[SYSTEM] ERROR: the phone could not perform "$action" — tell me plainly.';
       AppFeedback.toast("Couldn't do that on this phone.", spoken: true);
-      _reportDeviceFailure('phone_control', target: action,
-          reason: 'the phone refused or could not do it');
+      _reportDeviceFailure('phone_control',
+          target: action, reason: 'the phone refused or could not do it');
     }
     if (report != null) await _tellModel(report);
   }
@@ -3836,11 +4037,16 @@ class AssistantEngine extends ChangeNotifier {
       context: ctx,
       builder: (c) => AlertDialog(
         title: const Text('Allow full silent?'),
-        content: const Text('To put your phone fully on silent, allow "Do Not Disturb" '
+        content: const Text(
+            'To put your phone fully on silent, allow "Do Not Disturb" '
             'for My Assistant once, then come back. Until then I use vibrate.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Use vibrate')),
-          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Open settings')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Use vibrate')),
+          FilledButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('Open settings')),
         ],
       ),
     );
@@ -3893,7 +4099,8 @@ class AssistantEngine extends ChangeNotifier {
     unawaited(_refreshLocation());
     unawaited(MissedCallsService.instance.check());
     final pausedAt = _backgroundedAt;
-    final away = pausedAt == null ? Duration.zero : DateTime.now().difference(pausedAt);
+    final away =
+        pausedAt == null ? Duration.zero : DateTime.now().difference(pausedAt);
     _backgroundedAt = null;
     final wasExternal = _leftForExternalApp;
     _leftForExternalApp = false;
@@ -4278,8 +4485,10 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> _shopFromList(Map<String, dynamic> e) async {
     final h = ShopHandoff.fromJson(e);
     if (h == null) {
-      _reportDeviceFailure('shop_from_list', reason: 'there was nothing to open');
-      await _tellModel('[SYSTEM] ERROR: nothing from the shopping list could be opened on the '
+      _reportDeviceFailure('shop_from_list',
+          reason: 'there was nothing to open');
+      await _tellModel(
+          '[SYSTEM] ERROR: nothing from the shopping list could be opened on the '
           'phone, so NOTHING was opened, ordered or paid. Say so plainly in one sentence.');
       return;
     }
@@ -4290,7 +4499,9 @@ class AssistantEngine extends ChangeNotifier {
     if (!r.opened || s == null) {
       _leftForExternalApp = false;
       _reportDeviceFailure('shop_from_list',
-          reason: s == null ? 'no safe link to open' : 'nothing could open ${s.item.name}');
+          reason: s == null
+              ? 'no safe link to open'
+              : 'nothing could open ${s.item.name}');
       await _tellModel('[SYSTEM] ERROR: the phone could not open '
           '${s == null ? 'any of those links safely' : s.item.name}, so NOTHING was opened, '
           'ordered or paid. Say so plainly in one sentence.');
@@ -4302,7 +4513,8 @@ class AssistantEngine extends ChangeNotifier {
     final more = r.total > 1
         ? ' The notification on the phone offers the next of the ${r.total} things.'
         : '';
-    await _tellModel('[SYSTEM] Opened ${s.item.name} in $where.$more Nothing is ordered or '
+    await _tellModel(
+        '[SYSTEM] Opened ${s.item.name} in $where.$more Nothing is ordered or '
         'paid: they choose and pay in the app themselves.');
   }
 
@@ -4319,12 +4531,17 @@ class AssistantEngine extends ChangeNotifier {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     await _runTurn(t,
-        mode: BrainMode.voice, image: image, untrusted: true, shared: true, fromOwner: false);
+        mode: BrainMode.voice,
+        image: image,
+        untrusted: true,
+        shared: true,
+        fromOwner: false);
   }
 
   /// Performs one device action as if the server had just sent it — the
   /// shortcut runner's hands. Every action keeps its own honest reporting.
-  Future<void> performDeviceAction(Map<String, dynamic> action) => _onEvent(action);
+  Future<void> performDeviceAction(Map<String, dynamic> action) =>
+      _onEvent(action);
 
   /// The shortcut runner's view of this app.
   late final ShortcutPorts shortcutPorts = _EngineShortcutPorts(this);
@@ -4346,7 +4563,8 @@ class AssistantEngine extends ChangeNotifier {
   bool takeQuietEnd() {
     final at = _quietEndAt;
     _quietEndAt = null;
-    return at != null && DateTime.now().difference(at) < const Duration(seconds: 5);
+    return at != null &&
+        DateTime.now().difference(at) < const Duration(seconds: 5);
   }
 
   /// "Scan this visiting card" — the camera, the server's reading, and the
@@ -4356,14 +4574,16 @@ class AssistantEngine extends ChangeNotifier {
     await holdMicDuring(() async {
       final ctx = AvatarMessageService.navigatorKey.currentContext;
       if (ctx == null || !ctx.mounted) {
-        _reportDeviceFailure('scan_business_card', reason: 'no screen to show the camera on');
+        _reportDeviceFailure('scan_business_card',
+            reason: 'no screen to show the camera on');
         await _tellModel('[SYSTEM] ERROR: the card scanner could not open on '
             'this screen, so nothing was saved. Say so in ONE short sentence.');
         return;
       }
       final person = await BusinessCardFlow.scan(ctx);
       if (person == null) {
-        _reportDeviceFailure('scan_business_card', reason: 'cancelled or unreadable');
+        _reportDeviceFailure('scan_business_card',
+            reason: 'cancelled or unreadable');
         await _tellModel('[SYSTEM] The card scan was cancelled or could not be '
             'read, so nothing was saved. Say so in ONE short sentence.');
       } else {
@@ -4379,12 +4599,14 @@ class AssistantEngine extends ChangeNotifier {
   /// A device action failed. Inside a turn, the action it belongs to is
   /// answered as a failure (the model says so; the server's record of the
   /// turn carries the outcome); outside one, it is logged.
-  void _reportDeviceFailure(String tool, {String target = '', String reason = ''}) {
+  void _reportDeviceFailure(String tool,
+      {String target = '', String reason = ''}) {
     AppLog.add('device',
         '$tool failed${target.isEmpty ? '' : ' ($target)'}${reason.isEmpty ? '' : ': $reason'}');
     final reply = Zone.current[_deviceReplyKey];
     if (reply is _DeviceReply) {
-      reply.failed ??= 'the phone could not do it${reason.isEmpty ? '' : ': $reason'}';
+      reply.failed ??=
+          'the phone could not do it${reason.isEmpty ? '' : ': $reason'}';
     }
   }
 
@@ -4396,7 +4618,9 @@ class AssistantEngine extends ChangeNotifier {
 
   /// User closed the web results.
   void dismissSearchResults() {
-    if (searchResults.isEmpty && searchQuery == null && searchSuggestions.isEmpty) return;
+    if (searchResults.isEmpty &&
+        searchQuery == null &&
+        searchSuggestions.isEmpty) return;
     searchQuery = null;
     searchResults = const [];
     searchSuggestions = const [];
@@ -4445,7 +4669,8 @@ class AssistantEngine extends ChangeNotifier {
     if (ok) {
       if (identical(seenEvent, e)) seenEvent = null;
       notifyListeners();
-      AppFeedback.toast('Added to your calendar — ${e.title}, ${e.whenLabel()}.',
+      AppFeedback.toast(
+          'Added to your calendar — ${e.title}, ${e.whenLabel()}.',
           tone: FeedbackTone.success);
     } else {
       AppFeedback.toast("Couldn't add it to your calendar — allow calendar "
@@ -4729,7 +4954,8 @@ class _EngineShortcutPorts implements ShortcutPorts {
 
   @override
   Future<void> notifyContinue(ShortcutRunDirective d, ShortcutEnvelope next) =>
-      ReminderNotifications.instance.showNow(d.name, 'Tap to carry on: ${next.label}');
+      ReminderNotifications.instance
+          .showNow(d.name, 'Tap to carry on: ${next.label}');
 
   @override
   Future<void> notifyUnfinished(String name, String label) =>

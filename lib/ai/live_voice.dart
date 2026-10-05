@@ -106,10 +106,12 @@ class LiveSetup {
   List<Tool>? get sdkTools => tools.isEmpty
       ? null
       : [
-          Tool.functionDeclarations([for (final t in tools) liveDeclarationFor(t)]),
+          Tool.functionDeclarations(
+              [for (final t in tools) liveDeclarationFor(t)]),
         ];
 
-  static Sensitivity _sensitivity(String s) => s == 'low' ? Sensitivity.low : Sensitivity.high;
+  static Sensitivity _sensitivity(String s) =>
+      s == 'low' ? Sensitivity.low : Sensitivity.high;
 
   LiveGenerationConfig get generationConfig => LiveGenerationConfig(
         responseModalities: [ResponseModalities.audio],
@@ -118,7 +120,8 @@ class LiveSetup {
         outputAudioTranscription: AudioTranscriptionConfig(),
         // A long conversation outlives the 15-minute audio context without
         // this: the oldest turns slide out instead.
-        contextWindowCompression: ContextWindowCompressionConfig(slidingWindow: SlidingWindow()),
+        contextWindowCompression:
+            ContextWindowCompressionConfig(slidingWindow: SlidingWindow()),
         realtimeInputConfig: RealtimeInputConfig(
           automaticActivityDetection: ActivityDetectionConfig(
             startSensitivity: _sensitivity(live.startSensitivity),
@@ -152,6 +155,8 @@ final class LiveInContent extends LiveIn {
     this.audio = const [],
     this.heard,
     this.said,
+    this.startMs,
+    this.endMs,
     this.turnComplete = false,
     this.interrupted = false,
   });
@@ -164,13 +169,16 @@ final class LiveInContent extends LiveIn {
 
   /// More of what she is saying (output transcription).
   final String? said;
+  final int? startMs;
+  final int? endMs;
   final bool turnComplete;
   final bool interrupted;
 }
 
 final class LiveInToolCall extends LiveIn {
-  const LiveInToolCall(this.calls);
+  const LiveInToolCall(this.calls, {this.delegationId});
   final List<FunctionCall> calls;
+  final String? delegationId;
 }
 
 /// The model is working on their request out of the phone's sight
@@ -217,7 +225,8 @@ LiveIn liveInFrom(LiveServerMessage m) => switch (m) {
         LiveInContent(
           audio: [
             for (final p in modelTurn?.parts ?? const <Part>[])
-              if (p is InlineDataPart && p.mimeType.toLowerCase().startsWith('audio/'))
+              if (p is InlineDataPart &&
+                  p.mimeType.toLowerCase().startsWith('audio/'))
                 (p.bytes, SpeechEngine.sampleRateOf(p.mimeType)),
           ],
           heard: inputTranscription?.text,
@@ -225,7 +234,8 @@ LiveIn liveInFrom(LiveServerMessage m) => switch (m) {
           turnComplete: turnComplete == true,
           interrupted: interrupted == true,
         ),
-      LiveServerToolCall(:final functionCalls) => LiveInToolCall(functionCalls ?? const []),
+      LiveServerToolCall(:final functionCalls) =>
+        LiveInToolCall(functionCalls ?? const []),
       LiveServerToolCallCancellation(:final functionIds) =>
         LiveInToolCancel(functionIds ?? const []),
       GoingAwayNotice(:final timeLeft) => LiveInGoAway(timeLeft),
@@ -268,17 +278,20 @@ abstract interface class LiveConnector {
 /// Developer API, with the same App Check and Firebase user as every other
 /// model call ([FirebaseModelPort.defaultAi]).
 class FirebaseLiveConnector implements LiveConnector {
-  FirebaseLiveConnector({FirebaseAI Function()? ai}) : _ai = ai ?? FirebaseModelPort.defaultAi;
+  FirebaseLiveConnector({FirebaseAI Function()? ai})
+      : _ai = ai ?? FirebaseModelPort.defaultAi;
 
   final FirebaseAI Function() _ai;
 
   @override
-  Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) async {
+  Future<LiveSessionPort> connect(LiveSetup setup,
+      {String? resumeHandle}) async {
     final model = _ai().liveGenerativeModel(
       model: setup.model,
       liveGenerationConfig: setup.generationConfig,
       tools: setup.sdkTools,
-      systemInstruction: setup.system.trim().isEmpty ? null : Content.system(setup.system),
+      systemInstruction:
+          setup.system.trim().isEmpty ? null : Content.system(setup.system),
     );
     final session = await model.connect(
       sessionResumption: resumeHandle == null
@@ -328,7 +341,11 @@ class _FirebaseLiveSession implements LiveSessionPort {
       onError: (Object e) {
         final closed = e is LiveWebSocketClosedException;
         _errored = !closed;
-        AppLog.add('live', closed ? 'the socket closed: $e' : 'server error: ${AssistantBrain.describeError(e)}');
+        AppLog.add(
+            'live',
+            closed
+                ? 'the socket closed: $e'
+                : 'server error: ${AssistantBrain.describeError(e)}');
       },
       onDone: () {
         if (_closed) return;
@@ -349,7 +366,8 @@ class _FirebaseLiveSession implements LiveSessionPort {
   /// reconnects instead of talking into nothing.
   void _quiet(Future<void> Function() send) {
     void failed(Object e) {
-      if (e is! LiveWebSocketClosedException || _closed || _out.isClosed) return;
+      if (e is! LiveWebSocketClosedException || _closed || _out.isClosed)
+        return;
       AppLog.add('live', 'sending into a closed socket: the session is over');
       unawaited(_sub?.cancel());
       unawaited(_out.close());
@@ -363,8 +381,8 @@ class _FirebaseLiveSession implements LiveSessionPort {
   }
 
   @override
-  void sendAudio(Uint8List pcm16) =>
-      _quiet(() => _s.sendAudioRealtime(InlineDataPart('audio/pcm;rate=16000', pcm16)));
+  void sendAudio(Uint8List pcm16) => _quiet(() =>
+      _s.sendAudioRealtime(InlineDataPart('audio/pcm;rate=16000', pcm16)));
 
   @override
   void sendText(String text) => _quiet(() => _s.sendTextRealtime(text));
@@ -411,8 +429,16 @@ sealed class LiveEvent {
 
 /// The owner's words so far this turn (captions).
 final class LiveHeard extends LiveEvent {
-  const LiveHeard(this.text);
+  const LiveHeard(
+    this.text, {
+    this.delta,
+    this.startMs,
+    this.endMs,
+  });
   final String text;
+  final String? delta;
+  final int? startMs;
+  final int? endMs;
 }
 
 /// The owner stopped talking; her answer is coming (THINKING).
@@ -435,8 +461,16 @@ final class LiveSpeaking extends LiveEvent {
 
 /// Her words so far this turn (captions).
 final class LiveSaid extends LiveEvent {
-  const LiveSaid(this.text);
+  const LiveSaid(
+    this.text, {
+    this.delta,
+    this.startMs,
+    this.endMs,
+  });
   final String text;
+  final String? delta;
+  final int? startMs;
+  final int? endMs;
 }
 
 /// The owner talked over her (or tapped): she stopped.
@@ -477,7 +511,8 @@ final class LiveCorrected extends LiveEvent {
 /// (a tool ran but she went quiet). [keepLive]: the next turn may try Live
 /// again; otherwise the conversation carries on without it.
 final class LiveFallback extends LiveEvent {
-  const LiveFallback({required this.reason, this.words, this.line, this.keepLive = false});
+  const LiveFallback(
+      {required this.reason, this.words, this.line, this.keepLive = false});
   final String reason;
   final String? words;
   final String? line;
@@ -545,7 +580,8 @@ class LiveVoicePrefs {
 class LiveVoicePreview {
   static final _cache = <String, List<SpeechChunk>>{};
 
-  static String line(String voice) => "Hi, I'm $voice. This is how I'll sound when we talk.";
+  static String line(String voice) =>
+      "Hi, I'm $voice. This is how I'll sound when we talk.";
 
   /// Plays [voice]'s sample into [sink]. False when it could not be made.
   static Future<bool> play(
@@ -830,7 +866,8 @@ class LiveVoice {
   static const _deafSentenceMs = 1500;
 
   /// Said when the fast voice gives up on a turn nobody heard.
-  static const missedLine = "Sorry, I didn't catch that. Could you say it again?";
+  static const missedLine =
+      "Sorry, I didn't catch that. Could you say it again?";
 
   /// The owner's microphone level, 0..1, while she is silent (the orb).
   void Function(double level)? onLevel;
@@ -844,6 +881,7 @@ class LiveVoice {
   /// silence, so half a sentence was answered.
   VoiceActivityDetector room = VoiceActivityDetector(hangoverMs: 700);
   final _preRoll = MicPreRoll(keepMs: 480);
+  Completer<bool>? _openingGreetingDone;
 
   /// THE TV GATE (2026-09-30, measured on gemini-3.8-live with a TV mixed
   /// in at 10 dB: Live's own end-of-turn never fired, no answer; at 5 dB
@@ -858,12 +896,14 @@ class LiveVoice {
   static const _gateRollMax = 10; // ×40 ms
   static const _gateMaxUs = 8000000;
 
-  /// Frames held while the session is (re)connecting: ~3 s.
+  /// Frames held while the session is (re)connecting: up to ~8 s.
   final _backlog = ListQueue<Uint8List>();
-  static const _backlogMax = 75;
+  // Up to 8 s lets the owner begin speaking as soon as the cached hello
+  // finishes, even on a cold mobile connection. Old frames still roll off.
+  static const _backlogMax = 200;
 
   /// The session is open and ready for audio.
-  bool get connected => _session != null && !_reconnecting;
+  bool get connected => _session != null && !_reconnecting && !_stopped;
 
   /// The microphone is streaming to Live.
   bool get listening => _micOn;
@@ -871,7 +911,9 @@ class LiveVoice {
   /// A turn is under way (the owner has spoken, her answer is not over).
   bool get turnOpen {
     final t = _turn;
-    return t != null && !t.finished && (t.heard.isNotEmpty || t.answered || t.endUs != null);
+    return t != null &&
+        !t.finished &&
+        (t.heard.isNotEmpty || t.answered || t.endUs != null);
   }
 
   int _now() => _player.nowUs();
@@ -887,7 +929,11 @@ class LiveVoice {
   /// call often: one connection at a time.
   Future<bool> warm() {
     if (_session != null || _reconnecting) return Future.value(true);
-    return _connecting ??= _connectFresh().whenComplete(() => _connecting = null);
+    // stop() closes the previous session. A new foreground prewarm is a
+    // fresh lifecycle, so it must be allowed to establish a replacement.
+    _stopped = false;
+    return _connecting ??=
+        _connectFresh().whenComplete(() => _connecting = null);
   }
 
   Future<Map<String, Object?>> _device() async {
@@ -902,27 +948,44 @@ class LiveVoice {
 
   Future<bool> _connectFresh() async {
     if (!_enabled()) return false;
+    final attempt = _gen;
     final started = _now();
+    var readsMs = 0;
+    var contextMs = 0;
+    var openMs = 0;
     try {
-      final all = await _configs.get();
+      // These reads are independent; doing them in parallel removes a
+      // config-store and platform-channel round trip from the setup path.
+      final setupReads = await Future.wait<Object?>([
+        _configs.get(),
+        _device(),
+      ]);
+      final all = setupReads[0] as AiConfig;
+      final device = setupReads[1] as Map<String, Object?>;
+      readsMs = (_now() - started) ~/ 1000;
+      if (_stopped || attempt != _gen) return false;
       final cfg = all.live;
       if (!cfg.on) {
         AppLog.add('live', 'off in the config: the cascade answers');
         return false;
       }
       // The call's phone side is built while the context is fetched.
-      if (all.viaServer && cfg.transport == 'gpt-live' && _prepareGptLive) GptLiveConnector.prepare();
+      if (all.viaServer && cfg.transport == 'gpt-live' && _prepareGptLive)
+        GptLiveConnector.prepare();
+      final contextStarted = _now();
       final ctx = await _server.context(
         text: '',
         mode: 'live',
         sessionId: _brain.sessionId,
-        device: await _device(),
+        device: device,
         timeout: timeouts.context,
       );
+      contextMs = (_now() - contextStarted) ~/ 1000;
       if (ctx == null) {
         AppLog.add('live', 'no context from the server: the cascade answers');
         return false;
       }
+      if (_stopped || attempt != _gen) return false;
       _sid = ctx.sessionId;
       _nextIds = Future.value((ctx.sessionId, ctx.turnId));
       final names = {for (final s in ctx.tools) s.name};
@@ -939,12 +1002,14 @@ class LiveVoice {
         live: cfg,
       );
       _setup = setup;
+      final openStarted = _now();
       final ok = await _open(setup);
+      openMs = (_now() - openStarted) ~/ 1000;
       final ms = (_now() - started) ~/ 1000;
       AppLog.add(
           'live',
           ok
-              ? 'connected in $ms ms (${setup.model}, ${setup.voice}, ${setup.tools.length} tools)'
+              ? 'connected in $ms ms (${setup.model}, ${setup.voice}, ${setup.tools.length} tools); reads=${readsMs}ms context=${contextMs}ms open=${openMs}ms'
               : 'could not connect ($ms ms): the cascade answers');
       if (ok) _armIdle();
       return ok;
@@ -958,7 +1023,8 @@ class LiveVoice {
   /// conversation so far (a fresh Live session knows none of it).
   static String systemFor(AiContext ctx) {
     final b = StringBuffer(ctx.system.trim())
-      ..write('\n\nYOU ARE SPEAKING OUT LOUD in a live voice conversation: short, natural '
+      ..write(
+          '\n\nYOU ARE SPEAKING OUT LOUD in a live voice conversation: short, natural '
           'sentences; no lists, links or formatting. When you use a tool, say what '
           'happened as soon as it answers.');
     if (ctx.history.isNotEmpty) {
@@ -980,7 +1046,9 @@ class LiveVoice {
     LiveSessionPort? s;
     final deadline = DateTime.now().add(timeouts.connect);
     try {
-      s = await _connector.connect(setup, resumeHandle: handle).timeout(timeouts.connect);
+      s = await _connector
+          .connect(setup, resumeHandle: handle)
+          .timeout(timeouts.connect);
       final session = s;
       _sub = session.messages.listen(
         (m) => _onIn(gen, m),
@@ -997,7 +1065,8 @@ class LiveVoice {
       _flushBacklog();
       return true;
     } catch (e) {
-      AppLog.add('live', 'session not ready: ${AssistantBrain.describeError(e)}');
+      AppLog.add(
+          'live', 'session not ready: ${AssistantBrain.describeError(e)}');
       if (gen == _gen) {
         await _sub?.cancel();
         _sub = null;
@@ -1060,7 +1129,11 @@ class LiveVoice {
 
   Future<bool> start() async {
     _stopped = false;
-    if (!await warm()) return false;
+    // Start the websocket handshake at the tap, while Android opens the
+    // microphone. Audio is buffered by _onMic until the session is ready.
+    final configFuture = _configs.get();
+    final connectedFuture = warm();
+    final config = await configFuture;
     if (_stopped) return false;
     // The served hangover, read per conversation so a bad value can be
     // taken back from the server without a release.
@@ -1070,22 +1143,30 @@ class LiveVoice {
     }
     _idle?.cancel();
     if (_micOn) return true;
+
+    // GPT-Live owns the WebRTC microphone track. Other live transports use
+    // our Android mic, which can come up in parallel with the connection.
+    final ownsAudio = config.viaServer && config.live.transport == 'gpt-live';
+    if (ownsAudio) {
+      if (!await connectedFuture || _stopped) return false;
+    }
     if (_session case final OwnsAudio own) {
       own.setMicOpen(true);
       _micOn = true;
       return true;
     }
     unawaited(_player.warm());
-    final opened = await _openMic();
-    if (!opened) {
+    _micOn = true; // collect any speech while the websocket finishes
+    final micFuture = _openMic();
+    final connected = await connectedFuture;
+    final opened = await micFuture;
+    if (_stopped || !connected || !opened) {
+      _micOn = false;
+      if (opened) await _mic.stop();
+      _backlog.clear();
       AppLog.add('live', 'the microphone could not be opened');
       return false;
     }
-    if (_stopped) {
-      await _mic.stop();
-      return false;
-    }
-    _micOn = true;
     _armMicWatch();
     return true;
   }
@@ -1096,18 +1177,36 @@ class LiveVoice {
 
   /// HER HELLO, IN HER OWN VOICE (owner, 2026-09-30: "the hello sir should
   /// not be a recorded audio, I want the same tone as the conversation").
-  /// Live is asked to say [instruction]'s line the moment it can, with the
-  /// microphone already open: he can talk over it, and listening never
-  /// waits for it. False when it cannot be said now (no session yet, or he
-  /// is already talking).
-  bool greet(String instruction) {
+  /// Live is asked to say the opening line as soon as possible, with the
+  /// microphone already opening. OpenAI gets a response-level directive so
+  /// the session prompt cannot substitute another welcome. False when no
+  /// session is ready or another turn is already underway.
+  Future<bool> greet(String instruction) async {
     final s = _session;
-    if (s == null || _reconnecting || _stopped || !_micOn) return false;
+    if (s == null || _reconnecting || _stopped) return false;
     if (room.speaking || turnOpen) return false;
     _turn = _LiveTurn(++_turns)..opening = true;
-    s.sendText(instruction);
+    final done = Completer<bool>();
+    _openingGreetingDone = done;
+    if (s is OpenAiLiveSession) {
+      s.speakFixedLine('Hello sir.');
+    } else {
+      s.sendText(instruction);
+    }
     _armWatch(timeouts.firstReply);
-    return true;
+    return done.future.timeout(
+      timeouts.firstReply + const Duration(seconds: 2),
+      onTimeout: () {
+        if (identical(_openingGreetingDone, done)) {
+          final current = _turn;
+          if (current != null && current.opening && !current.finished) {
+            if (s is CancellableReply) (s as CancellableReply).cancelReply();
+            _finish(current, quiet: true, record: false);
+          }
+        }
+        return false;
+      },
+    );
   }
 
   /// The microphone is let go (typing, the camera, a cascade turn); the
@@ -1129,7 +1228,8 @@ class LiveVoice {
     _micWatch?.cancel();
     _lastFrameUs = _now();
     final tick = timeouts.micSilent.inMicroseconds ~/ 4;
-    _micWatch = Timer.periodic(Duration(microseconds: tick < 100000 ? 100000 : tick), (_) {
+    _micWatch = Timer.periodic(
+        Duration(microseconds: tick < 100000 ? 100000 : tick), (_) {
       if (!_micOn || _restartingMic) return;
       final quietUs = _now() - _lastFrameUs;
       if (quietUs > timeouts.micSilent.inMicroseconds) {
@@ -1261,8 +1361,10 @@ class LiveVoice {
   void _send(Uint8List chunk) {
     // A heartbeat every ~8 s of microphone (diagnostics, 2026-09-30).
     if (++_sentFrames % 200 == 0) {
-      AppLog.add('live', 'mic → Live: $_sentFrames frames (gated $_gated, playing ${_player.playing}, '
-          'session ${_session != null}, bar ${room.threshold.toStringAsFixed(3)})');
+      AppLog.add(
+          'live',
+          'mic → Live: $_sentFrames frames (gated $_gated, playing ${_player.playing}, '
+              'session ${_session != null}, bar ${room.threshold.toStringAsFixed(3)})');
     }
     final s = _session;
     if (s == null || _reconnecting) {
@@ -1336,7 +1438,8 @@ class LiveVoice {
       return;
     }
     final heardUs = now - PcmPlayer.ringLatencyUs;
-    final echo = _player.echo.maxBetween(heardUs - ms * 1000 - 300000, heardUs + 100000);
+    final echo =
+        _player.echo.maxBetween(heardUs - ms * 1000 - 300000, heardUs + 100000);
     final confirmed = detector.feed(
       mic: level,
       echo: echo,
@@ -1405,7 +1508,11 @@ class LiveVoice {
 
   void _onOnset(int now, List<List<int>> leadIn) {
     final cur = _turn;
-    if (cur != null && !cur.finished && !cur.opening && cur.endUs != null && !cur.answered) {
+    if (cur != null &&
+        !cur.finished &&
+        !cur.opening &&
+        cur.endUs != null &&
+        !cur.answered) {
       // He had stopped and her answer is owed; a new voice (a TV, someone
       // else) must not stop the clock on it — "Thinking…" sat forever
       // (audit 2026-10-01).
@@ -1416,7 +1523,9 @@ class LiveVoice {
     final hello = _turn;
     if (hello != null && hello.opening && !hello.finished) {
       // He spoke before (or while) she greeted: his words are his own turn.
-      _finish(hello, quiet: !hello.spoke && !hello.answered && !hello.ranTools, record: false);
+      _finish(hello,
+          quiet: !hello.spoke && !hello.answered && !hello.ranTools,
+          record: false);
     }
     final t = _turn;
     if (t == null || t.finished) _turn = _LiveTurn(++_turns);
@@ -1446,8 +1555,10 @@ class LiveVoice {
     if (t.opening && t.speechMs >= _deafSpeechMs && !t.spoke) {
       // He talked before the hello was said: the hello is dropped and
       // his words are answered (owner's phone, 2026-10-01).
-      AppLog.add('live', 'turn ${t.index}: he spoke over the hello — answer him');
-      _session?.sendText('[SYSTEM] Skip the greeting: answer what I just said.');
+      AppLog.add(
+          'live', 'turn ${t.index}: he spoke over the hello — answer him');
+      _session
+          ?.sendText('[SYSTEM] Skip the greeting: answer what I just said.');
     }
     _emit(const LiveThinking());
     _armWatch(timeouts.firstReply);
@@ -1463,13 +1574,18 @@ class LiveVoice {
   void _armHearingCheck(_LiveTurn t, Duration after) {
     _hearCheck?.cancel();
     _hearCheck = Timer(after, () {
-      if (t.finished || t.answered || !identical(_turn, t) || _stopped || _reviving) return;
+      if (t.finished ||
+          t.answered ||
+          !identical(_turn, t) ||
+          _stopped ||
+          _reviving) return;
       if (t.speechMs < _deafSpeechMs || _lastInUs > (t.onsetUs ?? 0)) return;
       if (t.revived) {
         // A fresh session got his words and made no sound either: it was
         // not speech (a clatter, a horn) — unless that keeps happening.
         _deadRevives++;
-        AppLog.add('live', 'turn ${t.index}: the fresh session heard nothing either ($_deadRevives)');
+        AppLog.add('live',
+            'turn ${t.index}: the fresh session heard nothing either ($_deadRevives)');
         if (_deadRevives >= 2) {
           _fail('Live stopped hearing', line: missedLine);
         } else {
@@ -1477,7 +1593,8 @@ class LiveVoice {
         }
         return;
       }
-      AppLog.add('live', 'turn ${t.index}: ${t.speechMs} ms of speech, not a sound back');
+      AppLog.add('live',
+          'turn ${t.index}: ${t.speechMs} ms of speech, not a sound back');
       unawaited(_revive(t));
     });
   }
@@ -1513,7 +1630,8 @@ class LiveVoice {
     _backlog.clear();
     var ok = false;
     try {
-      ok = await (_connecting ??= _connectFresh().whenComplete(() => _connecting = null));
+      ok = await (_connecting ??=
+          _connectFresh().whenComplete(() => _connecting = null));
     } catch (_) {}
     _reviving = false;
     if (_stopped) return;
@@ -1576,7 +1694,8 @@ class LiveVoice {
         _cancelledIds.addAll(ids);
         AppLog.add('live', 'tool call cancelled by the model');
       case LiveInGoAway(:final timeLeft):
-        AppLog.add('live', 'the server will close the session (${timeLeft ?? '?'} left)');
+        AppLog.add('live',
+            'the server will close the session (${timeLeft ?? '?'} left)');
         _goingAway = true;
         if (!turnOpen) unawaited(_resume());
       case LiveInResumption(:final handle, :final resumable):
@@ -1598,10 +1717,12 @@ class LiveVoice {
     final heard = c.heard;
     if (heard != null && heard.isNotEmpty) {
       final t = _current();
-      if (t.heard.isEmpty) AppLog.add('live', 'turn ${t.index}: Live hears him');
+      if (t.heard.isEmpty)
+        AppLog.add('live', 'turn ${t.index}: Live hears him');
       t.heard += heard;
       _heardBack();
-      _emit(LiveHeard(t.heard.trim()));
+      _emit(LiveHeard(t.heard,
+          delta: heard, startMs: c.startMs, endMs: c.endMs));
       // No end of speech from this phone to wait for (a microphone too
       // quiet for its VAD, the S24 Ultra's is): his words start the watch
       // themselves, so an unanswered question never waits for ever.
@@ -1616,9 +1737,10 @@ class LiveVoice {
     if (said != null && said.isNotEmpty && !_dropOutput) {
       final last = _turn;
       // Words that trail a turn already over belong to it.
-      final t = last != null && last.finished && last.serverDone && !last.interrupted
-          ? last
-          : _current();
+      final t =
+          last != null && last.finished && last.serverDone && !last.interrupted
+              ? last
+              : _current();
       t
         ..said += said
         ..answered = true;
@@ -1632,7 +1754,8 @@ class LiveVoice {
       }
       _watch?.cancel();
       _heardBack();
-      _emit(LiveSaid(t.said.trim()));
+      _emit(LiveSaid(t.said,
+          delta: said, startMs: c.startMs, endMs: c.endMs));
     }
     if (c.turnComplete) _onTurnComplete();
   }
@@ -1679,7 +1802,8 @@ class LiveVoice {
   void _onTurnComplete() {
     _dropOutput = false;
     final t = _turn;
-    AppLog.add('live', 'turn ${t?.index}: complete (spoke ${t?.spoke}, tools ${t?.ranTools}, finished ${t?.finished})');
+    AppLog.add('live',
+        'turn ${t?.index}: complete (spoke ${t?.spoke}, tools ${t?.ranTools}, finished ${t?.finished})');
     if (t == null || t.finished) return;
     t.serverDone = true;
     if (!t.spoke && t.ranTools && !t.nudged) {
@@ -1689,7 +1813,8 @@ class LiveVoice {
         ..nudged = true
         ..serverDone = false;
       AppLog.add('live', 'silent after a tool: asking her to say the result');
-      _session?.sendText('[SYSTEM] Tell me the result of that now, in one short sentence.');
+      _session?.sendText(
+          '[SYSTEM] Tell me the result of that now, in one short sentence.');
       _armWatch(timeouts.afterTool);
       return;
     }
@@ -1697,13 +1822,15 @@ class LiveVoice {
       final line = _toolLine(t);
       t.said = line;
       _finish(t, quiet: true);
-      _emit(LiveFallback(reason: 'silent after a tool', line: line, keepLive: true));
+      _emit(LiveFallback(
+          reason: 'silent after a tool', line: line, keepLive: true));
       return;
     }
     if (!t.spoke && _meaningful(t.heard)) {
       // Heard, not answered, nothing done: the cascade answers it.
       _finish(t, quiet: true, record: false);
-      _emit(LiveFallback(reason: 'no answer', words: t.heard.trim(), keepLive: true));
+      _emit(LiveFallback(
+          reason: 'no answer', words: t.heard.trim(), keepLive: true));
       return;
     }
     _finishWhenHeard(t);
@@ -1738,12 +1865,14 @@ class LiveVoice {
         final line = _toolLine(t);
         t.said = line;
         _finish(t, quiet: true);
-        _emit(LiveFallback(reason: 'stalled after a tool', line: line, keepLive: true));
+        _emit(LiveFallback(
+            reason: 'stalled after a tool', line: line, keepLive: true));
         return;
       }
       if (_meaningful(t.heard)) {
         _stalls++;
-        AppLog.add('live', 'no answer in ${after.inSeconds}s (stall $_stalls): the cascade answers');
+        AppLog.add('live',
+            'no answer in ${after.inSeconds}s (stall $_stalls): the cascade answers');
         if (_stalls >= 2) {
           // Twice: the cascade answers these words and listens from here —
           // with the Live microphone CLOSED ([_fail] stops it), or the
@@ -1752,17 +1881,21 @@ class LiveVoice {
           return;
         }
         _finish(t, quiet: true, record: false);
-        _emit(LiveFallback(reason: 'stalled', words: t.heard.trim(), keepLive: true));
+        _emit(LiveFallback(
+            reason: 'stalled', words: t.heard.trim(), keepLive: true));
         return;
       }
-      if (!t.answered && !t.revived && t.speechMs >= _deafSpeechMs &&
+      if (!t.answered &&
+          !t.revived &&
+          t.speechMs >= _deafSpeechMs &&
           (++_deafTurns >= 2 || t.speechMs >= _deafSentenceMs)) {
         // Real speech, a server that answers with keep-alives only, not a
         // word heard. A short burst may be a clatter: let go once, revive
         // the second time. A whole sentence is revived AT ONCE (2026-10-01:
         // waiting for a second one dropped the first thing the client
         // said, silently). Nothing is lost: the utterance is replayed.
-        AppLog.add('live', 'turn ${t.index}: nothing heard of ${t.speechMs} ms');
+        AppLog.add(
+            'live', 'turn ${t.index}: nothing heard of ${t.speechMs} ms');
         _deafTurns = 0;
         unawaited(_revive(t));
         return;
@@ -1783,11 +1916,13 @@ class LiveVoice {
         final got = await next.timeout(timeouts.turnIds);
         if (got.$1 != null && got.$2 != null) return got;
       } catch (e) {
-        AppLog.add('live', 'turn ids not ready: ${AssistantBrain.describeError(e)}');
+        AppLog.add(
+            'live', 'turn ids not ready: ${AssistantBrain.describeError(e)}');
       }
     }
     final ctx = await _server
-        .openLiveTurn(sessionId: _sid, device: await _device(), timeout: timeouts.turnIds)
+        .openLiveTurn(
+            sessionId: _sid, device: await _device(), timeout: timeouts.turnIds)
         .catchError((Object _) => null);
     if (ctx?.sessionId != null) _sid = ctx!.sessionId;
     return (ctx?.sessionId ?? _sid, ctx?.turnId);
@@ -1798,7 +1933,10 @@ class LiveVoice {
     if (_nextIds != null || _session == null) return;
     _nextIds = () async {
       final ctx = await _server
-          .openLiveTurn(sessionId: _sid, device: await _device(), timeout: timeouts.turnIds)
+          .openLiveTurn(
+              sessionId: _sid,
+              device: await _device(),
+              timeout: timeouts.turnIds)
           .catchError((Object _) => null);
       return (ctx?.sessionId ?? _sid, ctx?.turnId);
     }();
@@ -1826,7 +1964,8 @@ class LiveVoice {
   Future<void> _onToolCall(List<FunctionCall> calls) async {
     final session = _session;
     if (session == null || calls.isEmpty) return;
-    AppLog.add('live', 'turn ${_turn?.index}: tools ${calls.map((c) => c.name).join(', ')}');
+    AppLog.add('live',
+        'turn ${_turn?.index}: tools ${calls.map((c) => c.name).join(', ')}');
     _watch?.cancel();
     _heardBack();
     final t = _current()..answered = true;
@@ -1843,7 +1982,8 @@ class LiveVoice {
       Map<String, Object?> answer;
       try {
         answer = await tools
-            .run(c.name, Map<String, Object?>.of(c.args), userText: t.heard.trim())
+            .run(c.name, Map<String, Object?>.of(c.args),
+                userText: t.heard.trim())
             .timeout(timeouts.tool);
       } catch (e) {
         AppLog.add('live', 'tool ${c.name} failed: ${e.runtimeType}');
@@ -1872,6 +2012,13 @@ class LiveVoice {
   void _finish(_LiveTurn t, {bool quiet = false, bool record = true}) {
     if (t.finished) return;
     t.finished = true;
+    if (t.opening) {
+      final done = _openingGreetingDone;
+      _openingGreetingDone = null;
+      if (done != null && !done.isCompleted) {
+        done.complete(t.spoke && !t.interrupted);
+      }
+    }
     if (identical(_turn, t)) _watch?.cancel();
     final latency = t.latency();
     if (latency.containsKey('endToFirstAudio')) {
@@ -1927,7 +2074,9 @@ class LiveVoice {
         cutOffAfter: t.interrupted ? (t.cutOffAfter ?? 0) : null,
         timeout: timeouts.record,
       );
-      if (receipt != null && receipt.corrected && receipt.reply.trim() != reply) {
+      if (receipt != null &&
+          receipt.corrected &&
+          receipt.reply.trim() != reply) {
         AppLog.add('live', 'the claim check corrected her reply');
         _emit(LiveCorrected(receipt.reply.trim()));
       }
@@ -1941,7 +2090,11 @@ class LiveVoice {
   /// GoAway: a new connection, resuming this session where the server can.
   Future<void> _resume() async {
     final setup = _setup;
-    if (setup == null || _reconnecting || _reviving || _connecting != null || _stopped) return;
+    if (setup == null ||
+        _reconnecting ||
+        _reviving ||
+        _connecting != null ||
+        _stopped) return;
     _goingAway = false;
     _reconnecting = true;
     _droppedWhileOpening = false;
@@ -1956,7 +2109,11 @@ class LiveVoice {
     try {
       await old?.close();
     } catch (_) {}
-    AppLog.add('live', ok ? 'session renewed${handle != null ? ' (resumed)' : ''}' : 'renewal failed');
+    AppLog.add(
+        'live',
+        ok
+            ? 'session renewed${handle != null ? ' (resumed)' : ''}'
+            : 'renewal failed');
     if (!ok) _fail('could not renew the session');
     _flushBacklog();
   }
@@ -1990,7 +2147,8 @@ class LiveVoice {
     // A question caught in the drop, unanswered: the cascade answers it.
     if (t != null && !t.finished && !t.answered && _meaningful(t.heard)) {
       _finish(t, quiet: true, record: false);
-      _emit(LiveFallback(reason: 'dropped', words: t.heard.trim(), keepLive: true));
+      _emit(LiveFallback(
+          reason: 'dropped', words: t.heard.trim(), keepLive: true));
     } else if (t != null && !t.finished && t.answered) {
       t.interrupted = !t.serverDone;
       _finishWhenHeard(t);
@@ -2034,16 +2192,21 @@ class LiveVoice {
     final t = _turn;
     String? words;
     if (t != null && !t.finished) {
-      if (!t.answered && !t.ranTools && _meaningful(t.heard)) words = t.heard.trim();
+      if (!t.answered && !t.ranTools && _meaningful(t.heard))
+        words = t.heard.trim();
       // He spoke, nothing was transcribed and now the session is gone:
       // the words are lost, so he is told rather than left in silence.
-      if (words == null && line == null && !t.answered && t.speechMs >= _deafSpeechMs) {
+      if (words == null &&
+          line == null &&
+          !t.answered &&
+          t.speechMs >= _deafSpeechMs) {
         line = missedLine;
       }
       if (t.answered) t.interrupted = true;
       _finish(t, quiet: true, record: words == null);
     }
-    _emit(LiveFallback(reason: reason, words: words, line: words == null ? line : null));
+    _emit(LiveFallback(
+        reason: reason, words: words, line: words == null ? line : null));
     unawaited(stop());
   }
 

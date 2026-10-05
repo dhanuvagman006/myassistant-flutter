@@ -175,7 +175,7 @@ class AiLive {
     this.prefixMs = 100,
     this.startSensitivity = 'low',
     this.endSensitivity = 'high',
-    this.idleCloseSec = 180,
+    this.idleCloseSec = 900,
     this.affectiveDialog = false,
     this.vadHangoverMs = 700,
     this.fragmentGuard = true,
@@ -230,16 +230,9 @@ class AiLive {
   /// The voices the picker offers for Live.
   final List<String> voices;
 
-  static const defaultVoices = [
-    'Sulafat',
-    'Callirrhoe',
-    'Achernar',
-    'Aoede',
-    'Vindemiatrix',
-    'Kore',
-    'Charon',
-    'Achird',
-  ];
+  // A single feminine fallback voice when a server config is unavailable.
+  // The OpenAI server replaces this with its matching `marin` preset.
+  static const defaultVoices = ['Sulafat'];
 
   static String _sensitivity(Object? v, String fallback) {
     final s = v is String ? v.trim().toLowerCase() : '';

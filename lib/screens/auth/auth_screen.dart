@@ -32,7 +32,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _password = TextEditingController();
 
   bool _isSignUp = false;
-  String? _gender; // male | female | other — picked on sign-up
+  String? _gender; 
   bool _busy = false;
   bool _obscure = true;
 

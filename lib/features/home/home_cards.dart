@@ -274,6 +274,11 @@ class _HomeFeedViewState extends State<HomeFeedView> {
                     a,
               ]),
             ),
+            const SizedBox(height: 8),
+            Reveal(
+              delayMs: 180,
+              child: _toolShortcuts(),
+            ),
             const SizedBox(height: 20),
             // Once per release: what just got better. Below the day, never
             // above what needs the user.
@@ -614,6 +619,49 @@ class _HomeFeedViewState extends State<HomeFeedView> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Direct routes to common tools. Unlike the suggestion chips above,
+  /// these open the feature immediately and never send a model request.
+  Widget _toolShortcuts() {
+    final shortcuts = <(String, IconData, NeonTone, Widget)>[
+      ('Calendar', Icons.calendar_month_rounded, NeonTone.info,
+          const CalendarScreen()),
+      ('Reminders', Icons.notifications_active_rounded, NeonTone.action,
+          const RemindersScreen()),
+      ('Shopping', Icons.shopping_basket_rounded, NeonTone.discovery,
+          const ShoppingListScreen()),
+      ('Finance', Icons.account_balance_wallet_rounded, NeonTone.tip,
+          const FinanceScreen()),
+      ('News', Icons.newspaper_rounded, NeonTone.info, const NewsScreen()),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 6),
+          child: Text(
+            'Open a tool',
+            style: NeonType.eyebrow.copyWith(color: Neon.textLo),
+          ),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final shortcut in shortcuts)
+              NeonPill(
+                label: shortcut.$1,
+                icon: shortcut.$2,
+                tone: shortcut.$3,
+                inkOverride: Neon.textHi,
+                quiet: true,
+                onPressed: () => _do.open(context, shortcut.$4),
+              ),
+          ],
+        ),
+      ],
     );
   }
 

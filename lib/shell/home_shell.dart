@@ -4,7 +4,6 @@ import '../screens/chat_screen.dart' show ChatThreadScreen;
 import '../screens/chat_group_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../ai/config.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -52,7 +51,6 @@ import '../services/share_intake_service.dart';
 import '../services/usage_service.dart';
 import '../services/api_service.dart';
 import '../services/device_control_service.dart';
-import '../services/greeting_voice.dart';
 import '../features/reminders/reminder_popup.dart';
 
 /// Where a tapped notification goes, by its payload: a video note left in
@@ -382,18 +380,6 @@ class _HomeShellState extends State<HomeShell>
     }
   }
 
-  /// The greeting the orb will speak, cached in the assistant's voice.
-  Future<void> _warmGreeting() async {
-    try {
-      // The config says which voice makes it (the live voice on GPT-Live).
-      await AiConfigStore.instance.get();
-      final u = AuthService.instance.user;
-      await GreetingVoice.instance.prewarm(
-        AssistantEngine.orbGreeting(name: u?.name, gender: u?.gender),
-      );
-    } catch (_) {/* a greeting that cannot be fetched simply stays quiet */}
-  }
-
   /// Cached on ApiService so neither the header getter nor the socket
   /// connect has to await a platform channel on the hot path.
   Future<void> _refreshBattery() async {
@@ -456,11 +442,9 @@ class _HomeShellState extends State<HomeShell>
     // on requests and on the live socket — cheap, and it makes "I'm going
     // out" able to say "charge your phone first" without a round trip.
     _refreshBattery();
-    // One /tts call in the app's lifetime; every later tap plays from
-    // disk. Deliberately after the first frame — it must never delay
-    // launch.
+    // Warm the live connection after the first frame so the orb can open
+    // without waiting for a new session. No greeting clip is generated here.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _warmGreeting();
       AssistantEngine.instance.prewarmVoice();
     });
     // (The app-open streak that was counted here is gone: the streak is

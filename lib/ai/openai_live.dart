@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:firebase_ai/firebase_ai.dart' show FunctionCall, FunctionResponse;
+import 'package:firebase_ai/firebase_ai.dart'
+    show FunctionCall, FunctionResponse;
 import 'package:web_socket_channel/io.dart';
 
 import '../core/log.dart';
@@ -26,23 +27,30 @@ import 'live_voice.dart';
 /// player already handles by rate.
 class OpenAiLiveConnector implements LiveConnector {
   OpenAiLiveConnector({
-    Future<Map<String, dynamic>?> Function(Map<String, Object?> body)? mintSecret,
+    Future<Map<String, dynamic>?> Function(Map<String, Object?> body)?
+        mintSecret,
     OpenAiLiveSession Function(String model, String secret)? open,
-  })  : _mint = mintSecret ?? ((body) => ApiService.postJson('/ai/realtime/secret', body)),
+  })  : _mint = mintSecret ??
+            ((body) => ApiService.postJson('/ai/realtime/secret', body)),
         _open = open ?? _dial;
 
   final Future<Map<String, dynamic>?> Function(Map<String, Object?> body) _mint;
   final OpenAiLiveSession Function(String model, String secret) _open;
 
   static OpenAiLiveSession _dial(String model, String secret) {
-    final uri = Uri.parse('wss://api.openai.com/v1/realtime?model=${Uri.encodeQueryComponent(model)}');
+    final uri = Uri.parse(
+        'wss://api.openai.com/v1/realtime?model=${Uri.encodeQueryComponent(model)}');
     final channel = IOWebSocketChannel.connect(uri,
-        headers: {'Authorization': 'Bearer $secret'}, pingInterval: const Duration(seconds: 20));
-    return OpenAiLiveSession(channel.stream, (s) => channel.sink.add(s), () => channel.sink.close());
+        headers: {'Authorization': 'Bearer $secret'},
+        pingInterval: const Duration(seconds: 20));
+    return OpenAiLiveSession(
+        channel.stream, (s) => channel.sink.add(s), () => channel.sink.close());
   }
 
   @override
-  Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) async {
+  Future<LiveSessionPort> connect(LiveSetup setup,
+      {String? resumeHandle}) async {
+    final clock = Stopwatch()..start();
     final body = <String, Object?>{
       'model': setup.model,
       'voice': setup.voice,
@@ -51,11 +59,13 @@ class OpenAiLiveConnector implements LiveConnector {
       'tools': [for (final t in setup.tools) liveDeclarationFor(t).toJson()],
     };
     final minted = await _mint(body);
+    final mintMs = clock.elapsedMilliseconds;
     final secret = (minted?['value'] ?? '').toString();
     if (secret.isEmpty) throw StateError('no realtime key from the server');
     final model = (minted?['model'] ?? setup.model).toString();
     final session = _open(model, secret);
     await session.ready.timeout(const Duration(seconds: 12));
+    AppLog.add('live', 'realtime setup token=${mintMs}ms socketReady=${clock.elapsedMilliseconds - mintMs}ms');
     return session;
   }
 }
@@ -64,6 +74,11 @@ class OpenAiLiveConnector implements LiveConnector {
 /// callbacks rather than a socket type, so a test can drive it.
 class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   OpenAiLiveSession(Stream<dynamic> incoming, this._send, this._close) {
+    _out = StreamController<LiveIn>(onListen: () {
+      // connect() waits for OpenAI's acknowledgement before returning, so
+      // the engine can subscribe after this first event has already arrived.
+      if (_serverReady) _out.add(const LiveInReady());
+    });
     // A socket that dies before anyone awaits [ready] must not be an
     // unhandled error; whoever awaits it still gets the failure.
     _ready.future.ignore();
@@ -75,12 +90,16 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
 
   final void Function(String) _send;
   final Future<void> Function() _close;
-  final _out = StreamController<LiveIn>();
+  late final StreamController<LiveIn> _out;
   final _ready = Completer<void>();
+  bool _serverReady = false;
   StreamSubscription<dynamic>? _sub;
   bool _closed = false;
   bool _responding = false;
   bool _cutOff = false;
+  DateTime? _speechStartedAt;
+  Duration? _lastSpeechDuration;
+
   /// The calls of the response in progress. With parallel tool calls one
   /// response can ask for several; they go to the engine together when it
   /// ends, so their answers go back in one batch and ask for ONE reply.
@@ -108,7 +127,9 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   void _onFrame(dynamic frame) {
     Map<String, dynamic> e;
     try {
-      final decoded = frame is String ? jsonDecode(frame) : jsonDecode(utf8.decode(frame as List<int>));
+      final decoded = frame is String
+          ? jsonDecode(frame)
+          : jsonDecode(utf8.decode(frame as List<int>));
       if (decoded is! Map<String, dynamic>) return;
       e = decoded;
     } catch (_) {
@@ -119,30 +140,41 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
     switch (type) {
       case 'session.created':
       case 'session.updated':
+        _serverReady = true;
         if (!_ready.isCompleted) _ready.complete();
-        _emit(const LiveInReady());
+        if (_out.hasListener) _emit(const LiveInReady());
       case 'response.created':
         _responding = true;
       case 'input_audio_buffer.speech_started':
+        _speechStartedAt = DateTime.now();
         // Never an interruption (the owner, 2026-10-02): a voice in the room
         // does not stop her; the Interrupt button does ([cancelReply]).
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        final started = _speechStartedAt;
+        if (started != null) _lastSpeechDuration = DateTime.now().difference(started);
+        _speechStartedAt = null;
         break;
       case 'conversation.item.input_audio_transcription.completed':
         final heard = (e['transcript'] ?? '').toString();
         if (heard.trim().isNotEmpty) {
-          if (plausible(heard)) {
+          if (plausible(heard) &&
+              _transcriptConfidenceOkay(e['logprobs']) &&
+              _transcriptLengthFitsAudio(heard)) {
             _emit(LiveInContent(heard: heard));
           } else {
-            // "Mr. Shankar Bhat" came back in Urdu script (the client,
-            // 2026-10-02): the model heard the audio itself; a caption in a
-            // script nobody here speaks only misleads the fallback.
-            AppLog.add('live', 'realtime: dropped a transcript in an unexpected script');
+            // Low-confidence audio guesses should never be shown as words the
+            // user said (or fed into the text fallback).
+            AppLog.add('live',
+                'realtime: dropped an implausible or low-confidence transcript');
           }
         }
       case 'response.output_audio.delta':
       case 'response.audio.delta':
         final b64 = (e['delta'] ?? '').toString();
-        if (b64.isNotEmpty) _emit(LiveInContent(audio: [(Uint8List.fromList(base64Decode(b64)), 24000)]));
+        if (b64.isNotEmpty)
+          _emit(LiveInContent(
+              audio: [(Uint8List.fromList(base64Decode(b64)), 24000)]));
       case 'response.output_audio_transcript.delta':
       case 'response.audio_transcript.delta':
         final said = (e['delta'] ?? '').toString();
@@ -153,19 +185,24 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         Map<String, Object?> args;
         try {
           final parsed = jsonDecode((e['arguments'] ?? '{}').toString());
-          args = parsed is Map ? parsed.cast<String, Object?>() : <String, Object?>{};
+          args = parsed is Map
+              ? parsed.cast<String, Object?>()
+              : <String, Object?>{};
         } catch (_) {
           args = <String, Object?>{};
         }
-        _calls.add(FunctionCall(name, args, id: (e['call_id'] ?? '').toString()));
+        _calls
+            .add(FunctionCall(name, args, id: (e['call_id'] ?? '').toString()));
       case 'response.done':
         _responding = false;
         final resp = e['response'];
         final status = resp is Map ? '${resp['status'] ?? ''}' : '';
         final output = resp is Map ? resp['output'] : null;
-        final calledTools = output is List && output.any((o) => o is Map && o['type'] == 'function_call');
+        final calledTools = output is List &&
+            output.any((o) => o is Map && o['type'] == 'function_call');
         if (status == 'failed' || status == 'incomplete') {
-          AppLog.add('live', 'realtime response $status: ${resp is Map ? '${resp['status_details'] ?? ''}' : ''}');
+          AppLog.add('live',
+              'realtime response $status: ${resp is Map ? '${resp['status_details'] ?? ''}' : ''}');
         }
         // A response that ends in tool calls is not the end of her turn:
         // OpenAI closes it before the tools run, and she speaks the result
@@ -174,7 +211,8 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         // "no answer" (2026-10-02, the client's search).
         final calls = List.of(_calls);
         _calls.clear();
-        if (calls.isNotEmpty && status != 'cancelled' && status != 'failed') _emit(LiveInToolCall(calls));
+        if (calls.isNotEmpty && status != 'cancelled' && status != 'failed')
+          _emit(LiveInToolCall(calls));
         if (calledTools && status == 'completed') break;
         // The reply they talked over: its turn already ended at the
         // interruption. Told "complete" again, the engine closed the NEW
@@ -187,7 +225,8 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         _emit(const LiveInContent(turnComplete: true));
       case 'error':
         final err = e['error'];
-        final msg = err is Map ? '${err['message'] ?? err['code'] ?? err}' : '$err';
+        final msg =
+            err is Map ? '${err['message'] ?? err['code'] ?? err}' : '$err';
         AppLog.add('live', 'realtime: $msg');
         if (!_ready.isCompleted) _ready.completeError(StateError(msg));
       default:
@@ -198,7 +237,8 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   void _finish() {
     if (_closed) return;
     _closed = true;
-    if (!_ready.isCompleted) _ready.completeError(StateError('the realtime socket closed'));
+    if (!_ready.isCompleted)
+      _ready.completeError(StateError('the realtime socket closed'));
     if (!_out.isClosed) _out.close();
   }
 
@@ -222,8 +262,10 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   }
 
   @override
-  void sendAudio(Uint8List pcm16) =>
-      _event({'type': 'input_audio_buffer.append', 'audio': base64Encode(resample16to24(pcm16))});
+  void sendAudio(Uint8List pcm16) => _event({
+        'type': 'input_audio_buffer.append',
+        'audio': base64Encode(resample16to24(pcm16))
+      });
 
   @override
   void sendText(String text) {
@@ -237,7 +279,44 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
         ],
       },
     });
-    _event({'type': 'response.create'});
+    // Keep every realtime turn spoken. In particular, the opening greeting
+    // must produce audio even when the client is also showing its transcript.
+    _event({
+      'type': 'response.create',
+      'response': {
+        'output_modalities': ['audio']
+      },
+    });
+  }
+
+  /// Speak a fixed one-off line without treating it as conversational input.
+  /// Response-level instructions override session prompts just for this
+  /// greeting, so session copy cannot replace it with an unsolicited welcome.
+  void speakFixedLine(String line) {
+    final words = line.trim();
+    if (words.isEmpty) return;
+    _event({
+      'type': 'response.create',
+      'response': {
+        'conversation': 'none',
+        'input': [
+          {
+            'type': 'message',
+            'role': 'user',
+            'content': [
+              {'type': 'input_text', 'text': words}
+            ],
+          }
+        ],
+        'instructions':
+            'Speak only these exact words: "$words". Do not add a greeting, '
+            'acknowledgment, invitation, or any other words. Use your configured voice.',
+        'tools': [],
+        'tool_choice': 'none',
+        'output_modalities': ['audio'],
+        'max_output_tokens': 32,
+      },
+    });
   }
 
   @override
@@ -245,7 +324,11 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
     for (final r in responses) {
       _event({
         'type': 'conversation.item.create',
-        'item': {'type': 'function_call_output', 'call_id': r.id ?? '', 'output': jsonEncode(r.response)},
+        'item': {
+          'type': 'function_call_output',
+          'call_id': r.id ?? '',
+          'output': jsonEncode(r.response)
+        },
       });
     }
     _event({'type': 'response.create'});
@@ -265,10 +348,37 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
   /// Latin and the Indian scripts are always plausible here; Arabic, CJK,
   /// Cyrillic and the rest only show up when the transcriber guessed wrong.
   static bool plausible(String text) {
-    final letters = text.replaceAll(RegExp(r'[\s\d\p{P}\p{S}]', unicode: true), '');
+    final letters =
+        text.replaceAll(RegExp(r'[\s\d\p{P}\p{S}]', unicode: true), '');
     if (letters.isEmpty) return true;
     final ok = RegExp(r'[A-Za-zÀ-ɏऀ-෿]').allMatches(letters).length;
     return ok / letters.length >= 0.5;
+  }
+
+  static bool _transcriptConfidenceOkay(dynamic raw) {
+    if (raw is! List || raw.isEmpty) return true;
+    final values = <double>[];
+    for (final item in raw) {
+      if (item is Map && item['logprob'] is num) {
+        values.add((item['logprob'] as num).toDouble());
+      }
+    }
+    if (values.isEmpty) return true;
+    final mean = values.reduce((a, b) => a + b) / values.length;
+    return mean >= -1.2;
+  }
+
+  bool _transcriptLengthFitsAudio(String text) {
+    final duration = _lastSpeechDuration;
+    _lastSpeechDuration = null;
+    if (duration == null || duration <= Duration.zero) return true;
+    final words = RegExp(r"[\p{L}\p{N}]+(?:['’][\p{L}]+)?", unicode: true)
+        .allMatches(text)
+        .length;
+    // A brief syllable should not become a full sentence through ASR
+    // hallucination. This is deliberately permissive for natural speech.
+    final maxWords = (duration.inMilliseconds / 1000 * 6 + 1).floor().clamp(3, 60);
+    return words <= maxWords;
   }
 
   /// 16 kHz → 24 kHz, 16-bit mono: two input samples become three, the
@@ -286,7 +396,8 @@ class OpenAiLiveSession implements LiveSessionPort, CancellableReply {
       final t = pos - a;
       final sa = src.getInt16(a * 2, Endian.little);
       final sb = src.getInt16(b * 2, Endian.little);
-      out.setInt16(i * 2, (sa + (sb - sa) * t).round().clamp(-32768, 32767), Endian.little);
+      out.setInt16(i * 2, (sa + (sb - sa) * t).round().clamp(-32768, 32767),
+          Endian.little);
     }
     return out.buffer.asUint8List();
   }
@@ -303,8 +414,10 @@ class SwitchingLiveConnector implements LiveConnector {
   })  : _gemini = gemini ?? FirebaseLiveConnector(),
         _openai = openai ?? OpenAiLiveConnector(),
         _gptLive = gptLive ?? GptLiveConnector(),
-        _viaServer = viaServer ?? (() => AiConfigStore.instance.current.viaServer),
-        _transport = transport ?? (() => AiConfigStore.instance.current.live.transport);
+        _viaServer =
+            viaServer ?? (() => AiConfigStore.instance.current.viaServer),
+        _transport =
+            transport ?? (() => AiConfigStore.instance.current.live.transport);
 
   final LiveConnector _gemini;
   final LiveConnector _openai;
@@ -314,8 +427,9 @@ class SwitchingLiveConnector implements LiveConnector {
 
   @override
   Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) {
-    if (!_viaServer()) return _gemini.connect(setup, resumeHandle: resumeHandle);
-    return (_transport() == 'gpt-live' ? _gptLive : _openai).connect(setup, resumeHandle: resumeHandle);
+    if (!_viaServer())
+      return _gemini.connect(setup, resumeHandle: resumeHandle);
+    return (_transport() == 'gpt-live' ? _gptLive : _openai)
+        .connect(setup, resumeHandle: resumeHandle);
   }
 }
-

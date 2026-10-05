@@ -45,21 +45,27 @@ class GreetingVoice {
   final AudioSink? _sinkOverride;
   final AiConfig Function() _config;
   final Future<Directory> Function() _directory;
+  final Set<String> _prewarming = {};
 
   SpeechEngine? _speechMade;
   SpeechEngine get _speech =>
-      _speechOverride ?? (_speechMade ??= SpeechEngine(port: ModelPorts.cloud(), config: _config));
+      _speechOverride ??
+      (_speechMade ??= SpeechEngine(port: ModelPorts.cloud(), config: _config));
   AudioSink get _sink => _sinkOverride ?? PcmPlayer.instance;
 
   static const _magic = [0x50, 0x43, 0x4D, 0x31]; // "PCM1", then the rate
 
-  /// THE LIVE VOICE (owner, 2026-10-04: "hello sir every time, in the exact
-  /// same voice as her replies"). On GPT-Live the hello is recorded by the
-  /// server from GPT-Live itself, in the voice she answers in. Null: the
-  /// classic voice (Firebase TTS) makes it, as before.
+  /// THE SHARED LIVE VOICE. OpenAI Realtime and GPT-Live both use this same
+  /// fixed female voice. Its greeting is generated once by the backend and
+  /// shared across users, then cached on each phone for instant playback.
   String? _liveVoice() {
     final c = _config();
-    return c.viaServer && c.live.transport == 'gpt-live' ? LiveVoicePrefs.voiceFor(c.live) : null;
+    if (!c.viaServer) return null;
+    if (c.live.transport == 'gpt-live') {
+      return LiveVoicePrefs.voiceFor(c.live);
+    }
+    // The server forces this same preset for Realtime and speech replies.
+    return 'marin';
   }
 
   /// One file per wording AND voice: a new voice is a new greeting.
@@ -67,7 +73,9 @@ class GreetingVoice {
     final m = _config().models;
     final live = _liveVoice();
     final key = sha1
-        .convert(utf8.encode(live != null ? 'gptlive2|$live|$text' : '${m.tts}|${m.ttsVoice}|${m.ttsLanguage}|$text'))
+        .convert(utf8.encode(live != null
+            ? 'shared-live-v4|$live|$text'
+            : '${m.tts}|${m.ttsVoice}|${m.ttsLanguage}|$text'))
         .toString()
         .substring(0, 16);
     return File('${(await _directory()).path}/greet_$key.pcm');
@@ -75,31 +83,36 @@ class GreetingVoice {
 
   /// Synthesise and cache, if it is not already there. Safe to call often.
   Future<void> prewarm(String text) async {
-    if (text.trim().isEmpty) return;
+    final line = text.trim();
+    if (line.isEmpty || !_prewarming.add(line)) return;
     try {
-      final f = await _fileFor(text);
+      final f = await _fileFor(line);
       // A truncated or empty file is worse than none — make it again.
       if (await f.exists() && await f.length() > 2000) return;
       final live = _liveVoice();
       if (live != null) {
         final wav = await ApiService.getBytes(
-            '/ai/voices/$live/greeting?line=${Uri.encodeQueryComponent(text)}');
-        if (wav == null || wav.length < 2044 || utf8.decode(wav.sublist(0, 4), allowMalformed: true) != 'RIFF') {
+            '/ai/voices/$live/greeting-v4?line=${Uri.encodeQueryComponent(line)}');
+        if (wav == null ||
+            wav.length < 2044 ||
+            utf8.decode(wav.sublist(0, 4), allowMalformed: true) != 'RIFF') {
           return;
         }
-        final rate = ByteData.sublistView(wav, 24, 28).getUint32(0, Endian.little);
+        final rate =
+            ByteData.sublistView(wav, 24, 28).getUint32(0, Endian.little);
         final head = ByteData(8);
         for (var i = 0; i < 4; i++) {
           head.setUint8(i, _magic[i]);
         }
         head.setUint32(4, rate, Endian.little);
-        await f.writeAsBytes([...head.buffer.asUint8List(), ...wav.sublist(44)], flush: true);
-        AppLog.add('greeting', 'cached "$text" in the live voice $live');
+        await f.writeAsBytes([...head.buffer.asUint8List(), ...wav.sublist(44)],
+            flush: true);
+        AppLog.add('greeting', 'cached "$line" in the live voice $live');
         return;
       }
       final pcm = BytesBuilder(copy: false);
       var rate = 24000;
-      await for (final c in _speech.synthesizeChunks(text)) {
+      await for (final c in _speech.synthesizeChunks(line)) {
         pcm.add(c.pcm);
         rate = c.sampleRate;
       }
@@ -109,10 +122,13 @@ class GreetingVoice {
         head.setUint8(i, _magic[i]);
       }
       head.setUint32(4, rate, Endian.little);
-      await f.writeAsBytes([...head.buffer.asUint8List(), ...pcm.takeBytes()], flush: true);
-      AppLog.add('greeting', 'cached "$text"');
+      await f.writeAsBytes([...head.buffer.asUint8List(), ...pcm.takeBytes()],
+          flush: true);
+      AppLog.add('greeting', 'cached "$line"');
     } catch (e) {
       AppLog.add('greeting', 'prewarm failed: $e');
+    } finally {
+      _prewarming.remove(line);
     }
   }
 
@@ -145,9 +161,11 @@ class GreetingVoice {
         return false;
       }
       final bytes = await f.readAsBytes();
-      final ok = bytes.length > 8 && [for (var i = 0; i < 4; i++) bytes[i]].join() == _magic.join();
+      final ok = bytes.length > 8 &&
+          [for (var i = 0; i < 4; i++) bytes[i]].join() == _magic.join();
       if (!ok) return false;
-      final rate = ByteData.sublistView(bytes, 4, 8).getUint32(0, Endian.little);
+      final rate =
+          ByteData.sublistView(bytes, 4, 8).getUint32(0, Endian.little);
       await _sink.play(Uint8List.sublistView(bytes, 8), sampleRate: rate);
       return true;
     } catch (e) {
@@ -163,7 +181,8 @@ class GreetingVoice {
       final dir = await _directory();
       for (final e in dir.listSync()) {
         final name = e.uri.pathSegments.isEmpty ? '' : e.uri.pathSegments.last;
-        if (e is File && name.startsWith('greet_') &&
+        if (e is File &&
+            name.startsWith('greet_') &&
             (name.endsWith('.pcm') || name.endsWith('.wav'))) {
           try {
             await e.delete();

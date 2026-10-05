@@ -107,7 +107,14 @@ class TranscriptEntry {
   final TranscriptRole role;
   final String text;
   final DateTime at;
-  TranscriptEntry(this.role, this.text) : at = DateTime.now();
+  final int? startMs;
+  final int? endMs;
+  TranscriptEntry(
+    this.role,
+    this.text, {
+    this.startMs,
+    this.endMs,
+  }) : at = DateTime.now();
 }
 
 // ---------------- tools / cards ----------------

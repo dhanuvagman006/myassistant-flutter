@@ -28,11 +28,26 @@ import '../design/motion.dart';
 /// white rounded groups, one row per destination with a small solid-color
 /// icon tile, hairline separators and a chevron. No decoration that
 /// doesn't inform — the calm look is the design.
-class HubScreen extends StatelessWidget {
+class HubScreen extends StatefulWidget {
   const HubScreen({super.key});
 
   @override
+  State<HubScreen> createState() => _HubScreenState();
+}
+
+class _HubScreenState extends State<HubScreen> {
+  final _featureQuery = TextEditingController();
+  bool _foundFeature = false;
+
+  @override
+  void dispose() {
+    _featureQuery.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    _foundFeature = false;
     return SafeArea(
       bottom: false,
       child: ListView(
@@ -42,6 +57,46 @@ class HubScreen extends StatelessWidget {
         children: [
           // The same large title every tab uses.
           const LargeTitle('Hub'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20, top: 8),
+            child: TextField(
+              controller: _featureQuery,
+              onChanged: (_) => setState(() {}),
+              textInputAction: TextInputAction.search,
+              style: TextStyle(color: Neon.textHi, fontSize: 16),
+              decoration: InputDecoration(
+                hintText: 'Find a feature',
+                hintStyle: TextStyle(color: Neon.textDim),
+                prefixIcon: Icon(Icons.search_rounded, color: Neon.textLo),
+                suffixIcon: _featureQuery.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: Icon(Icons.close_rounded, color: Neon.textLo),
+                        onPressed: () {
+                          _featureQuery.clear();
+                          setState(() {});
+                        },
+                      ),
+                filled: true,
+                fillColor: Neon.surface,
+                contentPadding:
+                    const EdgeInsets.symmetric(vertical: 13, horizontal: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Neon.line),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Neon.line),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Neon.cyan.withValues(alpha: .7)),
+                ),
+              ),
+            ),
+          ),
           _group(context, 'Your day', [
             // The month, moved off Home (2026-09-29): Home shows what is
             // next; everything with a date lives here.
@@ -178,6 +233,15 @@ class HubScreen extends StatelessWidget {
               (c) => const FeaturesScreen(),
             ),
           ]),
+          if (_featureQuery.text.trim().isNotEmpty && !_foundFeature)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+              child: Text(
+                'No features found. Try a shorter search.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Neon.textLo, fontSize: 14),
+              ),
+            ),
         ],
       ),
     );
@@ -189,6 +253,16 @@ class HubScreen extends StatelessWidget {
   // ground. GroupLabel and GroupedCard are the shared pieces: one label
   // style, a hairline edge, and the separators inset past the icon tile.
   Widget _group(BuildContext context, String title, List<_Row> rows) {
+    final query = _featureQuery.text.trim().toLowerCase();
+    final matches = query.isEmpty
+        ? rows
+        : rows
+            .where((r) => '$title ${r.title} ${r.subtitle}'
+                .toLowerCase()
+                .contains(query))
+            .toList();
+    if (matches.isEmpty) return const SizedBox.shrink();
+    _foundFeature = true;
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
       child: Column(
@@ -197,7 +271,7 @@ class HubScreen extends StatelessWidget {
           GroupLabel(title),
           GroupedCard(
             dividerInset: 60,
-            children: [for (final r in rows) _rowTile(context, r)],
+            children: [for (final r in matches) _rowTile(context, r)],
           ),
         ],
       ),

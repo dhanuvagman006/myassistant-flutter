@@ -99,7 +99,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
         configured,
       ].whereType<String>().firstWhere(
             (v) => offered.contains(v),
-            orElse: () => 'gleam',
+            orElse: () => 'shimmer',
           );
       _rules = (r?['instructions'] as List?) ?? [];
     });
@@ -176,7 +176,7 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
       // — show THAT, not a generic failure.
       final why = (r?['message'] ?? "Couldn't save the voice.").toString();
       AppFeedback.show(why, context: context, tone: FeedbackTone.error);
-      await LiveVoicePrefs.setVoice(prev.isEmpty ? 'gleam' : prev);
+      await LiveVoicePrefs.setVoice(prev.isEmpty ? 'shimmer' : prev);
       return;
     }
   }

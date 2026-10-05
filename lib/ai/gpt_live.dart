@@ -8,7 +8,6 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../core/log.dart';
 import '../services/api_service.dart';
 import 'live_voice.dart';
-import 'openai_live.dart';
 
 /// THE FAST VOICE ON GPT-LIVE (the owner's agent, 2026-10-02).
 ///
@@ -130,16 +129,15 @@ class GptLiveConnector implements LiveConnector {
     final sw = Stopwatch()..start();
     try {
       final created = await _create({
-        'sdp': sdp,
-        'instructions': setup.system,
-        // Gemini-shaped declarations; the server turns them into OpenAI's.
-        'tools': [for (final t in setup.tools) liveDeclarationFor(t).toJson()],
+        'transport': {'type': 'webrtc', 'sdp': sdp},
       });
       final transport = created?['transport'];
       final answer = transport is Map ? '${transport['sdp'] ?? ''}' : '';
       if (answer.isEmpty) throw StateError('no GPT-Live session from the server');
-      final id = created?['session'] is Map ? '${(created!['session'] as Map)['id'] ?? ''}' : '';
-      AppLog.add('live', 'gpt-live session $id (server ${sw.elapsedMilliseconds} ms)');
+      final sessionInfo = created?['session'];
+      final id = sessionInfo is Map ? '${sessionInfo['id'] ?? ''}' : '';
+      if (id.isEmpty) throw StateError('the GPT-Live session id is missing');
+      AppLog.add('live', 'gpt-live session created (server ${sw.elapsedMilliseconds} ms)');
       pc.onIceConnectionState = (st) {
         if (st == RTCIceConnectionState.RTCIceConnectionStateConnected) {
           AppLog.add('live', 'gpt-live: network connected ${sw.elapsedMilliseconds} ms after the offer');
@@ -158,7 +156,15 @@ class GptLiveConnector implements LiveConnector {
       final session = GptLiveSession(
         incoming.stream,
         (s) {
-          if (channel.state == RTCDataChannelState.RTCDataChannelOpen) unawaited(channel.send(RTCDataChannelMessage(s)));
+          if (channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+            AppLog.add('live', 'gpt-live: could not send an event; channel is not open');
+            return;
+          }
+          unawaited(channel
+              .send(RTCDataChannelMessage(s))
+              .catchError((Object error) {
+            AppLog.add('live', 'gpt-live: event send failed: ${error.runtimeType}');
+          }));
         },
         () async {
           for (final t in stream.getTracks()) {
@@ -256,7 +262,8 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   /// Quiet after her last word's end before her turn is over.
   final int tailMs;
 
-  final _out = StreamController<LiveIn>();
+  late final _out = StreamController<LiveIn>(onListen: _flushBuffered);
+  final List<LiveIn> _buffered = [];
   final _ready = Completer<void>();
   final _closed = Completer<void>();
   StreamSubscription<String>? _sub;
@@ -272,6 +279,14 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   bool _closing = false;
   bool _disposed = false;
   int _events = 0;
+  String? _activeDelegation;
+  final Map<String, String> _responseForDelegation = {};
+  final Map<String, _DelegationInvocation> _invocations = {};
+  final Map<String, _InvocationRef> _invocationForCall = {};
+  final Map<String, _SubmittedOutput> _clientEvents = {};
+  final Map<String, int> _continuationRetries = {};
+  int _backendInputItems = 0;
+  int _backendInputBytes = 0;
 
   @override
   Stream<LiveIn> get messages => _out.stream;
@@ -279,10 +294,26 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   Future<void> get ready => _ready.future;
 
   void _emit(LiveIn m) {
-    if (!_out.isClosed) _out.add(m);
+    if (_out.isClosed) return;
+    if (!_out.hasListener) {
+      _buffered.add(m);
+    } else {
+      _out.add(m);
+    }
   }
 
-  void _event(Map<String, Object?> e) => _send(jsonEncode({'event_id': 'app_${++_events}', ...e}));
+  void _flushBuffered() {
+    if (_out.isClosed) return;
+    for (final message in _buffered) {
+      _out.add(message);
+    }
+    _buffered.clear();
+  }
+
+  String _eventId() => 'live_${DateTime.now().microsecondsSinceEpoch}_${++_events}';
+
+  void _event(Map<String, Object?> e) =>
+      _send(jsonEncode({'event_id': _eventId(), ...e}));
 
   void _onEvent(String raw) {
     Map<String, dynamic> e;
@@ -297,6 +328,11 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     switch ('${e['type'] ?? ''}') {
       case 'session.started':
         _clock.start();
+        _event({
+          'type': 'session.commentary.append',
+          'delegation_id': null,
+          'content': 'Greet the caller now: Hello Sir\nThen pause and listen.',
+        });
         if (!_ready.isCompleted) _ready.complete();
         _emit(const LiveInReady());
       case 'session.input_transcript.delta':
@@ -306,17 +342,32 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
           _muted = false;
           _speaker?.call(true);
         }
-        if (heard.isNotEmpty && OpenAiLiveSession.plausible(heard)) _emit(LiveInContent(heard: heard));
+        if (heard.isNotEmpty) {
+          _emit(LiveInContent(
+            heard: heard,
+            startMs: _eventMillis(e['start_ms']),
+            endMs: _eventMillis(e['end_ms']),
+          ));
+        }
       case 'session.output_transcript.delta':
         final said = '${e['delta'] ?? ''}';
         if (said.isEmpty) break;
         _speaking = true;
-        _emit(LiveInContent(said: said));
+        _emit(LiveInContent(
+          said: said,
+          startMs: _eventMillis(e['start_ms']),
+          endMs: _eventMillis(e['end_ms']),
+        ));
         _armTurnEnd(e['end_ms']);
       case 'session.delegation.created':
+        final delegation = e['delegation'];
+        _activeDelegation = delegation is Map
+            ? '${delegation['id'] ?? ''}'
+            : '${e['delegation_id'] ?? ''}';
+        if (_activeDelegation!.isEmpty) _activeDelegation = null;
         _work(null);
       case 'response.event':
-        _onBackend(e['event']);
+        _onBackend(e['event'], '${e['delegation_id'] ?? _activeDelegation ?? ''}');
       case 'session.usage.updated':
         final u = e['usage'];
         if (u is Map) AppLog.add('live', 'gpt-live: ${u['seconds']} s so far');
@@ -324,7 +375,8 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         final err = e['error'];
         final msg = err is Map ? '${err['message'] ?? err['code'] ?? err}' : '$err';
         AppLog.add('live', 'gpt-live: $msg');
-        if (_pending) _done();
+        _handleClientError(err);
+        if (_pending && !_hasOpenInvocation) _done();
         if (!_ready.isCompleted) _ready.completeError(StateError(msg));
       case 'session.closed':
         AppLog.add('live', 'gpt-live closed (${e['reason'] ?? 'no reason'})');
@@ -336,37 +388,92 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   }
 
   /// The backend model's own events, wrapped: its finished function calls
-  /// are the app's to run.
-  void _onBackend(Object? inner) {
+  /// are the app's to run. The outer delegation id is part of the routing
+  /// context; response.output is not used because it is intentionally empty.
+  void _onBackend(Object? inner, String delegationId) {
     if (inner is! Map) return;
     final type = '${inner['type'] ?? ''}';
     final added = inner['item'] is Map ? inner['item'] as Map : const {};
-    if (!_pending && type == 'response.created') _work(null);
+    final response = inner['response'] is Map ? inner['response'] as Map : const {};
+    final responseId = '${response['id'] ?? inner['response_id'] ?? ''}';
+    if (type == 'response.created') {
+      final id = responseId.isNotEmpty ? responseId : '${inner['id'] ?? ''}';
+      if (delegationId.isNotEmpty && id.isNotEmpty) {
+        _responseForDelegation[delegationId] = id;
+        _invocations.putIfAbsent(_invocationKey(delegationId, id), _DelegationInvocation.new);
+      }
+      _work(null);
+    }
     if (_pending) _armStall();
     if (type == 'response.output_item.added' && added['type'] == 'web_search_call') _work('web_search');
-    if (type == 'response.completed' || type == 'response.failed' || type == 'response.incomplete') {
-      final resp = inner['response'];
-      final out = resp is Map ? resp['output'] : null;
-      final calls = out is List && out.any((o) => o is Map && o['type'] == 'function_call');
-      if (type != 'response.completed') AppLog.add('live', 'gpt-live backend: $type');
-      // A function call is the phone's to answer; the work goes on.
-      if (!calls || type != 'response.completed') _done();
+    if (type == 'response.completed') {
+      final id = responseId.isNotEmpty
+          ? responseId
+          : _responseForDelegation[delegationId] ?? '';
+      final key = _invocationKey(delegationId, id);
+      final invocation = _invocations.remove(key);
+      if (invocation != null && invocation.calls.isNotEmpty) {
+        for (final call in invocation.calls) {
+          final callId = call.id ?? '';
+          if (callId.isNotEmpty) {
+            _invocationForCall[callId] = _InvocationRef(delegationId, id);
+          }
+        }
+        _emit(LiveInToolCall(
+          List<FunctionCall>.unmodifiable(invocation.calls),
+          delegationId: delegationId,
+        ));
+      } else if (!_hasOpenInvocation) {
+        _done();
+      }
+      return;
+    }
+    if (type == 'response.failed' || type == 'response.incomplete') {
+      AppLog.add('live', 'gpt-live backend: $type');
+      final id = responseId.isNotEmpty
+          ? responseId
+          : _responseForDelegation[delegationId] ?? '';
+      _invocations.remove(_invocationKey(delegationId, id));
+      if (!_hasOpenInvocation) _done();
       return;
     }
     if (type != 'response.output_item.done') return;
     final item = inner['item'] is Map ? inner['item'] as Map : inner;
     final name = '${item['name'] ?? ''}';
-    if (name.isEmpty || (item['type'] != null && item['type'] != 'function_call')) return;
+    final callId = '${item['call_id'] ?? ''}';
+    if (name.isEmpty || callId.isEmpty || item['type'] != 'function_call') return;
+    final id = responseId.isNotEmpty
+        ? responseId
+        : _responseForDelegation[delegationId] ?? '';
+    if (delegationId.isEmpty || id.isEmpty) {
+      AppLog.add('live', 'gpt-live: function call had no delegation/response id');
+      return;
+    }
     Map<String, Object?> args;
     try {
       final parsed = jsonDecode('${item['arguments'] ?? '{}'}');
-      args = parsed is Map ? parsed.cast<String, Object?>() : <String, Object?>{};
+      if (parsed is! Map) throw const FormatException('arguments must be an object');
+      args = parsed.cast<String, Object?>();
     } catch (_) {
-      args = <String, Object?>{};
+      AppLog.add('live', 'gpt-live: discarded malformed function arguments');
+      return;
     }
+    final invocation = _invocations.putIfAbsent(
+      _invocationKey(delegationId, id),
+      _DelegationInvocation.new,
+    );
+    if (invocation.calls.any((call) => call.id == callId)) return;
     _turnEnd?.cancel();
-    _emit(LiveInToolCall([FunctionCall(name, args, id: '${item['call_id'] ?? ''}')]));
+    invocation.calls.add(FunctionCall(name, args, id: callId));
   }
+
+  String _invocationKey(String delegationId, String responseId) =>
+      '$delegationId\u0000$responseId';
+
+  bool get _hasOpenInvocation => _invocations.values.any((b) => b.calls.isNotEmpty);
+
+  int? _eventMillis(Object? value) =>
+      value is num && value >= 0 ? value.toInt() : null;
 
   /// The backend took their request: show it working (again, once her
   /// "let me check" has been said).
@@ -434,18 +541,100 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   @override
   void sendText(String text) {
     final t = text.length > 1800 ? text.substring(0, 1800) : text;
-    _event({'type': 'session.instructions.append', 'delegation_id': null, 'content': t});
+    _event({'type': 'session.commentary.append', 'delegation_id': null, 'content': t});
   }
 
   @override
   void sendToolResponses(List<FunctionResponse> responses) {
-    for (final r in responses) {
-      _event({
-        'type': 'response.item.create',
-        'item': {'type': 'function_call_output', 'call_id': r.id ?? '', 'output': jsonEncode(r.response)},
-      });
+    final batches = <String, _OutputBatch>{};
+    for (final response in responses) {
+      final callId = response.id ?? '';
+      final invocation = _invocationForCall[callId];
+      if (callId.isEmpty || invocation == null || invocation.delegationId.isEmpty) {
+        AppLog.add('live', 'gpt-live: dropped an uncorrelated tool result');
+        continue;
+      }
+      final outputKey = '${invocation.key}\u0000$callId';
+      if (_submittedOutputs.contains(outputKey)) continue;
+      final item = <String, Object?>{
+        'type': 'function_call_output',
+        'call_id': callId,
+        'output': jsonEncode(response.response),
+      };
+      batches.putIfAbsent(
+        invocation.key,
+        () => _OutputBatch(invocation),
+      ).items.add(item);
     }
-    _event({'type': 'response.create'});
+
+    for (final entry in batches.entries) {
+      final batch = entry.value;
+      final outputs = batch.items;
+      final byteCount = outputs.fold<int>(
+        0,
+        (total, item) => total + utf8.encode(jsonEncode(item)).length,
+      );
+      if (_backendInputItems + outputs.length > _maxBackendInputItems ||
+          _backendInputBytes + byteCount > _maxBackendInputBytes) {
+        AppLog.add('live', 'gpt-live: delegated result batch exceeds input budget');
+        continue;
+      }
+      _backendInputItems += outputs.length;
+      _backendInputBytes += byteCount;
+      for (final item in outputs) {
+        final callId = '${item['call_id']}';
+        final outputKey = '${batch.invocation.key}\u0000$callId';
+        _submittedOutputs.add(outputKey);
+        _sendOutput(batch.invocation, item);
+      }
+      _sendContinuation(batch.invocation);
+    }
+  }
+
+  final Set<String> _submittedOutputs = {};
+  final Map<String, int> _outputRetries = {};
+
+  void _sendOutput(_InvocationRef invocation, Map<String, Object?> item) {
+    final id = _eventId();
+    final envelope = <String, Object?>{
+      'event_id': id,
+      'type': 'response.item.create',
+      'delegation_id': invocation.delegationId,
+      'item': item,
+    };
+    _clientEvents[id] = _SubmittedOutput.item(invocation, item);
+    _send(jsonEncode(envelope));
+  }
+
+  void _sendContinuation(_InvocationRef invocation) {
+    final id = _eventId();
+    _clientEvents[id] = _SubmittedOutput.continuation(invocation);
+    _send(jsonEncode({'event_id': id, 'type': 'response.create'}));
+  }
+
+  void _handleClientError(Object? error) {
+    if (error is! Map) return;
+    final eventId = '${error['client_event_id'] ?? ''}';
+    if (eventId.isEmpty) return;
+    final failed = _clientEvents.remove(eventId);
+    if (failed == null) return;
+    final message = '${error['message'] ?? error['code'] ?? 'request rejected'}';
+    if (failed.isItem) {
+      AppLog.add('live', 'gpt-live: result item rejected: $message');
+      final key = '${failed.invocation.key}\u0000${failed.item!['call_id']}';
+      final attempts = _outputRetries[key] ?? 0;
+      if (attempts == 0) {
+        _outputRetries[key] = 1;
+        _sendOutput(failed.invocation, failed.item!);
+      }
+      return;
+    }
+    AppLog.add('live', 'gpt-live: continuation rejected: $message');
+    final retries = _continuationRetries[failed.invocation.key] ?? 0;
+    if (retries == 0) {
+      _continuationRetries[failed.invocation.key] = 1;
+      _sendContinuation(failed.invocation);
+    }
   }
 
   /// The stop button: her voice goes quiet here until they speak again.
@@ -503,3 +692,41 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     await _dispose().catchError((Object _) {});
   }
 }
+
+class _DelegationInvocation {
+  final List<FunctionCall> calls = [];
+}
+
+class _InvocationRef {
+  const _InvocationRef(this.delegationId, this.responseId);
+
+  final String delegationId;
+  final String responseId;
+  String get key => '$delegationId\u0000$responseId';
+}
+
+class _OutputBatch {
+  _OutputBatch(this.invocation);
+
+  final _InvocationRef invocation;
+  final List<Map<String, Object?>> items = [];
+}
+
+class _SubmittedOutput {
+  const _SubmittedOutput._(this.invocation, this.item);
+
+  const _SubmittedOutput.item(
+    _InvocationRef invocation,
+    Map<String, Object?> item,
+  ) : this._(invocation, item);
+
+  const _SubmittedOutput.continuation(_InvocationRef invocation)
+      : this._(invocation, null);
+
+  final _InvocationRef invocation;
+  final Map<String, Object?>? item;
+  bool get isItem => item != null;
+}
+
+const _maxBackendInputItems = 128;
+const _maxBackendInputBytes = 32768;
