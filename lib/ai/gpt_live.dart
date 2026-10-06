@@ -748,10 +748,14 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
 
   void _sendOutput(_InvocationRef invocation, Map<String, Object?> item) {
     final id = _eventId();
+    // NO delegation_id HERE (2026-10-06, production): GPT-Live rejects it on
+    // response.item.create ("Unknown parameter: 'delegation_id'"), the result
+    // never arrives, the continuation is refused ("Submit the pending tool
+    // results…"), and she says "one moment" and never answers. The result
+    // is matched to its call by call_id alone.
     final envelope = <String, Object?>{
       'event_id': id,
       'type': 'response.item.create',
-      'delegation_id': invocation.delegationId,
       'item': item,
     };
     _clientEvents[id] = _SubmittedOutput.item(invocation, item);
