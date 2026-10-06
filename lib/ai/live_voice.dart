@@ -928,7 +928,28 @@ class LiveVoice {
   /// the server, then connect and setup). True when it is ready. Safe to
   /// call often: one connection at a time.
   Future<bool> warm() {
-    if (_session != null || _reconnecting) return Future.value(true);
+    // THE VOICE CHANGED (2026-10-06, "open voice settings"): a session's
+    // voice is fixed when it starts, so a warmed or standby one in the old
+    // voice is closed and the next one starts in the new.
+    final held = _setup;
+    if (_session != null && !_reconnecting && !_micOn && held != null &&
+        held.voice != LiveVoicePrefs.voiceFor(_configs.current.live)) {
+      AppLog.add('live', 'voice changed (${held.voice} -> '
+          '${LiveVoicePrefs.voiceFor(_configs.current.live)}): new session');
+      _stopped = false;
+      return _connecting ??= () async {
+        _idle?.cancel();
+        await _closeSession();
+        return _connectFresh();
+      }()
+          .whenComplete(() => _connecting = null);
+    }
+    if (_session != null || _reconnecting) {
+      // A GPT-Live session kept on standby after stop() is this new
+      // conversation's: it is not stopped any more.
+      if (_session != null) _stopped = false;
+      return Future.value(true);
+    }
     // stop() closes the previous session. A new foreground prewarm is a
     // fresh lifecycle, so it must be allowed to establish a replacement.
     _stopped = false;
@@ -954,6 +975,12 @@ class LiveVoice {
     var contextMs = 0;
     var openMs = 0;
     try {
+      // GPT-Live's phone side (microphone, offer, ICE: ~0.8 s) does not
+      // need this connect's config: start it now on the copy already held.
+      final held = _configs.current;
+      if (held.viaServer && held.live.transport == 'gpt-live' && _prepareGptLive) {
+        GptLiveConnector.prepare();
+      }
       // These reads are independent; doing them in parallel removes a
       // config-store and platform-channel round trip from the setup path.
       final setupReads = await Future.wait<Object?>([
@@ -970,8 +997,8 @@ class LiveVoice {
         return false;
       }
       // The call's phone side is built while the context is fetched.
-      if (all.viaServer && cfg.transport == 'gpt-live' && _prepareGptLive)
-        GptLiveConnector.prepare();
+      final gptLive = all.viaServer && cfg.transport == 'gpt-live';
+      if (gptLive && _prepareGptLive) GptLiveConnector.prepare();
       final contextStarted = _now();
       final ctx = await _server.context(
         text: '',
@@ -979,6 +1006,7 @@ class LiveVoice {
         sessionId: _brain.sessionId,
         device: device,
         timeout: timeouts.context,
+        transport: gptLive ? 'gpt-live' : null,
       );
       contextMs = (_now() - contextStarted) ~/ 1000;
       if (ctx == null) {
@@ -1181,15 +1209,19 @@ class LiveVoice {
   /// microphone already opening. OpenAI gets a response-level directive so
   /// the session prompt cannot substitute another welcome. False when no
   /// session is ready or another turn is already underway.
-  Future<bool> greet(String instruction) async {
+  Future<bool> greet(String instruction, {String openingLine = 'Hello Sir.'}) async {
     final s = _session;
     if (s == null || _reconnecting || _stopped) return false;
     if (room.speaking || turnOpen) return false;
     _turn = _LiveTurn(++_turns)..opening = true;
     final done = Completer<bool>();
     _openingGreetingDone = done;
-    if (s is OpenAiLiveSession) {
-      s.speakFixedLine('Hello sir.');
+    if (s is GptLiveSession) {
+      // The server's line for this user ("Hello Sir" / "Hello Madam"),
+      // spoken by the session itself — the same voice as every reply.
+      if (!s.greetOpening()) s.sendText(instruction);
+    } else if (s is OpenAiLiveSession) {
+      s.speakFixedLine(openingLine);
     } else {
       s.sendText(instruction);
     }
@@ -1207,6 +1239,20 @@ class LiveVoice {
         return false;
       },
     );
+  }
+
+  /// HELD WHILE THE RECORDED OPENING PLAYS (2026-10-06): the loudspeaker's
+  /// "Hello Sir" must not reach her as if they had said it. Only the
+  /// microphone's track is held; the session and the turn are untouched.
+  void holdMicTrack(bool held) {
+    if (!_micOn) return;
+    if (_session case final OwnsAudio own) own.setMicOpen(!held);
+  }
+
+  /// What she should know without saying it (GPT-Live: thinking context).
+  void tellSilently(String text) {
+    final s = _session;
+    if (s is GptLiveSession) s.sendThinking(text);
   }
 
   /// The microphone is let go (typing, the camera, a cascade turn); the
@@ -1310,6 +1356,18 @@ class LiveVoice {
     }
   }
 
+  /// Like [stop], but the session is closed even where [stop] would keep it
+  /// on standby: it failed (no opening line came), so the next tap must not
+  /// be given it again.
+  Future<void> discard() async {
+    await stop();
+    _idle?.cancel();
+    if (_session != null) {
+      AppLog.add('live', 'session discarded: the next conversation starts a new one');
+      await _closeSession();
+    }
+  }
+
   /// The conversation is over: microphone, session and timers go. The
   /// player is the engine's.
   Future<void> stop() async {
@@ -1330,6 +1388,10 @@ class LiveVoice {
       _finish(t, quiet: true);
     }
     _turn = null;
+    // A GPT-Live session is never put back on standby for the next tap
+    // (2026-10-06, measured): one that has had a conversation queued the
+    // next opening request and never said it. It closes here; the engine
+    // warms a fresh one, which answers its opening in ~1.5-2 s.
     if (_micOn) {
       _micOn = false;
       if (_session case final OwnsAudio own) {

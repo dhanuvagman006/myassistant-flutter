@@ -41,6 +41,8 @@ import '../../../screens/focus_screen.dart';
 import '../../../screens/avatar_identity_screen.dart';
 import '../../../screens/connected_apps_screen.dart';
 import '../../../screens/shortcuts_screen.dart';
+import '../../../services/voice_choice.dart';
+import '../../../screens/voice_picker_screen.dart';
 import '../../../models/shortcut.dart';
 import '../../../services/shortcut_runner.dart';
 import '../../../services/turn_audio_uploader.dart';
@@ -318,7 +320,9 @@ class AssistantEngine extends ChangeNotifier {
       // A cache miss falls back to a fixed-line response from the Live voice.
       _lastGreetedAt = now;
       _openingDue = true;
-      _openingClip = _playOpeningGreeting();
+      // GPT-Live says the opening itself, in the session's voice: never a
+      // recorded clip in another voice before it (2026-10-06).
+      if (!_gptLive) _openingClip = _playOpeningGreeting();
     } else if (now.difference(_lastGreetedAt) >= _greetCooldown &&
         MissedCallsService.instance.hasUnmentioned) {
       // CALLS WERE MISSED: the greeting is the one that mentions them,
@@ -327,7 +331,7 @@ class AssistantEngine extends ChangeNotifier {
       _helloInMention = true;
     } else if (now.difference(_lastGreetedAt) >= _greetCooldown) {
       _lastGreetedAt = now;
-      const hello = 'Hello sir.';
+      final hello = _openingLine;
       // The microphone opens only once this has played: it comes out of
       // the same loudspeaker, and heard, it would be the owner's first
       // words.
@@ -374,7 +378,7 @@ class AssistantEngine extends ChangeNotifier {
   Future<bool>? _openingClip;
 
   Future<bool> _playOpeningGreeting() async {
-    const line = 'Hello sir.';
+    final line = _openingLine;
     greetingPlaying = true;
     _captionLine('hari', line);
     notifyListeners();
@@ -951,6 +955,29 @@ class AssistantEngine extends ChangeNotifier {
   /// closes itself ([AiLive.idleCloseSec]).
   void prewarmVoice() {
     if (_voiceOn || !_liveWanted) return;
+    unawaited(_prewarmVoice());
+  }
+
+  Future<void> _prewarmVoice() async {
+    // Which voice this is comes from the server's config; at app start it
+    // may still be loading.
+    await AiConfigStore.instance.get();
+    if (_voiceOn || !_liveWanted) return;
+    // GPT-Live bills every connected second, silence included. The phone's
+    // half of the call is always made ready (it is free: no microphone, no
+    // session). The session itself is warmed when the server allows it, and
+    // an unused one closes after the served standby (AiLive.idleCloseSec).
+    // No cooldown (2026-10-06): one used to block the warm-up when the
+    // previous one had just closed, so that tap connected from nothing.
+    // warm() does nothing while a session is open or connecting.
+    if (_gptLive) {
+      GptLiveConnector.prepare();
+      // The recorded opening in this voice, ready before the tap.
+      unawaited(_prewarmOpeningGreeting());
+      if (!AiConfigStore.instance.current.live.prewarm) return;
+      unawaited(_live.warm().catchError((Object _) => false));
+      return;
+    }
     // Have the speaker stream ready before the user taps. Live can answer
     // the opening greeting while Android is bringing up the microphone.
     unawaited(_player.warm());
@@ -960,7 +987,45 @@ class AssistantEngine extends ChangeNotifier {
 
   Future<void> _prewarmOpeningGreeting() async {
     await Future.wait([AiConfigStore.instance.get(), LiveVoicePrefs.load()]);
-    await GreetingVoice.instance.prewarm('Hello sir.');
+    await GreetingVoice.instance.prewarm(_openingLine);
+  }
+
+  /// Between the tap and the recorded opening: the orb shows connecting.
+  bool openingPending = false;
+
+  /// Plays the recorded opening 1.5 s after the tap, on the call stream
+  /// (the live voice's volume). The microphone is held only while it plays,
+  /// so the loudspeaker is not heard as them; GPT-Live is then told it was
+  /// said, so it does not greet again. Skipped when they spoke first.
+  Future<void> _recordedOpening(int epoch, DateTime tappedAt) async {
+    final line = _openingLine;
+    final wait = const Duration(milliseconds: 1500) - DateTime.now().difference(tappedAt);
+    if (wait > Duration.zero) await Future<void>.delayed(wait);
+    openingPending = false;
+    if (epoch != _voiceEpoch || !_voiceOn) {
+      notifyListeners();
+      return;
+    }
+    if (_live.turnOpen) {
+      AppLog.add('voice', 'recorded opening skipped: they spoke first');
+      notifyListeners();
+      return;
+    }
+    greetingPlaying = true;
+    _captionLine('hari', line);
+    notifyListeners();
+    _live.holdMicTrack(true);
+    final played = await GreetingVoice.instance.playOnCall(line);
+    _live.holdMicTrack(false);
+    greetingPlaying = false;
+    notifyListeners();
+    if (played) {
+      _live.tellSilently('You have just greeted them with "$line" to open this '
+          'conversation. Do not greet again; listen and answer what they say.');
+    }
+    AppLog.add('voice', played
+        ? 'recorded opening played ${DateTime.now().difference(tappedAt).inMilliseconds} ms after the tap'
+        : 'recorded opening could not play');
   }
 
   /// HER HELLO ON THE FAST VOICE: said by Live itself, in the voice she
@@ -971,20 +1036,21 @@ class AssistantEngine extends ChangeNotifier {
       return false;
     // Keep the realtime opener short and deterministic. The realtime voice
     // says this itself after the mic is live; no separately recorded clip.
-    const line = 'Hello sir.';
+    final line = _openingLine;
     // GPT-Live speaks first only when told plainly to begin now (OpenAI's
     // guide: say what to say, that it starts immediately, then listen).
     final said = await _live.greet(
         '[SYSTEM] Speak first, right now, in English: say exactly '
         '"$line" and nothing before or after it. Then stop and listen. BUT if I '
-        'have already said something, skip the greeting and answer what I said.');
+        'have already said something, skip the greeting and answer what I said.',
+        openingLine: line);
     if (!said) AppLog.add('voice', 'hello skipped: he was already talking');
     return said;
   }
 
   /// The classic voice's greeting, when the fast voice could not start.
   Future<void> _greetOnCascade() async {
-    await _sayGreeting('Hello sir.');
+    await _sayGreeting(_openingLine);
   }
 
   /// THE GREETING MENTIONS MISSED CALLS, ONCE.
@@ -1186,6 +1252,8 @@ class AssistantEngine extends ChangeNotifier {
     _listening = false;
     _sayEpoch++;
     greetingPlaying = false;
+    openingPending = false;
+    unawaited(GreetingVoice.instance.stopOnCall());
     _notes.clear();
     if (was) {
       AppLog.add('voice', 'conversation ends');
@@ -1228,6 +1296,12 @@ class AssistantEngine extends ChangeNotifier {
     } catch (_) {}
     micLevel = 0;
     partial = '';
+    // THE NEXT TAP FINDS A SESSION WAITING (2026-10-06): standby keeps the
+    // one just used; when there was none (the classic voice answered, or it
+    // was discarded), one is warmed now instead of at the next tap.
+    if (was && _foreground && _liveWanted) {
+      unawaited(Future<void>.delayed(const Duration(milliseconds: 500), prewarmVoice));
+    }
   }
 
   /// Listens for the owner's next words — when the conversation is on and
@@ -1457,18 +1531,39 @@ class AssistantEngine extends ChangeNotifier {
       _openingClip = null;
       if (openingClip != null && await openingClip) _openingDue = false;
       if (epoch != _voiceEpoch || !_voiceOn) return;
-      if (_openingDue) {
+      if (_openingDue && _gptLive && await GreetingVoice.instance.isReady(_openingLine)) {
+        // THE RECORDED OPENING (2026-10-06, the owner's design): GPT-Live
+        // takes ~1.5-2 s to start speaking, so its own "Hello Sir", recorded
+        // once in this voice, plays 1.5 s after the tap, while the
+        // microphone is ALREADY open: what they say is heard at once.
+        _openingDue = false;
+        openingPending = true;
+        notifyListeners();
+        unawaited(_recordedOpening(epoch, wokeAt));
+        ok = await _live.start();
+      } else if (_openingDue) {
         // Connect first, then finish the greeting before opening the mic.
         // Otherwise buffered speech can arrive at the model before its hello.
         final ready = await _live.warm();
         if (epoch != _voiceEpoch || !_voiceOn) return;
         _openingDue = false;
         if (ready) {
-          final greeted = await _greetOnLive(epoch);
+          var greeted = await _greetOnLive(epoch);
+          if (!greeted && _gptLive && epoch == _voiceEpoch && _voiceOn) {
+            // ONE FRESH TRY (2026-10-06): a session that does not say the
+            // opening line is broken; it is thrown away, never put back on
+            // standby for the next tap, and a new one is connected.
+            AppLog.add('voice', 'no opening from that session: connecting a new one');
+            await _live.discard();
+            if (epoch == _voiceEpoch && _voiceOn && await _live.warm()) {
+              greeted = await _greetOnLive(epoch);
+            }
+          }
+          if (epoch != _voiceEpoch || !_voiceOn) return;
           if (!greeted) {
             // If Live could not say the opener, keep the fallback greeting
             // and the rest of this conversation on the same speech path.
-            await _live.stop();
+            await _live.discard();
             await _greetOnCascade();
           }
           ok = greeted && await _live.start();
@@ -2426,6 +2521,19 @@ class AssistantEngine extends ChangeNotifier {
   /// them Sir"). Ma'am when the profile says female, Sir otherwise — never
   /// "<name> ji". The server tells the model the same thing, so the voice
   /// and this greeting never disagree.
+  /// The opening line (2026-10-06): "Hello Madam." when the profile says
+  /// female, "Hello Sir." otherwise. GPT-Live gets the same from the server.
+  static String openingLine({String? gender}) =>
+      (gender ?? '').trim().toLowerCase() == 'female' ? 'Hello Madam.' : 'Hello Sir.';
+
+  String get _openingLine => openingLine(gender: AuthService.instance.user?.gender);
+
+  /// The fast voice is GPT-Live (WebRTC, server-built agent).
+  bool get _gptLive {
+    final c = AiConfigStore.instance.current;
+    return c.viaServer && c.live.transport == 'gpt-live';
+  }
+
   static String honorific({String? name, String? gender}) {
     return (gender ?? '').trim().toLowerCase() == 'female' ? "Ma'am" : 'Sir';
   }
@@ -2878,7 +2986,9 @@ class AssistantEngine extends ChangeNotifier {
           // means the Messages thread list, pushed from the Hub.
           // Chats (meetings) took Nearby's tab (2026-10-04); Nearby is pushed.
           const tabs = {'home': 0, 'hub': 1, 'meetings': 2, 'settings': 3};
-          if (tabs.containsKey(screen)) {
+          if (screen == 'voice_settings') {
+            unawaited(_openVoiceSettings());
+          } else if (tabs.containsKey(screen)) {
             HomeShell.requestedTab.value = tabs[screen];
           } else {
             final nav = AvatarMessageService.navigatorKey.currentState;
@@ -4548,7 +4658,49 @@ class AssistantEngine extends ChangeNotifier {
 
   /// Whether a voice command can open [screen] (open_app_screen).
   @visibleForTesting
-  bool canOpenAppScreen(String screen) => _appScreenBuilder(screen) != null;
+  bool canOpenAppScreen(String screen) =>
+      screen == 'voice_settings' || _appScreenBuilder(screen) != null;
+
+  /// "OPEN VOICE SETTINGS" (2026-10-06). The conversation ends once her
+  /// "Opening voice settings." has played — a session's voice is fixed, so
+  /// the new one can only start fresh — then the picker opens, where every
+  /// voice's sample can be heard. The pick is saved (VoiceChoice), and the
+  /// fast voice is warmed in it, so the next tap is answered in that voice.
+  Future<void> _openVoiceSettings() async {
+    AppLog.add('voice', 'voice settings asked for: ending the conversation');
+    _endAfterTurn = true;
+    if (_listening) unawaited(_stopListening());
+    if (!_turnRunning) unawaited(_endWhenQuiet());
+    final until = DateTime.now().add(const Duration(seconds: 12));
+    while ((_voiceOn || inlineVoice) && DateTime.now().isBefore(until)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    if (_voiceOn || inlineVoice) await leaveConversation(chime: false);
+    final nav = AvatarMessageService.navigatorKey.currentState;
+    if (nav == null) {
+      AppLog.add('voice', 'voice settings: no screen to open them on');
+      return;
+    }
+    await LiveVoicePrefs.load();
+    final live = (await AiConfigStore.instance.get()).live;
+    final current = LiveVoicePrefs.voiceFor(live);
+    final picked = await nav.push<String>(
+      MaterialPageRoute(builder: (_) => VoicePickerScreen(selectedId: current)),
+    );
+    if (picked == null || picked.toLowerCase() == current.toLowerCase()) return;
+    final why = await VoiceChoice.save(picked);
+    if (why != null) {
+      AppFeedback.toast(why);
+      return;
+    }
+    final name = '${picked[0].toUpperCase()}${picked.substring(1)}';
+    AppLog.add('voice', 'voice changed to $picked');
+    AppFeedback.toast('Voice set to $name. Tap the orb to hear it.');
+    // Connected now in the new voice (warm() replaces the old session).
+    if (_liveWanted && _foreground) {
+      unawaited(_live.warm().catchError((Object _) => false));
+    }
+  }
 
   /// When the conversation was last closed for a task rather than by the
   /// owner: its last line ("On it…") is not an answer to keep on screen.

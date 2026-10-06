@@ -710,6 +710,18 @@ class MainActivity : FlutterFragmentActivity() {
                     // "Listening". A loss here changes nothing.
                     "audioFocus" -> result.success(
                         conversationFocus(ctx, call.argument<Boolean>("on") == true))
+                    // The recorded opening, on the same stream and volume as
+                    // the live voice (VoiceClip). Answers when it has played.
+                    "playVoiceClip" -> {
+                        val pcm = call.argument<ByteArray>("pcm")
+                        val rate = call.argument<Int>("rate") ?: 24000
+                        if (pcm == null) result.success(false)
+                        else VoiceClip.play(ctx, pcm, rate) { ok -> result.success(ok) }
+                    }
+                    "stopVoiceClip" -> {
+                        VoiceClip.stop()
+                        result.success(true)
+                    }
                     "torch" -> result.success(
                         DeviceControl.torch(ctx, call.argument<Boolean>("on") == true))
                     "volume" -> result.success(

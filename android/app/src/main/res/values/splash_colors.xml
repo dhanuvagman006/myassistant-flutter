@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The splash's night (lib/screens/splash_screen.dart): no white flash
+         between tapping the icon and the first Flutter frame. -->
+    <color name="splash_bg">#05060D</color>
+</resources>

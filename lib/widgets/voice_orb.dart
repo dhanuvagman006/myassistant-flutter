@@ -67,6 +67,11 @@ enum OrbMood {
   /// The turn landed: one outward pulse in green into cyan.
   done,
 
+  /// The voice is getting ready (2026-10-06, the owner: "add the
+  /// connecting animation"): violet into cyan, a quick ripple running out
+  /// through the rings and the light running round the inner ring.
+  connecting,
+
   /// The mic is paused while he types: idle's colours, holding still —
   /// no frames while the keyboard moves (test/smoothness_test.dart).
   paused,
@@ -120,6 +125,7 @@ class _MoodLight {
       OrbMood.responding => _MoodLight(act[0], act[1], 0.42, 0.80, act[0]),
       OrbMood.speaking => _MoodLight(pink, act[0], 0.52, 1.0, pink),
       OrbMood.done => _MoodLight(ok[0], ok[1], 0.62, 1.0, ok[0]),
+      OrbMood.connecting => _MoodLight(info[1], tip[0], 0.55, 0.90, info[1]),
     };
   }
 }
@@ -576,7 +582,7 @@ class _BackdropScene extends ChangeNotifier {
 
   /// Eased 0..1: thinking; the voice's loudness; idle's calm breath; her
   /// voice's sway (2026-09-30: the ribbons sway only while she speaks).
-  double think = 0, glow = 0, calm = 0, swayK = 0;
+  double think = 0, glow = 0, calm = 0, swayK = 0, wait = 0;
 
   /// Each moving tier's push (a share of its radius) and its speed.
   final Float64List x = Float64List(5), v = Float64List(5);
@@ -622,6 +628,7 @@ class _BackdropScene extends ChangeNotifier {
     glow = 0;
     calm = 0;
     swayK = 0;
+    wait = 0;
     pulse = _pulseEnd;
   }
 
@@ -667,7 +674,10 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
 
   /// The working light's strength in this mood.
   double get _arcTarget =>
-      widget.active && widget.mood == OrbMood.responding ? 1.0 : 0.0;
+      widget.active &&
+              (widget.mood == OrbMood.responding || widget.mood == OrbMood.connecting)
+          ? 1.0
+          : 0.0;
 
   /// The light has reached its mood's.
   bool get _lightSettled {
@@ -789,6 +799,8 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
     sc.think =
         _ease(sc.think, moving && mood == OrbMood.thinking ? 1 : 0, 4, dt);
     sc.calm = _ease(sc.calm, moving && mood == OrbMood.idle ? 1 : 0, 2, dt);
+    sc.wait =
+        _ease(sc.wait, moving && mood == OrbMood.connecting ? 1 : 0, 5, dt);
     sc.swayK =
         _ease(sc.swayK, moving && mood == OrbMood.speaking ? 1 : 0, 3, dt);
     sc.sec += dt;
@@ -832,7 +844,11 @@ class _VoiceOrbBackdropState extends State<VoiceOrbBackdrop>
               (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.16 * i) / 2.2)) +
           sc.calm *
               0.014 *
-              (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.2 * i) / 4.8));
+              (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.2 * i) / 4.8)) +
+          // Connecting: a ripple running outward, one every 1.1 s.
+          sc.wait *
+              0.032 *
+              (0.5 - 0.5 * math.cos(2 * math.pi * (sc.sec - 0.12 * i) / 1.1));
       final kick = _pulsePush *
           (1 - 0.1 * i) *
           _bump((sc.pulse - _pulseLag * i) / _pulseLen);

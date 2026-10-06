@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:firebase_ai/firebase_ai.dart' show FunctionCall, FunctionResponse;
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../core/log.dart';
@@ -28,12 +29,19 @@ class GptLiveConnector implements LiveConnector {
   final Future<Map<String, dynamic>?> Function(Map<String, Object?> body) _create;
 
   /// FASTER CONNECT (owner, 2026-10-04: "it takes too much time to
-  /// connect"). The phone's half of the call — microphone, data channel,
-  /// SDP offer — does not depend on the instruction, so [prepare] builds it
-  /// while the context is fetched, and [connect] takes it. Unused for a
-  /// minute, it is closed (it holds the microphone, track disabled).
+  /// connect"; 2026-10-06: "make it much more faster"). The phone's half of
+  /// the call (peer, an audio slot, data channel, SDP offer, ICE) does not
+  /// depend on the instruction, so [prepare] builds it ahead and [connect]
+  /// takes it. It holds NO microphone: the audio slot is an empty
+  /// send-receive transceiver, and the microphone is opened at connect, in
+  /// parallel with the server's session, and put in the slot with
+  /// replaceTrack (no renegotiation). So a spare costs nothing, shows no
+  /// microphone indicator, and can be kept ready for minutes.
   static Future<_Peer>? _spare;
   static Timer? _spareTtl;
+
+  /// A spare's offer is good while the network it was gathered on is.
+  static const spareTtl = Duration(minutes: 3);
 
   /// Sound to the loudspeaker (call mode routes it to the earpiece).
   static Future<void> loudspeaker() async {
@@ -51,10 +59,13 @@ class GptLiveConnector implements LiveConnector {
       return _Peer.none;
     });
     _spareTtl?.cancel();
-    _spareTtl = Timer(const Duration(seconds: 60), () {
+    _spareTtl = Timer(spareTtl, () {
       final left = _spare;
       _spare = null;
       left?.then((p) => p.dispose()).catchError((Object _) {});
+      // Kept ready while the app is in front: the next one is gathered on
+      // the network as it is now. In the background nothing is kept.
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) prepare();
     });
   }
 
@@ -71,24 +82,29 @@ class GptLiveConnector implements LiveConnector {
     return _openPeer();
   }
 
-  static Future<_Peer> _openPeer() async {
-    final sw = Stopwatch()..start();
-    RTCPeerConnection? pc;
-    MediaStream? mic;
-    try {
-      pc = await createPeerConnection(<String, dynamic>{});
-      mic = await navigator.mediaDevices.getUserMedia(<String, dynamic>{
+  static Future<MediaStream> _openMic() => navigator.mediaDevices.getUserMedia(<String, dynamic>{
         'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
         'video': false,
       });
-      final track = mic.getAudioTracks().first;
-      // Closed until the conversation opens the microphone: a session
-      // warmed on app-open must not hear the room.
-      track.enabled = false;
-      await pc.addTrack(track, mic);
+
+  static Future<_Peer> _openPeer() async {
+    final sw = Stopwatch()..start();
+    RTCPeerConnection? pc;
+    try {
+      pc = await createPeerConnection(<String, dynamic>{'sdpSemantics': 'unified-plan'});
+      // The microphone's place in the call, empty until connect.
+      final audio = await pc.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.SendRecv),
+      );
       final remote = <MediaStreamTrack>[];
+      // Her voice stays silent until the conversation opens: a warmed
+      // session may decide to speak, and nobody asked it to yet.
+      final audible = _Audible();
       pc.onTrack = (e) {
-        if (e.track.kind == 'audio') remote.add(e.track);
+        if (e.track.kind != 'audio') return;
+        e.track.enabled = audible.on;
+        remote.add(e.track);
       };
       // The event channel exists before the offer, or it is not in it.
       final channel = await pc.createDataChannel('oai-events', RTCDataChannelInit());
@@ -106,11 +122,8 @@ class GptLiveConnector implements LiveConnector {
       final sdp = local?.sdp ?? '';
       if (sdp.isEmpty) throw StateError('no local SDP offer');
       AppLog.add('live', 'gpt-live: phone side ready in ${sw.elapsedMilliseconds} ms');
-      return _Peer(pc, mic, track, remote, channel, incoming, sdp);
+      return _Peer(pc, audio.sender, remote, channel, incoming, sdp, audible);
     } catch (_) {
-      for (final t in mic?.getTracks() ?? const <MediaStreamTrack>[]) {
-        unawaited(t.stop().catchError((Object _) {}));
-      }
       unawaited(pc?.close().catchError((Object _) {}));
       rethrow;
     }
@@ -120,16 +133,57 @@ class GptLiveConnector implements LiveConnector {
   Future<LiveSessionPort> connect(LiveSetup setup, {String? resumeHandle}) async {
     final p = await _take();
     final pc = p.pc!;
-    final mic = p.mic!;
-    final track = p.track!;
+    final sender = p.sender!;
     final remote = p.remote;
+    final audible = p.audible;
     final channel = p.channel!;
     final incoming = p.incoming!;
     final sdp = p.sdp;
     final sw = Stopwatch()..start();
+    // THE MICROPHONE OPENS WHEN THEY ARE LISTENED TO (2026-10-06), not when
+    // the session is warmed: a session waiting for the tap holds none (no
+    // privacy indicator), and the greeting needs none. The first
+    // setMicOpen(true) opens it and puts it in the call's audio slot.
+    MediaStream? mic;
+    MediaStreamTrack? track;
+    Future<void>? micOpening;
+    var micWanted = false;
+    var disposed = false;
+    void openMic() {
+      micOpening ??= () async {
+        final opened = Stopwatch()..start();
+        final m = await _openMic();
+        if (disposed) {
+          for (final t in m.getTracks()) {
+            await t.stop();
+          }
+          await m.dispose();
+          return;
+        }
+        final t = m.getAudioTracks().first;
+        t.enabled = micWanted;
+        await sender.replaceTrack(t);
+        mic = m;
+        track = t;
+        AppLog.add('live', 'gpt-live: microphone on in ${opened.elapsedMilliseconds} ms');
+      }()
+          .catchError((Object e) {
+        AppLog.add('live', 'gpt-live: the microphone could not open: ${e.runtimeType}');
+        micOpening = null;
+      });
+    }
     try {
+      // The server builds the agent per user (voice, the opening line by
+      // their gender, the delegated model). The delegated model gets the
+      // same context and every tool the other live transports get.
       final created = await _create({
         'transport': {'type': 'webrtc', 'sdp': sdp},
+        'voice': setup.voice,
+        'instructions': setup.system,
+        'tools': [
+          for (final t in setup.tools)
+            {'name': t.name, 'description': t.description, 'parameters': t.parameters},
+        ],
       });
       final transport = created?['transport'];
       final answer = transport is Map ? '${transport['sdp'] ?? ''}' : '';
@@ -137,7 +191,10 @@ class GptLiveConnector implements LiveConnector {
       final sessionInfo = created?['session'];
       final id = sessionInfo is Map ? '${sessionInfo['id'] ?? ''}' : '';
       if (id.isEmpty) throw StateError('the GPT-Live session id is missing');
-      AppLog.add('live', 'gpt-live session created (server ${sw.elapsedMilliseconds} ms)');
+      final opening = created?['opening'];
+      final openingInstruction = opening is Map ? '${opening['instruction'] ?? ''}' : '';
+      AppLog.add('live',
+          'gpt-live session created (server ${sw.elapsedMilliseconds} ms, voice ${created?['voice'] ?? '?'})');
       pc.onIceConnectionState = (st) {
         if (st == RTCIceConnectionState.RTCIceConnectionStateConnected) {
           AppLog.add('live', 'gpt-live: network connected ${sw.elapsedMilliseconds} ms after the offer');
@@ -152,7 +209,6 @@ class GptLiveConnector implements LiveConnector {
       await pc.setRemoteDescription(RTCSessionDescription(answer, 'answer'));
       unawaited(Helper.setSpeakerphoneOn(true).catchError((Object _) {}));
       final peer = pc;
-      final stream = mic;
       final session = GptLiveSession(
         incoming.stream,
         (s) {
@@ -167,15 +223,25 @@ class GptLiveConnector implements LiveConnector {
           }));
         },
         () async {
-          for (final t in stream.getTracks()) {
+          disposed = true;
+          final stream = mic;
+          for (final t in stream?.getTracks() ?? const <MediaStreamTrack>[]) {
             await t.stop();
           }
-          await stream.dispose();
+          await stream?.dispose();
           await channel.close();
           await peer.close();
+          // The next call's phone side, ready before it is needed.
+          prepare();
         },
         mic: (open) {
-          track.enabled = open;
+          micWanted = open;
+          final t = track;
+          if (t != null) {
+            t.enabled = open;
+          } else if (open) {
+            openMic();
+          }
           // LOUDSPEAKER ON EVERY OPEN (2026-10-04, "the volume has dropped"):
           // a session warmed in the background set it while the previous
           // call was still closing, and that close put Android back on the
@@ -183,15 +249,18 @@ class GptLiveConnector implements LiveConnector {
           if (open) unawaited(Helper.setSpeakerphoneOn(true).catchError((Object _) {}));
         },
         speaker: (on) {
+          audible.on = on;
           for (final t in remote) {
             t.enabled = on;
           }
         },
+        openingInstruction: openingInstruction,
       );
       await session.ready.timeout(const Duration(seconds: 12));
       AppLog.add('live', 'gpt-live: started ${sw.elapsedMilliseconds} ms after the offer');
       return session;
     } catch (_) {
+      disposed = true;
       await p.dispose();
       rethrow;
     }
@@ -210,31 +279,41 @@ class GptLiveConnector implements LiveConnector {
     await done.future.timeout(const Duration(milliseconds: 1500), onTimeout: () {
       AppLog.add('live', 'gpt-live: ICE gathering still running after 1.5 s, offering what there is');
     });
+    // An offer without a single candidate cannot connect at all. Slow
+    // radios (some phones on mobile data) need longer for the first one:
+    // wait for it, up to 5 s more, instead of failing every time there.
+    if (!_hasCandidate((await pc.getLocalDescription())?.sdp)) {
+      final until = DateTime.now().add(const Duration(seconds: 5));
+      while (DateTime.now().isBefore(until) && !done.isCompleted) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        if (_hasCandidate((await pc.getLocalDescription())?.sdp)) break;
+      }
+      AppLog.add('live', 'gpt-live: waited for a first ICE candidate');
+    }
   }
+
+  static bool _hasCandidate(String? sdp) => sdp != null && sdp.contains('a=candidate:');
 }
 
 /// The phone's half of a GPT-Live call, before the server has answered.
 class _Peer {
-  _Peer(this.pc, this.mic, this.track, this.remote, this.channel, this.incoming, this.sdp);
-  static final none = _Peer(null, null, null, const [], null, null, '');
+  _Peer(this.pc, this.sender, this.remote, this.channel, this.incoming, this.sdp, this.audible);
+  static final none = _Peer(null, null, const [], null, null, '', _Audible());
   final RTCPeerConnection? pc;
-  final MediaStream? mic;
-  final MediaStreamTrack? track;
+
+  /// The audio slot the microphone goes into at connect.
+  final RTCRtpSender? sender;
   final List<MediaStreamTrack> remote;
   final RTCDataChannel? channel;
   final StreamController<String>? incoming;
   final String sdp;
+  final _Audible audible;
 
   Future<void> dispose() async {
-    for (final t in mic?.getTracks() ?? const <MediaStreamTrack>[]) {
-      await t.stop().catchError((Object _) {});
-    }
-    await mic?.dispose().catchError((Object _) {});
     await channel?.close().catchError((Object _) {});
     await pc?.close().catchError((Object _) {});
   }
 }
-
 /// One GPT-Live conversation: its data-channel events, as the engine's
 /// [LiveIn]s. The WebRTC plumbing is outside, so this is testable.
 class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
@@ -246,6 +325,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     void Function(bool on)? speaker,
     this.closeWait = const Duration(seconds: 15),
     this.tailMs = 600,
+    this.openingInstruction = '',
   })  : _mic = mic,
         _speaker = speaker {
     _sub = incoming.listen(_onEvent, onDone: _onChannelDone, onError: (Object _) => _onChannelDone());
@@ -261,6 +341,28 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
 
   /// Quiet after her last word's end before her turn is over.
   final int tailMs;
+
+  /// The server's direction for the opening line ("Hello Sir" / "Hello
+  /// Madam", by the user's gender). Empty: an older server; no greeting.
+  final String openingInstruction;
+  bool _greeted = false;
+
+  /// Nothing she says is heard or shown before the conversation opens
+  /// ([greetOpening] or the microphone opening): a warmed session waiting
+  /// for the tap stays silent even if the model decides to speak.
+  bool _audible = false;
+
+  /// When the opening line was asked for (session clock), until her first
+  /// words: how long GPT-Live takes to start speaking.
+  int? _openingAskedMs;
+
+
+
+  void _becomeAudible() {
+    if (_audible) return;
+    _audible = true;
+    _speaker?.call(true);
+  }
 
   late final _out = StreamController<LiveIn>(onListen: _flushBuffered);
   final List<LiveIn> _buffered = [];
@@ -285,8 +387,6 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   final Map<String, _InvocationRef> _invocationForCall = {};
   final Map<String, _SubmittedOutput> _clientEvents = {};
   final Map<String, int> _continuationRetries = {};
-  int _backendInputItems = 0;
-  int _backendInputBytes = 0;
 
   @override
   Stream<LiveIn> get messages => _out.stream;
@@ -327,15 +427,21 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     _emit(const LiveInPing());
     switch ('${e['type'] ?? ''}') {
       case 'session.started':
+        // No greeting here: a session can be up before anyone tapped the
+        // orb. The engine asks for it with [greetOpening] when they did.
         _clock.start();
-        _event({
-          'type': 'session.commentary.append',
-          'delegation_id': null,
-          'content': 'Greet the caller now: Hello Sir\nThen pause and listen.',
-        });
         if (!_ready.isCompleted) _ready.complete();
         _emit(const LiveInReady());
+      case 'session.instructions.appended':
+        final asked = _openingAskedMs;
+        if (asked != null) {
+          AppLog.add('live', 'gpt-live: opening acknowledged ${_clock.elapsedMilliseconds - asked} ms after the request');
+        }
       case 'session.input_transcript.delta':
+        // Nobody is heard before the conversation opens: a warmed session
+        // has no microphone, yet GPT-Live once transcribed its silence
+        // (2026-10-06), and that phantom turn made the tap skip the hello.
+        if (!_audible) break;
         final heard = '${e['delta'] ?? ''}';
         // They spoke after a stop: her voice is theirs to hear again.
         if (_muted) {
@@ -351,7 +457,12 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         }
       case 'session.output_transcript.delta':
         final said = '${e['delta'] ?? ''}';
-        if (said.isEmpty) break;
+        if (said.isEmpty || !_audible) break;
+        final asked = _openingAskedMs;
+        if (asked != null) {
+          _openingAskedMs = null;
+          AppLog.add('live', 'gpt-live: first words ${_clock.elapsedMilliseconds - asked} ms after the opening request');
+        }
         _speaking = true;
         _emit(LiveInContent(
           said: said,
@@ -359,6 +470,10 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
           endMs: _eventMillis(e['end_ms']),
         ));
         _armTurnEnd(e['end_ms']);
+      case 'session.delegation.created' || 'response.event' when !_audible:
+        // Nothing was asked before the conversation opened: no tool runs
+        // for a request nobody made.
+        AppLog.add('live', 'gpt-live: ignored backend work before the conversation opened');
       case 'session.delegation.created':
         final delegation = e['delegation'];
         _activeDelegation = delegation is Map
@@ -407,6 +522,14 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     if (_pending) _armStall();
     if (type == 'response.output_item.added' && added['type'] == 'web_search_call') _work('web_search');
     if (type == 'response.completed') {
+      // What this backend call cost: cached input is billed at a tenth.
+      final usage = response['usage'];
+      if (usage is Map) {
+        final details = usage['input_tokens_details'];
+        final cached = details is Map ? details['cached_tokens'] : null;
+        AppLog.add('live',
+            'gpt-live backend tokens: in ${usage['input_tokens']} (cached ${cached ?? 0}), out ${usage['output_tokens']}');
+      }
       final id = responseId.isNotEmpty
           ? responseId
           : _responseForDelegation[delegationId] ?? '';
@@ -533,8 +656,34 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
 
   @override
   void setMicOpen(bool open) {
+    if (open) _becomeAudible();
+    // Audio keeps flowing (silence while closed), as the guide asks;
+    // session.input_audio.mute left GPT-Live ignoring later requests.
     _mic?.call(open);
-    _event({'type': open ? 'session.input_audio.unmute' : 'session.input_audio.mute'});
+  }
+
+  /// THE OPENING LINE, IN THE SESSION'S OWN VOICE. GPT-Live has no greeting
+  /// field: the guide's way is a system-level `session.instructions.append`
+  /// after `session.started`. Once per session; false when the server gave
+  /// no line or it was already said.
+  bool greetOpening() {
+    if (_greeted || openingInstruction.isEmpty || _closing || _disposed) return false;
+    _greeted = true;
+    _becomeAudible();
+    _openingAskedMs = _clock.elapsedMilliseconds;
+    AppLog.add('live', 'gpt-live: opening requested');
+    _event({
+      'type': 'session.instructions.append',
+      'delegation_id': null,
+      'content': openingInstruction,
+    });
+    return true;
+  }
+
+  /// Silent context for her (`session.thinking.append`): known, not said.
+  void sendThinking(String text) {
+    final t = text.length > 1800 ? text.substring(0, 1800) : text;
+    _event({'type': 'session.thinking.append', 'delegation_id': null, 'content': t});
   }
 
   /// A nudge or a typed line: context for her, at most 500 tokens.
@@ -559,7 +708,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
       final item = <String, Object?>{
         'type': 'function_call_output',
         'call_id': callId,
-        'output': jsonEncode(response.response),
+        'output': _boundedOutput(response.response),
       };
       batches.putIfAbsent(
         invocation.key,
@@ -569,19 +718,10 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
 
     for (final entry in batches.entries) {
       final batch = entry.value;
-      final outputs = batch.items;
-      final byteCount = outputs.fold<int>(
-        0,
-        (total, item) => total + utf8.encode(jsonEncode(item)).length,
-      );
-      if (_backendInputItems + outputs.length > _maxBackendInputItems ||
-          _backendInputBytes + byteCount > _maxBackendInputBytes) {
-        AppLog.add('live', 'gpt-live: delegated result batch exceeds input budget');
-        continue;
-      }
-      _backendInputItems += outputs.length;
-      _backendInputBytes += byteCount;
-      for (final item in outputs) {
+      // No session-wide budget (2026-10-06): one used to drop every result
+      // past 32 KB, so a long conversation's later tools never answered.
+      // Each result is bounded instead (_boundedOutput).
+      for (final item in batch.items) {
         final callId = '${item['call_id']}';
         final outputKey = '${batch.invocation.key}\u0000$callId';
         _submittedOutputs.add(outputKey);
@@ -589,6 +729,18 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
       }
       _sendContinuation(batch.invocation);
     }
+  }
+
+  /// A tool's result for the backend, at most [_maxOutputChars]. Every later
+  /// delegated call in the session re-reads it, so a long search result or
+  /// list costs its tokens again and again; the voice needs a summary.
+  static String _boundedOutput(Map<String, Object?> result) {
+    final s = jsonEncode(result);
+    if (s.length <= _maxOutputChars) return s;
+    return jsonEncode({
+      'truncated': true,
+      'result': s.substring(0, _maxOutputChars),
+    });
   }
 
   final Set<String> _submittedOutputs = {};
@@ -693,6 +845,11 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   }
 }
 
+/// Whether her remote audio track may play (shared with onTrack).
+class _Audible {
+  bool on = false;
+}
+
 class _DelegationInvocation {
   final List<FunctionCall> calls = [];
 }
@@ -728,5 +885,4 @@ class _SubmittedOutput {
   bool get isItem => item != null;
 }
 
-const _maxBackendInputItems = 128;
-const _maxBackendInputBytes = 32768;
+const _maxOutputChars = 4000;

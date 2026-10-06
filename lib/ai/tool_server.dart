@@ -228,10 +228,13 @@ class ToolServer {
     bool expressive = false,
     Map<String, Object?> device = const {},
     Duration timeout = const Duration(seconds: 8),
+    String? transport,
   }) async {
     final body = <String, Object?>{
       'text': text,
       'mode': mode,
+      // 'gpt-live': its delegated model takes every tool, not the live 40.
+      if (transport != null) 'transport': transport,
       'sessionId': sessionId,
       'build': ApiService.appBuild ?? 0,
       'platform': _platform(),

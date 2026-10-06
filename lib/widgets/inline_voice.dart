@@ -53,8 +53,10 @@ OrbMood orbMoodFor(AssistantEngine e, {bool micPaused = false}) {
   // HER HELLO COVERS THE CONNECT (2026-10-04): while it plays she is
   // speaking; after it, the orb is awake, never the dim "waiting" rest.
   if (e.greetingPlaying) return OrbMood.speaking;
-  if (e.connecting) return OrbMood.listening;
   if (p == AssistantPhase.speaking) return OrbMood.speaking;
+  // Until her first word (2026-10-06, the owner: "add the connecting
+  // animation"): the ~1.5 s GPT-Live takes to start shows as connecting.
+  if (e.connecting || e.openingPending) return OrbMood.connecting;
   if (p == AssistantPhase.responding ||
       p == AssistantPhase.searching ||
       p == AssistantPhase.findingContact) {
@@ -542,8 +544,10 @@ class _InlineCaptionOverlayState extends State<InlineCaptionOverlay>
     // The cached hello is already playing while the realtime socket catches
     // up; leave the status quiet for that first spoken moment.
     if (engine.greetingPlaying) return '';
-    // Never "Connecting…" (2026-10-04): it tells the user they are waiting.
-    if (engine.connecting) return 'Say something';
+    // Connecting… until her first word (2026-10-06, the owner asked for it).
+    if ((engine.connecting || engine.openingPending) && p != AssistantPhase.speaking) {
+      return 'Connecting…';
+    }
     if (micPaused && !_waitingForVoice(p) && p != AssistantPhase.speaking) {
       return 'Mic paused while you type';
     }

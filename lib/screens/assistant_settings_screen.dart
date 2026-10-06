@@ -13,6 +13,7 @@ import '../design/dock_metrics.dart';
 import '../design/neon_tokens.dart';
 import '../design/neon_widgets.dart';
 import '../design/theme_controller.dart';
+import '../services/voice_choice.dart';
 import '../services/api_service.dart';
 import '../services/assistant_identity.dart';
 import 'account_section.dart';
@@ -23,7 +24,6 @@ import 'avatar_identity_screen.dart';
 import 'bills_email_screen.dart';
 import '../models/mail_inbox.dart';
 import '../services/mail_inbox_service.dart';
-import '../services/greeting_voice.dart';
 import '../services/app_feedback.dart';
 import '../services/location_service.dart';
 import '../services/tester_feedback.dart';
@@ -163,20 +163,14 @@ class _AssistantSettingsScreenState extends State<AssistantSettingsScreen> {
     HapticFeedback.selectionClick();
     final prev = _voice;
     setState(() => _voice = v);
-    await LiveVoicePrefs.setVoice(v);
-    // The cached orb greeting is in the OLD voice — drop it so the next
-    // tap is greeted in the one they just picked.
-    unawaited(GreetingVoice.instance.clear());
-    final r = await ApiService.sendJson('/profile/assistant',
-        method: 'PUT', body: {'voice': v});
+    // Saved on the phone and the server; the next conversation is in it.
+    final why = await VoiceChoice.save(v);
     if (!mounted) return;
-    if (r == null || r['rejected'] == true) {
+    if (why != null) {
       setState(() => _voice = prev);
       // The server explains a mismatch in a sentence the user can act on
       // — show THAT, not a generic failure.
-      final why = (r?['message'] ?? "Couldn't save the voice.").toString();
       AppFeedback.show(why, context: context, tone: FeedbackTone.error);
-      await LiveVoicePrefs.setVoice(prev.isEmpty ? 'shimmer' : prev);
       return;
     }
   }

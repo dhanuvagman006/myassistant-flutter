@@ -5,10 +5,14 @@
 // Cached. A copy younger than 30 minutes is used as it is; an older one is
 // still used while a fresh one is fetched in the background; the store is
 // refreshed on every sign-in (identity.dart) and emptied on sign-out. When
-// the server cannot be reached and nothing was ever fetched, the SAFE
-// DEFAULTS apply.
+// the server cannot be reached and nothing was ever fetched, the last good
+// copy saved on the phone applies, and only without one the SAFE DEFAULTS.
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../core/log.dart';
 import '../services/api_service.dart';
 
 List<String> _strings(Object? v) => v is List
@@ -181,7 +185,12 @@ class AiLive {
     this.fragmentGuard = true,
     this.voices = defaultVoices,
     this.transport = 'realtime',
+    this.prewarm = true,
   });
+
+  /// Connect the session as the app comes to the front (served; GPT-Live
+  /// can turn it off, since a connected session bills by the second).
+  final bool prewarm;
 
   /// 'gpt-live': the owner's GPT-Live agent over WebRTC (154+); otherwise
   /// the provider's own (Gemini Live or OpenAI Realtime).
@@ -258,6 +267,7 @@ class AiLive {
       fragmentGuard: j['fragmentGuard'] is bool ? j['fragmentGuard'] as bool : d.fragmentGuard,
       voices: voices.isEmpty ? defaultVoices : voices,
       transport: _str(j['transport'], d.transport),
+      prewarm: j['prewarm'] is bool ? j['prewarm'] as bool : d.prewarm,
     );
   }
 }
@@ -336,18 +346,49 @@ class AiConfigStore {
   AiConfigStore({
     Future<Map<String, dynamic>?> Function()? fetch,
     DateTime Function()? now,
+    Future<String?> Function()? readSaved,
+    Future<void> Function(String? json)? writeSaved,
     this.maxAge = const Duration(minutes: 30),
-    this.retryAfter = const Duration(minutes: 1),
+    this.retryAfter = const Duration(seconds: 15),
   })  : _fetch = fetch ?? _defaultFetch,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _readSaved = readSaved ?? (fetch == null ? _defaultRead : _noRead),
+        _writeSaved = writeSaved ?? (fetch == null ? _defaultWrite : _noWrite);
 
   static final AiConfigStore instance = AiConfigStore();
 
   static Future<Map<String, dynamic>?> _defaultFetch() =>
       ApiService.getJson('/ai/config', timeout: const Duration(seconds: 5));
 
+  // THE LAST GOOD CONFIG, KEPT ON THE PHONE (2026-10-06). A slow server at
+  // launch (one /ai/config timeout) used to put the app on the built-in
+  // defaults: Gemini through Firebase directly, which a build without App
+  // Check cannot use, so every voice and chat turn failed. Now the saved
+  // copy is used until the server answers again.
+  static const _savedKey = 'ai_config_last_good';
+  static Future<String?> _defaultRead() async {
+    try {
+      return (await SharedPreferences.getInstance()).getString(_savedKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _defaultWrite(String? json) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      json == null ? await p.remove(_savedKey) : await p.setString(_savedKey, json);
+    } catch (_) {}
+  }
+
+  static Future<String?> _noRead() async => null;
+  static Future<void> _noWrite(String? _) async {}
+
   final Future<Map<String, dynamic>?> Function() _fetch;
   final DateTime Function() _now;
+  final Future<String?> Function() _readSaved;
+  final Future<void> Function(String? json) _writeSaved;
+  bool _triedSaved = false;
 
   /// How long a fetched copy is used as it is.
   final Duration maxAge;
@@ -378,7 +419,10 @@ class AiConfigStore {
       if (_mayRetry) unawaited(refresh());
       return current;
     }
-    if (!_mayRetry) return current;
+    if (!_mayRetry) {
+      await _restoreSaved();
+      return current;
+    }
     return refresh();
   }
 
@@ -402,13 +446,29 @@ class AiConfigStore {
         _config = AiConfig.fromJson(j);
         _fetchedAt = _now();
         _failedAt = null;
-      } else {
-        _failedAt = _now();
+        unawaited(_writeSaved(jsonEncode(j)).catchError((Object _) {}));
+        return current;
       }
-    } catch (_) {
-      _failedAt = _now();
-    }
+    } catch (_) {}
+    _failedAt = _now();
+    await _restoreSaved();
     return current;
+  }
+
+  /// The server did not answer and nothing is held: the copy saved on the
+  /// phone, once (still stale, so it is refreshed again soon).
+  Future<void> _restoreSaved() async {
+    if (_config != null || _triedSaved) return;
+    _triedSaved = true;
+    try {
+      final raw = await _readSaved();
+      if (raw == null || raw.isEmpty) return;
+      final j = jsonDecode(raw);
+      if (j is Map<String, dynamic>) {
+        _config = AiConfig.fromJson(j);
+        AppLog.add('ai', 'config: server unreachable, using the saved copy');
+      }
+    } catch (_) {}
   }
 
   /// Sign-out: the next account must not inherit this one's shortcuts.
@@ -416,5 +476,7 @@ class AiConfigStore {
     _config = null;
     _fetchedAt = null;
     _failedAt = null;
+    _triedSaved = false;
+    unawaited(_writeSaved(null).catchError((Object _) {}));
   }
 }

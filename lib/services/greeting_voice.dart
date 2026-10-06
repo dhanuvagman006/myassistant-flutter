@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:path_provider/path_provider.dart';
 
 import '../ai/config.dart';
@@ -74,7 +75,7 @@ class GreetingVoice {
     final live = _liveVoice();
     final key = sha1
         .convert(utf8.encode(live != null
-            ? 'shared-live-v4|$live|$text'
+            ? 'gptlive-v5|$live|$text'
             : '${m.tts}|${m.ttsVoice}|${m.ttsLanguage}|$text'))
         .toString()
         .substring(0, 16);
@@ -92,7 +93,7 @@ class GreetingVoice {
       final live = _liveVoice();
       if (live != null) {
         final wav = await ApiService.getBytes(
-            '/ai/voices/$live/greeting-v4?line=${Uri.encodeQueryComponent(line)}');
+            '/ai/voices/$live/greeting-v5?line=${Uri.encodeQueryComponent(line)}');
         if (wav == null ||
             wav.length < 2044 ||
             utf8.decode(wav.sublist(0, 4), allowMalformed: true) != 'RIFF') {
@@ -170,6 +171,53 @@ class GreetingVoice {
       return true;
     } catch (e) {
       AppLog.add('greeting', 'play failed: $e');
+      return false;
+    }
+  }
+
+  static const _device = MethodChannel('hari/device');
+
+  /// THE RECORDED OPENING, PLAYED LIKE THE LIVE VOICE (2026-10-06): on the
+  /// voice-call stream and the loudspeaker (VoiceClip.kt), so it has the
+  /// same volume as GPT-Live's audio after it. False when nothing is
+  /// cached (it is fetched for next time) or it could not play.
+  Future<bool> playOnCall(String text) async {
+    if (text.trim().isEmpty) return false;
+    try {
+      final f = await _fileFor(text);
+      if (!await f.exists() || await f.length() < 2000) {
+        unawaited(prewarm(text));
+        return false;
+      }
+      final bytes = await f.readAsBytes();
+      final ok = bytes.length > 8 &&
+          [for (var i = 0; i < 4; i++) bytes[i]].join() == _magic.join();
+      if (!ok) return false;
+      final rate = ByteData.sublistView(bytes, 4, 8).getUint32(0, Endian.little);
+      final played = await _device.invokeMethod<bool>('playVoiceClip', {
+        'pcm': Uint8List.sublistView(bytes, 8),
+        'rate': rate,
+      });
+      return played == true;
+    } catch (e) {
+      AppLog.add('greeting', 'call-stream play failed: $e');
+      return false;
+    }
+  }
+
+  /// Stops a recorded opening that is still playing.
+  Future<void> stopOnCall() async {
+    try {
+      await _device.invokeMethod<bool>('stopVoiceClip');
+    } catch (_) {}
+  }
+
+  /// Whether [text] is cached in the current voice (it can play at once).
+  Future<bool> isReady(String text) async {
+    try {
+      final f = await _fileFor(text);
+      return await f.exists() && await f.length() > 2000;
+    } catch (_) {
       return false;
     }
   }
