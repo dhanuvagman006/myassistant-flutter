@@ -43,6 +43,16 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Arrived here because the session ended, not by choice: say so kindly.
+    if (AuthService.instance.sessionEnded) {
+      _error = 'For your security you were signed out. Please sign in again — '
+          'everything you saved is still here.';
+    }
+  }
+
+  @override
   void dispose() {
     _name.dispose();
     _email.dispose();
@@ -60,7 +70,8 @@ class _AuthScreenState extends State<AuthScreen> {
       HapticFeedback.lightImpact();
       // Success: AuthGate rebuilds via AuthService listener — nothing to do.
     } on AuthException catch (e) {
-      setState(() => _error = e.message);
+      // An empty message = the user backed out of a sign-in sheet.
+      setState(() => _error = e.message.isEmpty ? null : e.message);
     } catch (_) {
       setState(() => _error = 'Something went wrong. Please try again.');
     } finally {

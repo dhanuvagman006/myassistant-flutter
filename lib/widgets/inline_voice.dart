@@ -1309,7 +1309,7 @@ class _ErrorCaption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = (engine.errorMessage ?? '').trim().isEmpty
-        ? 'Something went wrong.'
+        ? "Sorry, something didn't work on my side. Let's try that again."
         : engine.errorMessage!.trim();
     final needsSettings = message.toLowerCase().contains('permission');
     // Scrolls rather than overflows: under the 330 px orb, a small phone or

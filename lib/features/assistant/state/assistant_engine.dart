@@ -367,7 +367,7 @@ class AssistantEngine extends ChangeNotifier {
       _setPhase(AssistantPhase.idle, silent: true);
       notifyListeners();
       AppLog.add('orb', 'start produced no session');
-      AppFeedback.toast("Couldn't start the conversation — tap again.");
+      AppFeedback.toast("I couldn't connect just now — please tap the orb to try again.");
     }
   }
 
@@ -2418,7 +2418,8 @@ class AssistantEngine extends ChangeNotifier {
         reply.answer(const DeviceOutcome.ok(
             'Started on the phone; its result comes as the next message.'));
       } catch (e) {
-        reply.answer(DeviceOutcome.failed('The phone could not do it: $e'));
+        AppLog.add('device', 'device action failed: $e');
+        reply.answer(DeviceOutcome.failed('The phone could not do it just now. Say so kindly in one short sentence and offer to try again — do not read out any technical details.'));
       }
       reply.answer(const DeviceOutcome.ok());
     }, zoneValues: {_deviceReplyKey: reply});
@@ -3993,6 +3994,14 @@ class AssistantEngine extends ChangeNotifier {
   /// else a plain direct dial for the user to talk.
   Future<void> _actOnResolvedCall(ContactMatch contact) async {
     HapticFeedback.mediumImpact();
+    // The pick is made (by tap or by saying the full name): close the
+    // picker flow. Left set, the NEXT confirmation card (an email, say)
+    // was routed into the call branch of confirm() and its Yes was lost.
+    _localCallFlow = false;
+    if (ambiguousContacts.isNotEmpty) {
+      ambiguousContacts = const [];
+      notifyListeners();
+    }
     final task = _localCallTask;
     _localCallTask = null;
 
@@ -4374,9 +4383,11 @@ class AssistantEngine extends ChangeNotifier {
   Future<void> _followAgentCall(String id, String who) async {
     callStatus = CallStatusInfo(status: 'dialing', contactName: who);
     notifyListeners();
-    String state = 'failed';
+    String state = 'dialing';
     String? result;
-    final deadline = DateTime.now().add(const Duration(minutes: 3));
+    // A real conversation runs well past 3 minutes: the old deadline
+    // announced "did not go through" while the call was still going.
+    final deadline = DateTime.now().add(const Duration(minutes: 15));
     while (DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(seconds: 3));
       try {
@@ -4394,6 +4405,16 @@ class AssistantEngine extends ChangeNotifier {
     }
     callStatus = null;
     notifyListeners();
+    final ended =
+        state == 'completed' || state == 'no_answer' || state == 'failed';
+    if (!ended) {
+      // Still going (or we lost track of it): never claim it failed.
+      await _tellModel(
+          '[SYSTEM] The call to $who is still going on. Tell me in one short, '
+          'warm sentence that the call is taking a while and its summary '
+          'will be in the Calls screen once it ends.');
+      return;
+    }
     final said = result ??
         (state == 'completed'
             ? 'The call to $who is done.'

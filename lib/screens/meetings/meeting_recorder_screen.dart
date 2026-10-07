@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -50,7 +51,10 @@ class MeetingRecorderScreen extends StatefulWidget {
   State<MeetingRecorderScreen> createState() => _MeetingRecorderScreenState();
 }
 
-enum _Stage { ready, recording, paused, uploading }
+/// [failed]: the upload did not go through. The recording is kept on the
+/// phone and offered again — before, the screen fell back to [ready],
+/// whose only button (Start) overwrote it.
+enum _Stage { ready, recording, paused, uploading, failed }
 
 class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
   static const _maxLength = Duration(hours: 3);
@@ -205,7 +209,22 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
     _pause('Paused for your call — tap Resume when you’re back.');
   }
 
+  /// The recording whose upload failed, kept until it goes through or the
+  /// owner discards it.
+  String? _failedPath;
+  bool _stopping = false;
+
   Future<void> _stop() async {
+    if (_stopping) return; // a double tap must not upload twice
+    _stopping = true;
+    try {
+      await _stopNow();
+    } finally {
+      _stopping = false;
+    }
+  }
+
+  Future<void> _stopNow() async {
     HapticFeedback.mediumImpact();
     _tick?.cancel();
     _amp?.cancel();
@@ -224,6 +243,10 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
       });
       return;
     }
+    await _upload(path);
+  }
+
+  Future<void> _upload(String path) async {
     setState(() => _stage = _Stage.uploading);
     try {
       final id = await MeetingsService.upload(
@@ -232,17 +255,45 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
         participants: _people.text,
         durationS: _elapsed.inSeconds,
       );
+      _failedPath = null;
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => MeetingDetailScreen(id: id)));
     } catch (e) {
+      _failedPath = path;
       if (!mounted) return;
-      setState(() => _stage = _Stage.ready);
+      setState(() => _stage = _Stage.failed);
       // The raw error goes to the log; the user gets a sentence.
       AppLog.add('meeting', 'upload failed: $e');
-      _snack("Couldn't upload the recording — check your connection. "
-          'The recording is kept; try Stop again.');
+      _snack("We couldn't upload the recording just now — it's safe on your "
+          'phone. Tap "Try again" when your connection is back.');
     }
+  }
+
+  Future<void> _discardFailed() async {
+    final sure = await showAppDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Discard this recording?'),
+        content: const Text("It hasn't been uploaded yet, so it can't be recovered."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep it')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Discard')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final p = _failedPath;
+    _failedPath = null;
+    if (p != null) {
+      try {
+        await File(p).delete();
+      } catch (_) {}
+    }
+    setState(() {
+      _stage = _Stage.ready;
+      _elapsed = Duration.zero;
+    });
   }
 
   void _snack(String text) {
@@ -258,6 +309,20 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
   }
 
   Future<bool> _confirmLeave() async {
+    if (_stage == _Stage.failed) {
+      final leave = await showAppDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Leave without uploading?'),
+          content: const Text("This recording hasn't been uploaded yet and will be lost."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Stay')),
+            TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Leave')),
+          ],
+        ),
+      );
+      return leave == true;
+    }
     if (_stage != _Stage.recording && _stage != _Stage.paused) return true;
     final leave = await showAppDialog<bool>(
       context: context,
@@ -318,6 +383,7 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
                     _Stage.recording => 'Recording — keep this screen open.',
                     _Stage.paused => _pausedBecause ?? 'Paused',
                     _Stage.uploading => 'Uploading — the minutes follow in a few minutes.',
+                    _Stage.failed => 'Not uploaded yet — your recording is safe on this phone.',
                   },
                   textAlign: TextAlign.center,
                   // On air says so in the danger tone's words.
@@ -335,6 +401,29 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
                 const SizedBox(height: 30),
                 if (busy)
                   const NeonLoader(semanticLabel: 'Uploading')
+                else if (_stage == _Stage.failed)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _round(
+                        icon: Icons.delete_outline_rounded,
+                        label: 'Discard recording',
+                        color: Neon.surfaceHigh,
+                        onTap: _discardFailed,
+                        size: 60,
+                      ),
+                      const SizedBox(width: 28),
+                      _RecordButton(
+                        icon: Icons.cloud_upload_rounded,
+                        label: 'Try upload again',
+                        onTap: () {
+                          final p = _failedPath;
+                          if (p != null) _upload(p);
+                        },
+                        pulsing: false,
+                      ),
+                    ],
+                  )
                 else
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -366,7 +455,11 @@ class _MeetingRecorderScreenState extends State<MeetingRecorderScreen> {
                   ),
                 const SizedBox(height: 14),
                 Text(
-                  _stage == _Stage.ready ? 'Start' : busy ? '' : 'Stop for minutes',
+                  _stage == _Stage.ready
+                      ? 'Start'
+                      : _stage == _Stage.failed
+                          ? 'Try again'
+                          : busy ? '' : 'Stop for minutes',
                   style: TextStyle(color: Neon.textLo, fontSize: NeonType.footnote),
                 ),
               ],

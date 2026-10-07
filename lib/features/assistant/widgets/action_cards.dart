@@ -513,9 +513,11 @@ class ConfirmationCard extends StatefulWidget {
 
 class _ConfirmationCardState extends State<ConfirmationCard> {
   bool _approved = false;
+  bool _decided = false; // either button: a double tap answers once
 
   void _decide(bool approved) {
-    if (_approved) return;
+    if (_decided) return;
+    _decided = true;
     if (approved) setState(() => _approved = true);
     widget.onDecision(approved);
   }

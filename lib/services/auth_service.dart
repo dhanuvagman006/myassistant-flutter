@@ -7,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
+import '../core/log.dart';
 import 'api_service.dart';
 import 'push_service.dart';
 
@@ -113,11 +114,11 @@ class AuthService extends ChangeNotifier {
     } catch (_) {
       throw const AuthException('Google sign-in failed. Please try again.');
     }
-    if (account == null) throw const AuthException('Connection cancelled.');
+    if (account == null) throw const AuthException('');
     final code = account.serverAuthCode;
     if (code == null) {
       throw const AuthException(
-          'Google did not return an auth code — check GOOGLE_WEB_CLIENT_ID.');
+          "We couldn't connect your Google account just now. Please try again in a moment.");
     }
     await ApiService.connectGoogle(code);
   }
@@ -159,14 +160,24 @@ class AuthService extends ChangeNotifier {
     // the app returns to the login screen instead of showing a ghost
     // account until the next cold start.
     ApiService.onSessionRejected = _onSessionRejected;
-    final token = await _storage.read(key: _tokenKey);
+    String? token;
+    try {
+      token = await _storage.read(key: _tokenKey);
+    } catch (e) {
+      // Keystore hiccup (backup restore, OS update) — treat as signed out
+      // rather than crash the launch.
+      AppLog.add('auth', 'token read failed: $e');
+    }
     if (token == null) {
       restored = true;
       return;
     }
     ApiService.sessionToken = token;
     _runSignInHooks(); // a restored session counts as signed in
-    final cached = await _storage.read(key: _userCacheKey);
+    String? cached;
+    try {
+      cached = await _storage.read(key: _userCacheKey);
+    } catch (_) {}
     if (cached != null) {
       try {
         user = AppUser.fromJson(jsonDecode(cached));
@@ -188,14 +199,17 @@ class AuthService extends ChangeNotifier {
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(const Duration(seconds: 8));
       if (r.statusCode == 200) {
-        final m = jsonDecode(r.body)['user'];
+        final body = jsonDecode(r.body);
+        final m = body['user'];
         user = AppUser.fromJson(m);
         _storage.write(key: _userCacheKey, value: jsonEncode(m));
+        _adoptRenewedToken(body);
         // Returning user: re-assert the token. FCM rotates it on reinstall,
         // restore and app-data clear, and a stale token silently drops
         // every notification.
         PushService.instance.syncToken();
       } else if (r.statusCode == 401) {
+        sessionEnded = true;
         await _clear(); // token expired or account gone
       } else {
         // Server hiccup — stay signed in with the cached identity.
@@ -266,11 +280,13 @@ class AuthService extends ChangeNotifier {
 
   Future<void> signInWithGoogle() async {
     final account = await _google.signIn();
-    if (account == null) throw const AuthException('Sign-in cancelled.');
+    // Backing out of the Google sheet is a choice, not an error: an empty
+    // message keeps the red error box hidden.
+    if (account == null) throw const AuthException('');
     final idToken = (await account.authentication).idToken;
     if (idToken == null) {
       throw const AuthException(
-          'Google did not return an ID token — check GOOGLE_WEB_CLIENT_ID.');
+          "We couldn't sign you in with Google just now. Please try again in a moment.");
     }
     await _post('/auth/google', {'idToken': idToken});
   }
@@ -305,6 +321,20 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Set when the server ended the session (expired or revoked), so the
+  /// login screen can say so instead of silently appearing.
+  bool sessionEnded = false;
+
+  /// /auth/me hands back a fresh token once the current one is a week old
+  /// (sliding renewal) — keep it so regular users are never signed out.
+  void _adoptRenewedToken(dynamic body) {
+    final fresh = body is Map ? body['token'] : null;
+    if (fresh is String && fresh.isNotEmpty && fresh != ApiService.sessionToken) {
+      ApiService.sessionToken = fresh;
+      _storage.write(key: _tokenKey, value: fresh).catchError((_) {});
+    }
+  }
+
   bool _rejectCheckRunning = false;
 
   Future<void> _onSessionRejected() async {
@@ -320,6 +350,7 @@ class AuthService extends ChangeNotifier {
       // Only an authoritative 401 signs the user out; network errors and
       // 5xx keep the session — the account may be fine and the server not.
       if (r.statusCode == 401) {
+        sessionEnded = true; // the login screen explains why
         await _clear();
         notifyListeners(); // AuthGate swaps to the login screen
       }
@@ -391,14 +422,20 @@ class AuthService extends ChangeNotifier {
     try {
       data = jsonDecode(r.body) as Map<String, dynamic>;
     } catch (_) {
-      throw const AuthException('Unexpected server response. Please try again.');
+      throw AuthException(r.statusCode == 429
+          ? 'Too many sign-in attempts just now. Please wait a few minutes and try again.'
+          : "We couldn't sign you in just now. Please try again in a moment.");
     }
 
     if (r.statusCode != 200) {
-      throw AuthException((data['error'] as String?) ?? 'Sign-in failed (${r.statusCode}).');
+      final msg = data['error'] as String?;
+      throw AuthException(msg == null || msg.isEmpty
+          ? "We couldn't sign you in just now. Please try again in a moment."
+          : msg[0].toUpperCase() + msg.substring(1));
     }
 
     final token = data['token'] as String;
+    sessionEnded = false;
     await _storage.write(key: _tokenKey, value: token);
     ApiService.sessionToken = token;
     user = AppUser.fromJson(data['user']);

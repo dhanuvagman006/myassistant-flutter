@@ -583,12 +583,20 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
           method: 'POST', body: {'phone': widget.phone, 'text': text});
       if (r?['ok'] == true && mounted) {
         _input.clear();
-        final m = r!['item'] as Map;
-        setState(() => _items = [
-              ..._items,
-              _ChatItem((m['id'] as num).toInt(), true, text,
-                  (m['at'] as num).toInt(), false, null),
-            ]);
+        // The message IS sent: an odd reply shape must not report it as
+        // failed (the owner would retype it and send a duplicate).
+        final m = r!['item'];
+        final id = m is Map ? (m['id'] as num?)?.toInt() : null;
+        final at = m is Map ? (m['at'] as num?)?.toInt() : null;
+        if (id == null) {
+          unawaited(_load());
+        } else {
+          setState(() => _items = [
+                ..._items,
+                _ChatItem(id, true, text,
+                    at ?? DateTime.now().millisecondsSinceEpoch, false, null),
+              ]);
+        }
         _jumpToEnd();
       } else if (mounted) {
         AppFeedback.show("Couldn't send — are they on the app?", context: context);

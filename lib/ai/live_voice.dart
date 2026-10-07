@@ -822,6 +822,12 @@ class LiveVoice {
 
   bool _micOn = false;
 
+  /// The opening clip asked for the mic track to be held. Remembered even
+  /// before the mic is open: on GPT-Live the mic opens only after the
+  /// connection, usually after the clip started, and opening it unheld let
+  /// the model hear its own "Hello" and greet again.
+  bool _micHeld = false;
+
   /// Thinking or a tool is on show (GPT-Live): her next words switch the
   /// orb back to speaking.
   bool _working = false;
@@ -1179,7 +1185,7 @@ class LiveVoice {
       if (!await connectedFuture || _stopped) return false;
     }
     if (_session case final OwnsAudio own) {
-      own.setMicOpen(true);
+      own.setMicOpen(!_micHeld);
       _micOn = true;
       return true;
     }
@@ -1245,6 +1251,7 @@ class LiveVoice {
   /// "Hello Sir" must not reach her as if they had said it. Only the
   /// microphone's track is held; the session and the turn are untouched.
   void holdMicTrack(bool held) {
+    _micHeld = held;
     if (!_micOn) return;
     if (_session case final OwnsAudio own) own.setMicOpen(!held);
   }
@@ -1400,6 +1407,7 @@ class LiveVoice {
         await _mic.stop();
       }
     }
+    _micHeld = false;
     await _closeSession();
     _backlog.clear();
     _cancelledIds.clear();
@@ -2228,6 +2236,12 @@ class LiveVoice {
       if (!ok) {
         _fail('the session dropped');
       } else {
+        // GPT-Live owns its mic track: the new session starts with it
+        // closed, and start() skips reopening because _micOn is still
+        // true — so after a drop she could neither hear nor be heard.
+        if (_micOn && _session is OwnsAudio) {
+          (_session as OwnsAudio).setMicOpen(!_micHeld);
+        }
         _flushBacklog();
       }
     }());

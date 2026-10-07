@@ -74,6 +74,7 @@ import 'config.dart';
 import 'local_tools.dart';
 import 'model_port.dart';
 import 'router.dart';
+import 'server_model_port.dart' show ServerModelException;
 import 'speech.dart';
 import 'speech_markup.dart';
 import 'tool_server.dart';
@@ -191,33 +192,41 @@ final class BrainError extends BrainEvent {
   /// Plain words for any failure.
   factory BrainError.from(Object e) {
     if (e is TimeoutException) {
-      return const BrainError('timeout', 'That took too long. Please try again.');
+      return const BrainError('timeout', 'Sorry, that took longer than it should. Could you try once more?');
     }
     if (e is CloudBlockedException) {
-      return const BrainError('blocked', "I can't help with that one.");
+      return const BrainError('blocked', "I'm sorry, I'm not able to help with that one.");
+    }
+    // The server's model proxy: a rate limit or exhausted credits arrive
+    // as a 429 (or a 'quota' message in a stream) — a kind "busy" line,
+    // never the generic failure.
+    if (e is ServerModelException &&
+        (e.status == 429 || e.body.toLowerCase().contains('quota'))) {
+      return const BrainError(
+          'quota', "I'm a little busy right now — please give me a minute and try again.");
     }
     if (e is QuotaExceeded) {
       return const BrainError(
-          'quota', "I'm getting too many requests right now. Try again in a minute.");
+          'quota', "I'm a little busy right now — please give me a minute and try again.");
     }
     if (e is ServiceApiNotEnabled || e is InvalidApiKey) {
-      return const BrainError('not_enabled', "The assistant isn't switched on for this app yet.");
+      return const BrainError('not_enabled', "I'm not quite ready yet — please try again in a little while.");
     }
     if (e is UnsupportedUserLocation) {
       return const BrainError('location', "The assistant isn't available where you are.");
     }
     if (e is SocketException || e is http.ClientException) {
-      return const BrainError('offline', 'No connection. Check your internet and try again.');
+      return const BrainError('offline', "I can't reach the internet right now. Please check your connection and try again.");
     }
     if (e is FirebaseAIException) {
       final m = e.message.toLowerCase();
       if (m.contains('app check') || m.contains('permission') || m.contains('unauth')) {
         return const BrainError(
-            'denied', "The assistant couldn't confirm this app. Please update it.");
+            'denied', "I couldn't connect just now. Please try again in a moment.");
       }
-      return const BrainError('server', "I couldn't reach the assistant. Please try again.");
+      return const BrainError('server', "Sorry, I couldn't connect just now. Please try again in a moment.");
     }
-    return const BrainError('failed', 'Something went wrong. Please try again.');
+    return const BrainError('failed', "Sorry, something didn't work on my side. Let's try that again.");
   }
 }
 

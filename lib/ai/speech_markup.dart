@@ -35,7 +35,11 @@ abstract final class SpeechMarkup {
   };
 
   static final _tag = RegExp(r'<\s*([a-zA-Z][a-zA-Z \-]{0,30}?)\s*>');
-  static final _tone = RegExp(r'<\s*tone\s*:\s*([^<>\n]{1,80}?)\s*>', caseSensitive: false);
+  // "<prompt: bright and sunny>" reached the screen (2026-10-07): a delivery
+  // note under another name is still a tone note, never shown.
+  static final _tone = RegExp(
+      r'<\s*(?:tone|prompt|style|voice|delivery|manner|mood)\s*:\s*([^<>\n]{1,80}?)\s*>',
+      caseSensitive: false);
 
   // Where a mark was cut or kept, so spacing is mended there and only there.
   static const _cut = '\u0000';
@@ -77,6 +81,7 @@ abstract final class SpeechMarkup {
     final r = rest.trimLeft().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
     if (r.length > 90 || rest.contains('\n')) return false;
     if (RegExp(r'^t(o(n(e ?(:.*)?)?)?)?$').hasMatch(r)) return true;
+    if (RegExp(r'^p(r(o(m(p(t ?(:.*)?)?)?)?)?)?$').hasMatch(r)) return true;
     return expressions.any((e) => e.startsWith(r));
   }
 

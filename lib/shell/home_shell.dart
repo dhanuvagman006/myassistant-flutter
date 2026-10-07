@@ -819,9 +819,9 @@ class _HomeShellState extends State<HomeShell>
             }),
           // Floating captions for the inline (no-screen) conversation.
           const InlineCaptionOverlay(),
-          // The last spoken answer lingers as a readable card once the
-          // voice stops — spoken words evaporate; this one doesn't.
-          AnswerAfterglow(dismissOn: _tabChanges),
+          // The answer card that lingered after a voice chat (AnswerAfterglow)
+          // is off (owner, 2026-10-07): the spoken reply is enough, and the
+          // card covered Home.
           // The cards a turn produces — a confirmation to tap, a call in
           // progress, a written piece, search results. These lived only
           // inside the old conversation screen, which is why Home had to
