@@ -97,4 +97,67 @@ void main() {
     await sub.cancel();
     await incoming.close();
   });
+
+  // 2026-10-09, production: "who is the CM of Karnataka?" — she said "One
+  // moment", the backend answered with no tool, and she never said it.
+  group('a backend answer she does not say', () {
+    late StreamController<String> incoming;
+    late List<Map<String, dynamic>> sent;
+    late GptLiveSession session;
+    void event(Map<String, Object?> e) => incoming.add(jsonEncode(e));
+
+    void askAndAnswer(String answer) {
+      event({'type': 'session.started', 'session': {'id': 'live_1'}});
+      session.setMicOpen(true);
+      event({'type': 'session.output_transcript.delta', 'delta': 'One moment.'});
+      event({
+        'type': 'session.delegation.created',
+        'delegation': {'id': 'item_1', 'target': 'responses'},
+      });
+      event({
+        'type': 'response.event',
+        'delegation_id': 'item_1',
+        'event': {'type': 'response.created', 'response': {'id': 'resp_1'}},
+      });
+      event({
+        'type': 'response.event',
+        'delegation_id': 'item_1',
+        'event': {'type': 'response.output_text.delta', 'delta': answer},
+      });
+      event({
+        'type': 'response.event',
+        'delegation_id': 'item_1',
+        'event': {'type': 'response.completed', 'response': {'id': 'resp_1'}},
+      });
+    }
+
+    setUp(() {
+      incoming = StreamController<String>();
+      sent = [];
+      session = GptLiveSession(
+        incoming.stream,
+        (s) => sent.add(jsonDecode(s) as Map<String, dynamic>),
+        () async {},
+        closeWait: const Duration(milliseconds: 10),
+      );
+      session.messages.listen((_) {});
+    });
+    tearDown(() => incoming.close());
+
+    test('is handed to her to say', () async {
+      askAndAnswer('The Chief Minister of Karnataka is Siddaramaiah.');
+      await Future<void>.delayed(GptLiveSession.unspokenGrace + const Duration(milliseconds: 300));
+      final notes = sent.where((e) => e['type'] == 'session.commentary.append').toList();
+      expect(notes, hasLength(1));
+      expect(notes.single['content'], contains('Siddaramaiah'));
+    });
+
+    test('is left alone when she says it', () async {
+      askAndAnswer('The Chief Minister of Karnataka is Siddaramaiah.');
+      await pumpEventQueue();
+      event({'type': 'session.output_transcript.delta', 'delta': 'It is Siddaramaiah.'});
+      await Future<void>.delayed(GptLiveSession.unspokenGrace + const Duration(milliseconds: 300));
+      expect(sent.where((e) => e['type'] == 'session.commentary.append'), isEmpty);
+    });
+  });
 }

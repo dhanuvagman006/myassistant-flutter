@@ -388,6 +388,17 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
   final Map<String, _SubmittedOutput> _clientEvents = {};
   final Map<String, int> _continuationRetries = {};
 
+  /// The backend's own answer text, for the response in progress.
+  final StringBuffer _backendText = StringBuffer();
+
+  /// Session-clock time of her last spoken word (-1: none yet).
+  int _lastSaidMs = -1;
+  Timer? _unspoken;
+
+  /// How long she may stay quiet after the backend answered before the
+  /// app hands her the answer to say.
+  static const unspokenGrace = Duration(milliseconds: 2500);
+
   @override
   Stream<LiveIn> get messages => _out.stream;
 
@@ -464,6 +475,8 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
           AppLog.add('live', 'gpt-live: first words ${_clock.elapsedMilliseconds - asked} ms after the opening request');
         }
         _speaking = true;
+        _lastSaidMs = _clock.elapsedMilliseconds;
+        _unspoken?.cancel();
         _emit(LiveInContent(
           said: said,
           startMs: _eventMillis(e['start_ms']),
@@ -517,7 +530,14 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         _responseForDelegation[delegationId] = id;
         _invocations.putIfAbsent(_invocationKey(delegationId, id), _DelegationInvocation.new);
       }
+      _backendText.clear();
       _work(null);
+    }
+    if (type == 'response.output_text.delta') {
+      _backendText.write('${inner['delta'] ?? ''}');
+    }
+    if (type == 'response.output_text.done' && _backendText.isEmpty) {
+      _backendText.write('${inner['text'] ?? ''}');
     }
     if (_pending) _armStall();
     if (type == 'response.output_item.added' && added['type'] == 'web_search_call') _work('web_search');
@@ -548,6 +568,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
         ));
       } else if (!_hasOpenInvocation) {
         _done();
+        _sayIfUnspoken(_answerText(response));
       }
       return;
     }
@@ -588,6 +609,52 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     if (invocation.calls.any((call) => call.id == callId)) return;
     _turnEnd?.cancel();
     invocation.calls.add(FunctionCall(name, args, id: callId));
+  }
+
+  /// The backend's answer: the streamed text, else the finished
+  /// response's message items.
+  String _answerText(Map response) {
+    var t = _backendText.toString().trim();
+    if (t.isEmpty) {
+      final out = response['output'];
+      if (out is List) {
+        final parts = <String>[];
+        for (final item in out) {
+          if (item is! Map || item['type'] != 'message') continue;
+          final content = item['content'];
+          if (content is! List) continue;
+          for (final c in content) {
+            if (c is Map && c['text'] is String) parts.add(c['text'] as String);
+          }
+        }
+        t = parts.join(' ').trim();
+      }
+    }
+    _backendText.clear();
+    return t;
+  }
+
+  /// "ONE MOMENT" AND THEN NOTHING (2026-10-09, production). The owner
+  /// asked "who is the CM of Karnataka?": she said "One moment", the
+  /// backend answered in five seconds with no tool, and she never said
+  /// it — the turn just ended. When the backend has answered and she
+  /// stays quiet past [unspokenGrace], she is handed the answer to say.
+  void _sayIfUnspoken(String answer) {
+    _unspoken?.cancel();
+    final mark = _lastSaidMs;
+    _unspoken = Timer(unspokenGrace, () {
+      if (_closing || _disposed || _lastSaidMs != mark || _pending) return;
+      AppLog.add('live', 'gpt-live: backend answer was not spoken; handing it to her');
+      _turnEnd?.cancel();
+      final a = answer.length > 1200 ? answer.substring(0, 1200) : answer;
+      sendText(a.isEmpty
+          ? '[SYSTEM] Your lookup has finished. Answer the user\'s last question now, '
+              'in one or two short sentences, in their language. Do not say "one moment" again.'
+          : '[SYSTEM] Your lookup came back with this answer: "$a". Say it to the user now, '
+              'in one or two short sentences, in their language. Do not say "one moment" again.');
+      // If she still says nothing, the turn closes as before.
+      _turnEnd = Timer(const Duration(seconds: 8), _endTurn);
+    });
   }
 
   String _invocationKey(String delegationId, String responseId) =>
@@ -843,6 +910,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     _disposed = true;
     _turnEnd?.cancel();
     _stall?.cancel();
+    _unspoken?.cancel();
     await _sub?.cancel();
     if (!_out.isClosed) unawaited(_out.close());
     await _dispose().catchError((Object _) {});
