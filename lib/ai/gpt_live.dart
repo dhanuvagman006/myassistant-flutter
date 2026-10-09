@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../core/log.dart';
+import '../services/self_check.dart';
 import '../services/api_service.dart';
 import 'live_voice.dart';
 
@@ -645,6 +646,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     _unspoken = Timer(unspokenGrace, () {
       if (_closing || _disposed || _lastSaidMs != mark || _pending) return;
       AppLog.add('live', 'gpt-live: backend answer was not spoken; handing it to her');
+      SelfCheck.instance.afterProblem('voice: answer not spoken');
       _turnEnd?.cancel();
       final a = answer.length > 1200 ? answer.substring(0, 1200) : answer;
       sendText(a.isEmpty
@@ -690,6 +692,7 @@ class GptLiveSession implements LiveSessionPort, CancellableReply, OwnsAudio {
     _stall = Timer(const Duration(seconds: 60), () {
       if (!_pending) return;
       AppLog.add('live', 'gpt-live: the backend went quiet for 60 s');
+      SelfCheck.instance.afterProblem('voice: backend quiet 60 s');
       _pending = false;
       _tool = null;
       _endTurn();

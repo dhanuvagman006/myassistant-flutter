@@ -17,6 +17,7 @@ import 'screens/auth/phone_verify_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/self_check.dart';
 import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
@@ -279,12 +280,18 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       // cold start.
       if (AuthService.instance.isSignedIn) {
         PushService.instance.syncToken(force: true);
+        // The admin may have asked this phone for a self-check.
+        unawaited(SelfCheck.instance.runIfRequested());
       }
     }
   }
 
   void _onAuthChanged() {
     if (mounted) setState(() {});
+    // Signed in (at launch too): the admin may have asked for a self-check.
+    if (AuthService.instance.isSignedIn) {
+      Future.delayed(const Duration(seconds: 8), SelfCheck.instance.runIfRequested);
+    }
   }
 
   /// FROM THE SPLASH INTO THE APP, NOT A CUT (2026-09-24). After the

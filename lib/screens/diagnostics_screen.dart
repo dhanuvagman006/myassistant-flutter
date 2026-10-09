@@ -12,6 +12,7 @@ import '../design/neon_widgets.dart';
 import '../features/assistant/state/assistant_engine.dart';
 import '../services/api_service.dart';
 import '../services/app_feedback.dart';
+import '../services/self_check.dart';
 
 /// ─────────────────────────────────────────────────────────────────────────
 ///  DIAGNOSTICS — "why isn't it working?", answered on the phone itself.
@@ -106,6 +107,19 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             OutlinedButton(
               onPressed: _checking ? null : _checkHealth,
               child: Text(_checking ? 'Checking…' : 'Test /health'),
+            ),
+            // SELF-CHECK (2026-10-09): every check, with the log, to support.
+            OutlinedButton(
+              onPressed: () async {
+                final ok = await SelfCheck.instance.run('button');
+                if (!context.mounted) return;
+                AppFeedback.show(
+                  ok ? 'Self-check sent to support.' : "Couldn't send it now. It will go with the next check.",
+                  context: context,
+                  tone: ok ? FeedbackTone.success : FeedbackTone.error,
+                );
+              },
+              child: const Text('Send self-check'),
             ),
           ]),
           if (_healthResult != null) ...[
