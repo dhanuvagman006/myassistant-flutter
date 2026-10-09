@@ -14,6 +14,7 @@ import '../models/call_outcome.dart';
 import '../models/user_document.dart';
 import '../models/remote_config.dart';
 import 'document_events.dart';
+import 'net_status.dart';
 
 /// All network traffic goes app → backend → AI providers.
 /// The app never holds AI provider keys.
@@ -144,6 +145,7 @@ class ApiService {
       final decoded = r.body.isEmpty ? {} : jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
     } catch (e) {
+      if (isConnectError(e)) NetStatus.instance.requestFailed();
       AppLog.add('api', '$method $path -> $e');
       return null;
     }
@@ -224,6 +226,7 @@ class ApiService {
       final body = jsonDecode(r.body);
       return body is Map<String, dynamic> ? body : null;
     } catch (e) {
+      if (isConnectError(e)) NetStatus.instance.requestFailed();
       AppLog.add('api', '$path -> $e');
       return null;
     }
@@ -248,6 +251,7 @@ class ApiService {
       final decoded = jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : null;
     } catch (e) {
+      if (isConnectError(e)) NetStatus.instance.requestFailed();
       AppLog.add('api', '$path -> $e');
       return null;
     }
@@ -270,6 +274,7 @@ class ApiService {
       }
       return r.bodyBytes;
     } catch (e) {
+      if (isConnectError(e)) NetStatus.instance.requestFailed();
       AppLog.add('api', 'GET $path -> $e');
       return null;
     }
@@ -294,6 +299,7 @@ class ApiService {
       final decoded = jsonDecode(r.body);
       return decoded is Map<String, dynamic> ? decoded : null;
     } catch (e) {
+      if (isConnectError(e)) NetStatus.instance.requestFailed();
       AppLog.add('api', '$path -> $e');
       return null;
     }

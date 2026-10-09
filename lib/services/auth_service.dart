@@ -4,6 +4,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+
+import 'net_status.dart';
 import 'package:http/http.dart' as http;
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
@@ -415,7 +417,11 @@ class AuthService extends ChangeNotifier {
           )
           .timeout(const Duration(seconds: 20));
     } catch (_) {
-      throw const AuthException('Could not reach the server. Check your connection.');
+      // Say which it is: their internet, or our server (2026-10-09).
+      await NetStatus.instance.check();
+      throw AuthException(NetStatus.instance.state.value == NetState.offline
+          ? 'No internet connection. Check Wi-Fi or mobile data and try again.'
+          : 'Could not reach the server. Please try again in a moment.');
     }
 
     final Map<String, dynamic> data;

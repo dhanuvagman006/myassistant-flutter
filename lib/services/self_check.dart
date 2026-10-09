@@ -133,9 +133,9 @@ class SelfCheck {
       }
     });
     await guard('sign-in', () async {
-      final me = await ApiService.getJson('/me', timeout: const Duration(seconds: 10));
+      final me = await ApiService.getJson('/auth/me', timeout: const Duration(seconds: 10));
       return CheckResult('sign-in', me != null,
-          me != null ? 'signed in as #${me['id'] ?? me['user']?['id'] ?? '?'}' : '/me did not answer (token refused or no network)');
+          me != null ? 'signed in as #${me['id'] ?? me['user']?['id'] ?? '?'}' : '/auth/me did not answer (token refused or no network)');
     });
     Future<void> perm(String name, Permission p) => guard(name, () async {
           final s = await p.status;

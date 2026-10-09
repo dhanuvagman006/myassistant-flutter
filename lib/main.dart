@@ -18,6 +18,7 @@ import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/self_check.dart';
+import 'widgets/net_banner.dart';
 import 'services/app_feedback.dart';
 import 'services/app_lock.dart';
 import 'services/auth_service.dart';
@@ -145,7 +146,8 @@ class MyAssistantApp extends StatelessWidget {
         builder: (context, child) => LockLayer(
             locked: () => AuthGate.locked,
             changes: AuthGate.lockChanges,
-            child: child!),
+            // The connection, over every screen (widgets/net_banner.dart).
+            child: NetBanner(child: child!)),
         home: KeyedSubtree(
             key: ValueKey('$dark|${AccentController.seed.value.toARGB32()}'),
             child: const AuthGate()),
